@@ -19,13 +19,27 @@ contracts:
 
 ## 威胁模型
 
-### 需要防御的
+### 核心威胁（Discord 账号 ≈ 远程本机 shell）
 
-1. **未授权 Discord 用户**：任何 Discord 用户都能发消息到 bot 所在的 channel；必须做身份验证
+**allowlisted 用户的 Discord 账号被他人控制**是本项目最核心的威胁。被盗账号**不只**是"能发消息"——它在我们的架构下等价于**远程读写本机代码、触发工具、消耗订阅配额**。
+
+这不是"可以防御的风险之一"，而是**基本假设**：allowlist 是身份映射，不是强认证；Discord 的登录状态不等于本机用户的在场。
+
+**缓解（默认行为）**：
+
+- MVP 默认不在公开 channel 持续对话；触发 bot 后自动转私有 thread 或 DM
+- 默认工具集只读（`Read / Grep / Glob`），`Edit / Write` 默认禁用；用户需显式开启
+- 写操作可配置二次确认（per-session 或 per-tool）
+- 危险工具（`Bash`、MCP shell 类）启用时在首条欢迎消息显式标注
+- 不在公开 channel 回显敏感内容（见 `redaction` + `publicChannelMode`）
+
+### 其他威胁
+
+1. **未授权 Discord 用户（边界穿越）**：bot 被邀请到非预期 guild，或用户在错误 channel 触发；allowlist 必须基于 `(guildId, channelId, userId, roleIds)` 四元组，不是只看 user
 2. **CC CLI 越权**：CC 能读写本机文件、执行工具；必须限制工作目录与工具集
-3. **Prompt injection**：用户消息中嵌入"忽略上面的指令..."等试图改变 agent 行为的内容
-4. **密钥泄露**：通过日志、IM 输出、transcript 意外回显 token/API key
-5. **Discord 账号被盗**：allowlist 里的用户账号被他人控制
+3. **Prompt injection**：用户消息中嵌入"忽略上面的指令"等试图改变 agent 行为的内容；**非发起者投毒尤其危险**，见下文砍掉 `shared_channel_mode` 的理由
+4. **附件投毒**：恶意上传的文件（超大、压缩炸弹、带 injection 文本的文档、SSRF 链路的 URL）
+5. **密钥泄露**：通过日志、IM 输出、transcript 意外回显 token / API key
 
 ### 不在范围
 
@@ -37,23 +51,49 @@ contracts:
 
 ### Allowlist
 
-- 配置项：`config.security.allowlist`
-- 支持两种：`userIds`（Discord user id 列表）、`roleIds`（Discord role id 列表）
-- **空列表 == 拒绝所有**（fail-closed）；不得默认开放
-- 启动时验证格式，有错立即失败
+权限判断基于**四元组** `(guildId, channelId, userId, roleIds)`，不是只看 `userId`。
+
+配置项 `config.security.allowlist`：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `userIds` | string[] | 允许的 Discord user id |
+| `roleIds` | string[] | 允许的 Discord role id（guild 内） |
+| `allowedGuildIds` | string[] | 允许的 guild id（空列表 = 拒绝所有 guild） |
+| `allowedChannelIds` | string[] | 允许的 channel / thread id（可选；留空则 guild 内任意 channel） |
+| `allowDM` | bool | 是否允许 Discord DM 触发（默认 `true`） |
+| `requireMentionOrSlash` | bool | 是否要求消息 @ bot 或走 slash command 才触发（默认 `true`；仅 DM 自动豁免） |
+
+**约束**：
+
+- **fail-closed**：任一字段空列表 = 拒绝所有（`userIds=[]` 和 `allowedGuildIds=[]` 都会让 bot 拒绝一切 guild 消息；DM 受 `allowDM` 控制）
+- 启动时验证格式与至少一个字段非空，有错立即失败
 
 ### 权限检查位置
 
-- 在 `core.auth` 模块，位于 `core.Engine.dispatch` **最前**
-- 任何 NormalizedEvent 先过 allowlist；不在列表内直接拒绝
-- 拒绝时：打 `auth_denied` 日志 + 可选发 DM 通知（可配置）
+- 在 `core.auth` 模块，位于 `core.Engine.dispatch` **最前**（见 `architecture/overview.md` 数据流）
+- 先过 auth，再执行 idempotency checkAndSet，再限流/预算（见 `spec/message-protocol.md` §幂等流程）
+- 拒绝时：打 `auth_denied` 日志（字段含 guildId / channelId / userId / reason）+ 可选 DM 通知
 
 ### 会话绑定
 
-一个 session 绑定 **一个** initiator user。该 user 之外的其他用户发到同 channel 的消息：
+一个 session 绑定 **一个** initiator user。其他用户发到同 channel 的消息 → **一律丢弃**，不进入 agent context、不记入 session transcript、不触发任何动作。
 
-- 默认**丢弃**（不处理、不回复）
-- 可选：打开 `shared_channel_mode` 时，将其他用户消息作为 context 可见，但仍不能触发 agent（防 hijack）
+**MVP 不提供 `shared_channel_mode`**：曾考虑过"非发起者消息可作为 agent 可见 context"，但被识别为明显的 prompt injection 入口——攻击者无需触发 agent，只要把恶意文本塞进共享 channel，下一次 allowlisted 用户触发时就会中招。如果未来确有需要，必须：
+
+- 先发独立 ADR 评审
+- 非发起者内容必须打 `untrusted` 标，且默认不拼接进 agent prompt
+- 明确记录这份上下文的来源和信任级别
+
+### 公开 channel 默认转私域
+
+为缓解核心威胁（账号被盗）与旁观泄露，默认行为：
+
+- `config.platform.discord.publicChannelMode`，取值 `disabled | thread | public`，默认 `thread`
+  - `disabled`：公开 channel 触发 → 直接拒绝并提示"请到 DM 或私有 thread"
+  - `thread`：公开 channel 触发 → 创建 private thread（或 ephemeral ACK + thread）继续对话
+  - `public`：允许在公开 channel 持续对话（不推荐，仅为调试 / 演示用）
+- `ephemeral` 发送能力仅对 slash command 的 interaction response 有效，不适用于持续对话
 
 ## 工具白名单
 

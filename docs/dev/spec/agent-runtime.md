@@ -6,6 +6,7 @@ summary: Agent 后端适配层接口契约；SessionConfig、AgentEvent 流、CC
 tags: [spec, agent-runtime, cc-cli, subprocess]
 related:
   - dev/adr/0002-agent-backend-claude-code-cli
+  - dev/spec/claude-code-cli-contract
   - dev/spec/message-protocol
   - dev/spec/security
   - dev/spec/cost-and-limits
@@ -140,35 +141,21 @@ enum EventType {
 
 ## CC CLI 专属说明（Claude Code 实现）
 
-以下是 `agent/claudecode` 实现必须处理的细节。对 core 透明。
+`agent/claudecode` 实现 CC CLI 后端，但**具体的外部契约**（命令模板、stream-json 协议、stdin/stdout/stderr 分工、退出码、stop_reason 映射、UsageCompleteness、兼容性自检）已独立锁定在：
 
-### 启动
+→ [`claude-code-cli-contract.md`](claude-code-cli-contract.md)
 
-- 以子进程启动 CC CLI，传入 working dir、env、工具白名单参数
-- 子进程 stdin / stdout 使用管道（或 pty，以支持颜色/交互）
-- 解析 CC 输出为 AgentEvent 流
+本节仅概括 adapter 侧的实现职责：
 
-### 输出解析
+- **启动**：按 `claude-code-cli-contract.md` §"启动命令模板"组装参数；跑 CompatibilityProbe 失败则拒启 session
+- **输出解析**：维护行缓冲 + JSON 解析器，把 `ClaudeCodeStreamEvent` 翻译为 `AgentEvent`（映射表见 contract 文档）
+- **stop_reason 映射**：按 contract §"stop_reason 到 turn_finished.reason 的映射"
+- **中断**：首选 SIGINT，等 5s 未 `turn_finished` → SIGKILL
+- **超时**：`SessionConfig.timeoutMs` 超过 → 走中断链 → 产出 `turn_finished { reason: "wallclock_timeout" }`
+- **崩溃**：意外 exit → `error` + `session_stopped { reason: "error" }`；不自动重启
+- **UsageCompleteness**：按 contract §"UsageCompleteness" 标注 complete / partial / missing，并在 partial/missing 时触发 `$ 预算`的 fail-closed
 
-- CC 支持 JSON 流输出模式（具体标志随 CC 版本，写入实现时锁定）
-- 解析器维护状态机：识别 `message_start` / `content_block_delta` / `tool_use` 等类型
-- 把 CC 的内部事件归一化为 AgentEvent
-
-### 中断
-
-- `interrupt` 发送 SIGINT 给子进程
-- 等待 CC 返回 `turn_finished { reason: "user_interrupt" }`
-- 超时未返回则 SIGKILL 并标记 session Errored
-
-### 超时
-
-- `SessionConfig.timeoutMs` 是单次 `sendInput` 到 `turn_finished` 的超时
-- 超时触发 interrupt；如仍未响应则强杀
-
-### 崩溃恢复
-
-- 子进程意外退出 → 投递 `error` + `session_stopped { reason: "error" }`
-- 不自动重启 session；交给 core / 用户决策
+contract 文档本身是 spec，任何映射或协议字段改动必须先改 contract 再改代码。
 
 ## 权限边界
 

@@ -95,7 +95,7 @@ Discord gateway 会重发事件（at-least-once）。同一条用户消息可能
 
 - 每条入站 `NormalizedEvent` 带唯一 `messageId`（Discord 给的消息 snowflake）
 - `core.idempotency` 维护 `(sessionKey, messageId) → processed_at` 的去重表
-- adapter 收到事件后 **先查去重表**；命中则直接 ack 并跳过
+- **Adapter 只负责归一化与投递，不做去重；由 core 在 dispatch 阶段（auth 检查之后、session 入队之前）执行 `checkAndSet(sessionKey, messageId)`**
 - 去重表条目 TTL 默认 24 小时（时间窗口在 `spec/message-protocol.md` 调优）
 
 ### 存储

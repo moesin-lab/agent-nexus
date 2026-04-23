@@ -17,6 +17,15 @@
 
 - 重构 `spec/cost-and-limits.md`：一等 limits 为 turn/wall-clock/tool-call/并发/退避/熔断，$ 预算降为 opt-in；对应同步 `spec/observability.md`（新增 `turn_limit_hit` / `tool_limit_hit` / `wallclock_timeout` 事件与 `toolCallsThisTurn` / `wallClockMs` 字段）、`architecture/session-model.md`（Session 元数据结构）、`spec/persistence.md`（sessions 表字段；`budget_events` 重命名为 `usage_events`）、`testing/eval.md`（case 05 扩为 `resource-limit-hit`）。
 - `spec/cost-and-limits.md` 二次修订（配合 ADR-0006）：开头重心从"订阅用户"改为"机制分层"；把"订阅配额跟踪"从"未来占位"提升为与 `$ 预算`并列的二等可选机制；合约测试增加"用户路径对称"case。
+- 按 Codex review P0 反馈修订一轮（见 `reviews/2026-04-23-dev-docs-codex.md`）：
+  - **幂等职责统一**：`architecture/overview.md` + `architecture/session-model.md` + `spec/message-protocol.md` 一致化为"adapter 只归一化投递；core 在 auth 之后、session 入队之前执行 `checkAndSet`"
+  - **Allowlist 四元组**：`spec/security.md` 从"仅 userIds/roleIds"扩为 `(guildId, channelId, userId, roleIds)`；新增 `allowedGuildIds / allowedChannelIds / allowDM / requireMentionOrSlash`，fail-closed
+  - **砍 shared_channel_mode**：`spec/security.md` MVP 移除（prompt injection 入口）；未来引入需新 ADR + untrusted 标注
+  - **Discord 账号盗升格为核心威胁**：`spec/security.md` §威胁模型重写置顶；新增 `publicChannelMode` 默认 `thread`（公开 channel 自动转私有 thread）
+
+### Added
+
+- 新增 `spec/claude-code-cli-contract.md`：锁定 CC CLI 版本、启动命令模板、stream-json 协议、stdout 事件到 `AgentEvent` 的映射表、stop_reason 映射、`UsageCompleteness` 三档、中断/超时/崩溃处理链、兼容性自检（probe）、合约测试清单、兼容矩阵占位。`spec/README.md` 索引新增一类"Agent 后端专属契约"；`spec/agent-runtime.md` §CC CLI 专属说明瘦身为引用。
 
 ### Tooling
 

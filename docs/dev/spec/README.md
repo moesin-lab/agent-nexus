@@ -30,6 +30,10 @@ related:
 - [`agent-runtime.md`](agent-runtime.md) — Agent 后端适配层接口
 - [`message-protocol.md`](message-protocol.md) — 归一化消息与事件格式
 
+### Agent 后端专属契约
+
+- [`claude-code-cli-contract.md`](claude-code-cli-contract.md) — Claude Code CLI 的版本、命令模板、stream-json 协议、事件映射、UsageCompleteness、兼容性自检
+
 ### 横切四件套（跨层约束）
 
 - [`persistence.md`](persistence.md) — 本地存储契约

@@ -63,14 +63,15 @@ Discord gateway event
         ▼
 platform/discord
   - 把 Discord 事件解析成 NormalizedEvent（见 spec/message-protocol）
-  - 执行 messageId 幂等检查（调 core 的去重表）
   - 打 traceId、sessionKey
+  - 不做业务决策（不做幂等、不做权限、不做限流）
         │
         ▼
 core.Engine.dispatch(NormalizedEvent)
-  - 路由到对应 session
-  - 跑限流/预算检查（见 spec/cost-and-limits）
-  - 跑权限/白名单检查（见 spec/security）
+  - 权限/白名单检查（见 spec/security）
+  - 幂等去重：core.idempotency.checkAndSet(sessionKey, messageId)（见 spec/message-protocol）
+  - 限流/预算检查（见 spec/cost-and-limits）
+  - 路由到对应 session 的 FIFO 队列
         │
         ▼
 agent/claudecode.SendInput(session, input)

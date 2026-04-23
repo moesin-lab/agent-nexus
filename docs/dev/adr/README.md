@@ -1,0 +1,86 @@
+# ADR（Architecture Decision Records）
+
+本目录存放所有架构级决策的记录。每个决策一个文件，编号连续。
+
+## 为什么要 ADR
+
+cc-connect 的一个教训是：架构决策散落在 Issue 与 commit message 里，新人（或半年后的自己）读不懂"为什么是这样"。ADR 解决这个问题——**每个决策有固定位置、固定结构、固定状态机**。
+
+## 编号规则
+
+- 四位数字，从 `0001` 开始
+- 编号连续，不跳号，不复用
+- 被废弃的 ADR **保留编号与文件**，只追加状态变更，不删除内容
+- 文件名：`<编号>-<kebab-case-标题>.md`（例 `0001-im-platform-discord.md`）
+
+## 状态机
+
+```
+Proposed ──(评审通过)──> Accepted
+   │                       │
+   │                       ├──(被新决策取代)──> Superseded by XXXX
+   │                       │
+   │                       └──(问题已不存在)──> Deprecated
+   │
+   └──(评审拒绝)──> Rejected（罕见，一般会修 ADR 而非拒绝）
+```
+
+**状态变更只追加，不覆盖**：
+
+- 原状态段保留
+- 在文件顶部追加新状态头与变更日期、理由
+- 方便未来审计"当时为什么这么决定"
+
+## 什么情况写 ADR
+
+触发 ADR 的改动（非穷举，见 [`../process/workflow.md`](../process/workflow.md)）：
+
+- 引入/替换外部依赖大类（IM 平台、agent 后端、数据库、框架）
+- 改变模块依赖方向
+- 改变对外契约（spec/ 下任意文件的接口）
+- 改变部署形态
+- 改变安全模型
+- 选定实现语言、运行时、核心库
+
+## 评审流程
+
+1. 作者基于 [`template.md`](template.md) 写 ADR，状态设为 `Proposed`
+2. PR 发起 review，至少跑一次 codex review
+3. Review 反馈逐条响应
+4. 讨论收敛后改状态为 `Accepted`（或 `Rejected`）
+5. 合并
+
+**禁止**：未经评审直接提交 `Accepted` 状态的 ADR。
+
+## 书写要点
+
+- 用中文，标题与 filename 尽量信息密度高
+- Context 段回答：我们为什么现在要决定这件事？
+- Options 段列出至少 2 个认真比较过的候选
+- Decision 段一句话说选哪个
+- Consequences 段同时列**正向**与**负向**后果
+- Out of scope 段说明**这个 ADR 不决定什么**，避免 scope 蔓延
+
+详见 [`template.md`](template.md)。
+
+## 当前索引
+
+| 编号 | 标题 | 状态 |
+|---|---|---|
+| [0001](0001-im-platform-discord.md) | MVP IM 平台选型：Discord | Accepted |
+| [0002](0002-agent-backend-claude-code-cli.md) | Agent 后端选型：Claude Code CLI | Accepted |
+| [0003](0003-deployment-local-desktop.md) | 部署形态：本机桌面 | Accepted |
+| [0004](0004-language-runtime.md) | 实现语言与运行时选型 | Proposed |
+
+## 引用规则
+
+- 其他文档引用 ADR 用编号：`ADR 0001` 或直接链接
+- ADR 之间互相引用也用编号
+- 代码注释里引用用 `# see ADR-0001`
+
+## 不做的事
+
+- 不把 ADR 当长篇论文写；60–200 行为宜
+- 不在 ADR 里写实现细节（实现细节放 spec）
+- 不把还没做的决策写成 ADR（没决策就没 ADR）
+- 不删除任何已合入的 ADR 文件（保留，更新状态）

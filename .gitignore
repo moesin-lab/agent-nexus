@@ -1,0 +1,53 @@
+# Dependencies / build artifacts
+node_modules/
+dist/
+build/
+out/
+bin/
+vendor/
+target/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pnp.*
+.yarn/
+
+# Test / coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Logs
+*.log
+logs/
+
+# Runtime / local state
+.env
+.env.*
+!.env.example
+*.local
+.cache/
+.data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+*.swp
+*.swo
+
+# Claude Code / agent 工件
+.claude/
+.tasks/*.scratch.md
+
+# 临时文件
+tmp/
+temp/
+*.tmp

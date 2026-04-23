@@ -7,6 +7,8 @@ tags: [spec, persistence, sqlite, storage, secrets]
 related:
   - dev/adr/0003-deployment-local-desktop
   - dev/architecture/session-model
+  - dev/spec/idempotency
+  - dev/spec/secrets
   - dev/spec/security
 contracts:
   - Store

@@ -7,6 +7,7 @@ tags: [session, session-model, lifecycle, idempotency, ordering, concurrency]
 related:
   - dev/architecture/overview
   - dev/spec/message-protocol
+  - dev/spec/idempotency
   - dev/spec/persistence
   - dev/spec/cost-and-limits
 ---
@@ -91,17 +92,14 @@ SessionKey = (platform, channelId, initiatorUserId)
 
 Discord gateway 会重发事件（at-least-once）。同一条用户消息可能被 adapter 收到多次——**不能让 CC CLI 被触发多次**。
 
-### 机制
+详细规则、存储、流程与合约测试见独立 spec：[`../spec/idempotency.md`](../spec/idempotency.md)。
+
+### 在本 session 模型中的角色（要点）
 
 - 每条入站 `NormalizedEvent` 带唯一 `messageId`（Discord 给的消息 snowflake）
-- `core.idempotency` 维护 `(sessionKey, messageId) → processed_at` 的去重表
-- **Adapter 只负责归一化与投递，不做去重；由 core 在 dispatch 阶段（auth 检查之后、session 入队之前）执行 `checkAndSet(sessionKey, messageId)`**
-- 去重表条目 TTL 默认 24 小时（时间窗口在 `spec/message-protocol.md` 调优）
-
-### 存储
-
-- 本机 SQLite 表 `idempotency`（主键 `(sessionKey, messageId)`）
-- 内存 LRU 缓存热数据加速
+- **Adapter 只负责归一化与投递，不做去重**；由 core 在 dispatch 阶段（auth 检查之后、session 入队之前）执行 `checkAndSet(sessionKey, messageId)`
+- 去重表条目 TTL 默认 24 小时
+- 本机 SQLite 表 `idempotency`（主键 `(sessionKey, messageId)`），内存 LRU 缓存热数据
 
 ## 顺序保证
 

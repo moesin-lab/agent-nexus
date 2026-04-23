@@ -24,22 +24,30 @@ related:
 
 ## 文档清单
 
-### 核心三件套（模块间接口）
+### 核心接口（模块间契约）
 
 - [`platform-adapter.md`](platform-adapter.md) — IM 平台适配层接口
 - [`agent-runtime.md`](agent-runtime.md) — Agent 后端适配层接口
-- [`message-protocol.md`](message-protocol.md) — 归一化消息与事件格式
+- [`message-protocol.md`](message-protocol.md) — 归一化消息与事件类型定义
+- [`idempotency.md`](idempotency.md) — `(sessionKey, messageId)` 去重契约与 dispatch 流程
 
 ### Agent 后端专属契约
 
 - [`claude-code-cli-contract.md`](claude-code-cli-contract.md) — Claude Code CLI 的版本、命令模板、stream-json 协议、事件映射、UsageCompleteness、兼容性自检
 
-### 横切四件套（跨层约束）
+### Security 分区（伞：security.md；分四份子 spec）
+
+- [`security.md`](security.md) — 威胁模型 + 索引 + 跨分区综合缓解 + 启动自检清单
+- [`auth.md`](auth.md) — 身份四元组 allowlist、会话绑定、公开 channel 转私域
+- [`tool-boundary.md`](tool-boundary.md) — 工具白名单、工作目录、危险工具启用流程
+- [`secrets.md`](secrets.md) — 密钥存储层级、命名、禁止写入清单、轮换
+- [`redaction.md`](redaction.md) — 出口脱敏 Redactor 的必过滤项与合约测试
+
+### 其他横切
 
 - [`persistence.md`](persistence.md) — 本地存储契约
 - [`observability.md`](observability.md) — 日志/trace/metric 字段契约
-- [`security.md`](security.md) — 权限、脱敏、密钥处理
-- [`cost-and-limits.md`](cost-and-limits.md) — 预算、限流、熔断
+- [`cost-and-limits.md`](cost-and-limits.md) — Limits（一等：失控保护 + 观测）/ $ 预算（二等 opt-in）
 
 ## 阅读顺序
 

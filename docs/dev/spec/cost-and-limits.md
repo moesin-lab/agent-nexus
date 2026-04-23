@@ -148,9 +148,7 @@ base = 1000ms, cap 见上表, jitter = 0.2
 
 ## 幂等表清理
 
-- 后台 GC：每 5 分钟扫一次 `expires_at < now()` 的条目
-- 批量上限：每轮 10000 条
-- 见 `persistence.md`
+见独立 spec：[`idempotency.md`](idempotency.md) §"后台 GC"。此处不再重复。
 
 ## 配置示例
 
@@ -204,7 +202,7 @@ cacheWrite = 18.75
 - **Discord 429**：mock 429 响应 → 按 `Retry-After` 退避 + 重试
 - **Anthropic 429**：指数退避 + jitter 观察
 - **熔断**：连续 3 次 agent error → Errored + 通知
-- **幂等 GC**：插入 10000 过期条目 → 一轮 GC 清空
+- **幂等 GC**：见 [`idempotency.md`](idempotency.md) §合约测试
 - **$ 预算（opt-in）**：启用后，预算耗尽 → 拒绝 + 通知
 - **订阅配额跟踪（opt-in，未来）**：接入 Anthropic 接口后补合约测试
 - **Usage 字段完整**：订阅模式下 `costUsd` 可为 null，但 token/turnSequence/wallClockMs 必有
@@ -232,7 +230,7 @@ cacheWrite = 18.75
 - 无退避地重试（打爆平台）
 - 熔断后永不恢复（必须有冷却 + 用户可恢复）
 - 指数退避不加 jitter（雷鸣群）
-- 幂等表不 GC
+- 在本 spec 维护幂等相关规则（已迁移至 `idempotency.md`）
 - 预算/限流超限时静默跳过（必须显式拒绝 + 通知）
 
 ## Out of spec

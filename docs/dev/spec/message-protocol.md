@@ -126,42 +126,9 @@ ReactionPayload {
 
 ## 幂等
 
-### 规则
+见独立 spec：[`idempotency.md`](idempotency.md)。
 
-同一 `(sessionKey, messageId)` 在 TTL 窗口内**最多处理一次**。
-
-### 存储
-
-- 表：`idempotency`
-- 主键：`(sessionKey, messageId)`
-- 字段：`firstSeenAt`, `status: "processing" | "processed" | "failed"`, `result?`
-- TTL：默认 24 小时，配置在 `spec/cost-and-limits.md`
-
-### 流程
-
-**职责划分**：幂等完全由 `core` 负责，adapter 只做归一化与投递。流程如下：
-
-```
-adapter 归一化 NormalizedEvent
-    │
-    └─> core.Engine.dispatch(event)
-           │
-           ├─ core.auth 权限检查（先；拒绝直接返回，不插入幂等表）
-           │
-           ├─ core.idempotency.checkAndSet(sessionKey, messageId)
-           │     ├─ 命中 "processed" → 丢弃事件（已经处理过）
-           │     ├─ 命中 "processing" → 跳过（上一次还在进行中）
-           │     ├─ 命中 "failed" 且在可重试窗口内 → 重试（标回 "processing"）
-           │     └─ 未命中 → 插入 "processing"，继续
-           │
-           ├─ core 限流/预算检查
-           │
-           ├─ 投递到 session 的 FIFO 队列
-           │
-           └─ 处理完成 → 更新 status 为 "processed"（或 "failed"）
-```
-
-**为什么先 auth 再 idempotency**：拒绝请求不应污染幂等表（否则攻击者可以用假 messageId 刷满表）；且 auth 是轻量检查，失败得越早越好。
+**要点**：`(sessionKey, messageId)` TTL 窗口内最多处理一次；**adapter 不做去重**，由 core 在 `auth → idempotency → 限流 → 队列` 流程中执行 `checkAndSet`。本 spec 只定义 `NormalizedEvent` 与相关数据结构；幂等的规则、存储、流程、GC、合约测试全部集中在 `idempotency.md`。
 
 ## 顺序
 

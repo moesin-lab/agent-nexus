@@ -27,6 +27,16 @@
 
 - 新增 `spec/claude-code-cli-contract.md`：锁定 CC CLI 版本、启动命令模板、stream-json 协议、stdout 事件到 `AgentEvent` 的映射表、stop_reason 映射、`UsageCompleteness` 三档、中断/超时/崩溃处理链、兼容性自检（probe）、合约测试清单、兼容矩阵占位。`spec/README.md` 索引新增一类"Agent 后端专属契约"；`spec/agent-runtime.md` §CC CLI 专属说明瘦身为引用。
 
+### Refactored
+
+- 按职责单一原则（SRP）拆分 spec（由自审 + Codex review 驱动）：
+  - **Security 分区**：`spec/security.md` 瘦身为"威胁模型 + 跨分区索引"，原聚合内容按独立职责拆出 `spec/auth.md`（身份 allowlist / 会话绑定 / publicChannelMode）、`spec/tool-boundary.md`（工具白名单 / 工作目录）、`spec/secrets.md`（密钥层级 / 禁写清单 / 轮换）、`spec/redaction.md`（Redactor 必过滤项 / 合约测试）。
+  - **幂等独立**：`spec/idempotency.md` 新建，吸收原 `spec/message-protocol.md` §幂等 + `spec/cost-and-limits.md` §幂等表清理；原位置替换为指针。
+  - **命名对齐 `architecture/overview.md` §横切关注点表**：`core.budget` 拆为 `core.counters`（一等 usage 记账）+ `core.quota-enforcer`（二等 $ 预算 opt-in），与 ADR-0006 一致；新增 `core.toolguard` / `core.secrets` 对齐新 spec。
+  - **交叉引用统一**：`spec/README.md` 索引重排为"核心接口 / Agent 后端专属 / Security 分区 / 其他横切"四类；`AGENTS.md` 文件定位速查表新增 auth / tool-boundary / secrets / redaction / idempotency 五行；`architecture/session-model.md` §幂等机制收缩为指向 `idempotency.md` 的要点摘录。
+
+本次拆分只动文件结构与命名，不引入新抽象（`MiddlewareChain` / `Session` aggregate 留待实现阶段前独立 PR）。
+
 ### Tooling
 
 - 新增 `scripts/docs-read`（bash，零外部依赖）：按 YAML frontmatter 状态控制性读取项目文档，防止 agent 读取过时文档后正文污染上下文。三种模式：默认（active 全文，过时只 frontmatter + 告警）/ `--head`（仅 frontmatter，泛读用）/ `--force`（强制全文，过时告警）。

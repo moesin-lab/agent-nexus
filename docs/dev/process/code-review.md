@@ -97,7 +97,8 @@ Ultrareview 的反馈响应规则同上。
 - 把 codex review 当橡皮图章（"它说 OK 就 OK"）
 - PR 作者自己审自己（除非单人仓库且已跑过 codex）
 - 合并有未回应反馈的 PR
-- 跳过 review 直接合并（除非是轻量路径白名单内的改动）
+- 跳过 review 直接合并（不存在"太小就不 review"的例外）
+- 在 `main` 上直接 commit，绕过分支 / PR / review（见 `commit-and-branch.md`"分支先行"）
 
 ## 反模式速查
 

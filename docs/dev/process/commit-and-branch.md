@@ -71,6 +71,12 @@ BREAKING CHANGE: session key 从 (platform, channelId, userId) 改为
 
 ## 分支策略
 
+### 分支先行（硬性要求）
+
+一切改动——代码、文档、脚本、配置——必须先从 `main` checkout 新分支再动手。**禁止在 `main` 上直接编辑或 commit 未合入的改动**。即便是单行错别字也走分支 → PR → review → squash merge。
+
+理由：PR 是本项目强制的 codex review 触发点。跳过分支 = 跳过 review。
+
 ### 分支命名
 
 ```
@@ -89,7 +95,7 @@ BREAKING CHANGE: session key 从 (platform, channelId, userId) 改为
 
 ### 主分支
 
-- `main`：当前稳定分支。直接向 `main` push 的权限保留给维护者。
+- `main`：当前稳定分支。只接受来自 feature 分支的 squash merge PR，**任何人（包括维护者）不得在 `main` 上直接编写或 commit 未经 PR 的改动**。
 - 本阶段（单人 + 文档）不设置额外保护分支。
 - MVP 发版后会新增 `release/*` 分支与 tag 策略，届时本文件补充。
 

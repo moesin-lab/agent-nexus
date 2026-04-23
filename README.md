@@ -47,4 +47,4 @@ agent-nexus 让你在 IM（当前：Discord）里直接和本机 Claude Code 对
 
 ## 许可证
 
-待定（将与 ADR 0004 一同决策）。
+[MIT](LICENSE)。

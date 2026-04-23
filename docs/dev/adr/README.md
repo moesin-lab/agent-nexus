@@ -82,7 +82,7 @@ Proposed ──(评审通过)──> Accepted
 | [0002](0002-agent-backend-claude-code-cli.md) | Agent 后端选型：Claude Code CLI | Accepted |
 | [0003](0003-deployment-local-desktop.md) | 部署形态：本机桌面 | Accepted |
 | [0004](0004-language-runtime.md) | 实现语言与运行时选型 | Proposed |
-| [0005](0005-subscription-as-first-class-path.md) | 订阅计费为一等用户路径 | Superseded by 0006 |
+| [0005](superseded/0005-subscription-as-first-class-path.md) | 订阅计费为一等用户路径 | Superseded by 0006 |
 | [0006](0006-limits-layering-defense-first.md) | Limits 分层——失控保护为一等，配额控制按用户路径可选 | Accepted |
 
 ## 引用规则
@@ -91,9 +91,21 @@ Proposed ──(评审通过)──> Accepted
 - ADR 之间互相引用也用编号
 - 代码注释里引用用 `# see ADR-0001`
 
+## Superseded 工作流
+
+一条 ADR 被取代时，必须**同一个 commit 内**完成：
+
+1. `git mv docs/dev/adr/NNNN-*.md docs/dev/adr/superseded/NNNN-*.md`
+2. 被取代 ADR 的 frontmatter：`status: superseded`、`adr_status: Superseded`、`superseded_by: "MMMM"`
+3. 取代 ADR 的 frontmatter：`supersedes: "NNNN"`，`related:` 字段路径指向 `dev/adr/superseded/NNNN-...`
+4. 本 README 索引表里被取代 ADR 的路径改为 `superseded/NNNN-...`
+5. 正文里对被取代 ADR 的相对链接按新深度调整（例：`superseded/0005-*.md` 或从 superseded 内部出去用 `../`）
+
+这样 `docs/dev/adr/` 根目录下只会有**当前有效**的 ADR；pretool-read-guard 会拦截对 `superseded/**` 的直接 `Read`，保护后续决策不被已作废的论述污染。
+
 ## 不做的事
 
 - 不把 ADR 当长篇论文写；60–200 行为宜
 - 不在 ADR 里写实现细节（实现细节放 spec）
 - 不把还没做的决策写成 ADR（没决策就没 ADR）
-- 不删除任何已合入的 ADR 文件（保留，更新状态）
+- 不删除任何已合入的 ADR 文件（被取代的 ADR 移到 `superseded/` 保留）

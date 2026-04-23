@@ -59,5 +59,11 @@
 - 新增 `scripts/docs-read`（bash，零外部依赖）：按 YAML frontmatter 状态控制性读取项目文档，防止 agent 读取过时文档后正文污染上下文。三种模式：默认（active 全文，过时只 frontmatter + 告警）/ `--head`（仅 frontmatter，泛读用）/ `--force`（强制全文，过时告警）。
 - `AGENTS.md` 追加"读文档的防污染规则"作为核心原则第 8 条，强制所有 `docs/` 与规则文档通过脚本读取。
 - 新增 `scripts/pretool-read-guard`（从 `.claude/hooks/` 搬出）：通用 PreToolUse 守卫脚本，拦截对 `docs/**/*.md` 与根规则文档的裸 `Read`，stderr 指引三种 docs-read 模式。支持 PreToolUse hook 的 agent harness（Claude Code / Codex 等）皆可接入；AGENTS.md 附 Claude Code 配置示例。
+- **防污染机制重构——状态物化到归档目录**（Edit 工具链工作流冲突驱动）：原机制下所有 `docs/**/*.md` 的 Read 均被 hook 拦，而 Edit 工具要求必须先 Read，导致文档维护无法用标准 Read+Edit 流程。改由"路径即状态信号"承担防污染责任：
+  - 过时文档迁移到 `docs/dev/adr/superseded/` 或 `docs/_archive/`；active 路径下文档可直接 `Read`
+  - `pretool-read-guard` 从"拦 docs/**"简化为"只拦归档目录"
+  - `scripts/docs-read` 不再是强制入口，职能退化为三个：`--head`（预览 frontmatter）/ `--force`（读归档时的唯一合法入口，hook 指引走此）/ 默认模式（兜底 active 路径下 frontmatter 状态漂移，提示应 `git mv` 到归档）
+  - `adr/README.md` 新增 §Superseded 工作流，规定状态变更必须单 commit 内 `git mv` + 更新 frontmatter `status` + 调整相对链接
+  - `git mv docs/dev/adr/0005-*.md → docs/dev/adr/superseded/`，同步修 frontmatter `status: superseded`、`ADR-0006` 相对链接深度、`adr/README.md` 索引、`adr/0006` 的 `related` + 正文链接
 - 新增 `CLAUDE.md` 符号链接指向 `AGENTS.md`，方便 Claude Code 自动识别项目规则；规范化入口仍是 `AGENTS.md`。
 - `.gitignore` 调整：不假定协作者使用哪种 agent，`.claude/` / `.codex/` / `.gemini/` / `.continue/` / `.cursor/` 全部忽略（不再把 settings.json / hooks 入库）；新增 `eval-runs/`、`HANDOFF.md`、`HANDOFF-*.md`、`*.scratch.*` 条目。

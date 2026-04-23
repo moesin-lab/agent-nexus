@@ -2,16 +2,20 @@
 # pretool-read-guard — 通用 PreToolUse 守卫
 #
 # 作为任何支持 PreToolUse hook 的 agent harness（Claude Code / Codex
-# 等）的守卫脚本：拦截对项目文档的 Read 调用，让 agent 改走 docs-read。
+# 等）的守卫脚本：拦截对「归档目录」中 markdown 的 Read 调用。
 #
-# 匹配规则（被拦截）：
-#     docs/**/*.md
-#     AGENTS.md / CLAUDE.md / README.md / CONTRIBUTING.md
+# 设计前提（见 AGENTS.md §"读文档的防污染规则"）：
+#     active 文档 = 权威事实，放在默认路径，Read 无障碍；
+#     过时文档（Superseded / Deprecated / placeholder）物化到归档目录，
+#     路径本身就是"别当事实"的信号；
+#     想读归档内容必须显式走 scripts/docs-read --force（或经 hook 指引）。
 #
-# 例外（放行）：
-#     CHANGELOG.md
-#     非 markdown 文件
-#     非 Read 工具
+# 被拦截的路径：
+#     docs/dev/adr/superseded/**/*.md
+#     docs/_archive/**/*.md
+#
+# 放行（不管是不是 markdown）：
+#     其他一切路径（包括 active 的 docs/**/*.md、AGENTS.md、CHANGELOG.md 等）
 #
 # 返回：
 #     exit 0 → 放行
@@ -29,8 +33,6 @@
 #     }
 #
 # 其他 harness 按自身文档配置即可。
-#
-# 配套：AGENTS.md §"读文档的防污染规则"
 
 set -euo pipefail
 
@@ -52,43 +54,28 @@ if [[ -n "$cwd" && "$file_path" == "$cwd"/* ]]; then
     rel_path="${file_path#$cwd/}"
 fi
 
-is_blocked() {
+is_archived() {
     local p="$1"
     # 只管 .md
     [[ "$p" == *.md ]] || return 1
-    # CHANGELOG 例外（Keep a Changelog 规范不带 frontmatter）
-    [[ "$p" == "CHANGELOG.md" ]] && return 1
-    # docs/ 下一律拦
-    [[ "$p" == docs/* ]] && return 0
-    # 仓库根的规则文档（CLAUDE.md 是 AGENTS.md 的符号链接，也拦）
-    case "$p" in
-        AGENTS.md|CLAUDE.md|README.md|CONTRIBUTING.md) return 0 ;;
-    esac
+    # 归档目录
+    [[ "$p" == docs/dev/adr/superseded/* ]] && return 0
+    [[ "$p" == docs/_archive/* ]] && return 0
     return 1
 }
 
-if is_blocked "$rel_path"; then
+if is_archived "$rel_path"; then
     cat >&2 <<EOF
-[pretool-read-guard] 已阻止直接 Read 项目文档：$rel_path
+[pretool-read-guard] 已阻止直接 Read 归档文档：$rel_path
 
-项目约定：读 docs/ 下的 markdown 与仓库根规则文档必须通过 scripts/docs-read。
-根据意图选一种模式：
+这份文档位于归档目录，意味着它已被取代 / 废弃 / 仅为占位符。
+路径本身就是"别当事实来源"的信号 —— 读它的全文有污染当前决策的风险。
 
-    Bash: scripts/docs-read $rel_path
-        默认（智能）：active 返回全文；Superseded / Deprecated / placeholder
-        只返回 frontmatter + 告警。**大多数场景走这个。**
-
-    Bash: scripts/docs-read --head $rel_path
-        泛读：仅返回 frontmatter，无视状态。想先看 summary / tags 判断
-        这篇要不要继续读时用这个。
+如果你确实要研究历史演进（例：复盘某条 Superseded ADR 的推导轨迹），用：
 
     Bash: scripts/docs-read --force $rel_path
-        强读：强制返回全文；过时状态会在 stderr 告警但仍给正文。仅在
-        研究历史（例：复盘被 Superseded 的 ADR 演进）时用。
 
-理由：Read 会把整份文件读进上下文，不会因为 YAML frontmatter 的 --- 停下；
-过时文档正文污染上下文后，纠偏代价远高于一开始就过滤。scripts/docs-read
-先解析 frontmatter 再决定返回内容，三种模式覆盖三种合法意图。
+该入口会在 stderr 明确告警，提醒你所读内容不代表当前权威决策。
 
 详见 AGENTS.md §"读文档的防污染规则"。
 EOF

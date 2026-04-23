@@ -1,3 +1,14 @@
+---
+title: Commit 与分支规范
+type: process
+status: active
+summary: Conventional Commits 格式、分支命名与生命周期、合并策略、commit 粒度
+tags: [commit, process]
+related:
+  - root/AGENTS
+  - dev/process/workflow
+---
+
 # Commit 与分支规范
 
 ## Conventional Commits

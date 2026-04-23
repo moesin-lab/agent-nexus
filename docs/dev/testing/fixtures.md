@@ -1,3 +1,16 @@
+---
+title: 测试数据与 Fixture
+type: testing
+status: active
+summary: testdata 目录结构、fixture 类型、命名与版本、录制与脱敏、合约测试的 fixture 需求
+tags: [testing, fixtures]
+related:
+  - dev/testing/strategy
+  - dev/testing/eval
+  - dev/spec/platform-adapter
+  - dev/spec/agent-runtime
+---
+
 # 测试数据与 Fixture
 
 所有测试数据（输入 fixture、预期输出 snapshot、CC transcript）的组织、命名、更新规则。

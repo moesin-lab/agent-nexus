@@ -1,3 +1,15 @@
+---
+title: 错误处理规范
+type: standards
+status: active
+summary: 错误四分类（user/platform/agent/internal）、传播规则、用户可见反馈与熔断重试策略
+tags: [errors, standards]
+related:
+  - dev/spec/cost-and-limits
+  - dev/spec/security
+  - dev/standards/logging
+---
+
 # 错误处理规范
 
 ## 错误分类

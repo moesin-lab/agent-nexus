@@ -1,3 +1,15 @@
+---
+title: Spec：Observability（可观测性）
+type: spec
+status: active
+summary: 日志/trace/metric 字段契约；事件命名、LLM/IM 事件字段、禁止字段与采样策略
+tags: [spec, observability, logging, tracing, metrics]
+related:
+  - dev/standards/logging
+  - dev/spec/security
+  - dev/spec/cost-and-limits
+---
+
 # Spec：Observability（可观测性）
 
 定义日志、trace、metric 的字段与事件契约。cc-connect 的重要教训：观测性留到后期补会漏字段、漏采集点、回归困难。本 spec 把观测字段定死，代码与之对齐。

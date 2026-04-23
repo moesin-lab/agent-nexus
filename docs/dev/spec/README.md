@@ -1,3 +1,16 @@
+---
+title: Spec 索引
+type: index
+status: active
+summary: 接口契约与跨层协议索引，分"核心三件套"与"横切四件套"
+tags: [spec, navigation]
+related:
+  - dev/architecture/overview
+  - dev/spec/platform-adapter
+  - dev/spec/agent-runtime
+  - dev/spec/message-protocol
+---
+
 # Spec（接口契约）
 
 本目录定义**跨模块接口**与**跨层协议**。所有契约**语言无关**（用伪代码 + 字段表），具体实现在代码里对齐本目录。

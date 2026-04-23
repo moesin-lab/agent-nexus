@@ -1,3 +1,16 @@
+---
+title: 贡献指南
+type: root
+status: active
+summary: 外部贡献者的 PR 前置条件与流程入口，指向 AGENTS.md 与 process/
+tags: [workflow, code-review, commit]
+related:
+  - root/AGENTS
+  - dev/process/workflow
+  - dev/process/code-review
+  - dev/process/commit-and-branch
+---
+
 # 贡献指南
 
 感谢你对 agent-nexus 感兴趣。

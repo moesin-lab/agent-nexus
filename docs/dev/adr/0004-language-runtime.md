@@ -1,3 +1,21 @@
+---
+title: ADR-0004：实现语言与运行时选型
+type: adr
+status: active
+summary: 实现语言选型（TS/Go/Python）；基于三大 spec 二次评审后倾向 Go，待用户最终决策
+tags: [adr, decision, language-runtime]
+related:
+  - dev/spec/platform-adapter
+  - dev/spec/agent-runtime
+  - dev/spec/message-protocol
+  - dev/spec/persistence
+adr_status: Proposed
+adr_number: "0004"
+decision_date: null
+supersedes: null
+superseded_by: null
+---
+
 # ADR-0004：实现语言与运行时选型
 
 - **状态**：Proposed

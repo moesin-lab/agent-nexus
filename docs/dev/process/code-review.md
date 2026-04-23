@@ -1,3 +1,15 @@
+---
+title: Code Review
+type: process
+status: active
+summary: 自查清单、codex review 流程、ultrareview 触发条件、review 优先级
+tags: [code-review, process, subagent]
+related:
+  - root/AGENTS
+  - dev/process/workflow
+  - dev/process/subagent-usage
+---
+
 # Code Review
 
 本项目所有 PR 必须经过至少一次 review。单人仓库时的"review"由**作者自查 + codex review**组成；有协作者时追加人类 review。

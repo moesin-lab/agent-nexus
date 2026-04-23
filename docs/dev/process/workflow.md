@@ -1,3 +1,17 @@
+---
+title: 开发流程（workflow）
+type: process
+status: active
+summary: 从想法到合并的主路径；何时需要 ADR/spec/TDD、完成定义、轻量路径白名单
+tags: [workflow, process]
+related:
+  - root/AGENTS
+  - dev/process/tdd
+  - dev/process/code-review
+  - dev/adr/README
+  - dev/spec/README
+---
+
 # 开发流程（workflow）
 
 定义"从想法到合并"的完整路径。所有代码改动都走此流程，除非命中下文"轻量路径"白名单。

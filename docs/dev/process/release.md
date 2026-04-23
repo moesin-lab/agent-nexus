@@ -1,3 +1,14 @@
+---
+title: 发版流程
+type: process
+status: placeholder
+summary: 发版流程占位；本阶段尚无可发版产物，等 MVP 与 ADR-0004 后填写
+tags: [release, process]
+related:
+  - dev/process/commit-and-branch
+  - dev/adr/0004-language-runtime
+---
+
 # 发版流程（占位）
 
 > **状态**：占位。本阶段（文档与规范骨架）尚无可发版的产物。本文件在 MVP 具备可运行工件、且 ADR 0004 语言选型完成后填写。

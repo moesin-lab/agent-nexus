@@ -1,3 +1,15 @@
+---
+title: 用户指南
+type: product
+status: placeholder
+summary: 用户侧安装、配置、使用指南；等 MVP 可运行后填写
+tags: [product, user-guide]
+related:
+  - product/README
+  - product/platforms/discord
+  - product/faq
+---
+
 # 用户指南（占位）
 
 > **状态**：占位。等 MVP 可运行后填写。

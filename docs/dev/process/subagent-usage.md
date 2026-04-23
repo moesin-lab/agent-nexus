@@ -1,3 +1,14 @@
+---
+title: Subagent 使用规范
+type: process
+status: active
+summary: 何时派发子代理、如何写 prompt、主 session 收敛职责与并行策略
+tags: [subagent, process]
+related:
+  - root/AGENTS
+  - dev/process/code-review
+---
+
 # Subagent 使用规范
 
 在 Claude Code / Codex 这类多代理环境里，**何时派发子代理、如何写 prompt** 直接决定效率与上下文质量。cc-connect 的教训之一是主 session 把所有事都自己做，上下文很快被日志、代码片段、搜索结果腐败。

@@ -1,3 +1,16 @@
+---
+title: Discord 使用手册
+type: product
+status: placeholder
+summary: Discord 侧的注册、权限、slash command、错误提示手册；等 MVP 后填写
+tags: [product, discord, user-guide]
+related:
+  - product/user-guide
+  - dev/spec/platform-adapter
+  - dev/spec/message-protocol
+  - dev/spec/security
+---
+
 # Discord 使用手册（占位）
 
 > **状态**：占位。等 MVP 可运行后填写。

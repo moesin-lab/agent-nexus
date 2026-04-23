@@ -1,3 +1,15 @@
+---
+title: TDD（测试驱动开发）
+type: process
+status: active
+summary: 本项目强制 TDD 的理由与 Red-Green-Refactor 节奏、探针例外与反模式
+tags: [tdd, testing, process]
+related:
+  - dev/process/workflow
+  - dev/testing/strategy
+  - dev/testing/fixtures
+---
+
 # TDD（测试驱动开发）
 
 本项目**强制** TDD。理由不是教条，而是：

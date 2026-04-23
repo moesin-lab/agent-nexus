@@ -1,3 +1,21 @@
+---
+title: ADR-0003：部署形态——本机桌面
+type: adr
+status: active
+summary: 选择本机桌面形态（单用户单机）作为 MVP 部署模式，与 CC CLI 和 Discord gateway 匹配最佳
+tags: [adr, decision, deployment]
+related:
+  - dev/adr/0001-im-platform-discord
+  - dev/adr/0002-agent-backend-claude-code-cli
+  - dev/spec/persistence
+  - dev/spec/security
+adr_status: Accepted
+adr_number: "0003"
+decision_date: 2026-04-22
+supersedes: null
+superseded_by: null
+---
+
 # ADR-0003：部署形态——本机桌面
 
 - **状态**：Accepted

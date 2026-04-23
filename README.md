@@ -1,3 +1,17 @@
+---
+title: agent-nexus
+type: root
+status: active
+summary: 把本机 Claude Code CLI 接入 IM 平台的桥；MVP 目标 Discord + 本机桌面形态
+tags: [project, discord, cc-cli]
+related:
+  - root/AGENTS
+  - docs/README
+  - dev/adr/0001-im-platform-discord
+  - dev/adr/0002-agent-backend-claude-code-cli
+  - dev/adr/0003-deployment-local-desktop
+---
+
 # agent-nexus
 
 把本机 Claude Code CLI 接入 IM 平台的桥。首个目标平台：Discord。

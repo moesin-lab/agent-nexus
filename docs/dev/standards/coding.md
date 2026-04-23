@@ -1,3 +1,15 @@
+---
+title: 编码规范（语言无关部分）
+type: standards
+status: active
+summary: 命名、函数长度、模块边界、注释、依赖与泛化时机的语言无关原则
+tags: [coding, standards]
+related:
+  - dev/standards/errors
+  - dev/standards/logging
+  - dev/architecture/dependencies
+---
+
 # 编码规范（语言无关部分）
 
 具体语法规范（格式化、lint 规则、类型系统用法）等 ADR 0004 语言选型后补独立文件（例如 `coding-ts.md` / `coding-go.md`）。本文件只讲跨语言的原则。

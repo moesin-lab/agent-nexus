@@ -1,3 +1,17 @@
+---
+title: Spec：Persistence（本地存储）
+type: spec
+status: active
+summary: 本机桌面形态下的存储契约；SQLite 表结构、transcript 文件、secrets 层级、Store 接口
+tags: [spec, persistence, sqlite, storage, secrets]
+related:
+  - dev/adr/0003-deployment-local-desktop
+  - dev/architecture/session-model
+  - dev/spec/security
+contracts:
+  - Store
+---
+
 # Spec：Persistence（本地存储）
 
 定义本机桌面形态（ADR-0003）下的数据存储契约。所有持久化走 core 提供的存储抽象；platform/agent 不直接触碰存储层。

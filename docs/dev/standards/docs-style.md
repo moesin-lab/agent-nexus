@@ -1,6 +1,31 @@
+---
+title: 文档写作规范
+type: standards
+status: active
+summary: 文档语言、目录命名、标题层级、篇幅、中英混排与写作风格规范
+tags: [docs-style, standards]
+related:
+  - dev/standards/metadata
+  - dev/README
+---
+
 # 文档写作规范
 
 本项目文档的语言、结构、风格统一规则。
+
+## 元信息（YAML Frontmatter）
+
+**所有 Markdown 文档必须**以 YAML frontmatter 起头。详细 schema 见 [`metadata.md`](metadata.md)。
+
+强制条款：
+
+- 缺 frontmatter 的 PR 一律拒绝
+- `title` / `type` / `status` / `summary` / `tags` / `related` 六项通用字段必填
+- ADR 额外填 `adr_status` / `adr_number` / `decision_date` 等专属字段
+- `summary` 一句话讲清这篇做什么，≤120 字
+- `tags` 必须在 metadata.md 的词汇表内
+
+目的：让 agent 与人类**渐进式读取**——先扫元信息再决定是否全读，避免上下文被无关文档污染。
 
 ## 语言
 

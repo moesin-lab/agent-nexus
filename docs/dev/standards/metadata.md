@@ -230,9 +230,15 @@ related:
 
 ## 读取规则（强制）
 
-项目文档**必须**通过 `scripts/docs-read <path>` 读取，不得直接 `Read`。理由与例外见 [`../../../AGENTS.md`](../../../AGENTS.md) §"读文档的防污染规则"。
+项目文档**必须**通过 `scripts/docs-read` 读取，不得直接 `Read`（由 `.claude/hooks/pretool-read-guard` 在 harness 级拦截）。脚本三种模式：
 
-脚本按 frontmatter 中的 `status` 与 `adr_status` 决定是返回全文还是仅返回 frontmatter + 告警。该规则让 frontmatter 从"人类提示"升级为"机器可执行的过滤层"。
+- **默认**：`scripts/docs-read <path>` —— active 返全文，过时只返 frontmatter + 告警
+- **泛读**：`scripts/docs-read --head <path>` —— 仅 frontmatter，无视状态
+- **强读**：`scripts/docs-read --force <path>` —— 强制全文，过时在 stderr 告警
+
+理由与例外见 [`../../../AGENTS.md`](../../../AGENTS.md) §"读文档的防污染规则"。
+
+该规则让 frontmatter 从"人类提示"升级为"机器可执行的过滤层"。
 
 ## 校验（后续工具化）
 

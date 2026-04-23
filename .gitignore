@@ -44,7 +44,12 @@ Thumbs.db
 *.swo
 
 # Claude Code / agent 工件
-.claude/
+# 默认忽略 .claude/ 下所有内容（projects transcript、缓存等），
+# 但允许项目级 settings 与 hooks 脚本入库（harness 级强制约定的载体）
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+!.claude/hooks/**
 .tasks/*.scratch.md
 
 # 临时文件

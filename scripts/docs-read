@@ -19,9 +19,13 @@
 #     docs-read --head <path>       泛读：仅返回 frontmatter，无视文档状态。
 #                                   用于先判断一篇文档值不值得读全文。
 #
-#     docs-read --force <path>      强读：强制返回全文；若文档过时，stderr
-#                                   给出告警但仍返回全文。归档目录中的文档
-#                                   必须经此入口读取。
+#     docs-read --force <path>      强读：强制返回全文；两类情况 stderr 告警
+#                                   但仍返回全文——①路径是外部导向文档
+#                                   （README.md / CONTRIBUTING.md）；②frontmatter
+#                                   标记为过时（deprecated / placeholder /
+#                                   Superseded）。归档目录中的文档 + 外部导向
+#                                   文档必须经此入口读取（由 pretool-read-guard
+#                                   指引）。
 #
 # 退出码：
 #     0   正常返回
@@ -139,9 +143,18 @@ if [[ "$mode" == "head" ]]; then
     exit 0
 fi
 
-# ----- force 模式：强制返回全文，过时则 stderr 告警 -----
+# ----- force 模式：强制返回全文，两类场景发 stderr 告警 -----
+# 场景 A：外部导向文档（README.md / CONTRIBUTING.md 在仓库根）
+# 场景 B：frontmatter 标记为过时（deprecated / placeholder / Superseded / Deprecated）
 if [[ "$mode" == "force" ]]; then
-    if [[ -n "$frontmatter" ]]; then
+    # 场景 A：外部导向判定——不含 / 的直接文件名，且是 README/CONTRIBUTING
+    if [[ "$path" != */* && ( "$path" == "README.md" || "$path" == "CONTRIBUTING.md" ) ]]; then
+        echo "[docs-read --force] 注意：按 --force 读取外部导向文档全文" >&2
+        echo "   path:  $path" >&2
+        echo "   这份文档面向仓库外部读者（产品介绍 / 贡献指南），不是内部决策的事实源。" >&2
+        echo "   常规开发任务应以 AGENTS.md 与 docs/dev/** 为准。" >&2
+    # 场景 B：frontmatter 过时判定
+    elif [[ -n "$frontmatter" ]]; then
         status=$(get_field "status")
         adr_status=$(get_field "adr_status")
         title=$(get_field "title")

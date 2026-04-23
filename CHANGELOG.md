@@ -68,6 +68,7 @@
     - **双重真相清理**：`docs/dev/README.md` §读取方式、`docs/dev/standards/metadata.md` §读取规则 从"必须走 docs-read"更新为路径层机制
     - **banner 降级**：`AGENTS.md` §作废工作流 和 `adr/README.md` §Superseded 工作流 把"建议加 banner"从步骤里移出，明确为可选 UX 建议（路径已承担主责）
     - **subagent 拆分规则软化**：`docs/dev/process/subagent-usage.md` §任务拆分 "能拆就必须拆"改为"默认倾向拆分"，新增 §反向信号（倾向不拆）收录耦合/短任务/澄清场景，规模目标改为经验参考而非硬规则
-  - **三轮修订**：把仓库根 `README.md` 与 `CONTRIBUTING.md` 纳入 hook 拦截。理由：两者是面向外部读者（用户、贡献者）的文档，语气偏产品化与友好化；常规开发任务从中推断架构/契约会失真；agent 应读 `AGENTS.md`（内部协作规则）、`docs/dev/**`（架构/spec/ADR）或代码本身。`AGENTS.md` / `CHANGELOG.md` 仍放行（权威规则与事实类）。hook 的拦截信息按"归档 / 外部导向"两类分别给出指引；两类都通过 `scripts/docs-read --force` 显式读取。`docs-read` 本身不新增模式，`--force` 对无 frontmatter 文件直接 cat 全文，语义足够。
+  - **三轮修订**：把仓库根 `README.md` 与 `CONTRIBUTING.md` 纳入 hook 拦截。理由：两者是面向外部读者（用户、贡献者）的文档，语气偏产品化与友好化；常规开发任务从中推断架构/契约会失真；agent 应读 `AGENTS.md`（内部协作规则）、`docs/dev/**`（架构/spec/ADR）或代码本身。`AGENTS.md` / `CHANGELOG.md` 仍放行（权威规则与事实类）。hook 的拦截信息按"归档 / 外部导向"两类分别给出指引；两类都通过 `scripts/docs-read --force` 显式读取。
+  - **四轮修订**（响应 round-3 codex review P1 闭环补齐）：`scripts/docs-read --force` 对两类场景对称发 stderr 告警——原先只对"frontmatter 过时"告警，对路径型外部导向（README/CONTRIBUTING）是静默 cat，导致"拦截理由只存在于 hook stderr 一次、读取阶段丢失"。补齐后：`--force` 读到 README/CONTRIBUTING 时 stderr 输出"按 --force 读取外部导向文档"告警；读到 frontmatter 过时文档时 stderr 输出原有"过时文档"告警。`CONTRIBUTING.md` 顶部增补边界声明，明确"本文档只做摘要与外部流程说明；内部规则以 AGENTS.md / docs/dev/** 为准"——预防未来演化时长成独占事实源。`AGENTS.md` §docs-read 三种模式 表格里 `--force` 场景描述从"读归档文档"改为"读被 hook 拦截的文档（归档 / 外部导向）"。
 - 新增 `CLAUDE.md` 符号链接指向 `AGENTS.md`，方便 Claude Code 自动识别项目规则；规范化入口仍是 `AGENTS.md`。
 - `.gitignore` 调整：不假定协作者使用哪种 agent，`.claude/` / `.codex/` / `.gemini/` / `.continue/` / `.cursor/` 全部忽略（不再把 settings.json / hooks 入库）；新增 `eval-runs/`、`HANDOFF.md`、`HANDOFF-*.md`、`*.scratch.*` 条目。

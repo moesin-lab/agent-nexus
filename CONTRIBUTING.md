@@ -15,6 +15,8 @@ related:
 
 感谢你对 agent-nexus 感兴趣。
 
+> **边界声明**：本文档只做摘要与外部流程说明；内部协作规则以 [`AGENTS.md`](AGENTS.md) 为准，架构与契约以 `docs/dev/**` 为准。CONTRIBUTING 不应长出独占的内部规则——规则需要变化时改 `AGENTS.md` 或 `docs/dev/**`，本文档只在必要时同步指针。
+
 本项目当前处于**文档与规范骨架阶段**，尚无代码。如果你想参与：
 
 1. 先读 [`AGENTS.md`](AGENTS.md)，了解本项目的核心协作规则。

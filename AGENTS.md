@@ -66,7 +66,7 @@ related:
 | 命令 | 场景 | 返回 |
 |---|---|---|
 | `scripts/docs-read --head <path>` | 泛读：只看 frontmatter 判断是否相关 | 仅 frontmatter |
-| `scripts/docs-read --force <path>` | 读归档文档：hook 拦 Read 后的唯一合法入口 | 全文 + stderr 告警 |
+| `scripts/docs-read --force <path>` | 读被 hook 拦截的文档（归档 / 外部导向）：hook 拦 Read 后的唯一合法入口 | 全文 + stderr 告警（两类场景都有） |
 | `scripts/docs-read <path>` | placeholder 兜底 / 状态漂移兜底：`status: placeholder` 或 `deprecated` 文档位于 active 路径时，降级为 frontmatter + 提示 | active 全文 / 漂移则 frontmatter |
 
 ### pretool-read-guard（hook）

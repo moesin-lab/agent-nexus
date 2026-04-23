@@ -40,4 +40,4 @@ Slash command 集合、消息格式、错误模板都还没确定（见 `dev/spe
 
 - [`../../dev/spec/platform-adapter.md`](../../dev/spec/platform-adapter.md)
 - [`../../dev/spec/message-protocol.md`](../../dev/spec/message-protocol.md)
-- [`../../dev/spec/security.md`](../../dev/spec/security.md)（allowlist 的使用面）
+- [`../../dev/spec/security.md`](../../dev/spec/security/README.md)（allowlist 的使用面）

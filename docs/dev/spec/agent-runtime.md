@@ -6,9 +6,10 @@ summary: Agent 后端适配层接口契约；SessionConfig、AgentEvent 流、CC
 tags: [spec, agent-runtime, cc-cli, subprocess]
 related:
   - dev/adr/0002-agent-backend-claude-code-cli
+  - dev/spec/agent-backends/claude-code-cli
   - dev/spec/message-protocol
   - dev/spec/security
-  - dev/spec/cost-and-limits
+  - dev/spec/infra/cost-and-limits
 contracts:
   - AgentRuntime
   - AgentSession
@@ -66,15 +67,22 @@ Core 启动 agent session 时传入的配置。
 
 ```text
 SessionConfig {
+    sessionId: string                         // 持久化主键（见 session-model.md）
     workingDir: path                          // CC 运行的工作目录
-    toolWhitelist: string[]                   // 允许使用的工具（见 security.md）
+    toolWhitelist: string[]                   // 允许使用的工具（见 tool-boundary.md）
     maxTokensPerTurn: int
-    totalBudgetUsd: float
-    timeoutMs: int                            // 单次输入的处理超时
+    timeoutMs: int                            // 单次输入的处理超时（对应 limits.perInputTimeoutMs）
     env: map[string]string                    // 注入的环境变量（过滤敏感字段）
     transcriptFile: path?                     // 落盘 transcript 的位置
+    budget: BudgetConfig?                     // 可选；opt-in $ 预算层（见 ADR-0006）
+}
+
+BudgetConfig {
+    limitUsd: float                            // 启用时必填；不启用则 SessionConfig.budget = null
 }
 ```
+
+**变更记录**：原有 `totalBudgetUsd: float`（必填）已按 ADR-0006 降为可选 `budget: BudgetConfig?`。订阅用户配置中应保持 `budget=null`；API 用户按需启用。
 
 ## AgentInput
 
@@ -126,10 +134,45 @@ enum EventType {
 | `tool_call_started` | `{ callId, toolName, inputSummary }` |
 | `tool_call_progress` | `{ callId, note }` |
 | `tool_call_finished` | `{ callId, toolName, status: "ok" | "error", resultSummary }` |
-| `turn_finished` | `{ reason: "stop" | "max_tokens" | "user_interrupt" | "error" }` |
-| `usage` | `{ inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd }` |
+| `turn_finished` | `{ reason: TurnEndReason, turnSequence: int }` |
+| `usage` | `UsageRecord` — 见下方 |
 | `error` | `{ errorKind, code, message, cause? }` |
-| `session_stopped` | `{ reason: "idle_timeout" | "user_stop" | "error" | "budget_exceeded" }` |
+| `session_stopped` | `{ reason: "idle_timeout" | "user_stop" | "error" | "budget_exceeded" | "turn_limit" | "wallclock_timeout" }` |
+
+### TurnEndReason 枚举
+
+合并了"后端原生原因"与"core 注入的原因"：
+
+| 值 | 来源 | 含义 |
+|---|---|---|
+| `stop` | 后端 | 正常完成（CC `stop_reason=end_turn`） |
+| `max_tokens` | 后端 | CC 达到 output token 上限 |
+| `user_interrupt` | 后端（SIGINT） | 用户主动中断 |
+| `error` | 后端 / core | 工具错误 / CC 崩溃 / 其他异常 |
+| `tool_limit` | **core 注入** | `maxToolCallsPerTurn` 命中（见 `cost-and-limits.md`） |
+| `wallclock_timeout` | **core 注入** | `perInputTimeoutMs` 命中 |
+| `budget_exceeded` | **core 注入** | opt-in $ 预算耗尽 |
+
+**core 注入**的 `turn_finished` 由 `core.toolguard` / `core.quota-enforcer` 主动构造并追加到事件流（见 `claude-code-cli-contract.md` §"stop_reason 映射"）。adapter 收到 core 中断信号后也必须产出一条对应 reason 的 `turn_finished`，避免事件流不完整。
+
+### UsageRecord（`usage` 事件 payload）
+
+```text
+UsageRecord {
+    model: string
+    inputTokens: int
+    outputTokens: int
+    cacheReadTokens: int
+    cacheWriteTokens: int
+    costUsd: float | null                // 订阅模式可能为 null；见 claude-code-cli-contract §UsageCompleteness
+    turnSequence: int
+    toolCallsThisTurn: int
+    wallClockMs: int
+    completeness: "complete" | "partial" | "missing"
+}
+```
+
+**`usage` 事件与 `llm_call_finished` 日志事件的映射**：`core.counters` 收到 `AgentEvent{type: usage}` 后，按上表字段**原样**产出 `llm_call_finished` 结构化日志（见 [`observability.md`](infra/observability.md) §"LLM 调用事件必含字段"）。字段名一一对应；不存在"两套名字"。
 
 ### 顺序保证
 
@@ -140,40 +183,26 @@ enum EventType {
 
 ## CC CLI 专属说明（Claude Code 实现）
 
-以下是 `agent/claudecode` 实现必须处理的细节。对 core 透明。
+`agent/claudecode` 实现 CC CLI 后端，但**具体的外部契约**（命令模板、stream-json 协议、stdin/stdout/stderr 分工、退出码、stop_reason 映射、UsageCompleteness、兼容性自检）已独立锁定在：
 
-### 启动
+→ [`claude-code-cli-contract.md`](agent-backends/claude-code-cli.md)
 
-- 以子进程启动 CC CLI，传入 working dir、env、工具白名单参数
-- 子进程 stdin / stdout 使用管道（或 pty，以支持颜色/交互）
-- 解析 CC 输出为 AgentEvent 流
+本节仅概括 adapter 侧的实现职责：
 
-### 输出解析
+- **启动**：按 `claude-code-cli-contract.md` §"启动命令模板"组装参数；跑 CompatibilityProbe 失败则拒启 session
+- **输出解析**：维护行缓冲 + JSON 解析器，把 `ClaudeCodeStreamEvent` 翻译为 `AgentEvent`（映射表见 contract 文档）
+- **stop_reason 映射**：按 contract §"stop_reason 到 turn_finished.reason 的映射"
+- **中断**：首选 SIGINT，等 5s 未 `turn_finished` → SIGKILL
+- **超时**：`SessionConfig.timeoutMs` 超过 → 走中断链 → 产出 `turn_finished { reason: "wallclock_timeout" }`
+- **崩溃**：意外 exit → `error` + `session_stopped { reason: "error" }`；不自动重启
+- **UsageCompleteness**：按 contract §"UsageCompleteness" 标注 complete / partial / missing，并在 partial/missing 时触发 `$ 预算`的 fail-closed
 
-- CC 支持 JSON 流输出模式（具体标志随 CC 版本，写入实现时锁定）
-- 解析器维护状态机：识别 `message_start` / `content_block_delta` / `tool_use` 等类型
-- 把 CC 的内部事件归一化为 AgentEvent
-
-### 中断
-
-- `interrupt` 发送 SIGINT 给子进程
-- 等待 CC 返回 `turn_finished { reason: "user_interrupt" }`
-- 超时未返回则 SIGKILL 并标记 session Errored
-
-### 超时
-
-- `SessionConfig.timeoutMs` 是单次 `sendInput` 到 `turn_finished` 的超时
-- 超时触发 interrupt；如仍未响应则强杀
-
-### 崩溃恢复
-
-- 子进程意外退出 → 投递 `error` + `session_stopped { reason: "error" }`
-- 不自动重启 session；交给 core / 用户决策
+contract 文档本身是 spec，任何映射或协议字段改动必须先改 contract 再改代码。
 
 ## 权限边界
 
 - 工作目录：只能访问 `workingDir` 下的文件（由 CC 本身的 allowlist 控制）
-- 工具白名单：CC 的 `--allowed-tools` 参数决定可用工具集（见 [`security.md`](security.md)）
+- 工具白名单：CC 的 `--allowed-tools` 参数决定可用工具集（见 [`security.md`](security/README.md)）
 - 网络：CC 默认能访问网络；如需禁用，通过 env 或 hooks
 - Shell 命令：默认拒绝；需要时通过白名单开启（本项目 MVP 建议保持拒绝）
 

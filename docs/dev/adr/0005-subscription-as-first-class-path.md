@@ -8,8 +8,8 @@ related:
   - dev/adr/0006-limits-layering-defense-first
   - dev/adr/0002-agent-backend-claude-code-cli
   - dev/adr/0003-deployment-local-desktop
-  - dev/spec/cost-and-limits
-  - dev/spec/observability
+  - dev/spec/infra/cost-and-limits
+  - dev/spec/infra/observability
 adr_status: Superseded
 adr_number: "0005"
 decision_date: 2026-04-22

@@ -7,7 +7,7 @@ tags: [spec, platform-adapter, discord, normalized-event, gateway]
 related:
   - dev/spec/message-protocol
   - dev/architecture/overview
-  - dev/spec/cost-and-limits
+  - dev/spec/infra/cost-and-limits
   - dev/spec/security
 contracts:
   - PlatformAdapter
@@ -62,7 +62,7 @@ type EventHandler = fn(NormalizedEvent) -> void
 
 - 在连接建立前不向 handler 投递事件
 - 重连时通过 session resume 避免丢失事件
-- 失败进入指数退避（与 [`cost-and-limits.md`](cost-and-limits.md) 对齐）
+- 失败进入指数退避（与 [`cost-and-limits.md`](infra/cost-and-limits.md) 对齐）
 
 ## NormalizedEvent
 
@@ -205,8 +205,8 @@ Adapter 必须有下列合约测试：
 
 下列问题不在本 spec 范围：
 
-- 具体的 Discord 凭据管理（见 [`security.md`](security.md)）
-- 发送失败时的重试策略（见 [`cost-and-limits.md`](cost-and-limits.md)）
+- 具体的 Discord 凭据管理（见 [`security.md`](security/README.md)）
+- 发送失败时的重试策略（见 [`cost-and-limits.md`](infra/cost-and-limits.md)）
 - 具体的 embed / component 结构（附录定义，单独演进）
 - 产品层面的用户命令集（见 `docs/product/`）
 

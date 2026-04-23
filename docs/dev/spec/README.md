@@ -24,18 +24,30 @@ related:
 
 ## 文档清单
 
-### 核心三件套（模块间接口）
+### 核心接口（模块间契约，根下）
 
 - [`platform-adapter.md`](platform-adapter.md) — IM 平台适配层接口
 - [`agent-runtime.md`](agent-runtime.md) — Agent 后端适配层接口
-- [`message-protocol.md`](message-protocol.md) — 归一化消息与事件格式
+- [`message-protocol.md`](message-protocol.md) — 归一化消息与事件类型定义
 
-### 横切四件套（跨层约束）
+### `infra/` — 横切基础设施
 
-- [`persistence.md`](persistence.md) — 本地存储契约
-- [`observability.md`](observability.md) — 日志/trace/metric 字段契约
-- [`security.md`](security.md) — 权限、脱敏、密钥处理
-- [`cost-and-limits.md`](cost-and-limits.md) — 预算、限流、熔断
+- [`infra/idempotency.md`](infra/idempotency.md) — `(sessionKey, messageId)` 去重契约与 dispatch 流程
+- [`infra/persistence.md`](infra/persistence.md) — 本地存储契约
+- [`infra/observability.md`](infra/observability.md) — 日志/trace/metric 字段契约
+- [`infra/cost-and-limits.md`](infra/cost-and-limits.md) — Limits（一等：失控保护 + 观测）/ $ 预算（二等 opt-in）
+
+### `security/` — 安全分区（伞 + 四份子 spec）
+
+- [`security/README.md`](security/README.md) — 威胁模型 + 跨分区索引 + Prompt Injection 综合缓解 + 启动自检清单
+- [`security/auth.md`](security/auth.md) — 身份四元组 allowlist、会话绑定、公开 channel 转私域
+- [`security/tool-boundary.md`](security/tool-boundary.md) — 工具白名单、工作目录、危险工具启用
+- [`security/secrets.md`](security/secrets.md) — 密钥存储层级、禁止写入清单、轮换
+- [`security/redaction.md`](security/redaction.md) — 出口脱敏 Redactor 必过滤项与合约测试
+
+### `agent-backends/` — Agent 后端专属契约
+
+- [`agent-backends/claude-code-cli.md`](agent-backends/claude-code-cli.md) — Claude Code CLI 的版本、命令模板、stream-json 协议、事件映射、UsageCompleteness、兼容性自检
 
 ## 阅读顺序
 

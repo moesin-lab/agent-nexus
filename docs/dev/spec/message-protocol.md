@@ -126,32 +126,9 @@ ReactionPayload {
 
 ## 幂等
 
-### 规则
+见独立 spec：[`idempotency.md`](infra/idempotency.md)。
 
-同一 `(sessionKey, messageId)` 在 TTL 窗口内**最多处理一次**。
-
-### 存储
-
-- 表：`idempotency`
-- 主键：`(sessionKey, messageId)`
-- 字段：`firstSeenAt`, `status: "processing" | "processed" | "failed"`, `result?`
-- TTL：默认 24 小时，配置在 `spec/cost-and-limits.md`
-
-### 流程
-
-```
-收到 event
-    │
-    ├─ 查 idempotency 表
-    │     ├─ 命中 "processed" → 丢弃事件（已经处理过）
-    │     ├─ 命中 "processing" → 跳过（上一次还在进行中）
-    │     ├─ 命中 "failed" 且在可重试窗口内 → 重试
-    │     └─ 未命中 → 插入 "processing"，继续
-    │
-    ├─ 交给 core.Engine 处理
-    │
-    └─ 处理完成 → 更新 status 为 "processed"（或 "failed"）
-```
+**要点**：`(sessionKey, messageId)` TTL 窗口内最多处理一次；**adapter 不做去重**，由 core 在 `auth → idempotency → 限流 → 队列` 流程中执行 `checkAndSet`。本 spec 只定义 `NormalizedEvent` 与相关数据结构；幂等的规则、存储、流程、GC、合约测试全部集中在 `idempotency.md`。
 
 ## 顺序
 

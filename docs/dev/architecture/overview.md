@@ -63,14 +63,15 @@ Discord gateway event
         ▼
 platform/discord
   - 把 Discord 事件解析成 NormalizedEvent（见 spec/message-protocol）
-  - 执行 messageId 幂等检查（调 core 的去重表）
   - 打 traceId、sessionKey
+  - 不做业务决策（不做幂等、不做权限、不做限流）
         │
         ▼
 core.Engine.dispatch(NormalizedEvent)
-  - 路由到对应 session
-  - 跑限流/预算检查（见 spec/cost-and-limits）
-  - 跑权限/白名单检查（见 spec/security）
+  - 权限/白名单检查（见 spec/security）
+  - 幂等去重：core.idempotency.checkAndSet(sessionKey, messageId)（见 spec/idempotency）
+  - 限流/预算检查（见 spec/cost-and-limits）
+  - 路由到对应 session 的 FIFO 队列
         │
         ▼
 agent/claudecode.SendInput(session, input)
@@ -148,11 +149,14 @@ interface Engine {
 |---|---|---|
 | 结构化日志 + traceId | `core.logger` | `spec/observability.md` |
 | Session 管理 | `core.sessions` | `architecture/session-model.md` |
-| 幂等去重 | `core.idempotency` | `spec/message-protocol.md` |
+| 幂等去重 | `core.idempotency` | `spec/idempotency.md` |
 | 限流 / 退避 | `core.ratelimit` | `spec/cost-and-limits.md` |
-| Token / 成本记账 | `core.budget` | `spec/cost-and-limits.md` |
-| 权限 / allowlist | `core.auth` | `spec/security.md` |
-| 输出脱敏 | `core.redact` | `spec/security.md` |
+| Usage 记账（turn / tool / wallclock / token / cost） | `core.counters` | `spec/cost-and-limits.md` |
+| `$` 预算（opt-in） | `core.quota-enforcer` | `spec/cost-and-limits.md` |
+| 权限 / allowlist | `core.auth` | `spec/auth.md` |
+| 工具与工作目录边界 | `core.toolguard` | `spec/tool-boundary.md` |
+| 密钥管理 | `core.secrets` | `spec/secrets.md` |
+| 输出脱敏 | `core.redact` | `spec/redaction.md` |
 | 持久化 | `core.store` | `spec/persistence.md` |
 
 ## 进程模型

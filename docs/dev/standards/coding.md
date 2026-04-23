@@ -55,7 +55,7 @@ related:
 具体规则在 [`logging.md`](logging.md)。核心：
 
 - 用结构化日志，不拼字符串
-- 日志字段必须符合 [`../spec/observability.md`](../spec/observability.md) 的字段表
+- 日志字段必须符合 [`../spec/observability.md`](../spec/infra/observability.md) 的字段表
 - 禁止打印密钥、token、绝对路径、env 原值
 
 ## 注释

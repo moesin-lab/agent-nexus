@@ -6,9 +6,9 @@ summary: 部署、监控、排障、数据管理、安全检查手册；等 MVP 
 tags: [ops, runbook]
 related:
   - dev/architecture/overview
-  - dev/spec/observability
-  - dev/spec/persistence
-  - dev/spec/cost-and-limits
+  - dev/spec/infra/observability
+  - dev/spec/infra/persistence
+  - dev/spec/infra/cost-and-limits
   - dev/spec/security
 ---
 
@@ -28,7 +28,7 @@ related:
 ### 监控
 
 - 日志位置：`~/.agent-nexus/logs/<date>.jsonl`
-- 关键事件（见 [`../dev/spec/observability.md`](../dev/spec/observability.md)）
+- 关键事件（见 [`../dev/spec/observability.md`](../dev/spec/infra/observability.md)）
 - 健康检查端点（如有）
 
 ### 排障
@@ -68,7 +68,7 @@ related:
 本手册在填写时必须与以下对齐：
 
 - [`../dev/architecture/overview.md`](../dev/architecture/overview.md)
-- [`../dev/spec/observability.md`](../dev/spec/observability.md)
-- [`../dev/spec/persistence.md`](../dev/spec/persistence.md)
-- [`../dev/spec/cost-and-limits.md`](../dev/spec/cost-and-limits.md)
-- [`../dev/spec/security.md`](../dev/spec/security.md)
+- [`../dev/spec/observability.md`](../dev/spec/infra/observability.md)
+- [`../dev/spec/persistence.md`](../dev/spec/infra/persistence.md)
+- [`../dev/spec/cost-and-limits.md`](../dev/spec/infra/cost-and-limits.md)
+- [`../dev/spec/security.md`](../dev/spec/security/README.md)

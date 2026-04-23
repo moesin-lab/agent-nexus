@@ -24,7 +24,7 @@ related:
 - [ ] 对应哪些测试？新增/修改的测试列出
 - [ ] 新增 public 接口是否在 spec 中定义？
 - [ ] 代码是否遵循 [`../standards/coding.md`](../standards/coding.md)？
-- [ ] 日志字段是否符合 [`../standards/logging.md`](../standards/logging.md) 与 [`../spec/observability.md`](../spec/observability.md)？
+- [ ] 日志字段是否符合 [`../standards/logging.md`](../standards/logging.md) 与 [`../spec/observability.md`](../spec/infra/observability.md)？
 - [ ] 错误处理是否符合 [`../standards/errors.md`](../standards/errors.md)？
 - [ ] 敏感信息（路径、token、env）是否经过脱敏层？
 - [ ] 是否跳过或注释了任何测试？（禁止）

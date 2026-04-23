@@ -1,3 +1,16 @@
+---
+title: 会话模型（Session Model）
+type: architecture
+status: active
+summary: 定义 SessionKey、状态机、幂等、顺序保证、断线/重启恢复与交互原子性
+tags: [session, session-model, lifecycle, idempotency, ordering, concurrency]
+related:
+  - dev/architecture/overview
+  - dev/spec/message-protocol
+  - dev/spec/persistence
+  - dev/spec/cost-and-limits
+---
+
 # 会话模型（Session Model）
 
 "会话"（session）是本项目的核心抽象。几乎所有横切能力（幂等、限流、预算、日志串联、错误恢复）都以 session 为单位组织。

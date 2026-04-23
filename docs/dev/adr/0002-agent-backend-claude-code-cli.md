@@ -1,3 +1,20 @@
+---
+title: ADR-0002：Agent 后端选型——Claude Code CLI
+type: adr
+status: active
+summary: 选择 Claude Code CLI 作为 agent 后端，通过子进程 + stdio 驱动；直接复用用户现有 CC 能力
+tags: [adr, decision, cc-cli, claude-code, agent-runtime]
+related:
+  - dev/adr/0001-im-platform-discord
+  - dev/adr/0003-deployment-local-desktop
+  - dev/spec/agent-runtime
+adr_status: Accepted
+adr_number: "0002"
+decision_date: 2026-04-22
+supersedes: null
+superseded_by: null
+---
+
 # ADR-0002：Agent 后端选型——Claude Code CLI
 
 - **状态**：Accepted

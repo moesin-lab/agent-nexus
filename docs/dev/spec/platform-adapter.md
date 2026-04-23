@@ -1,3 +1,21 @@
+---
+title: Spec：Platform Adapter 接口
+type: spec
+status: active
+summary: IM 平台适配层接口契约；事件归一化、发送能力、能力声明、Discord 专属映射
+tags: [spec, platform-adapter, discord, normalized-event, gateway]
+related:
+  - dev/spec/message-protocol
+  - dev/architecture/overview
+  - dev/spec/cost-and-limits
+  - dev/spec/security
+contracts:
+  - PlatformAdapter
+  - OutboundMessage
+  - MessageRef
+  - CapabilitySet
+---
+
 # Spec：Platform Adapter 接口
 
 定义 IM 平台适配层的接口契约。每个 IM 平台（当前仅 Discord）实现此接口并注册到 `core`。

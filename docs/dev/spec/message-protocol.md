@@ -1,3 +1,22 @@
+---
+title: Spec：Message Protocol（归一化消息与事件）
+type: spec
+status: active
+summary: 归一化消息/事件的字段契约、幂等、顺序、切片、流式语义
+tags: [spec, message-protocol, normalized-event, idempotency, ordering]
+related:
+  - dev/spec/platform-adapter
+  - dev/spec/agent-runtime
+  - dev/architecture/session-model
+contracts:
+  - NormalizedEvent
+  - SessionKey
+  - Attachment
+  - CommandPayload
+  - InteractionPayload
+  - ReactionPayload
+---
+
 # Spec：Message Protocol（归一化消息与事件）
 
 定义系统内部的**归一化消息格式**与**幂等/顺序/分片语义**。所有 platform adapter 把入站事件翻译成本格式；core 与 agent runtime 只看本格式。

@@ -1,3 +1,20 @@
+---
+title: ADR-0001：MVP IM 平台选型——Discord
+type: adr
+status: active
+summary: 选择 Discord 作为 MVP 首个 IM 平台，理由是个人场景下 SDK 最齐、Thread/Slash command 交互模型最贴合
+tags: [adr, decision, discord, platform-adapter]
+related:
+  - dev/adr/0002-agent-backend-claude-code-cli
+  - dev/adr/0003-deployment-local-desktop
+  - dev/spec/platform-adapter
+adr_status: Accepted
+adr_number: "0001"
+decision_date: 2026-04-22
+supersedes: null
+superseded_by: null
+---
+
 # ADR-0001：MVP IM 平台选型——Discord
 
 - **状态**：Accepted

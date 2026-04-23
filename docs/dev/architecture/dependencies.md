@@ -1,3 +1,14 @@
+---
+title: 模块依赖方向
+type: architecture
+status: active
+summary: 定义仓库内模块间允许与禁止的 import 关系；core 只依赖 stdlib，agent/platform 只依赖 core
+tags: [architecture, layering, dependencies]
+related:
+  - dev/architecture/overview
+  - dev/standards/coding
+---
+
 # 模块依赖方向
 
 本文件定义仓库内模块间**允许**与**禁止**的 import 关系。违反即拒绝合并。

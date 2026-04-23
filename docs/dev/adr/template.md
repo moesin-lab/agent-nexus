@@ -1,3 +1,18 @@
+---
+title: ADR 模板
+type: adr
+status: active
+summary: 新 ADR 的起点；定义 Context / Options / Decision / Consequences / Out of scope 结构
+tags: [adr, decision]
+related:
+  - dev/adr/README
+adr_status: Proposed
+adr_number: "XXXX"
+decision_date: null
+supersedes: null
+superseded_by: null
+---
+
 # ADR-XXXX：<标题，祈使句或名词短语>
 
 - **状态**：Proposed | Accepted | Deprecated | Superseded by XXXX | Rejected

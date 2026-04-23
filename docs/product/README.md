@@ -1,3 +1,16 @@
+---
+title: 产品文档中心
+type: index
+status: placeholder
+summary: 面向使用者的文档中心；本阶段仅占位，等 MVP 可运行后填写
+tags: [product, navigation]
+related:
+  - docs/README
+  - product/user-guide
+  - product/platforms/discord
+  - product/faq
+---
+
 # 产品文档中心
 
 > **状态**：占位。本阶段（文档与规范骨架）尚无可用产物，本中心所有文档均为骨架，**等 MVP 可运行后填写**。

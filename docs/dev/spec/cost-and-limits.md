@@ -1,3 +1,15 @@
+---
+title: Spec：Cost & Limits（预算、限流、熔断）
+type: spec
+status: active
+summary: 预算层级、限流、退避与 jitter、熔断与恢复、配置示例
+tags: [spec, cost, budget, rate-limit, circuit-breaker]
+related:
+  - dev/spec/observability
+  - dev/spec/persistence
+  - dev/architecture/session-model
+---
+
 # Spec：Cost & Limits（预算、限流、熔断）
 
 LLM 可烧钱、IM 平台会限流、长会话可失控。本 spec 定义三道防护：**预算**、**限流**、**熔断**。

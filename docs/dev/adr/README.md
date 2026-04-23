@@ -1,3 +1,14 @@
+---
+title: ADR 索引
+type: index
+status: active
+summary: ADR 编号规则、状态机、评审流程与当前索引
+tags: [adr, decision, navigation]
+related:
+  - dev/adr/template
+  - dev/process/workflow
+---
+
 # ADR（Architecture Decision Records）
 
 本目录存放所有架构级决策的记录。每个决策一个文件，编号连续。

@@ -1,3 +1,17 @@
+---
+title: 架构总览
+type: architecture
+status: active
+summary: agent-nexus 的三层结构（cmd/core/agent+platform）、数据流、横切关注点与架构反模式
+tags: [architecture, layering, session, discord, cc-cli]
+related:
+  - dev/architecture/session-model
+  - dev/architecture/dependencies
+  - dev/spec/platform-adapter
+  - dev/spec/agent-runtime
+  - dev/spec/message-protocol
+---
+
 # 架构总览
 
 ## 定位

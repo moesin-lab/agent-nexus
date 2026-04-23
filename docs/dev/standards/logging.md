@@ -1,3 +1,15 @@
+---
+title: 日志规范
+type: standards
+status: active
+summary: 结构化日志写法约束；字段契约、等级语义、禁止打印清单与测试对日志的约束
+tags: [logging, standards, observability]
+related:
+  - dev/spec/observability
+  - dev/standards/errors
+  - dev/spec/security
+---
+
 # 日志规范
 
 本文件是 [`../spec/observability.md`](../spec/observability.md) 的代码侧落地。spec 定义**字段契约**，本文件定义**写法约束**。

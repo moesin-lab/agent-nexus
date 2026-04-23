@@ -1,3 +1,15 @@
+---
+title: 文档总导航
+type: index
+status: active
+summary: 开发文档与产品文档两个中心的总导航与阅读顺序
+tags: [navigation]
+related:
+  - dev/README
+  - product/README
+  - ops/runbook
+---
+
 # 文档总导航
 
 本项目的文档分为两个独立的中心：**开发文档** 与 **产品文档**。两者面向不同读者，结构、语气、维护节奏都不同，**不要混放**。

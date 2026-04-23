@@ -1,3 +1,17 @@
+---
+title: AGENTS.md（agent-nexus 项目规则）
+type: root
+status: active
+summary: 项目特有协作规则入口，叠加在全局 ~/.claude/CLAUDE.md 之上，定义七条不可违反的核心原则与 PR 三问
+tags: [workflow, tdd, code-review, subagent, commit]
+related:
+  - root/CONTRIBUTING
+  - dev/process/workflow
+  - dev/process/tdd
+  - dev/process/code-review
+  - dev/process/subagent-usage
+---
+
 # AGENTS.md（agent-nexus 项目规则）
 
 > 本文件是协作规则的**入口索引**，叠加在全局 `~/.claude/CLAUDE.md` 之上。具体规则展开在 `docs/dev/process/` 下对应文件。规则冲突时，本文件和 `docs/dev/` 下的项目文档优先。

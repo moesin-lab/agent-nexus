@@ -1,3 +1,17 @@
+---
+title: 运维手册
+type: ops
+status: placeholder
+summary: 部署、监控、排障、数据管理、安全检查手册；等 MVP 有部署产物后填写
+tags: [ops, runbook]
+related:
+  - dev/architecture/overview
+  - dev/spec/observability
+  - dev/spec/persistence
+  - dev/spec/cost-and-limits
+  - dev/spec/security
+---
+
 # 运维手册（占位）
 
 > **状态**：占位。等 MVP 有可部署产物后填写。

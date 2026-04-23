@@ -1,3 +1,13 @@
+---
+title: 任务追踪
+type: task
+status: active
+summary: 当前主线进度与待完成项，按全局 AGENTS.md 第 4 条约定维护
+tags: [task]
+related:
+  - root/AGENTS
+---
+
 # 任务追踪
 
 > 按全局 `~/.claude/CLAUDE.md` 第 4 条约定：非平凡任务在需要持续跟踪时写入本文件。不追踪一次性小任务。

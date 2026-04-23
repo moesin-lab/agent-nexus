@@ -1,3 +1,17 @@
+---
+title: 开发文档中心
+type: index
+status: active
+summary: 开发文档六大支柱（architecture/adr/spec/process/testing/standards）的索引与阅读顺序
+tags: [navigation, dev-docs]
+related:
+  - docs/README
+  - dev/architecture/overview
+  - dev/adr/README
+  - dev/spec/README
+  - dev/process/workflow
+---
+
 # 开发文档中心
 
 面向**实现者**。本中心是本项目当前阶段的文档主线，其他中心（`product/`、`ops/`）仅占位。
@@ -16,6 +30,30 @@
 | [`standards/`](standards/) | 代码与文档规范 | 该怎么写日志/错误/文档？ |
 
 每条规则只在一个地方被**定义**，其他地方只能**引用**。发现重复定义或冲突，视为文档 bug。
+
+## 渐进式读取（YAML Frontmatter）
+
+所有文档顶部有 YAML frontmatter 元信息，方便 agent 与人类先扫元信息再决定是否全读：
+
+```yaml
+---
+title: <标题>
+type: architecture | adr | spec | process | standards | testing | product | ops | index | root | task
+status: active | draft | placeholder | deprecated
+summary: <一句话 ≤120 字>
+tags: [...]
+related: [...]       # 相对 docs/ 的路径
+---
+```
+
+ADR 和 spec 有专属扩展字段。完整 schema 见 [`standards/metadata.md`](standards/metadata.md)，强制要求见 [`standards/docs-style.md`](standards/docs-style.md)。
+
+**使用建议**（给 agent）：
+
+- 查找相关文档时先读 frontmatter 的 `summary` + `tags`，命中再全读
+- 顺 `related` 链条探索上下文
+- 看到 `status: placeholder` 知道内容是骨架，别当权威依据
+- 看到 `adr_status: Deprecated` 知道该决策已失效
 
 ## 推荐阅读顺序
 

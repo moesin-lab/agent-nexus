@@ -1,3 +1,22 @@
+---
+title: Spec：Agent Runtime 接口
+type: spec
+status: active
+summary: Agent 后端适配层接口契约；SessionConfig、AgentEvent 流、CC CLI 子进程管理
+tags: [spec, agent-runtime, cc-cli, subprocess]
+related:
+  - dev/adr/0002-agent-backend-claude-code-cli
+  - dev/spec/message-protocol
+  - dev/spec/security
+  - dev/spec/cost-and-limits
+contracts:
+  - AgentRuntime
+  - AgentSession
+  - SessionConfig
+  - AgentInput
+  - AgentEvent
+---
+
 # Spec：Agent Runtime 接口
 
 定义 agent 后端适配层的接口契约。当前唯一实现是 `claudecode`（Claude Code CLI，见 ADR-0002）。接口保持**可扩展**，未来接其他后端（Codex / Gemini）时不应破坏本契约。

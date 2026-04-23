@@ -1,3 +1,18 @@
+---
+title: Spec：Security（权限、脱敏、密钥）
+type: spec
+status: active
+summary: 威胁模型、身份 allowlist、工具白名单、密钥层级、Redactor 脱敏规则与 prompt injection 缓解
+tags: [spec, security, auth, allowlist, redaction, secrets]
+related:
+  - dev/adr/0003-deployment-local-desktop
+  - dev/spec/persistence
+  - dev/spec/observability
+  - dev/standards/errors
+contracts:
+  - Redactor
+---
+
 # Spec：Security（权限、脱敏、密钥）
 
 本项目安全模型基于 ADR-0003（本机桌面）：**唯一可信主体是本机用户**。agent-nexus 代表本机用户行事；Discord 那头的"用户"只是远程遥控者，需要通过 allowlist 与权限边界约束。

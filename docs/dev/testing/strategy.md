@@ -1,3 +1,15 @@
+---
+title: 测试策略
+type: testing
+status: active
+summary: 四层测试模型（Unit/Integration/E2E/Eval）的职责、Mock 策略、运行节奏与 CI 门槛
+tags: [testing, strategy]
+related:
+  - dev/process/tdd
+  - dev/testing/fixtures
+  - dev/testing/eval
+---
+
 # 测试策略
 
 定义测试的分层、覆盖目标、mock 边界、运行节奏。配套 [`../process/tdd.md`](../process/tdd.md) 使用——tdd 讲"怎么写"，本文件讲"写哪一层"。

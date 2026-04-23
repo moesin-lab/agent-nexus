@@ -1,3 +1,15 @@
+---
+title: 常见问题（FAQ）
+type: product
+status: placeholder
+summary: 用户常见问题；等积累反馈后从 Issue 汇聚
+tags: [product, faq]
+related:
+  - product/README
+  - product/user-guide
+  - dev/adr/0003-deployment-local-desktop
+---
+
 # 常见问题（占位）
 
 > **状态**：占位。等积累到一定用户反馈后填写。

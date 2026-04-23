@@ -1,3 +1,15 @@
+---
+title: Eval：对话质量回归
+type: testing
+status: active
+summary: 对话质量 eval 的 case 结构、seed 最小集、断言类型、记分与回归门槛
+tags: [testing, eval]
+related:
+  - dev/testing/strategy
+  - dev/testing/fixtures
+  - dev/spec/agent-runtime
+---
+
 # Eval：对话质量回归
 
 Eval 测 agent 的**行为质量**（LLM 侧），不是代码的正确性。目的是防止提示词 / 工具集 / 模型升级带来的**静默退步**。

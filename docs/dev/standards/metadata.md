@@ -88,7 +88,9 @@ superseded_by: null                     # 取代本 ADR 的编号
 - `status`（通用）：文档本身是否可读、是否占位
 - `adr_status`（ADR 专属）：决策本身的状态
 
-一个 Deprecated 的 ADR 通常 `status: active`（文档仍可读）+ `adr_status: Deprecated`。
+一个 Deprecated 的 ADR 通常 `status: active`（文档仍可读）+ `adr_status: Deprecated`。同理，一个 Superseded 的 ADR 仍保留 `status: active`——ADR 的"被取代"由 `adr_status: Superseded` + 所在归档目录（`docs/dev/adr/deprecated/`）共同表达，`status` 字段不引入 `superseded` 值。
+
+**归档路径下的 `status` 允许保持 active**：文档一旦位于 `docs/dev/adr/deprecated/` 或 `docs/_deprecated/` 下，路径本身就是"已作废"的信号（见 `AGENTS.md` §读文档的防污染规则）；frontmatter `status` 字段在归档路径下变为冗余，维持 active 不影响语义。这样 `status` 字段的允许值保持稳定（`active|draft|placeholder|deprecated`），不需要为 ADR 的 Superseded 语义再扩展。
 
 ## spec 专属追加字段
 
@@ -228,17 +230,20 @@ related:
 ---
 ```
 
-## 读取规则（强制）
+## 读取规则
 
-项目文档**必须**通过 `scripts/docs-read` 读取，不得直接 `Read`。harness 级兜底为可选增强——支持 PreToolUse hook 的 agent 可接入 `scripts/pretool-read-guard`，配置见 AGENTS.md。脚本三种模式：
+2026-04 重构后，防污染主责已从"所有 docs 都必须走 docs-read"下放到**路径层**：作废文档物化到归档目录（`docs/dev/adr/deprecated/` / `docs/_deprecated/`），active 路径下的文档可直接 `Read`。
 
-- **默认**：`scripts/docs-read <path>` —— active 返全文，过时只返 frontmatter + 告警
-- **泛读**：`scripts/docs-read --head <path>` —— 仅 frontmatter，无视状态
-- **强读**：`scripts/docs-read --force <path>` —— 强制全文，过时在 stderr 告警
+- active 路径文档（含 `placeholder`）：`Read` 放行
+- 归档路径文档：hook 拦截 `Read`，必须走 `scripts/docs-read --force`
 
-理由与例外见 [`../../../AGENTS.md`](../../../AGENTS.md) §"读文档的防污染规则"。
+`scripts/docs-read` 不再是强制入口，但保留三种辅助模式：
 
-该规则让 frontmatter 从"人类提示"升级为"机器可执行的过滤层"。
+- **泛读**：`scripts/docs-read --head <path>` —— 仅 frontmatter，判断文档相关性
+- **强读**：`scripts/docs-read --force <path>` —— 读归档文档时的唯一合法入口
+- **兜底**：`scripts/docs-read <path>` —— 对 active 路径下状态为 `placeholder` / `deprecated` 的文档降级为 frontmatter + 告警
+
+完整机制与理由见 [`../../../AGENTS.md`](../../../AGENTS.md) §"读文档的防污染规则"。
 
 ## 校验（后续工具化）
 

@@ -25,31 +25,61 @@ related:
 5. **Subagent 优先**：探索类、长研究类任务优先派发子代理，主 session 只做收敛与决策。细节见 [`docs/dev/process/subagent-usage.md`](docs/dev/process/subagent-usage.md)。
 6. **范围收敛**：每个 PR 只做一件事，禁止"顺手重构"无关代码。
 7. **Conventional Commits**：所有提交遵循 [`docs/dev/process/commit-and-branch.md`](docs/dev/process/commit-and-branch.md)。
-8. **读文档走 `scripts/docs-read`**：读 `docs/` 下的 markdown 或仓库根规则文档一律通过 `scripts/docs-read <path>`，**禁止**直接 `Read`。详见下文"读文档的防污染规则"。
+8. **作废文档物化到归档目录**：Superseded ADR 和明确 Deprecated 的文档必须住在 `docs/dev/adr/deprecated/` 或 `docs/_deprecated/`——路径本身就是"别当事实"的信号。active 路径下的文档（含 placeholder）可直接 `Read`；归档路径的文档由 hook 拦截，必须走 `scripts/docs-read --force`。详见下文"读文档的防污染规则"。
 
 ## 读文档的防污染规则
 
-### 为什么
+### 核心机制：非权威源的 Read 由 hook 拦截
 
-`Read` 工具默认读全文，不会因为 YAML frontmatter 的 `---` 闭合符停下。如果直接 `Read` 一份 `adr_status: Superseded` 或 `status: placeholder` 的文档，**过时正文会立刻进入上下文**，之后再纠偏代价远高于第一次过滤。
+防污染的真正靶子是"让 agent 把非事实内容当事实用"。两类非权威源需要拦：① 归档文档（作废的历史内容）；② 面向外部的文档（`README.md` / `CONTRIBUTING.md`——语气偏向产品介绍与贡献指南，不是内部决策事实源）。
 
-### 强制规则
+| 文档类别 | 住在哪 | Read 工具行为 |
+|---|---|---|
+| 内部权威规则 | `AGENTS.md` / `CLAUDE.md`（symlink → `AGENTS.md`） | **放行**：可直接 `Read` |
+| 变更日志 | `CHANGELOG.md` | **放行**：事实类 |
+| active 架构/spec/ADR | `docs/**` | **放行**：可直接 `Read` |
+| `placeholder`（未完成骨架） | `docs/**`（默认路径，**不归档**） | **放行**：Read 可读全文（骨架通常极短；frontmatter `status: placeholder` 已是软告警）|
+| **外部导向文档** | `README.md` / `CONTRIBUTING.md`（仓库根） | **hook 拦截**：必须走 `scripts/docs-read --force` |
+| Superseded ADR | `docs/dev/adr/deprecated/**` | **hook 拦截**：必须走 `scripts/docs-read --force` |
+| 其他明确作废的 active 文档 | `docs/_deprecated/**` | **hook 拦截**：必须走 `scripts/docs-read --force` |
 
-读项目文档**必须**通过 `scripts/docs-read`（三种模式按意图选）：
+对归档：路径本身就是"已作废"的信号；GitHub web / grep / curl 任何入口打开都能识别。
 
-| 命令 | 用途 | 返回 | 退出码 |
-|---|---|---|---|
-| `scripts/docs-read <path>` | **默认（智能）**：大多数场景走这个 | active 全文；过时只 frontmatter + 告警 | 0 / 2 |
-| `scripts/docs-read --head <path>` | **泛读**：先看 summary/tags 判断要不要读全文 | 仅 frontmatter（无视状态） | 0 |
-| `scripts/docs-read --force <path>` | **强读**：研究历史（例：Superseded ADR 的演进） | 全文；过时在 stderr 告警 | 0 |
+对外部导向文档：它们是写给仓库外部读者看的（潜在用户、贡献者），语气偏产品化与友好化；内部开发任务从中推断架构/契约会引入失真——agent 应读 `AGENTS.md`（内部协作规则）、`docs/dev/**`（架构/spec/ADR）或代码本身。只有"帮用户改 README/CONTRIBUTING 文案 / 核对外部描述与内部 spec 一致"这类正当用途才走 `--force`。
 
-### 推荐的 harness 级强制（可选）
+**范围刻意收窄**：方案只处理"曾是权威但已作废"的文档（Superseded ADR / 明确 Deprecated）+ 外部导向文档（README / CONTRIBUTING）。`placeholder`（骨架文档，未来会填）仍留在 active 路径——这些文档承担"信息架构占位"作用（章节存在感、导航表），搬去归档会让读者以为相关主题废弃了。placeholder 的污染风险靠两道兜住：① 骨架正文通常极短，看一眼就知道是占位；② `docs-read` 默认模式会对 `status: placeholder` 返回 frontmatter + 告警（见下文）。
 
-项目不假定协作者使用哪种 agent，所以 `.claude/`、`.codex/` 等 harness 本地配置**不入库**（见 `.gitignore`）。但我们提供了通用的守卫脚本 `scripts/pretool-read-guard`：任何支持 PreToolUse hook 的 harness 都能接入，获得硬拦截（命中 `docs/**/*.md` 或根规则文档的裸 `Read` → 直接 block，stderr 指引三种 docs-read 模式）。
+### 作废工作流
+
+一份文档状态变为 Superseded / Deprecated 时，**同一个 commit 内**完成：
+
+1. `git mv <path> docs/dev/adr/deprecated/<name>.md`（ADR）或 `docs/_deprecated/<name>.md`（其他）
+2. frontmatter：ADR 设 `adr_status: Superseded` 或 `Deprecated`；`status` 字段保持 `active`（归档路径下 `status` 冗余；详见 `docs/dev/standards/metadata.md`）
+3. 更新所有引用该文档的相对链接到新路径
+
+> **可选**：正文顶部加 banner（`> **已被 [ADR-XXXX](../XXXX-...md) 取代，仅供审计追溯**`）供人类读者快速识别。这是**纯 UX 提示，不是流程步骤**——路径已承担主责，banner 只是额外双保险，不作强制。
+
+### docs-read 的三种模式
+
+`scripts/docs-read` 不是读文档的**强制入口**（本项目已把主责交给路径），但仍服务三个场景：
+
+| 命令 | 场景 | 返回 |
+|---|---|---|
+| `scripts/docs-read --head <path>` | 泛读：只看 frontmatter 判断是否相关 | 仅 frontmatter |
+| `scripts/docs-read --force <path>` | 读被 hook 拦截的文档（归档 / 外部导向）：hook 拦 Read 后的唯一合法入口 | 全文 + stderr 告警（两类场景都有） |
+| `scripts/docs-read <path>` | placeholder 兜底 / 状态漂移兜底：`status: placeholder` 或 `deprecated` 文档位于 active 路径时，降级为 frontmatter + 提示 | active 全文 / 漂移则 frontmatter |
+
+### pretool-read-guard（hook）
+
+项目不假定协作者使用哪种 agent，`.claude/` / `.codex/` 等本地配置不入库（见 `.gitignore`）。但我们提供通用守卫 `scripts/pretool-read-guard`，任何支持 PreToolUse hook 的 harness 都能接入：
+
+- 命中 `docs/dev/adr/deprecated/**` 或 `docs/_deprecated/**` 的 `Read` → block（归档，stderr 指引走 `docs-read --force`）
+- 命中仓库根 `README.md` / `CONTRIBUTING.md` 的 `Read` → block（外部导向，stderr 指引走 `docs-read --force`）
+- 其他一切 Read → 放行（含 `AGENTS.md` / `CHANGELOG.md` / active 的 `docs/**/*.md`）
 
 #### Claude Code 集成示例
 
-在本地创建 `.claude/settings.json`（不会被提交）：
+本地创建 `.claude/settings.json`（不会被提交）：
 
 ```json
 {
@@ -66,28 +96,15 @@ related:
 }
 ```
 
-#### 其他 harness
-
-按自身文档在 PreToolUse 事件上挂 `scripts/pretool-read-guard` 即可——脚本读 stdin JSON 判断工具名与路径，通用。
+其他 harness 按自身文档在 PreToolUse 挂 `scripts/pretool-read-guard`，脚本读 stdin JSON 判断，通用。
 
 #### 不配 hook 的后果
 
-AGENTS.md 的"强制规则"仍然生效；只是少了 harness 兜底，依赖 agent 纪律与 reviewer 把关。
-
-### 不走脚本的例外
-
-- `CHANGELOG.md`（Keep a Changelog 规范，无 frontmatter）
-- 代码文件（`.go` / `.ts` / `.py` 等）
-- 非项目文件（`.git/`、`.tasks/`、`scripts/`、外部仓库）
+AGENTS.md 的路径约定仍然生效；少了 harness 兜底，依赖 agent 纪律与 reviewer 把关。
 
 ### 违反的后果
 
-reviewer 在 PR 里看到直接 `Read` 项目 markdown 且作者确实基于它做了决策的，应要求重做。过时内容进决策链后，整条链条都要重新验证。
-
-### 脚本或 hook 不可用时
-
-- `docs-read` 崩溃：退回 `Read(path, limit=20)` 只读前 20 行元信息，再人工判断；**不允许**直接读全文作为默认行为。
-- 没有配 hook（协作者没用 Claude Code / 没装本地 `.claude/settings.json`）：仍按本节"强制规则"自律；reviewer 仍按硬标准验收。
+reviewer 在 PR 里看到基于归档文档做的决策（而作者没显式声明是在研究历史），应要求重做——过时内容进决策链后整条链条都要重新验证。
 
 ## 每个 PR 必答三问
 

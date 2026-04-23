@@ -48,15 +48,15 @@ related: [...]       # 相对 docs/ 的路径
 
 ADR 和 spec 有专属扩展字段。完整 schema 见 [`standards/metadata.md`](standards/metadata.md)，强制要求见 [`standards/docs-style.md`](standards/docs-style.md)。
 
-**读取方式（强制）**：项目文档一律通过 `scripts/docs-read` 读取，不得直接 `Read`。harness 级拦截为可选增强——如果你用 Claude Code 或其他支持 PreToolUse hook 的 agent，可把 `scripts/pretool-read-guard` 接入 hook（配置示例见 AGENTS.md §"推荐的 harness 级强制"）。
+**读取方式**：active 路径下的文档（含 `placeholder` 骨架）可直接 `Read`；归档路径（`docs/dev/adr/deprecated/` / `docs/_deprecated/`）的文档由 hook 拦截，需走 `scripts/docs-read --force`。这是 2026-04 重构后的新机制——文档状态**物化到路径**，不再要求所有 `docs/**` 都经 `docs-read`。
 
-三种模式按意图选：
+`scripts/docs-read` 仍服务三个场景（非强制）：
 
 | 命令 | 场景 |
 |---|---|
-| `scripts/docs-read <path>` | **默认**：大多数场景；active 全文，过时只 frontmatter + 告警 |
 | `scripts/docs-read --head <path>` | **泛读**：先看 summary/tags 决定要不要读全文 |
-| `scripts/docs-read --force <path>` | **强读**：研究历史（例：Superseded ADR 的演进） |
+| `scripts/docs-read --force <path>` | **归档强读**：hook 拦归档 Read 后的唯一合法入口（读 Superseded ADR 时必走此） |
+| `scripts/docs-read <path>` | **兜底**：placeholder 或状态漂移文档降级为 frontmatter + 告警 |
 
 详见 [`../../AGENTS.md`](../../AGENTS.md) §"读文档的防污染规则"。
 

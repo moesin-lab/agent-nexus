@@ -1,17 +1,31 @@
 #!/usr/bin/env bash
-# docs-read — 按 YAML frontmatter 状态控制性读取项目文档
+# docs-read — 项目文档阅读辅助（预览 / 归档强读 / frontmatter 漂移兜底）
+#
+# 本脚本与 pretool-read-guard 协同：
+#     agent 对 active 路径下文档的 Read，由 hook 放行 → 直接 Read 即可；
+#     归档路径（docs/dev/adr/deprecated/** / docs/_deprecated/**）的 Read 被 hook
+#     拦截，需显式走本脚本的 --force 模式（是唯一合法的"我知道我要读归档"入口）。
+#
+# 本脚本还承担一层兜底：若 active 路径下的文档 frontmatter 被标注为 placeholder
+# / deprecated / Superseded（即"状态漂移"，未 git mv 到归档目录），默认模式会
+# 在返回前降级到只给 frontmatter + 告警，提示 reviewer 把它迁移到归档目录。
 #
 # 三种模式：
 #
-#     docs-read <path>              默认（智能）：active 返回全文；过时仅返回
-#                                   frontmatter + 告警（含替代文档指引）。
+#     docs-read <path>              默认（智能）：active 返回全文；frontmatter
+#                                   指向过时状态则降级为 frontmatter + 告警
+#                                   （提示"考虑移到归档目录"）。
 #
 #     docs-read --head <path>       泛读：仅返回 frontmatter，无视文档状态。
 #                                   用于先判断一篇文档值不值得读全文。
 #
-#     docs-read --force <path>      强读：强制返回全文；若文档过时，stderr
-#                                   给出告警但仍返回全文。用于研究历史
-#                                   （例：复盘被 Superseded 的 ADR 演进）。
+#     docs-read --force <path>      强读：强制返回全文；两类情况 stderr 告警
+#                                   但仍返回全文——①路径是外部导向文档
+#                                   （README.md / CONTRIBUTING.md）；②frontmatter
+#                                   标记为过时（deprecated / placeholder /
+#                                   Superseded）。归档目录中的文档 + 外部导向
+#                                   文档必须经此入口读取（由 pretool-read-guard
+#                                   指引）。
 #
 # 退出码：
 #     0   正常返回
@@ -22,6 +36,7 @@
 #
 # See: docs/dev/standards/metadata.md
 #      AGENTS.md §"读文档的防污染规则"
+#      scripts/pretool-read-guard
 
 set -euo pipefail
 
@@ -128,9 +143,18 @@ if [[ "$mode" == "head" ]]; then
     exit 0
 fi
 
-# ----- force 模式：强制返回全文，过时则 stderr 告警 -----
+# ----- force 模式：强制返回全文，两类场景发 stderr 告警 -----
+# 场景 A：外部导向文档（README.md / CONTRIBUTING.md 在仓库根）
+# 场景 B：frontmatter 标记为过时（deprecated / placeholder / Superseded / Deprecated）
 if [[ "$mode" == "force" ]]; then
-    if [[ -n "$frontmatter" ]]; then
+    # 场景 A：外部导向判定——不含 / 的直接文件名，且是 README/CONTRIBUTING
+    if [[ "$path" != */* && ( "$path" == "README.md" || "$path" == "CONTRIBUTING.md" ) ]]; then
+        echo "[docs-read --force] 注意：按 --force 读取外部导向文档全文" >&2
+        echo "   path:  $path" >&2
+        echo "   这份文档面向仓库外部读者（产品介绍 / 贡献指南），不是内部决策的事实源。" >&2
+        echo "   常规开发任务应以 AGENTS.md 与 docs/dev/** 为准。" >&2
+    # 场景 B：frontmatter 过时判定
+    elif [[ -n "$frontmatter" ]]; then
         status=$(get_field "status")
         adr_status=$(get_field "adr_status")
         title=$(get_field "title")
@@ -202,15 +226,19 @@ esac
 
 if [[ $should_stop -eq 1 ]]; then
     echo "==================================================================="
-    echo "!! STOPPED by docs-read (default mode)"
+    echo "!! STOPPED by docs-read (default mode) — frontmatter 状态漂移"
     echo "   path:   $path"
     [[ -n "${title:-}" ]] && echo "   title:  $title"
     for r in "${reasons[@]}"; do
         echo "   reason: $r"
     done
     echo ""
-    echo "如果确需全文可用：docs-read --force $path"
-    echo "如果仅需 frontmatter 可用：docs-read --head $path"
+    echo "这份文档位于 active 路径但被标记为过时状态 —— 这是"状态漂移"，"
+    echo "规范做法是把它 git mv 到归档目录（docs/dev/adr/deprecated/ 或"
+    echo "docs/_deprecated/），由 pretool-read-guard 按路径拦截。"
+    echo ""
+    echo "如果此刻确需全文：docs-read --force $path"
+    echo "如果仅需 frontmatter：docs-read --head $path"
     echo ""
     echo "以下仅为 frontmatter（未返回正文，避免上下文污染）："
     echo "==================================================================="

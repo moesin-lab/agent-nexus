@@ -25,6 +25,47 @@ related:
 5. **Subagent 优先**：探索类、长研究类任务优先派发子代理，主 session 只做收敛与决策。细节见 [`docs/dev/process/subagent-usage.md`](docs/dev/process/subagent-usage.md)。
 6. **范围收敛**：每个 PR 只做一件事，禁止"顺手重构"无关代码。
 7. **Conventional Commits**：所有提交遵循 [`docs/dev/process/commit-and-branch.md`](docs/dev/process/commit-and-branch.md)。
+8. **读文档走 `scripts/docs-read`**：读 `docs/` 下的 markdown 或仓库根规则文档一律通过 `scripts/docs-read <path>`，**禁止**直接 `Read`。详见下文"读文档的防污染规则"。
+
+## 读文档的防污染规则
+
+### 为什么
+
+`Read` 工具默认读全文，不会因为 YAML frontmatter 的 `---` 闭合符停下。如果直接 `Read` 一份 `adr_status: Superseded` 或 `status: placeholder` 的文档，**过时正文会立刻进入上下文**，之后再纠偏代价远高于第一次过滤。
+
+### 强制规则
+
+读项目文档**必须**通过：
+
+```
+scripts/docs-read <path>
+```
+
+该脚本按 frontmatter 状态决定返回全文或仅 frontmatter + 告警：
+
+| frontmatter | 脚本返回 | 退出码 |
+|---|---|---|
+| `status: active` 且 `adr_status` 不是 Superseded/Deprecated | 完整文件 | 0 |
+| `status: deprecated` | 仅 frontmatter + 告警 | 2 |
+| `status: placeholder` | 仅 frontmatter + 告警 | 2 |
+| `adr_status: Superseded` | 仅 frontmatter + 告警（含 `superseded_by` 指向取代者） | 2 |
+| `adr_status: Deprecated` | 仅 frontmatter + 告警 | 2 |
+
+### 不走脚本的例外
+
+以下情况允许直接 `Read`：
+
+- `CHANGELOG.md`（按 Keep a Changelog 规范，无 frontmatter）
+- `.git/`、`.tasks/`、`scripts/`、代码文件（`.go` / `.ts` / `.py` 等）
+- 非项目的外部仓库（不归本规则管）
+
+### 违反的后果
+
+reviewer 看到 PR 里有直接 `Read` 项目 markdown 且作者看起来**确实读了**（引用了内容/做出了基于内容的决策），应要求重做。过时内容一旦进入决策链，整条链条都需要重新验证。
+
+### 脚本不可用时
+
+脚本崩溃或 frontmatter 解析失败时，**退回 `Read(path, limit=20)` 只读前 20 行元信息**，再人工判断。**不允许**在脚本不可用时直接读全文作为默认行为。
 
 ## 每个 PR 必答三问
 

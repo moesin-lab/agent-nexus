@@ -1,11 +1,11 @@
 ---
-title: Spec：Limits & Cost Control（限流、熔断、可选预算）
+title: Spec：Limits & Cost Control（限流、熔断、可选配额）
 type: spec
 status: active
-summary: 失控保护（主轴）+ 可选 $ 预算（二等）；订阅用户通过 turn/时长/并发/退避/熔断获得默认保护
+summary: 机制分层——失控保护+使用量观测为一等（默认启用）；$ 预算与订阅配额跟踪为二等（按用户路径可选）
 tags: [spec, cost, budget, rate-limit, circuit-breaker]
 related:
-  - dev/adr/0005-subscription-as-first-class-path
+  - dev/adr/0006-limits-layering-defense-first
   - dev/spec/observability
   - dev/spec/persistence
   - dev/architecture/session-model
@@ -13,7 +13,7 @@ related:
 
 # Spec：Limits & Cost Control
 
-本 spec 的一等公民是 **limits（失控保护）**，不是 $ 预算。**$ 预算作为可选层**，默认关闭，为 API 计费用户提供；订阅用户通过 turn 数、工具调用数、wall-clock 时长、并发、rate limit 退避、熔断获得保护。背景见 [`../adr/0005-subscription-as-first-class-path.md`](../adr/0005-subscription-as-first-class-path.md)。
+本 spec 按**机制类别**分层（不按用户类型）。一等公民是"**防御失控 + 使用量观测**"，两类用户（订阅 / API）对称看待、默认启用、无差别。配额控制机制（$ 预算 / 订阅配额跟踪）是二等层，按用户路径可选。背景见 [`../adr/0006-limits-layering-defense-first.md`](../adr/0006-limits-layering-defense-first.md)。
 
 ## 威胁模型
 
@@ -85,11 +85,13 @@ base = 1000ms, cap 见上表, jitter = 0.2
 - 重置：用户 `/resume`、或冷却 `circuit.cooldownMs`（默认 10 分钟）后自动尝试
 - 全局降级：5 分钟窗口内全局 agent 错误 > `circuit.globalDegradedThreshold`（默认 10）→ 停止接新 session，已有 session 正常，10 分钟无新错误自动解除
 
-## 二等 limits（opt-in）
+## 二等 limits（opt-in，按用户路径可选）
 
-### $ 预算（面向 API 计费用户）
+两个**并列**的配额控制机制。用户可以都开、都不开、任选其一；两者都**默认关闭**。
 
-默认**关闭**（所有字段 null）。需要时配置：
+### $ 预算（适合 API 计费路径）
+
+配置：
 
 - `budget.perSession.limitUsd`
 - `budget.daily.limitUsd`
@@ -101,16 +103,34 @@ base = 1000ms, cap 见上表, jitter = 0.2
 - 软阈值（50%/80%/100%）发 `info/warn`
 - 硬阈值（100%）拒绝新 turn，session → Errored（单 session）或全局 BudgetHalted（每日/每月）
 
-**订阅用户不应启用 $ 预算层**：CC CLI 在订阅模式下可能不返回可靠的 costUsd；启用后结果不可信。
+**订阅路径下不应启用**：CC CLI 在订阅模式下 `costUsd` 可能为 null 或不可靠，启用后结果失真。
 
-### 订阅配额剩余（未来）
+### 订阅配额跟踪（适合订阅路径，MVP 未实现）
 
-- 占位：如 Anthropic 暴露订阅配额剩余 API，接入后成为一等 limit
-- 当前未实现；MVP 阶段通过 turn 硬限近似保护
+配置（占位）：
 
-## Usage 记账（强制，不可关闭）
+- `quota.subscriptionTracking.enabled`
+- `quota.subscriptionTracking.warningRatio`（默认 0.8）
+- `quota.subscriptionTracking.rollingWindowHours`（默认 5）
 
-每个 `llm_call_finished` 事件必须落日志（见 `observability.md` §"LLM 调用事件必含字段"），无论是否启用 $ 预算：
+启用时（未来）：
+
+- 订阅配额窗口内消耗（messages/turns）由 Anthropic 接口（如未来开放）或本机估算获取
+- 接近窗口满时发 `warn`、禁止新 turn 直到窗口滚动
+
+**当前 MVP 阶段未实现**；一等层的 turn / tool-call 硬限提供近似保护。待 Anthropic 暴露订阅配额剩余接口后补实现（届时更新本段并可能发新 ADR）。
+
+### 选择指南
+
+| 用户路径 | 推荐启用 |
+|---|---|
+| 纯订阅（Claude Pro/Max） | 仅订阅配额跟踪（待实现）；$ 预算保持关闭 |
+| 纯 API（按 token 付费） | $ 预算；订阅跟踪保持关闭 |
+| 混合（两类 key 都配了） | 两个都开；按调用时用的 key 类型归类
+
+## Usage 记账（一等，强制，不可关闭）
+
+每个 `llm_call_finished` 事件必须落日志（见 `observability.md` §"LLM 调用事件必含字段"），**无论启用哪个二等机制、也无论用户路径**：
 
 - token（input / output / cache read / cache write）
 - `costUsd`（若 CC 返回；订阅模式可能为 0 或 null，**不视为错误**）
@@ -118,7 +138,7 @@ base = 1000ms, cap 见上表, jitter = 0.2
 - `toolCallsThisTurn`
 - `wallClockMs`
 
-订阅用户用这些字段做回溯："这 5 小时窗口里 turn 数走到多少、哪次 tool 循环最疯"。
+这份记账是"观测底座"：两类用户都依赖它做事后回溯（订阅用户查 turn 消耗、API 用户查成本归因）。计费归因是**副作用**，不是它的核心职能。
 
 ## 定价表（供 opt-in $ 预算使用）
 
@@ -152,8 +172,8 @@ cooldownMs = 600000
 globalDegradedWindowMs = 300000
 globalDegradedThreshold = 10
 
-# 二等 limits：$ 预算（默认关闭；API 用户可开启）
-# [budget.perSession]
+# 二等 limits：配额控制（两个机制并列，均默认关闭）
+# [budget.perSession]       # 适合 API 路径
 # limitUsd = 2.00
 #
 # [budget.daily]
@@ -161,6 +181,11 @@ globalDegradedThreshold = 10
 #
 # [budget.monthly]
 # limitUsd = 200.00
+#
+# [quota.subscriptionTracking]   # 适合订阅路径（MVP 未实现）
+# enabled = false
+# warningRatio = 0.8
+# rollingWindowHours = 5
 
 # 定价表（仅 $ 预算启用时生效）
 [pricing.claude-opus-4-7]
@@ -181,7 +206,9 @@ cacheWrite = 18.75
 - **熔断**：连续 3 次 agent error → Errored + 通知
 - **幂等 GC**：插入 10000 过期条目 → 一轮 GC 清空
 - **$ 预算（opt-in）**：启用后，预算耗尽 → 拒绝 + 通知
+- **订阅配额跟踪（opt-in，未来）**：接入 Anthropic 接口后补合约测试
 - **Usage 字段完整**：订阅模式下 `costUsd` 可为 null，但 token/turnSequence/wallClockMs 必有
+- **用户路径对称**：构造"纯 API 配置"与"纯订阅配置"两种基线，断言一等 limits 行为完全一致（无视用户路径）
 
 ## 观测
 
@@ -197,7 +224,9 @@ cacheWrite = 18.75
 
 ## 反模式
 
-- 把 `$ 预算`作为默认保护（对订阅用户无效 + 误导）
+- 把`$ 预算`作为默认保护（对订阅用户无效 + 误导）
+- 把"订阅配额跟踪"作为默认保护（对 API 用户无意义；两类机制都必须 opt-in）
+- 把**用户类型**当一等公民（应该按**机制类别**分层；两类用户路径对称）
 - 把"最贵已知模型"作为缺失定价的兜底估算（订阅模式会产生虚假报警）
 - 缺 turn 硬限只靠 $ 预算（订阅用户撞配额墙前得不到任何保护）
 - 无退避地重试（打爆平台）
@@ -210,5 +239,6 @@ cacheWrite = 18.75
 
 - 按模型区分不同预算（MVP 统一）
 - 按时段的动态限额
-- 订阅配额剩余的主动探测（依赖 Anthropic 接口支持；发新 ADR）
+- 订阅配额跟踪的**具体实现**（接口还未开放；本 spec 仅占位 + 规划配置项）
 - 多 agent 后端时的抽象计费层（届时发新 ADR）
+- 第三方计费后端（Bedrock / Vertex）的二等机制（将来如需再加）

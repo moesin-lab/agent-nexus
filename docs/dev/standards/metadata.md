@@ -230,7 +230,7 @@ related:
 
 ## 读取规则（强制）
 
-项目文档**必须**通过 `scripts/docs-read` 读取，不得直接 `Read`（由 `.claude/hooks/pretool-read-guard` 在 harness 级拦截）。脚本三种模式：
+项目文档**必须**通过 `scripts/docs-read` 读取，不得直接 `Read`。harness 级兜底为可选增强——支持 PreToolUse hook 的 agent 可接入 `scripts/pretool-read-guard`，配置见 AGENTS.md。脚本三种模式：
 
 - **默认**：`scripts/docs-read <path>` —— active 返全文，过时只返 frontmatter + 告警
 - **泛读**：`scripts/docs-read --head <path>` —— 仅 frontmatter，无视状态

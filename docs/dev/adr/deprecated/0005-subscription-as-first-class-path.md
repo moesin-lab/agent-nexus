@@ -1,7 +1,7 @@
 ---
 title: ADR-0005：订阅计费为一等用户路径（已被 0006 取代）
 type: adr
-status: superseded
+status: active
 summary: 原议把订阅作为一等用户路径；已被 ADR-0006 取代——正确的一等公民是"机制类别"（防御失控）而非"用户类型"
 tags: [adr, decision, cost, budget, rate-limit, circuit-breaker, superseded]
 related:

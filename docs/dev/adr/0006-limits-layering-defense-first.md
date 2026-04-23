@@ -5,7 +5,7 @@ status: active
 summary: 一等 limits 是"防御失控"（resilience）与"使用量观测"；$ 预算与订阅配额跟踪是二等可选机制，两类用户对称看待
 tags: [adr, decision, cost, budget, rate-limit, circuit-breaker]
 related:
-  - dev/adr/superseded/0005-subscription-as-first-class-path
+  - dev/adr/deprecated/0005-subscription-as-first-class-path
   - dev/spec/infra/cost-and-limits
   - dev/spec/infra/observability
   - dev/architecture/session-model
@@ -104,6 +104,6 @@ superseded_by: null
 
 ## 参考
 
-- 被取代的 ADR：[`superseded/0005-subscription-as-first-class-path.md`](superseded/0005-subscription-as-first-class-path.md)
+- 被取代的 ADR：[`deprecated/0005-subscription-as-first-class-path.md`](deprecated/0005-subscription-as-first-class-path.md)
 - 受影响 spec：[`../spec/cost-and-limits.md`](../spec/infra/cost-and-limits.md)
 - 触发本 ADR 的 review 二次意见：主 session 对话中

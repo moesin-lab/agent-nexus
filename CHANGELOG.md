@@ -59,11 +59,14 @@
 - 新增 `scripts/docs-read`（bash，零外部依赖）：按 YAML frontmatter 状态控制性读取项目文档，防止 agent 读取过时文档后正文污染上下文。三种模式：默认（active 全文，过时只 frontmatter + 告警）/ `--head`（仅 frontmatter，泛读用）/ `--force`（强制全文，过时告警）。
 - `AGENTS.md` 追加"读文档的防污染规则"作为核心原则第 8 条，强制所有 `docs/` 与规则文档通过脚本读取。
 - 新增 `scripts/pretool-read-guard`（从 `.claude/hooks/` 搬出）：通用 PreToolUse 守卫脚本，拦截对 `docs/**/*.md` 与根规则文档的裸 `Read`，stderr 指引三种 docs-read 模式。支持 PreToolUse hook 的 agent harness（Claude Code / Codex 等）皆可接入；AGENTS.md 附 Claude Code 配置示例。
-- **防污染机制重构——状态物化到归档目录**（Edit 工具链工作流冲突驱动）：原机制下所有 `docs/**/*.md` 的 Read 均被 hook 拦，而 Edit 工具要求必须先 Read，导致文档维护无法用标准 Read+Edit 流程。改由"路径即状态信号"承担防污染责任：
-  - 过时文档迁移到 `docs/dev/adr/superseded/` 或 `docs/_archive/`；active 路径下文档可直接 `Read`
-  - `pretool-read-guard` 从"拦 docs/**"简化为"只拦归档目录"
-  - `scripts/docs-read` 不再是强制入口，职能退化为三个：`--head`（预览 frontmatter）/ `--force`（读归档时的唯一合法入口，hook 指引走此）/ 默认模式（兜底 active 路径下 frontmatter 状态漂移，提示应 `git mv` 到归档）
-  - `adr/README.md` 新增 §Superseded 工作流，规定状态变更必须单 commit 内 `git mv` + 更新 frontmatter `status` + 调整相对链接
-  - `git mv docs/dev/adr/0005-*.md → docs/dev/adr/superseded/`，同步修 frontmatter `status: superseded`、`ADR-0006` 相对链接深度、`adr/README.md` 索引、`adr/0006` 的 `related` + 正文链接
+- **防污染机制重构——作废文档物化到归档目录**（Edit 工具链工作流冲突驱动）：原机制下所有 `docs/**/*.md` 的 Read 均被 hook 拦，而 Edit 工具要求必须先 Read，导致文档维护无法用标准 Read+Edit 流程。改由"路径即状态信号"承担防污染责任。经 codex review（`reviews/2026-04-23-pr4-codex.md`）后做两轮修订：
+  - **首轮**（commit `ce4c71a`）：初步把 Superseded ADR 迁到专属目录；但隐含"所有过时都归档"的定性错位 placeholder 类文档。
+  - **二轮修订**（响应 codex P0/P1）：
+    - **归档目录统一命名为 `deprecated`**（用户指出 superseded 是 deprecated 的子集）：`docs/dev/adr/superseded/` → `docs/dev/adr/deprecated/`；新建 `docs/_deprecated/`（含 `.gitkeep`）作为非 ADR 作废文档的归档位置
+    - **方案适用面收窄**：只处理 Superseded ADR + 明确 Deprecated 文档；`placeholder` 仍在 active 路径（承担信息架构占位作用），防污染靠 `docs-read` 默认模式兜底 + 未来 lint
+    - **修 `status: superseded` 破坏 schema**：回滚 ADR-0005 `status` 为 `active`（`status` 允许值稳定为 `active|draft|placeholder|deprecated`，ADR 的 Superseded 语义由 `adr_status` + 归档路径共同表达）；`docs/dev/standards/metadata.md` 追加"归档路径下 `status` 冗余，保持 active 无害"说明
+    - **双重真相清理**：`docs/dev/README.md` §读取方式、`docs/dev/standards/metadata.md` §读取规则 从"必须走 docs-read"更新为路径层机制
+    - **banner 降级**：`AGENTS.md` §作废工作流 和 `adr/README.md` §Superseded 工作流 把"建议加 banner"从步骤里移出，明确为可选 UX 建议（路径已承担主责）
+    - **subagent 拆分规则软化**：`docs/dev/process/subagent-usage.md` §任务拆分 "能拆就必须拆"改为"默认倾向拆分"，新增 §反向信号（倾向不拆）收录耦合/短任务/澄清场景，规模目标改为经验参考而非硬规则
 - 新增 `CLAUDE.md` 符号链接指向 `AGENTS.md`，方便 Claude Code 自动识别项目规则；规范化入口仍是 `AGENTS.md`。
 - `.gitignore` 调整：不假定协作者使用哪种 agent，`.claude/` / `.codex/` / `.gemini/` / `.continue/` / `.cursor/` 全部忽略（不再把 settings.json / hooks 入库）；新增 `eval-runs/`、`HANDOFF.md`、`HANDOFF-*.md`、`*.scratch.*` 条目。

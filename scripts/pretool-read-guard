@@ -11,8 +11,8 @@
 #     想读归档内容必须显式走 scripts/docs-read --force（或经 hook 指引）。
 #
 # 被拦截的路径：
-#     docs/dev/adr/superseded/**/*.md
-#     docs/_archive/**/*.md
+#     docs/dev/adr/deprecated/**/*.md
+#     docs/_deprecated/**/*.md
 #
 # 放行（不管是不是 markdown）：
 #     其他一切路径（包括 active 的 docs/**/*.md、AGENTS.md、CHANGELOG.md 等）
@@ -59,8 +59,8 @@ is_archived() {
     # 只管 .md
     [[ "$p" == *.md ]] || return 1
     # 归档目录
-    [[ "$p" == docs/dev/adr/superseded/* ]] && return 0
-    [[ "$p" == docs/_archive/* ]] && return 0
+    [[ "$p" == docs/dev/adr/deprecated/* ]] && return 0
+    [[ "$p" == docs/_deprecated/* ]] && return 0
     return 1
 }
 

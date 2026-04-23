@@ -25,48 +25,50 @@ related:
 5. **Subagent 优先**：探索类、长研究类任务优先派发子代理，主 session 只做收敛与决策。细节见 [`docs/dev/process/subagent-usage.md`](docs/dev/process/subagent-usage.md)。
 6. **范围收敛**：每个 PR 只做一件事，禁止"顺手重构"无关代码。
 7. **Conventional Commits**：所有提交遵循 [`docs/dev/process/commit-and-branch.md`](docs/dev/process/commit-and-branch.md)。
-8. **过时文档物化到归档目录**：Superseded / Deprecated / placeholder 的文档必须住在 `docs/dev/adr/superseded/` 或 `docs/_archive/`——路径本身就是"别当事实"的信号。active 路径下的文档可直接 `Read`；归档路径的文档由 hook 拦截，必须走 `scripts/docs-read --force`。详见下文"读文档的防污染规则"。
+8. **作废文档物化到归档目录**：Superseded ADR 和明确 Deprecated 的文档必须住在 `docs/dev/adr/deprecated/` 或 `docs/_deprecated/`——路径本身就是"别当事实"的信号。active 路径下的文档（含 placeholder）可直接 `Read`；归档路径的文档由 hook 拦截，必须走 `scripts/docs-read --force`。详见下文"读文档的防污染规则"。
 
 ## 读文档的防污染规则
 
-### 核心机制：状态物化到目录
+### 核心机制：作废文档物化到归档目录
 
 文档的权威性**长在路径里**，不依赖读者看 frontmatter 自觉过滤：
 
-| 状态 | 住在哪 | Read 工具行为 |
+| 文档类别 | 住在哪 | Read 工具行为 |
 |---|---|---|
 | `active`（权威事实） | `docs/**`（默认路径） | **放行**：可直接 `Read` |
-| Superseded ADR | `docs/dev/adr/superseded/**` | **hook 拦截**：必须走 `scripts/docs-read --force` |
-| Deprecated / placeholder | `docs/_archive/**` | **hook 拦截**：必须走 `scripts/docs-read --force` |
+| `placeholder`（未完成骨架） | `docs/**`（默认路径，**不归档**） | **放行**：Read 可读全文（骨架通常极短；frontmatter `status: placeholder` 已是软告警）|
+| Superseded ADR | `docs/dev/adr/deprecated/**` | **hook 拦截**：必须走 `scripts/docs-read --force` |
+| 其他明确作废的 active 文档 | `docs/_deprecated/**` | **hook 拦截**：必须走 `scripts/docs-read --force` |
 
-路径本身就是"别当事实来源"的信号。GitHub web、grep、curl、任何入口打开归档文档都能立刻识别——不依赖任何基础设施。
+路径本身就是"已作废"的信号。GitHub web、grep、curl、任何入口打开归档文档都能立刻识别——不依赖任何基础设施。
 
-### 状态变更工作流
+**范围刻意收窄**：方案只处理"曾是权威但已作废"的文档（Superseded ADR / 明确 Deprecated）。`placeholder`（骨架文档，未来会填）仍留在 active 路径——这些文档承担"信息架构占位"作用（章节存在感、导航表），搬去归档会让读者以为相关主题废弃了。placeholder 的污染风险靠两道兜住：① 骨架正文通常极短，看一眼就知道是占位；② `docs-read` 默认模式会对 `status: placeholder` 返回 frontmatter + 告警（见下文）。
 
-一份文档状态变为 Superseded / Deprecated / placeholder 时：
+### 作废工作流
 
-1. `git mv <path> docs/dev/adr/superseded/<name>.md`（ADR）或 `docs/_archive/<name>.md`（其他）
-2. frontmatter 同步更新 `status:` 字段（例：`active` → `superseded`）
-3. 正文顶部建议加 banner：`> **已被 [ADR-XXXX](../XXXX-...md) 取代，仅供审计追溯**`
-4. 更新所有引用该文档的相对链接到新路径
+一份文档状态变为 Superseded / Deprecated 时，**同一个 commit 内**完成：
 
-state 与 location 必须**同一个 commit 内改**，避免漂移。
+1. `git mv <path> docs/dev/adr/deprecated/<name>.md`（ADR）或 `docs/_deprecated/<name>.md`（其他）
+2. frontmatter：ADR 设 `adr_status: Superseded` 或 `Deprecated`；`status` 字段保持 `active`（归档路径下 `status` 冗余；详见 `docs/dev/standards/metadata.md`）
+3. 更新所有引用该文档的相对链接到新路径
+
+> **可选**：正文顶部加 banner（`> **已被 [ADR-XXXX](../XXXX-...md) 取代，仅供审计追溯**`）供人类读者快速识别。这是**纯 UX 提示，不是流程步骤**——路径已承担主责，banner 只是额外双保险，不作强制。
 
 ### docs-read 的三种模式
 
-`scripts/docs-read` 不再是读文档的**强制入口**，但仍服务三个场景：
+`scripts/docs-read` 不是读文档的**强制入口**（本项目已把主责交给路径），但仍服务三个场景：
 
 | 命令 | 场景 | 返回 |
 |---|---|---|
 | `scripts/docs-read --head <path>` | 泛读：只看 frontmatter 判断是否相关 | 仅 frontmatter |
 | `scripts/docs-read --force <path>` | 读归档文档：hook 拦 Read 后的唯一合法入口 | 全文 + stderr 告警 |
-| `scripts/docs-read <path>` | 兜底：active 路径下若 frontmatter 状态漂移（未 `git mv` 归档），降级为 frontmatter + 提示应归档 | active 全文 / 漂移则 frontmatter |
+| `scripts/docs-read <path>` | placeholder 兜底 / 状态漂移兜底：`status: placeholder` 或 `deprecated` 文档位于 active 路径时，降级为 frontmatter + 提示 | active 全文 / 漂移则 frontmatter |
 
 ### pretool-read-guard（hook）
 
 项目不假定协作者使用哪种 agent，`.claude/` / `.codex/` 等本地配置不入库（见 `.gitignore`）。但我们提供通用守卫 `scripts/pretool-read-guard`，任何支持 PreToolUse hook 的 harness 都能接入：
 
-- 命中 `docs/dev/adr/superseded/**` 或 `docs/_archive/**` 的 `Read` → block，stderr 指引走 `docs-read --force`
+- 命中 `docs/dev/adr/deprecated/**` 或 `docs/_deprecated/**` 的 `Read` → block，stderr 指引走 `docs-read --force`
 - 其他一切 Read → 放行
 
 #### Claude Code 集成示例

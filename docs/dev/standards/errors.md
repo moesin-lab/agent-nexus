@@ -5,7 +5,7 @@ status: active
 summary: 错误四分类（user/platform/agent/internal）、传播规则、用户可见反馈与熔断重试策略
 tags: [errors, standards]
 related:
-  - dev/spec/cost-and-limits
+  - dev/spec/infra/cost-and-limits
   - dev/spec/security
   - dev/standards/logging
 ---
@@ -72,7 +72,7 @@ related:
 
 ## 熔断与重试
 
-- **重试**：仅 `platform` 和标记为 `retryable` 的 `agent` 错误。退避 + jitter + 最大重试次数由 [`../spec/cost-and-limits.md`](../spec/cost-and-limits.md) 定义。
+- **重试**：仅 `platform` 和标记为 `retryable` 的 `agent` 错误。退避 + jitter + 最大重试次数由 [`../spec/cost-and-limits.md`](../spec/infra/cost-and-limits.md) 定义。
 - **熔断**：同一 session 连续 N 次 `agent`/`platform` 错误 → 挂起 session，发用户通知。N 的值在 cost-and-limits.md。
 - **降级**：某些场景可以降级（例如 gateway 断连时改走 webhook 重放）。降级路径要在 spec 里写明。
 

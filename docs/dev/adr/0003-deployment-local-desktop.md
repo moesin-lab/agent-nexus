@@ -7,7 +7,7 @@ tags: [adr, decision, deployment]
 related:
   - dev/adr/0001-im-platform-discord
   - dev/adr/0002-agent-backend-claude-code-cli
-  - dev/spec/persistence
+  - dev/spec/infra/persistence
   - dev/spec/security
 adr_status: Accepted
 adr_number: "0003"

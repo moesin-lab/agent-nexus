@@ -5,14 +5,14 @@ status: active
 summary: 结构化日志写法约束；字段契约、等级语义、禁止打印清单与测试对日志的约束
 tags: [logging, standards, observability]
 related:
-  - dev/spec/observability
+  - dev/spec/infra/observability
   - dev/standards/errors
   - dev/spec/security
 ---
 
 # 日志规范
 
-本文件是 [`../spec/observability.md`](../spec/observability.md) 的代码侧落地。spec 定义**字段契约**，本文件定义**写法约束**。
+本文件是 [`../spec/observability.md`](../spec/infra/observability.md) 的代码侧落地。spec 定义**字段契约**，本文件定义**写法约束**。
 
 ## 基本原则
 
@@ -62,7 +62,7 @@ related:
 - **用户消息正文在 IM 级别**（sessionKey + messageId 引用即可；需要时另存脱敏快照）
 - **CC CLI 的完整输出原文**（摘要或 hash；要完整输出走专门的 transcript 落盘）
 
-脱敏在日志系统入口拦截，详见 [`../spec/security.md`](../spec/security.md) §3。
+脱敏在日志系统入口拦截，详见 [`../spec/security.md`](../spec/security/README.md) §3。
 
 ## 输出格式
 

@@ -7,8 +7,8 @@ tags: [spec, persistence, sqlite, storage, secrets]
 related:
   - dev/adr/0003-deployment-local-desktop
   - dev/architecture/session-model
-  - dev/spec/idempotency
-  - dev/spec/secrets
+  - dev/spec/infra/idempotency
+  - dev/spec/security/secrets
   - dev/spec/security
 contracts:
   - Store
@@ -47,14 +47,16 @@ contracts:
 
 | 列 | 类型 | 约束 |
 |---|---|---|
-| `session_key` | TEXT PRIMARY KEY | `<platform>:<channelId>:<userId>` |
+| `session_id` | TEXT PRIMARY KEY | ulid / uuidv7；单调递增 |
+| `session_key` | TEXT NOT NULL | `<platform>:<channelId>:<userId>` |
+| `generation` | INTEGER NOT NULL | 同 session_key 下的代数，从 1 起 |
 | `state` | TEXT NOT NULL | `Created|Active|Idle|Archived|Errored|Interrupted` |
 | `created_at` | TEXT NOT NULL | RFC3339 |
 | `last_activity_at` | TEXT NOT NULL | RFC3339 |
 | `archived_at` | TEXT | |
 | `agent_backend` | TEXT NOT NULL | 当前仅 `"claudecode"` |
 | `working_dir` | TEXT NOT NULL | |
-| `transcript_path` | TEXT NOT NULL | 相对 `~/.agent-nexus/` |
+| `transcript_path` | TEXT NOT NULL | 相对 `~/.agent-nexus/`，按 session_id 归属 |
 | `turns_used` | INTEGER NOT NULL DEFAULT 0 | 一等计量 |
 | `tool_calls_used` | INTEGER NOT NULL DEFAULT 0 | 一等计量 |
 | `wall_clock_ms` | INTEGER NOT NULL DEFAULT 0 | 一等计量（累计） |
@@ -63,7 +65,13 @@ contracts:
 | `budget_limit_usd` | REAL | NULL 表示 $ 预算未启用（opt-in） |
 | `meta_json` | TEXT | 任意扩展 JSON |
 
-索引：`idx_sessions_last_activity`。
+索引：
+
+- `idx_sessions_last_activity (last_activity_at)`
+- `idx_sessions_key_generation (session_key, generation DESC)` — 按 SessionKey 查"当前活跃实例"用
+- `UNIQUE (session_key, generation)` — 同 key 的 generation 唯一
+
+**不变量**：任一时刻同 `session_key` 下非终态实例（`state ∉ {Archived}`）至多一个。核心插入前校验。
 
 ### idempotency
 
@@ -83,21 +91,21 @@ contracts:
 | 列 | 类型 | 说明 |
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
-| `session_key` | TEXT NOT NULL | |
+| `session_id` | TEXT NOT NULL | 归属的 session 实例（不是 session_key） |
 | `message_id` | TEXT | 平台消息 ID |
 | `direction` | TEXT NOT NULL | `inbound|outbound` |
 | `content_summary` | TEXT | 脱敏后的摘要 |
 | `trace_id` | TEXT | |
 | `created_at` | TEXT NOT NULL | |
 
-索引 `(session_key, created_at)`。
+索引 `(session_id, created_at)`。
 
 ### usage_events
 
 | 列 | 类型 | 说明 |
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY | |
-| `session_key` | TEXT NOT NULL | |
+| `session_id` | TEXT NOT NULL | 按 sessionId 归属（不按 session_key；avoid archive 后冲突） |
 | `trace_id` | TEXT NOT NULL | |
 | `turn_sequence` | INTEGER | 本 session 的 turn 序号 |
 | `tool_calls_this_turn` | INTEGER | 本 turn 的工具调用数 |
@@ -116,9 +124,9 @@ contracts:
 
 ### 位置
 
-`transcripts/<sessionKey_urlescaped>/<YYYY-MM-DD>.jsonl`
+`transcripts/<sessionId>/<YYYY-MM-DD>.jsonl`
 
-`sessionKey` 因含特殊字符需 URL 编码。
+按 `sessionId` 归档而非 `sessionKey`：同一 SessionKey 可能有多代 session，按 sessionId 隔离避免旧实例 transcript 被新实例覆盖/误读。
 
 ### 格式
 
@@ -157,7 +165,7 @@ contracts:
 - 写入 log
 - 出现在 IM 消息里
 
-详见 [`security.md`](security.md)。
+详见 [`security.md`](../security/README.md)。
 
 ## 存储接口（core）
 

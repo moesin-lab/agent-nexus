@@ -6,8 +6,8 @@ summary: 出口脱敏的必过滤项、配置开关、实现要点；与 secrets
 tags: [spec, security, redaction]
 related:
   - dev/spec/security
-  - dev/spec/secrets
-  - dev/spec/observability
+  - dev/spec/security/secrets
+  - dev/spec/infra/observability
   - dev/standards/logging
 contracts:
   - Redactor

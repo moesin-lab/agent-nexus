@@ -37,6 +37,23 @@
 
 本次拆分只动文件结构与命名，不引入新抽象（`MiddlewareChain` / `Session` aggregate 留待实现阶段前独立 PR）。
 
+- **契约内部对齐（Codex review 方向 A）**：
+  - `architecture/session-model.md` 状态机图补齐 `Interrupted` / `Errored` 及其转换；新增 sessionId / generation 概念（路由 key vs 持久化主键双层）
+  - `spec/infra/persistence.md` `sessions` 表改主键为 `session_id`，新增 `generation` 列与 `UNIQUE (session_key, generation)` 约束；`usage_events` / `messages` 表归属改为 `session_id`；transcript 路径按 `sessionId` 归档
+  - `spec/agent-runtime.md` AgentEvent 新增 `TurnEndReason` 枚举（含 core 注入的 `tool_limit` / `wallclock_timeout` / `budget_exceeded`）与 `UsageRecord` 类型；`SessionConfig` 去掉必填 `totalBudgetUsd`，改为可选 `budget: BudgetConfig?`（与 ADR-0006 一致）；新增 `sessionId` 字段
+  - `spec/infra/observability.md` §"LLM 调用事件必含字段"显式声明 `llm_call_finished` 即 `UsageRecord` 原样转写，消除"两套字段名"的歧义；新增 `completeness` 字段
+  - `spec/agent-backends/claude-code-cli.md` stop_reason 映射段指向 `agent-runtime.md` §TurnEndReason
+  - `spec/infra/idempotency.md` 显式说明幂等键用 `session_key` 而非 `sessionId`（路由层概念）
+
+- **spec/ 目录按领域重组**：扁平的 13 文件改为子目录结构：
+  - 根下：`platform-adapter.md` / `agent-runtime.md` / `message-protocol.md`（通用主契约）+ `README.md`
+  - `spec/agent-backends/`：`claude-code-cli.md`（原 `claude-code-cli-contract.md`）
+  - `spec/security/`：`README.md`（原 `security.md` 伞文件）+ `auth.md` / `tool-boundary.md` / `secrets.md` / `redaction.md`
+  - `spec/infra/`：`idempotency.md` / `persistence.md` / `observability.md` / `cost-and-limits.md`
+  - 所有 frontmatter `related` 字段按新路径批量更新；所有 Markdown 链接按文件新位置重算相对路径（跨 20 份文件）
+  - `AGENTS.md` 文件定位速查表新增 limits / persistence 行，并对齐路径
+  - 0 broken link（校验通过）
+
 ### Tooling
 
 - 新增 `scripts/docs-read`（bash，零外部依赖）：按 YAML frontmatter 状态控制性读取项目文档，防止 agent 读取过时文档后正文污染上下文。三种模式：默认（active 全文，过时只 frontmatter + 告警）/ `--head`（仅 frontmatter，泛读用）/ `--force`（强制全文，过时告警）。

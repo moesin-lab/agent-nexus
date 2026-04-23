@@ -8,7 +8,7 @@ related:
   - dev/spec/platform-adapter
   - dev/spec/agent-runtime
   - dev/spec/message-protocol
-  - dev/spec/persistence
+  - dev/spec/infra/persistence
 adr_status: Proposed
 adr_number: "0004"
 decision_date: null

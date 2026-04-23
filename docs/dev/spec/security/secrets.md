@@ -6,14 +6,14 @@ summary: OS keychain / env / 文件三层存储；命名前缀；禁止写入清
 tags: [spec, security, secrets]
 related:
   - dev/spec/security
-  - dev/spec/redaction
-  - dev/spec/persistence
-  - dev/spec/observability
+  - dev/spec/security/redaction
+  - dev/spec/infra/persistence
+  - dev/spec/infra/observability
 ---
 
 # Spec：Secrets（密钥管理）
 
-定义密钥的获取与约束。配套 [`redaction.md`](redaction.md)（出口过滤）、[`persistence.md`](persistence.md)（禁止落盘项）、[`observability.md`](observability.md)（禁止打印字段）共同构成"防泄露"体系。
+定义密钥的获取与约束。配套 [`redaction.md`](redaction.md)（出口过滤）、[`persistence.md`](../infra/persistence.md)（禁止落盘项）、[`observability.md`](../infra/observability.md)（禁止打印字段）共同构成"防泄露"体系。
 
 对应模块：`core.secrets`。
 

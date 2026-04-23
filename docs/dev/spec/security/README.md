@@ -5,13 +5,13 @@ status: active
 summary: 安全分区总索引 + 威胁模型 + 跨分区综合缓解（prompt injection）+ 启动自检清单
 tags: [spec, security]
 related:
-  - dev/spec/auth
-  - dev/spec/tool-boundary
-  - dev/spec/secrets
-  - dev/spec/redaction
-  - dev/spec/idempotency
-  - dev/spec/persistence
-  - dev/spec/observability
+  - dev/spec/security/auth
+  - dev/spec/security/tool-boundary
+  - dev/spec/security/secrets
+  - dev/spec/security/redaction
+  - dev/spec/infra/idempotency
+  - dev/spec/infra/persistence
+  - dev/spec/infra/observability
   - dev/standards/errors
 ---
 
@@ -27,7 +27,7 @@ related:
 | 能做什么操作 | [`tool-boundary.md`](tool-boundary.md) | `core.toolguard` |
 | 密钥怎么放 | [`secrets.md`](secrets.md) | `core.secrets` |
 | 出口脱敏 | [`redaction.md`](redaction.md) | `core.redact` |
-| 去重防重放 | [`idempotency.md`](idempotency.md) | `core.idempotency` |
+| 去重防重放 | [`idempotency.md`](../infra/idempotency.md) | `core.idempotency` |
 
 ## 威胁模型
 
@@ -50,7 +50,7 @@ related:
 3. **Prompt injection**：用户消息中嵌入"忽略上面的指令"等试图改变 agent 行为的内容；**非发起者投毒尤其危险**（见本文 §Prompt Injection 综合缓解）
 4. **附件投毒**：恶意上传的文件（超大、压缩炸弹、带 injection 文本的文档、SSRF 链路的 URL）
 5. **密钥泄露**：通过日志、IM 输出、transcript 意外回显 token / API key（[`secrets.md`](secrets.md) + [`redaction.md`](redaction.md)）
-6. **IM 事件重放** / **请求刷表**：Discord gateway at-least-once；攻击者用伪造 messageId 刷幂等表（[`idempotency.md`](idempotency.md)）
+6. **IM 事件重放** / **请求刷表**：Discord gateway at-least-once；攻击者用伪造 messageId 刷幂等表（[`idempotency.md`](../infra/idempotency.md)）
 
 ### 不在范围
 
@@ -69,7 +69,7 @@ related:
 | `shared_channel_mode` 不存在：非发起者内容根本不进 context | [`auth.md`](auth.md) |
 | shell 默认禁用：绕过白名单的破坏面有限 | [`tool-boundary.md`](tool-boundary.md) |
 | 回显脱敏：LLM 想让 bot "复读密钥"过不了 redactor | [`redaction.md`](redaction.md) |
-| 审计 transcript：所有工具调用有 `tool_call_finished` 事件，事后可查 | [`observability.md`](observability.md) |
+| 审计 transcript：所有工具调用有 `tool_call_finished` 事件，事后可查 | [`observability.md`](../infra/observability.md) |
 
 **未来（输入层 policy guard）**：MVP 只做输出层 redactor；输入侧的 policy guard 待实现阶段积累数据后再设计，见 [`redaction.md`](redaction.md) §"两层视角"。
 
@@ -85,9 +85,9 @@ related:
 1. **密钥**：所有必需密钥能加载，来源一致（[`secrets.md`](secrets.md) §启动自检）
 2. **工作目录**：`workingDir` 存在且可读写
 3. **Allowlist**：至少一个字段非空；格式合法（[`auth.md`](auth.md) §Allowlist §约束）
-4. **SQLite schema version**：兼容（[`persistence.md`](persistence.md) §迁移）
+4. **SQLite schema version**：兼容（[`persistence.md`](../infra/persistence.md) §迁移）
 5. **Hook / Redactor 基线测试**：内置的 red-team fixture 通过（[`redaction.md`](redaction.md) §合约测试）
-6. **CC CLI probe**：CompatibilityProbe 通过（[`claude-code-cli-contract.md`](claude-code-cli-contract.md) §兼容性自检）
+6. **CC CLI probe**：CompatibilityProbe 通过（[`claude-code-cli-contract.md`](../agent-backends/claude-code-cli.md) §兼容性自检）
 
 任何一项失败 → 退出码非零 + 清晰错误消息（不包含密钥值）。
 

@@ -6,8 +6,8 @@ summary: 一等 limits 是"防御失控"（resilience）与"使用量观测"；$
 tags: [adr, decision, cost, budget, rate-limit, circuit-breaker]
 related:
   - dev/adr/0005-subscription-as-first-class-path
-  - dev/spec/cost-and-limits
-  - dev/spec/observability
+  - dev/spec/infra/cost-and-limits
+  - dev/spec/infra/observability
   - dev/architecture/session-model
 adr_status: Accepted
 adr_number: "0006"
@@ -105,5 +105,5 @@ superseded_by: null
 ## 参考
 
 - 被取代的 ADR：[`0005-subscription-as-first-class-path.md`](0005-subscription-as-first-class-path.md)
-- 受影响 spec：[`../spec/cost-and-limits.md`](../spec/cost-and-limits.md)
+- 受影响 spec：[`../spec/cost-and-limits.md`](../spec/infra/cost-and-limits.md)
 - 触发本 ADR 的 review 二次意见：主 session 对话中

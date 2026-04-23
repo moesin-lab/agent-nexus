@@ -48,7 +48,7 @@ related: [...]       # 相对 docs/ 的路径
 
 ADR 和 spec 有专属扩展字段。完整 schema 见 [`standards/metadata.md`](standards/metadata.md)，强制要求见 [`standards/docs-style.md`](standards/docs-style.md)。
 
-**读取方式（强制）**：项目文档一律通过 `scripts/docs-read` 读取，不得直接 `Read`（由 `.claude/hooks/pretool-read-guard` 在 harness 级拦截）。
+**读取方式（强制）**：项目文档一律通过 `scripts/docs-read` 读取，不得直接 `Read`。harness 级拦截为可选增强——如果你用 Claude Code 或其他支持 PreToolUse hook 的 agent，可把 `scripts/pretool-read-guard` 接入 hook（配置示例见 AGENTS.md §"推荐的 harness 级强制"）。
 
 三种模式按意图选：
 

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# pretool-read-guard — PreToolUse hook
+# pretool-read-guard — 通用 PreToolUse 守卫
 #
-# 拦截 Claude Code 对项目文档的 Read 调用，强制走 scripts/docs-read。
+# 作为任何支持 PreToolUse hook 的 agent harness（Claude Code / Codex
+# 等）的守卫脚本：拦截对项目文档的 Read 调用，让 agent 改走 docs-read。
 #
 # 匹配规则（被拦截）：
 #     docs/**/*.md
-#     AGENTS.md / README.md / CONTRIBUTING.md
+#     AGENTS.md / CLAUDE.md / README.md / CONTRIBUTING.md
 #
 # 例外（放行）：
 #     CHANGELOG.md
@@ -14,9 +15,22 @@
 #
 # 返回：
 #     exit 0 → 放行
-#     exit 2 → 阻止并把 stderr 回给 Claude
+#     exit 2 → 阻止并把 stderr 回给 agent
 #
-# 配套：.claude/settings.json、AGENTS.md §"读文档的防污染规则"
+# 集成（Claude Code 示例，用户自行拷到本地 .claude/settings.json）：
+#     {
+#       "hooks": {
+#         "PreToolUse": [{
+#           "matcher": "Read",
+#           "hooks": [{ "type": "command",
+#                       "command": "scripts/pretool-read-guard" }]
+#         }]
+#       }
+#     }
+#
+# 其他 harness 按自身文档配置即可。
+#
+# 配套：AGENTS.md §"读文档的防污染规则"
 
 set -euo pipefail
 
@@ -46,8 +60,10 @@ is_blocked() {
     [[ "$p" == "CHANGELOG.md" ]] && return 1
     # docs/ 下一律拦
     [[ "$p" == docs/* ]] && return 0
-    # 仓库根的三个规则文档
-    [[ "$p" == "AGENTS.md" || "$p" == "README.md" || "$p" == "CONTRIBUTING.md" ]] && return 0
+    # 仓库根的规则文档（CLAUDE.md 是 AGENTS.md 的符号链接，也拦）
+    case "$p" in
+        AGENTS.md|CLAUDE.md|README.md|CONTRIBUTING.md) return 0 ;;
+    esac
     return 1
 }
 

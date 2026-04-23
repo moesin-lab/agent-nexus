@@ -43,14 +43,21 @@ Thumbs.db
 *.swp
 *.swo
 
-# Claude Code / agent 工件
-# 默认忽略 .claude/ 下所有内容（projects transcript、缓存等），
-# 但允许项目级 settings 与 hooks 脚本入库（harness 级强制约定的载体）
-.claude/*
-!.claude/settings.json
-!.claude/hooks/
-!.claude/hooks/**
-.tasks/*.scratch.md
+# Agent harness 本地配置（不假定协作者使用哪种 agent；
+# 通用脚本在 scripts/ 下，各 harness 在 README/AGENTS.md 里按需自行配置）
+.claude/
+.codex/
+.gemini/
+.continue/
+.cursor/
+
+# Agent session 产出
+HANDOFF.md
+HANDOFF-*.md
+*.scratch.*
+
+# 本地 eval / 运行时产物
+eval-runs/
 
 # 临时文件
 tmp/

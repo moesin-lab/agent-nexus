@@ -38,6 +38,8 @@ related:
 - [x] ADR-0005 订阅一等路径 + 重构 cost-and-limits + 同步相关文档
 - [ ] 整份 `docs/dev/` 丢给 `codex-review` skill 独立 review（推迟）
 - [ ] ADR-0004 语言最终决策（用户拍板）
+- [ ] 可选：PreToolUse hook 硬性拦截对 `docs/**/*.md` 的 `Read`（将 AGENTS.md 约定升级为 harness 级强制）
+- [ ] 可选：`scripts/docs-lint`（提交前校验 frontmatter 完整性与枚举值）
 
 ## 下一阶段（预留）
 

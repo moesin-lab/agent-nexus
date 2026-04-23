@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# docs-read — 按 YAML frontmatter 状态控制性读取项目文档
+#
+# 目的：防止 agent 读取 deprecated / superseded / placeholder 文档后
+#       正文污染上下文。active 文档正常返回全文；其余只返回 frontmatter
+#       与告警摘要。
+#
+# 用法：
+#     scripts/docs-read <markdown-path>
+#
+# 退出码：
+#     0   文档为 active，已返回全文
+#     2   文档状态过时/占位，仅返回 frontmatter + 告警（未返回正文）
+#     1   用法错误或文件不存在
+#
+# 依赖：bash + awk（POSIX 功能集），无外部工具依赖
+#
+# See: docs/dev/standards/metadata.md
+#      AGENTS.md §"读文档的防污染规则"
+
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+    echo "Usage: $0 <markdown-path>" >&2
+    exit 1
+fi
+
+path="$1"
+
+if [[ ! -f "$path" ]]; then
+    echo "ERROR: file not found: $path" >&2
+    exit 1
+fi
+
+# 提取 frontmatter（第一对 --- 之间的内容）
+frontmatter=$(awk '
+    BEGIN { inside = 0; count = 0 }
+    /^---$/ {
+        count++
+        if (count == 1) { inside = 1; next }
+        if (count == 2) { exit }
+    }
+    inside == 1 { print }
+' "$path")
+
+if [[ -z "$frontmatter" ]]; then
+    echo "WARN: no YAML frontmatter found; returning full file" >&2
+    cat "$path"
+    exit 0
+fi
+
+# 从 frontmatter 提取字段值（简陋 YAML 标量解析，不处理列表/嵌套）
+get_field() {
+    local key="$1"
+    echo "$frontmatter" | awk -v k="^${key}:" '
+        $0 ~ k {
+            sub(/^[^:]+:[ \t]*/, "")
+            sub(/#.*/, "")
+            gsub(/^[ \t"]+|[ \t"]+$/, "")
+            print
+            exit
+        }
+    '
+}
+
+title=$(get_field "title")
+status=$(get_field "status")
+adr_status=$(get_field "adr_status")
+superseded_by=$(get_field "superseded_by")
+
+# 判断是否应该止步
+should_stop=0
+declare -a reasons=()
+
+case "$status" in
+    deprecated)
+        should_stop=1
+        reasons+=("status=deprecated：此文档已废弃，不作依据")
+        ;;
+    placeholder)
+        should_stop=1
+        reasons+=("status=placeholder：仅占位，内容是骨架，不作权威依据")
+        ;;
+esac
+
+case "$adr_status" in
+    Superseded)
+        should_stop=1
+        if [[ -n "${superseded_by:-}" && "${superseded_by}" != "null" ]]; then
+            reasons+=("adr_status=Superseded by ${superseded_by}：请改读取代者 ADR-${superseded_by}")
+        else
+            reasons+=("adr_status=Superseded：该决策已被取代")
+        fi
+        ;;
+    Deprecated)
+        should_stop=1
+        reasons+=("adr_status=Deprecated：决策已失效")
+        ;;
+esac
+
+if [[ $should_stop -eq 1 ]]; then
+    echo "==================================================================="
+    echo "!! STOPPED by docs-read"
+    echo "   path:   $path"
+    [[ -n "${title:-}" ]] && echo "   title:  $title"
+    for r in "${reasons[@]}"; do
+        echo "   reason: $r"
+    done
+    echo ""
+    echo "仅返回 frontmatter（未返回正文，避免上下文污染）："
+    echo "==================================================================="
+    echo "---"
+    echo "$frontmatter"
+    echo "---"
+    exit 2
+fi
+
+# active → 返回完整文件
+cat "$path"

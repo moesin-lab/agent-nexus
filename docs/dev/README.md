@@ -48,12 +48,14 @@ related: [...]       # 相对 docs/ 的路径
 
 ADR 和 spec 有专属扩展字段。完整 schema 见 [`standards/metadata.md`](standards/metadata.md)，强制要求见 [`standards/docs-style.md`](standards/docs-style.md)。
 
+**读取方式（强制）**：项目文档一律通过 `scripts/docs-read <path>` 读取，不得直接 `Read`。脚本按 frontmatter 状态控制返回内容；active 返回全文，superseded / deprecated / placeholder 只返回 frontmatter + 告警。详见 [`../../AGENTS.md`](../../AGENTS.md) §"读文档的防污染规则"。
+
 **使用建议**（给 agent）：
 
-- 查找相关文档时先读 frontmatter 的 `summary` + `tags`，命中再全读
+- 派发子任务时把读文档动作替换成 `Bash: scripts/docs-read <path>`
+- 查找相关文档时先看 frontmatter 的 `summary` + `tags`，命中再全读
 - 顺 `related` 链条探索上下文
-- 看到 `status: placeholder` 知道内容是骨架，别当权威依据
-- 看到 `adr_status: Deprecated` 知道该决策已失效
+- 遇到脚本返回退出码 2 → 看告警里的替代文档指引（如 `superseded_by`）
 
 ## 推荐阅读顺序
 

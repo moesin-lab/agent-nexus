@@ -1,154 +1,146 @@
 ---
-title: Spec：Cost & Limits（预算、限流、熔断）
+title: Spec：Limits & Cost Control（限流、熔断、可选预算）
 type: spec
 status: active
-summary: 预算层级、限流、退避与 jitter、熔断与恢复、配置示例
+summary: 失控保护（主轴）+ 可选 $ 预算（二等）；订阅用户通过 turn/时长/并发/退避/熔断获得默认保护
 tags: [spec, cost, budget, rate-limit, circuit-breaker]
 related:
+  - dev/adr/0005-subscription-as-first-class-path
   - dev/spec/observability
   - dev/spec/persistence
   - dev/architecture/session-model
 ---
 
-# Spec：Cost & Limits（预算、限流、熔断）
+# Spec：Limits & Cost Control
 
-LLM 可烧钱、IM 平台会限流、长会话可失控。本 spec 定义三道防护：**预算**、**限流**、**熔断**。
+本 spec 的一等公民是 **limits（失控保护）**，不是 $ 预算。**$ 预算作为可选层**，默认关闭，为 API 计费用户提供；订阅用户通过 turn 数、工具调用数、wall-clock 时长、并发、rate limit 退避、熔断获得保护。背景见 [`../adr/0005-subscription-as-first-class-path.md`](../adr/0005-subscription-as-first-class-path.md)。
 
-## 预算
+## 威胁模型
 
-### 层级
+| 威胁 | 机制 |
+|---|---|
+| 用户不在场的失控（本机桌面 + IM 远程） | turn 硬限 + wall-clock 超时 + 熔断 |
+| 订阅配额窗口被一次失控吃光（Claude Pro/Max 5h 滚动窗口） | turn / tool-call 硬限（默认值按保守配额估算） |
+| Prompt injection 导致无限工具调用循环 | maxToolCallsPerTurn + 熔断 |
+| Discord 429 被滥刷封禁 | 出站 rate limit 退避 + jitter |
+| Anthropic 429 / 5xx | 入站 LLM 调用退避 + 有限重试 |
+| 一个坏 session 把整进程拖死 | 并发上限 + 单 session 熔断 + 全局 degraded |
+| 本机磁盘被幂等表/transcript 灌满 | 幂等 TTL GC + transcript 轮转 |
+| API 用户预算失控（次要） | 可选 $ 预算层 |
 
-| 层级 | 默认 | 可配置 |
-|---|---|---|
-| 单次 turn | 无硬限，只记账 | 否 |
-| 单 session | `config.budget.perSession.limitUsd`（默认 $2.00） | 是 |
-| 全局（每日） | `config.budget.daily.limitUsd`（默认 $20.00） | 是 |
-| 全局（每月） | `config.budget.monthly.limitUsd`（默认 $200.00） | 是 |
+## 一等 limits（默认启用，计费模型无关）
 
-### 记账
+### Session 级串行
 
-- 每个 `llm_call_finished` 事件触发记账（见 `spec/observability.md` 的字段）
-- 从 `inputTokens / outputTokens / cacheReadTokens / cacheWriteTokens` 计算 `costUsd`
-- 定价表在 `config.pricing.<model>.{input,output,cacheRead,cacheWrite}`（$/MTok）
-- 缺定价表的模型：按**最贵已知模型**估算 + 打 `warn`
+- 同 `sessionKey` 串行（见 `../architecture/session-model.md`）
+- 防 CC 子进程被并发输入搞乱状态
+- 不可关闭
 
-### 预算检查
+### Turn 与工具调用硬限
 
-在每次 agent 输入前检查：
+- `limits.maxTurnsPerSession`（默认 `50`）：单 session 活跃期内最大 turn 数；超限 → session 自动 Archived + 用户通知
+- `limits.maxToolCallsPerTurn`（默认 `30`）：单 turn 内最大工具调用数；超限 → 触发 `turn_finished { reason: "tool_limit" }`
+- `limits.maxConsecutiveToolErrors`（默认 `5`）：单 turn 内连续工具失败数；超限 → 触发 `turn_finished { reason: "error" }`
 
-```
-if session.budget.used >= session.budget.limit:
-    拒绝本次输入
-    发用户通知：超出单会话预算，建议 /reset
-    session.state → Errored（或保留 Active 等待用户 /reset）
+理由：订阅配额以 messages/turns 计，turn 硬限是对订阅用户**直接有效**的保护。
 
-if day_budget.used >= day_budget.limit:
-    拒绝所有 session 的新 turn
-    全局状态标为 BudgetHalted
-    用户通知：今日预算已用尽
-```
+### Wall-clock 硬限
 
-### 阈值通知
+- `limits.perInputTimeoutMs`（默认 `300000` = 5 分钟）：单次 `sendInput` 到 `turn_finished` 的墙钟超时
+- 与 `SessionConfig.timeoutMs`（见 `agent-runtime.md`）对齐；后者是每 session 可覆盖值
+- 超时处理链：先发 `interrupt`（SIGINT）→ 等 5 秒 → 仍未 `turn_finished` 则 SIGKILL 并投递 `error` + `session_stopped`
 
-- 单 session 使用到 50% / 80% / 100%：发 `info` 通知
-- 全局每日 80% / 100%：发 `warn` 通知（可配置渠道，MVP 仅日志）
+### 并发上限
 
-### 预算重置
+- `limits.maxConcurrentSessions`（默认 `3`）：全局活跃 CC 子进程数
+- `limits.maxConcurrentLlmCalls`（默认 `3`）：全局 in-flight LLM 调用数
+- `limits.globalMessagesPerSec`（默认 `5`）：全局入站消息限速
+- 超限行为：排队（最多 `limits.sessionQueueMaxWaitMs` = 30s）→ 仍超则拒绝 + 用户可见提示
 
-- 单 session：随 session archive 自动归零
-- 每日/每月：按 UTC 自然边界
-- `/reset-budget` slash command（需 owner 权限）：立即重置单 session 或全局
+### 出站 Rate Limit（Discord）
 
-## 限流
-
-### 入站（IM → core）
-
-- 同 sessionKey：串行处理（见 session-model）
-- 跨 sessionKey：全局并发上限 `config.limits.maxConcurrentSessions`（默认 3）
-- 每秒消息数上限 `config.limits.globalMessagesPerSec`（默认 5）
-- 超限行为：排队（最长 30 秒）→ 仍超则拒绝并提示"系统忙，稍后重试"
-
-### 出站（core → IM）
-
-Discord Rate Limit：
-
-- 监听响应头 `X-RateLimit-Remaining`, `X-RateLimit-Reset-After`
+- 监听响应头 `X-RateLimit-Remaining`、`X-RateLimit-Reset-After`
 - 命中 429：按 `Retry-After` 退避
 - 全局 `X-RateLimit-Global: true`：停 `Retry-After` 后重试
-- 发送队列：每 channel 一个 FIFO，保证同 channel 顺序
+- 发送队列：每 channel 一个 FIFO，保持同 channel 顺序
 
-### LLM 调用
+### 入站 Rate Limit（Anthropic via CC）
 
-- 每 session 最大 in-flight 调用数：1（保证同 session 串行）
-- 全局最大 in-flight LLM 调用数：`config.limits.maxConcurrentLlmCalls`（默认 3）
-- Anthropic rate limit 429：指数退避（1s → 2s → 4s → 8s → 上限 30s）+ jitter（±20%）
-- 最大重试次数：5
+- Anthropic 429：指数退避 + jitter（1s → 2s → 4s → 8s，cap 30s）
+- 最大重试：5
+- Anthropic 5xx：base 1s、cap 60s、最多 3 次
+- 其他云错误：base 1s、cap 10s、最多 2 次
 
-### 退避 + Jitter
-
-通用退避公式：
+### 退避 + Jitter 公式
 
 ```
 delay = min(base * 2^attempt, cap) * (1 + random(-jitter, +jitter))
-base = 1000ms, cap = 30000ms, jitter = 0.2
+base = 1000ms, cap 见上表, jitter = 0.2
 ```
 
-具体参数：
+### 熔断
 
-| 场景 | base | cap | maxAttempts |
-|---|---|---|---|
-| Discord 429 | 取 `Retry-After` | 30s | 5 |
-| Discord 5xx | 1s | 30s | 3 |
-| Anthropic 429 | 1s | 30s | 5 |
-| Anthropic 5xx | 1s | 60s | 3 |
-| Anthropic 云错误（非 rate limit） | 1s | 10s | 2 |
+- `circuit.consecutiveFailureThreshold`（默认 `3`）：同 session 连续可重试错误数
+- 触发：session → `Errored`、CC 子进程 stopSession、用户通知
+- 重置：用户 `/resume`、或冷却 `circuit.cooldownMs`（默认 10 分钟）后自动尝试
+- 全局降级：5 分钟窗口内全局 agent 错误 > `circuit.globalDegradedThreshold`（默认 10）→ 停止接新 session，已有 session 正常，10 分钟无新错误自动解除
 
-## 熔断
+## 二等 limits（opt-in）
 
-### 触发条件
+### $ 预算（面向 API 计费用户）
 
-同 session 连续 N 次可重试错误（`platform` 或 `agent`）后仍失败：
+默认**关闭**（所有字段 null）。需要时配置：
 
-- `N = config.circuit.consecutiveFailureThreshold`（默认 3）
-- 触发后：session 状态 → `Errored`
-- CC 子进程 → stopSession
-- 用户通知："本会话出错过多，已暂停。输入 /resume 重试或 /end 结束。"
+- `budget.perSession.limitUsd`
+- `budget.daily.limitUsd`
+- `budget.monthly.limitUsd`
 
-### 重置
+启用时：
 
-- 用户显式 `/resume`：重新 spawn，从 Errored → Active
-- 用户 `/end`：归档 session
-- 超过冷却期（默认 10 分钟）后下一条消息会自动尝试恢复
+- 每个 `llm_call_finished` 事件的 `costUsd` 累加到对应层级
+- 软阈值（50%/80%/100%）发 `info/warn`
+- 硬阈值（100%）拒绝新 turn，session → Errored（单 session）或全局 BudgetHalted（每日/每月）
 
-### 全局熔断
+**订阅用户不应启用 $ 预算层**：CC CLI 在订阅模式下可能不返回可靠的 costUsd；启用后结果不可信。
 
-所有 session 在短时间（5 分钟）内出现大量 agent 错误（>10 次）：
+### 订阅配额剩余（未来）
 
-- 全局状态 → `Degraded`
-- 停止接受新 session，已有 session 正常
-- 发 `warn` 日志；用户可见："系统检测到异常，暂停接受新会话"
-- 10 分钟无新错误后自动解除
+- 占位：如 Anthropic 暴露订阅配额剩余 API，接入后成为一等 limit
+- 当前未实现；MVP 阶段通过 turn 硬限近似保护
+
+## Usage 记账（强制，不可关闭）
+
+每个 `llm_call_finished` 事件必须落日志（见 `observability.md` §"LLM 调用事件必含字段"），无论是否启用 $ 预算：
+
+- token（input / output / cache read / cache write）
+- `costUsd`（若 CC 返回；订阅模式可能为 0 或 null，**不视为错误**）
+- `turnSequence`
+- `toolCallsThisTurn`
+- `wallClockMs`
+
+订阅用户用这些字段做回溯："这 5 小时窗口里 turn 数走到多少、哪次 tool 循环最疯"。
+
+## 定价表（供 opt-in $ 预算使用）
+
+- 由 core 维护，配置 `pricing.<model>.<key>`（$/MTok）
+- 缺定价表的模型：跳过 $ 记账 + 打一次 `warn`（不中断业务）
+- 不再把"最贵已知模型"估算作为默认行为（订阅场景下会产生误导性报警）
 
 ## 幂等表清理
 
-- 后台 GC：每 5 分钟扫一次 `expires_at < now()` 的条目删除
-- 批量上限：每轮最多删 10000 条，避免长事务
-- 见 [`persistence.md`](persistence.md)
+- 后台 GC：每 5 分钟扫一次 `expires_at < now()` 的条目
+- 批量上限：每轮 10000 条
+- 见 `persistence.md`
 
 ## 配置示例
 
 ```toml
-[budget]
-[budget.perSession]
-limitUsd = 2.00
-
-[budget.daily]
-limitUsd = 20.00
-
-[budget.monthly]
-limitUsd = 200.00
-
+# 一等 limits：默认即启用，下面是默认值示例
 [limits]
+maxTurnsPerSession = 50
+maxToolCallsPerTurn = 30
+maxConsecutiveToolErrors = 5
+perInputTimeoutMs = 300000
 maxConcurrentSessions = 3
 maxConcurrentLlmCalls = 3
 globalMessagesPerSec = 5
@@ -160,6 +152,17 @@ cooldownMs = 600000
 globalDegradedWindowMs = 300000
 globalDegradedThreshold = 10
 
+# 二等 limits：$ 预算（默认关闭；API 用户可开启）
+# [budget.perSession]
+# limitUsd = 2.00
+#
+# [budget.daily]
+# limitUsd = 20.00
+#
+# [budget.monthly]
+# limitUsd = 200.00
+
+# 定价表（仅 $ 预算启用时生效）
 [pricing.claude-opus-4-7]
 input = 15.00
 output = 75.00
@@ -167,36 +170,45 @@ cacheRead = 1.50
 cacheWrite = 18.75
 ```
 
-（定价单位：$/MTok。数字仅示例，实际值以 Anthropic 官方为准。）
-
 ## 合约测试
 
-- **预算超限**：构造已用 $1.99/$2.00 的 session，再发触发 $0.10 的输入 → 拒绝 + 通知
+- **Turn 超限**：session 跑到第 51 个 turn → 自动归档 + 通知
+- **工具调用循环**：单 turn 内 31 次工具调用 → `turn_finished { reason: "tool_limit" }`
+- **Wall-clock 超时**：构造长任务 > 5 分钟 → SIGINT → SIGKILL 路径 + session 标 Errored
+- **并发排队**：4 个 session 同时 spawn，第 4 个排队；超时后拒绝
 - **Discord 429**：mock 429 响应 → 按 `Retry-After` 退避 + 重试
-- **熔断**：连续 3 次 agent error → session → Errored + 通知
-- **幂等 GC**：插入 10000 条过期条目 → GC 后表为空
-- **全局并发**：4 个 session 同时启动，第 4 个排队
+- **Anthropic 429**：指数退避 + jitter 观察
+- **熔断**：连续 3 次 agent error → Errored + 通知
+- **幂等 GC**：插入 10000 过期条目 → 一轮 GC 清空
+- **$ 预算（opt-in）**：启用后，预算耗尽 → 拒绝 + 通知
+- **Usage 字段完整**：订阅模式下 `costUsd` 可为 null，但 token/turnSequence/wallClockMs 必有
 
 ## 观测
 
-所有相关事件走 [`observability.md`](observability.md)：
+所有相关事件走 `observability.md`：
 
-- `budget_threshold_crossed`
+- `turn_limit_hit`（session, turn 序号）
+- `tool_limit_hit`（session, turn 序号, toolCalls）
+- `wallclock_timeout`（session, elapsedMs）
 - `rate_limit_hit`
 - `circuit_opened` / `circuit_reset`
-- `llm_call_finished`（含 costUsd）
+- `budget_threshold_crossed`（仅 opt-in 启用时）
+- `llm_call_finished`（含 usage 字段）
 
 ## 反模式
 
-- 把预算硬编码在代码里（必须配置）
+- 把 `$ 预算`作为默认保护（对订阅用户无效 + 误导）
+- 把"最贵已知模型"作为缺失定价的兜底估算（订阅模式会产生虚假报警）
+- 缺 turn 硬限只靠 $ 预算（订阅用户撞配额墙前得不到任何保护）
 - 无退避地重试（打爆平台）
-- 熔断触发后永远不恢复（需要冷却 + 用户可恢复）
-- 用指数退避但不加 jitter（雷鸣群效应）
-- 幂等表不 GC（SQLite 无限增长）
-- 预算超限时静默跳过（必须显式拒绝 + 通知用户）
+- 熔断后永不恢复（必须有冷却 + 用户可恢复）
+- 指数退避不加 jitter（雷鸣群）
+- 幂等表不 GC
+- 预算/限流超限时静默跳过（必须显式拒绝 + 通知）
 
 ## Out of spec
 
-- 按模型区分不同预算（MVP 统一预算）
-- 按时段的动态预算（工作日 vs 周末）
-- 预算报表 UI（product 阶段）
+- 按模型区分不同预算（MVP 统一）
+- 按时段的动态限额
+- 订阅配额剩余的主动探测（依赖 Anthropic 接口支持；发新 ADR）
+- 多 agent 后端时的抽象计费层（届时发新 ADR）

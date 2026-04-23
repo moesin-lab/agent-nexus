@@ -32,10 +32,12 @@ related:
 
 ### 待完成（本阶段收尾）
 
-- [ ] ADR 0004 语言选型评审：基于已写成的三大契约推进决策
-- [ ] 整份 `docs/dev/` 丢给 `codex-review` skill 独立 review
-- [ ] 按 review 反馈原地修订
-- [ ] 一次性 commit：`docs: bootstrap dev docs and ADRs`
+- [x] ADR 0004 语言选型的二次评审（含 Go/TS/Python 对比矩阵），仍 `Proposed`，待用户最终决策
+- [x] 一次性 commit：`docs: bootstrap dev docs and ADRs`（d2fd1ab）
+- [x] 加 YAML frontmatter：`docs: add YAML frontmatter for progressive agent reading`（da7ac3d）
+- [x] ADR-0005 订阅一等路径 + 重构 cost-and-limits + 同步相关文档
+- [ ] 整份 `docs/dev/` 丢给 `codex-review` skill 独立 review（推迟）
+- [ ] ADR-0004 语言最终决策（用户拍板）
 
 ## 下一阶段（预留）
 

@@ -82,6 +82,7 @@ Proposed ──(评审通过)──> Accepted
 | [0002](0002-agent-backend-claude-code-cli.md) | Agent 后端选型：Claude Code CLI | Accepted |
 | [0003](0003-deployment-local-desktop.md) | 部署形态：本机桌面 | Accepted |
 | [0004](0004-language-runtime.md) | 实现语言与运行时选型 | Proposed |
+| [0005](0005-subscription-as-first-class-path.md) | 订阅计费为一等用户路径 | Accepted |
 
 ## 引用规则
 

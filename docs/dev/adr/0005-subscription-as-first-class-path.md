@@ -1,27 +1,31 @@
 ---
-title: ADR-0005：订阅计费为一等用户路径
+title: ADR-0005：订阅计费为一等用户路径（已被 0006 取代）
 type: adr
 status: active
-summary: 订阅（Claude Pro/Max）是主流用户路径；limits 设计以"配额/turn/时长"为主轴，$ 预算降为可选
-tags: [adr, decision, cost, budget, rate-limit, circuit-breaker]
+summary: 原议把订阅作为一等用户路径；已被 ADR-0006 取代——正确的一等公民是"机制类别"（防御失控）而非"用户类型"
+tags: [adr, decision, cost, budget, rate-limit, circuit-breaker, superseded]
 related:
+  - dev/adr/0006-limits-layering-defense-first
   - dev/adr/0002-agent-backend-claude-code-cli
   - dev/adr/0003-deployment-local-desktop
   - dev/spec/cost-and-limits
   - dev/spec/observability
-adr_status: Accepted
+adr_status: Superseded
 adr_number: "0005"
 decision_date: 2026-04-22
 supersedes: null
-superseded_by: null
+superseded_by: "0006"
 ---
 
 # ADR-0005：订阅计费为一等用户路径
+
+> **状态**：已被 [ADR-0006](0006-limits-layering-defense-first.md) 取代。本 ADR 把订阅作为"一等用户路径"的立论错位——等同于把 API 用户降为二等公民；真正的一等公民是"机制类别（防御失控 / 使用量观测）"而非"用户类型"。ADR-0006 保留同一决策精神但以正确框架表述。原文以下保留供审计追溯。
 
 ## 状态变更日志
 
 - 2026-04-22：Proposed（由用户 review 意见触发）
 - 2026-04-22：Accepted（同日收敛）
+- 2026-04-22：Superseded by ADR-0006（命名与立论角度错误；用户在第二轮 review 中指出"订阅也不是一等公民，不能不考虑 API 用户"；由 0006 以"机制分层"框架重新表述同一决策精神）
 
 ## Context
 

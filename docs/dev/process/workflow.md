@@ -2,7 +2,7 @@
 title: 开发流程（workflow）
 type: process
 status: active
-summary: 从想法到合并的主路径；何时需要 ADR/spec/TDD、完成定义、轻量路径白名单
+summary: 从想法到合并的主路径；分支先行、何时需要 ADR/spec/TDD、完成定义
 tags: [workflow, process]
 related:
   - root/AGENTS
@@ -14,7 +14,7 @@ related:
 
 # 开发流程（workflow）
 
-定义"从想法到合并"的完整路径。所有代码改动都走此流程，除非命中下文"轻量路径"白名单。
+定义"从想法到合并"的完整路径。所有代码与文档改动都走此流程，没有例外——包括错别字、注释、依赖补丁升级。
 
 ## 主路径
 
@@ -23,28 +23,44 @@ related:
  │
  ├─> 1. 开 Issue 说明问题与目标
  │
- ├─> 2. 判断是否需要 ADR
+ ├─> 2. 从 main checkout 新分支（命名见 commit-and-branch.md）
+ │     后续所有 ADR/spec/test/impl 的改动都落在这条分支上
+ │
+ ├─> 3. 判断是否需要 ADR
  │     ├─ 是 → 写 ADR（docs/dev/adr/）→ 评审 → 状态标为 Accepted
  │     └─ 否 → 跳过
  │
- ├─> 3. 判断是否需要 spec
+ ├─> 4. 判断是否需要 spec
  │     ├─ 是 → 写或改 spec（docs/dev/spec/）→ 评审
  │     └─ 否 → 跳过
  │
- ├─> 4. 写 failing test（TDD，见 process/tdd.md）
+ ├─> 5. 写 failing test（TDD，见 process/tdd.md）
  │
- ├─> 5. 写最小实现让测试变绿
+ ├─> 6. 写最小实现让测试变绿
  │
- ├─> 6. 按需 refactor（保持测试绿）
+ ├─> 7. 按需 refactor（保持测试绿）
  │
- ├─> 7. 自查清单（见 process/code-review.md）
+ ├─> 8. 自查清单（见 process/code-review.md）
  │
- ├─> 8. Codex review（大变更额外跑 ultrareview）
+ ├─> 9. Codex review（大变更额外跑 ultrareview）
  │
- ├─> 9. 人类 review（如果有协作者）
+ ├─> 10. 人类 review（如果有协作者）
  │
- └─> 10. Merge（遵循 commit-and-branch.md 的合并策略）
+ └─> 11. Merge（遵循 commit-and-branch.md 的合并策略）
 ```
+
+## 分支先行（不可跳过）
+
+- 一切改动必须在从 `main` checkout 的新分支上进行，包括纯文档、错别字、依赖补丁升级。
+- 禁止在 `main` 上直接编辑、commit 或累积未 PR 的改动。
+- 即便是"一行改动"，也走 分支 → PR → review → squash merge 的完整链路。
+
+理由：
+
+1. **PR 是 review 的承载窗口**：codex review / ultrareview 当前由作者手动触发（见 `code-review.md`），但 diff 展示、评论、反馈与作者回应、决策记录都挂在 PR 上。直接在 `main` commit 等于把这些都丢掉。
+2. **分支隔离**：每次改动独立、可单独 revert、可 abandon；不会把半成品和别人的工作搅在一起。
+3. **强制范围收敛**：分支命名（`<type>/<short-description>`）本身就是"这次只做这一件事"的承诺，与"PR 单一关注点"形成双约束。
+4. **为未来留位**：分支保护规则、PR 触发的 CI、自动 review hook、required reviewers——都需要"分支 → PR"已经是默认习惯才能挂上去。
 
 ## 何时需要 ADR
 
@@ -64,16 +80,16 @@ related:
 
 只改单一模块内部实现、不影响外部契约的，不需要改 spec。
 
-## 轻量路径（可跳过 ADR/spec/TDD）
+## 可跳过 ADR / spec / TDD 的情形
 
-以下改动允许直接走"改 → 自查 → review → merge"：
+流程主路径的每一步都保留，但以下改动允许在该步"判断为不需要"后直接跳过，而**分支、PR、review、squash merge 不可跳过**：
 
-- 文档错别字、链接修复、术语统一
-- 依赖的补丁版本升级（无 breaking change）
-- 代码注释修改
-- 本地开发脚本的小调整（不影响 CI）
+- 文档错别字、链接修复、术语统一 → 跳过 ADR / spec / test
+- 依赖的补丁版本升级（无 breaking change） → 跳过 ADR / spec；是否需要 test 看风险
+- 代码注释修改 → 跳过 ADR / spec / test
+- 本地开发脚本的小调整（不影响 CI） → 跳过 ADR / spec；是否需要 test 看风险
 
-轻量路径仍然需要 Conventional Commit 且 PR 必须范围收敛。
+上述改动同样需要独立分支、Conventional Commit 和 PR 范围收敛。
 
 ## 完成定义（Definition of Done）
 
@@ -97,6 +113,7 @@ related:
 
 ## 反模式
 
+- **在 `main` 上直接实现 / commit**（违反"分支先行"，绕过 PR 与 codex review）
 - 先写实现再补测试（违反 TDD，见 `process/tdd.md`）
 - 先写实现再补 spec（违反"契约先行"）
 - ADR 写完就开始写代码，跳过评审

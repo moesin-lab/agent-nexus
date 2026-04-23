@@ -2,7 +2,7 @@
 title: AGENTS.md（agent-nexus 项目规则）
 type: root
 status: active
-summary: 项目特有协作规则入口，叠加在全局 ~/.claude/CLAUDE.md 之上，定义七条不可违反的核心原则与 PR 三问
+summary: 项目特有协作规则入口，叠加在全局 ~/.claude/CLAUDE.md 之上，定义九条不可违反的核心原则与 PR 三问
 tags: [workflow, tdd, code-review, subagent, commit]
 related:
   - root/CONTRIBUTING
@@ -18,14 +18,15 @@ related:
 
 ## 核心原则（不可违反）
 
-1. **文档先行**：新模块没进 `docs/dev/spec/` 不接受 PR；架构级改动没进 `docs/dev/adr/` 不接受 PR。
-2. **TDD 强制**：先 spec → 先 failing test → 再 impl。细节见 [`docs/dev/process/tdd.md`](docs/dev/process/tdd.md)。
-3. **契约先行**：跨层交互必须走 `docs/dev/spec/` 定义的接口。新增能力先改 spec，再改代码。
-4. **Code review 不走过场**：每个 PR 必须过 codex review（大变更走 ultrareview）。流程见 [`docs/dev/process/code-review.md`](docs/dev/process/code-review.md)。
-5. **Subagent 优先**：探索类、长研究类任务优先派发子代理，主 session 只做收敛与决策。细节见 [`docs/dev/process/subagent-usage.md`](docs/dev/process/subagent-usage.md)。
-6. **范围收敛**：每个 PR 只做一件事，禁止"顺手重构"无关代码。
-7. **Conventional Commits**：所有提交遵循 [`docs/dev/process/commit-and-branch.md`](docs/dev/process/commit-and-branch.md)。
-8. **作废文档物化到归档目录**：Superseded ADR 和明确 Deprecated 的文档必须住在 `docs/dev/adr/deprecated/` 或 `docs/_deprecated/`——路径本身就是"别当事实"的信号。active 路径下的文档（含 placeholder）可直接 `Read`；归档路径的文档由 hook 拦截，必须走 `scripts/docs-read --force`。详见下文"读文档的防污染规则"。
+1. **分支先行**：所有改动（含文档、错别字、依赖补丁）必须先从 `main` checkout 新分支再动手；禁止在 `main` 上直接编辑或 commit 未合入的改动。理由：① PR 是 codex review / ultrareview 反馈与作者回应的承载窗口（review 本身手动触发，但 diff、评论、决策记录都挂在 PR 上）；② 分支隔离让每次改动独立可回滚、强制范围收敛；③ 为未来分支保护、自动化 CI/review hook、required reviewers 留出落点。细节见 [`docs/dev/process/commit-and-branch.md`](docs/dev/process/commit-and-branch.md)。
+2. **文档先行**：新模块没进 `docs/dev/spec/` 不接受 PR；架构级改动没进 `docs/dev/adr/` 不接受 PR。
+3. **TDD 强制**：先 spec → 先 failing test → 再 impl。细节见 [`docs/dev/process/tdd.md`](docs/dev/process/tdd.md)。
+4. **契约先行**：跨层交互必须走 `docs/dev/spec/` 定义的接口。新增能力先改 spec，再改代码。
+5. **Code review 不走过场**：每个 PR 必须过 codex review（大变更走 ultrareview）。流程见 [`docs/dev/process/code-review.md`](docs/dev/process/code-review.md)。
+6. **Subagent 优先**：探索类、长研究类任务优先派发子代理，主 session 只做收敛与决策。细节见 [`docs/dev/process/subagent-usage.md`](docs/dev/process/subagent-usage.md)。
+7. **范围收敛**：每个 PR 只做一件事，禁止"顺手重构"无关代码。
+8. **Conventional Commits**：所有提交遵循 [`docs/dev/process/commit-and-branch.md`](docs/dev/process/commit-and-branch.md)。
+9. **作废文档物化到归档目录**：Superseded ADR 和明确 Deprecated 的文档必须住在 `docs/dev/adr/deprecated/` 或 `docs/_deprecated/`——路径本身就是"别当事实"的信号。active 路径下的文档（含 placeholder）可直接 `Read`；归档路径的文档由 hook 拦截，必须走 `scripts/docs-read --force`。详见下文"读文档的防污染规则"。
 
 ## 读文档的防污染规则
 

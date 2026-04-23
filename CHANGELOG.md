@@ -20,4 +20,6 @@
 
 ### Tooling
 
-- 新增 `scripts/docs-read`（bash，零外部依赖）：按 YAML frontmatter 状态控制性读取项目文档，防止 agent 读取过时文档后正文污染上下文。`AGENTS.md` 追加"读文档的防污染规则"作为核心原则第 8 条，强制所有 `docs/` 与规则文档通过脚本读取。
+- 新增 `scripts/docs-read`（bash，零外部依赖）：按 YAML frontmatter 状态控制性读取项目文档，防止 agent 读取过时文档后正文污染上下文。三种模式：默认（active 全文，过时只 frontmatter + 告警）/ `--head`（仅 frontmatter，泛读用）/ `--force`（强制全文，过时告警）。
+- `AGENTS.md` 追加"读文档的防污染规则"作为核心原则第 8 条，强制所有 `docs/` 与规则文档通过脚本读取。
+- 新增 `.claude/settings.json` + `.claude/hooks/pretool-read-guard`：harness 级 PreToolUse hook 拦截对 `docs/**/*.md` 和根规则文档的裸 `Read` 调用，stderr 指引三种 docs-read 模式选择。`.gitignore` 允许 `.claude/settings.json` 与 `.claude/hooks/` 入库（同时默认忽略 `.claude/` 下的 transcript 等本地工件）。

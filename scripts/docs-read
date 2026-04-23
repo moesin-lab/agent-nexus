@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 # docs-read — 按 YAML frontmatter 状态控制性读取项目文档
 #
-# 目的：防止 agent 读取 deprecated / superseded / placeholder 文档后
-#       正文污染上下文。active 文档正常返回全文；其余只返回 frontmatter
-#       与告警摘要。
+# 三种模式：
 #
-# 用法：
-#     scripts/docs-read <markdown-path>
+#     docs-read <path>              默认（智能）：active 返回全文；过时仅返回
+#                                   frontmatter + 告警（含替代文档指引）。
+#
+#     docs-read --head <path>       泛读：仅返回 frontmatter，无视文档状态。
+#                                   用于先判断一篇文档值不值得读全文。
+#
+#     docs-read --force <path>      强读：强制返回全文；若文档过时，stderr
+#                                   给出告警但仍返回全文。用于研究历史
+#                                   （例：复盘被 Superseded 的 ADR 演进）。
 #
 # 退出码：
-#     0   文档为 active，已返回全文
-#     2   文档状态过时/占位，仅返回 frontmatter + 告警（未返回正文）
+#     0   正常返回
+#     2   默认模式下文档状态过时，仅返回 frontmatter + 告警
 #     1   用法错误或文件不存在
 #
 # 依赖：bash + awk（POSIX 功能集），无外部工具依赖
@@ -20,12 +25,66 @@
 
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-    echo "Usage: $0 <markdown-path>" >&2
+mode="auto"
+path=""
+
+usage() {
+    cat <<'EOF'
+Usage:
+    docs-read <path>              默认（智能）：active 全文；过时 frontmatter + 告警
+    docs-read --head <path>       泛读：仅 frontmatter（无视状态）
+    docs-read --force <path>      强读：强制全文（过时会 stderr 告警）
+    docs-read -h | --help         打印本帮助
+
+Exit codes:
+    0   正常返回
+    2   默认模式下文档过时，仅返回 frontmatter
+    1   用法错误 / 文件不存在
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --head)
+            mode="head"
+            shift
+            ;;
+        --force)
+            mode="force"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            if [[ $# -eq 1 ]]; then path="$1"; shift; else
+                echo "ERROR: expected exactly one path after --" >&2
+                exit 1
+            fi
+            ;;
+        -*)
+            echo "ERROR: unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+        *)
+            if [[ -z "$path" ]]; then
+                path="$1"
+            else
+                echo "ERROR: multiple paths given" >&2
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$path" ]]; then
+    usage >&2
     exit 1
 fi
-
-path="$1"
 
 if [[ ! -f "$path" ]]; then
     echo "ERROR: file not found: $path" >&2
@@ -43,12 +102,6 @@ frontmatter=$(awk '
     inside == 1 { print }
 ' "$path")
 
-if [[ -z "$frontmatter" ]]; then
-    echo "WARN: no YAML frontmatter found; returning full file" >&2
-    cat "$path"
-    exit 0
-fi
-
 # 从 frontmatter 提取字段值（简陋 YAML 标量解析，不处理列表/嵌套）
 get_field() {
     local key="$1"
@@ -63,12 +116,61 @@ get_field() {
     '
 }
 
+# ----- head 模式：仅返回 frontmatter -----
+if [[ "$mode" == "head" ]]; then
+    if [[ -z "$frontmatter" ]]; then
+        echo "WARN: no YAML frontmatter found in $path" >&2
+        exit 0
+    fi
+    echo "---"
+    echo "$frontmatter"
+    echo "---"
+    exit 0
+fi
+
+# ----- force 模式：强制返回全文，过时则 stderr 告警 -----
+if [[ "$mode" == "force" ]]; then
+    if [[ -n "$frontmatter" ]]; then
+        status=$(get_field "status")
+        adr_status=$(get_field "adr_status")
+        title=$(get_field "title")
+        declare -a warns=()
+        case "$status" in
+            deprecated|placeholder)
+                warns+=("status=$status")
+                ;;
+        esac
+        case "$adr_status" in
+            Superseded|Deprecated)
+                warns+=("adr_status=$adr_status")
+                ;;
+        esac
+        if [[ ${#warns[@]} -gt 0 ]]; then
+            echo "[docs-read --force] 注意：按 --force 读取过时文档全文" >&2
+            echo "   path:  $path" >&2
+            [[ -n "${title:-}" ]] && echo "   title: $title" >&2
+            for w in "${warns[@]}"; do
+                echo "   flag:  $w" >&2
+            done
+        fi
+    fi
+    cat "$path"
+    exit 0
+fi
+
+# ----- 默认（auto）模式 -----
+
+if [[ -z "$frontmatter" ]]; then
+    echo "WARN: no YAML frontmatter found; returning full file" >&2
+    cat "$path"
+    exit 0
+fi
+
 title=$(get_field "title")
 status=$(get_field "status")
 adr_status=$(get_field "adr_status")
 superseded_by=$(get_field "superseded_by")
 
-# 判断是否应该止步
 should_stop=0
 declare -a reasons=()
 
@@ -100,14 +202,17 @@ esac
 
 if [[ $should_stop -eq 1 ]]; then
     echo "==================================================================="
-    echo "!! STOPPED by docs-read"
+    echo "!! STOPPED by docs-read (default mode)"
     echo "   path:   $path"
     [[ -n "${title:-}" ]] && echo "   title:  $title"
     for r in "${reasons[@]}"; do
         echo "   reason: $r"
     done
     echo ""
-    echo "仅返回 frontmatter（未返回正文，避免上下文污染）："
+    echo "如果确需全文可用：docs-read --force $path"
+    echo "如果仅需 frontmatter 可用：docs-read --head $path"
+    echo ""
+    echo "以下仅为 frontmatter（未返回正文，避免上下文污染）："
     echo "==================================================================="
     echo "---"
     echo "$frontmatter"
@@ -115,5 +220,5 @@ if [[ $should_stop -eq 1 ]]; then
     exit 2
 fi
 
-# active → 返回完整文件
+# active 文档 → 返回全文
 cat "$path"

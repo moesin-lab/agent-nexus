@@ -35,37 +35,37 @@ related:
 
 ### 强制规则
 
-读项目文档**必须**通过：
+读项目文档**必须**通过 `scripts/docs-read`（三种模式按意图选）：
 
-```
-scripts/docs-read <path>
-```
+| 命令 | 用途 | 返回 | 退出码 |
+|---|---|---|---|
+| `scripts/docs-read <path>` | **默认（智能）**：大多数场景走这个 | active 全文；过时只 frontmatter + 告警 | 0 / 2 |
+| `scripts/docs-read --head <path>` | **泛读**：先看 summary/tags 判断要不要读全文 | 仅 frontmatter（无视状态） | 0 |
+| `scripts/docs-read --force <path>` | **强读**：研究历史（例：Superseded ADR 的演进） | 全文；过时在 stderr 告警 | 0 |
 
-该脚本按 frontmatter 状态决定返回全文或仅 frontmatter + 告警：
+### Harness 级强制
 
-| frontmatter | 脚本返回 | 退出码 |
-|---|---|---|
-| `status: active` 且 `adr_status` 不是 Superseded/Deprecated | 完整文件 | 0 |
-| `status: deprecated` | 仅 frontmatter + 告警 | 2 |
-| `status: placeholder` | 仅 frontmatter + 告警 | 2 |
-| `adr_status: Superseded` | 仅 frontmatter + 告警（含 `superseded_by` 指向取代者） | 2 |
-| `adr_status: Deprecated` | 仅 frontmatter + 告警 | 2 |
+项目 `.claude/settings.json` 配置了 PreToolUse hook（`.claude/hooks/pretool-read-guard`）：
+
+- 命中 `docs/**/*.md` 或根 `AGENTS.md` / `README.md` / `CONTRIBUTING.md` 的 `Read` 调用 → **直接 block**，stderr 指引三模式
+- 匹配不到的路径（代码文件、`CHANGELOG.md`、`.tasks/`、外部仓库）→ 放行
+
+即使 AGENTS.md 规则被忘，harness 也会把 agent 推回 docs-read。
 
 ### 不走脚本的例外
 
-以下情况允许直接 `Read`：
-
-- `CHANGELOG.md`（按 Keep a Changelog 规范，无 frontmatter）
-- `.git/`、`.tasks/`、`scripts/`、代码文件（`.go` / `.ts` / `.py` 等）
-- 非项目的外部仓库（不归本规则管）
+- `CHANGELOG.md`（Keep a Changelog 规范，无 frontmatter）
+- 代码文件（`.go` / `.ts` / `.py` 等）
+- 非项目文件（`.git/`、`.tasks/`、`scripts/`、外部仓库）
 
 ### 违反的后果
 
-reviewer 看到 PR 里有直接 `Read` 项目 markdown 且作者看起来**确实读了**（引用了内容/做出了基于内容的决策），应要求重做。过时内容一旦进入决策链，整条链条都需要重新验证。
+reviewer 在 PR 里看到直接 `Read` 项目 markdown 且作者确实基于它做了决策的，应要求重做。过时内容进决策链后，整条链条都要重新验证。
 
-### 脚本不可用时
+### 脚本或 hook 不可用时
 
-脚本崩溃或 frontmatter 解析失败时，**退回 `Read(path, limit=20)` 只读前 20 行元信息**，再人工判断。**不允许**在脚本不可用时直接读全文作为默认行为。
+- `docs-read` 崩溃：退回 `Read(path, limit=20)` 只读前 20 行元信息，再人工判断；**不允许**直接读全文作为默认行为。
+- Hook 失效（如 `.claude/settings.json` 未加载）：仍按 AGENTS.md 约定自律；reviewer 仍按硬标准验收。
 
 ## 每个 PR 必答三问
 

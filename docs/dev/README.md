@@ -48,14 +48,24 @@ related: [...]       # 相对 docs/ 的路径
 
 ADR 和 spec 有专属扩展字段。完整 schema 见 [`standards/metadata.md`](standards/metadata.md)，强制要求见 [`standards/docs-style.md`](standards/docs-style.md)。
 
-**读取方式（强制）**：项目文档一律通过 `scripts/docs-read <path>` 读取，不得直接 `Read`。脚本按 frontmatter 状态控制返回内容；active 返回全文，superseded / deprecated / placeholder 只返回 frontmatter + 告警。详见 [`../../AGENTS.md`](../../AGENTS.md) §"读文档的防污染规则"。
+**读取方式（强制）**：项目文档一律通过 `scripts/docs-read` 读取，不得直接 `Read`（由 `.claude/hooks/pretool-read-guard` 在 harness 级拦截）。
+
+三种模式按意图选：
+
+| 命令 | 场景 |
+|---|---|
+| `scripts/docs-read <path>` | **默认**：大多数场景；active 全文，过时只 frontmatter + 告警 |
+| `scripts/docs-read --head <path>` | **泛读**：先看 summary/tags 决定要不要读全文 |
+| `scripts/docs-read --force <path>` | **强读**：研究历史（例：Superseded ADR 的演进） |
+
+详见 [`../../AGENTS.md`](../../AGENTS.md) §"读文档的防污染规则"。
 
 **使用建议**（给 agent）：
 
-- 派发子任务时把读文档动作替换成 `Bash: scripts/docs-read <path>`
-- 查找相关文档时先看 frontmatter 的 `summary` + `tags`，命中再全读
+- 派发子任务时把读文档动作替换成 `Bash: scripts/docs-read [mode] <path>`
+- 进项目后先 `--head` 扫几份关键文档 summary 建立心智再选性全读
 - 顺 `related` 链条探索上下文
-- 遇到脚本返回退出码 2 → 看告警里的替代文档指引（如 `superseded_by`）
+- 默认模式遇到退出码 2 → 看告警里的替代文档指引（如 `superseded_by`），再决定切 `--force` 读历史还是改读取代者
 
 ## 推荐阅读顺序
 

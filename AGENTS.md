@@ -18,7 +18,7 @@ related:
 
 ## 核心原则（不可违反）
 
-1. **分支先行**：所有改动（含文档、错别字、依赖补丁）必须先从 `main` checkout 新分支再动手；禁止在 `main` 上直接编辑或 commit 未合入的改动。理由：PR 是本项目强制的 codex review 触发点，绕过分支即绕过 review。细节见 [`docs/dev/process/commit-and-branch.md`](docs/dev/process/commit-and-branch.md)。
+1. **分支先行**：所有改动（含文档、错别字、依赖补丁）必须先从 `main` checkout 新分支再动手；禁止在 `main` 上直接编辑或 commit 未合入的改动。理由：① PR 是 codex review / ultrareview 反馈与作者回应的承载窗口（review 本身手动触发，但 diff、评论、决策记录都挂在 PR 上）；② 分支隔离让每次改动独立可回滚、强制范围收敛；③ 为未来分支保护、自动化 CI/review hook、required reviewers 留出落点。细节见 [`docs/dev/process/commit-and-branch.md`](docs/dev/process/commit-and-branch.md)。
 2. **文档先行**：新模块没进 `docs/dev/spec/` 不接受 PR；架构级改动没进 `docs/dev/adr/` 不接受 PR。
 3. **TDD 强制**：先 spec → 先 failing test → 再 impl。细节见 [`docs/dev/process/tdd.md`](docs/dev/process/tdd.md)。
 4. **契约先行**：跨层交互必须走 `docs/dev/spec/` 定义的接口。新增能力先改 spec，再改代码。

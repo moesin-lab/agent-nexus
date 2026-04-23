@@ -53,7 +53,14 @@ related:
 
 - 一切改动必须在从 `main` checkout 的新分支上进行，包括纯文档、错别字、依赖补丁升级。
 - 禁止在 `main` 上直接编辑、commit 或累积未 PR 的改动。
-- 即便是"一行改动"，也走 分支 → PR → review → squash merge 的完整链路。原因：本项目把 PR 作为强制的 codex review 触发点，绕过分支就绕过了 review。
+- 即便是"一行改动"，也走 分支 → PR → review → squash merge 的完整链路。
+
+理由：
+
+1. **PR 是 review 的承载窗口**：codex review / ultrareview 当前由作者手动触发（见 `code-review.md`），但 diff 展示、评论、反馈与作者回应、决策记录都挂在 PR 上。直接在 `main` commit 等于把这些都丢掉。
+2. **分支隔离**：每次改动独立、可单独 revert、可 abandon；不会把半成品和别人的工作搅在一起。
+3. **强制范围收敛**：分支命名（`<type>/<short-description>`）本身就是"这次只做这一件事"的承诺，与"PR 单一关注点"形成双约束。
+4. **为未来留位**：分支保护规则、PR 触发的 CI、自动 review hook、required reviewers——都需要"分支 → PR"已经是默认习惯才能挂上去。
 
 ## 何时需要 ADR
 

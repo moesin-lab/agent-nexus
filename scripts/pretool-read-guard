@@ -9,16 +9,18 @@
 #     Read 无障碍；
 #     两类"非权威源"会让 agent 把非事实内容当事实用，必须拦：
 #       1. 归档文档（Superseded / Deprecated / placeholder 的历史内容）
-#       2. 仓库门面（README.md — 产品介绍语气，对内部决策不是事实源）
+#       2. 面向外部的文档（README.md / CONTRIBUTING.md — 产品介绍与贡献
+#          指南的语气；内部 agent 应读 AGENTS.md 或 docs/dev/**，而不是
+#          从这些文档推断架构/契约）
 #     想读这些内容必须显式走 scripts/docs-read --force（或经 hook 指引）。
 #
 # 被拦截的路径：
 #     docs/dev/adr/deprecated/**/*.md
 #     docs/_deprecated/**/*.md
-#     README.md（仓库根门面）
+#     README.md / CONTRIBUTING.md（仓库根的外部导向文档）
 #
 # 放行（不管是不是 markdown）：
-#     AGENTS.md / CLAUDE.md / CONTRIBUTING.md / CHANGELOG.md（权威规则与变更日志）
+#     AGENTS.md / CLAUDE.md / CHANGELOG.md（内部权威规则 + 变更日志）
 #     active 的 docs/**/*.md
 #     非 markdown 文件
 #     非 Read 工具
@@ -60,14 +62,14 @@ if [[ -n "$cwd" && "$file_path" == "$cwd"/* ]]; then
     rel_path="${file_path#$cwd/}"
 fi
 
-# 返回拦截类别：archived / readme / ""（不拦）
+# 返回拦截类别：archived / external / ""（不拦）
 block_kind() {
     local p="$1"
     [[ "$p" == *.md ]] || { echo ""; return; }
     if [[ "$p" == docs/dev/adr/deprecated/* ]] || [[ "$p" == docs/_deprecated/* ]]; then
         echo "archived"
-    elif [[ "$p" == "README.md" ]]; then
-        echo "readme"
+    elif [[ "$p" == "README.md" ]] || [[ "$p" == "CONTRIBUTING.md" ]]; then
+        echo "external"
     else
         echo ""
     fi
@@ -93,16 +95,16 @@ case "$kind" in
 EOF
         exit 2
         ;;
-    readme)
+    external)
         cat >&2 <<EOF
-[pretool-read-guard] 已阻止直接 Read 仓库门面：$rel_path
+[pretool-read-guard] 已阻止直接 Read 面向外部的文档：$rel_path
 
-README.md 是面向外部访客的产品介绍，不是内部决策的事实源。常规开发任务
-应读 AGENTS.md（协作规则）、docs/dev/**（架构/spec/ADR）或代码本身，
-而不是从 README 推断架构/契约。
+README.md / CONTRIBUTING.md 是面向外部访客与贡献者的文档（产品介绍、
+贡献指南），不是内部决策的事实源。常规开发任务应读 AGENTS.md（协作
+规则）、docs/dev/**（架构/spec/ADR）或代码本身，而不是从这些文档
+推断架构/契约。
 
-如果你确实要读 README（例：帮用户改 README 文案、核对外部描述是否与
-内部 spec 一致），用：
+如果你确实要读（例：帮用户改文案、核对外部描述是否与内部 spec 一致），用：
 
     Bash: scripts/docs-read --force $rel_path
 

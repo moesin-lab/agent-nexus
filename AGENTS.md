@@ -31,22 +31,23 @@ related:
 
 ### 核心机制：非权威源的 Read 由 hook 拦截
 
-防污染的真正靶子是"让 agent 把非事实内容当事实用"。两类非权威源需要拦：① 归档文档（作废的历史内容）；② 仓库根 `README.md`（产品介绍语气，不是内部决策事实源）。
+防污染的真正靶子是"让 agent 把非事实内容当事实用"。两类非权威源需要拦：① 归档文档（作废的历史内容）；② 面向外部的文档（`README.md` / `CONTRIBUTING.md`——语气偏向产品介绍与贡献指南，不是内部决策事实源）。
 
 | 文档类别 | 住在哪 | Read 工具行为 |
 |---|---|---|
-| `active` 权威规则/架构/spec | `AGENTS.md` / `CONTRIBUTING.md` / `docs/**` | **放行**：可直接 `Read` |
-| `CHANGELOG.md` | 仓库根 | **放行**：变更日志，事实类 |
+| 内部权威规则 | `AGENTS.md` / `CLAUDE.md`（symlink → `AGENTS.md`） | **放行**：可直接 `Read` |
+| 变更日志 | `CHANGELOG.md` | **放行**：事实类 |
+| active 架构/spec/ADR | `docs/**` | **放行**：可直接 `Read` |
 | `placeholder`（未完成骨架） | `docs/**`（默认路径，**不归档**） | **放行**：Read 可读全文（骨架通常极短；frontmatter `status: placeholder` 已是软告警）|
-| **仓库门面 README** | `README.md`（仓库根） | **hook 拦截**：必须走 `scripts/docs-read --force` |
+| **外部导向文档** | `README.md` / `CONTRIBUTING.md`（仓库根） | **hook 拦截**：必须走 `scripts/docs-read --force` |
 | Superseded ADR | `docs/dev/adr/deprecated/**` | **hook 拦截**：必须走 `scripts/docs-read --force` |
 | 其他明确作废的 active 文档 | `docs/_deprecated/**` | **hook 拦截**：必须走 `scripts/docs-read --force` |
 
 对归档：路径本身就是"已作废"的信号；GitHub web / grep / curl 任何入口打开都能识别。
 
-对 README：它是外部门面，语气偏产品介绍，常规开发任务从中推断架构/契约会引入失真——agent 应读 AGENTS.md（协作规则）、`docs/dev/**`（架构/spec/ADR）或代码本身。只有"帮用户改 README 文案 / 核对外部描述与内部 spec 一致"这类正当用途才走 `--force`。
+对外部导向文档：它们是写给仓库外部读者看的（潜在用户、贡献者），语气偏产品化与友好化；内部开发任务从中推断架构/契约会引入失真——agent 应读 `AGENTS.md`（内部协作规则）、`docs/dev/**`（架构/spec/ADR）或代码本身。只有"帮用户改 README/CONTRIBUTING 文案 / 核对外部描述与内部 spec 一致"这类正当用途才走 `--force`。
 
-**范围刻意收窄**：方案只处理"曾是权威但已作废"的文档（Superseded ADR / 明确 Deprecated）+ 仓库门面 README。`placeholder`（骨架文档，未来会填）仍留在 active 路径——这些文档承担"信息架构占位"作用（章节存在感、导航表），搬去归档会让读者以为相关主题废弃了。placeholder 的污染风险靠两道兜住：① 骨架正文通常极短，看一眼就知道是占位；② `docs-read` 默认模式会对 `status: placeholder` 返回 frontmatter + 告警（见下文）。
+**范围刻意收窄**：方案只处理"曾是权威但已作废"的文档（Superseded ADR / 明确 Deprecated）+ 外部导向文档（README / CONTRIBUTING）。`placeholder`（骨架文档，未来会填）仍留在 active 路径——这些文档承担"信息架构占位"作用（章节存在感、导航表），搬去归档会让读者以为相关主题废弃了。placeholder 的污染风险靠两道兜住：① 骨架正文通常极短，看一眼就知道是占位；② `docs-read` 默认模式会对 `status: placeholder` 返回 frontmatter + 告警（见下文）。
 
 ### 作废工作流
 
@@ -73,8 +74,8 @@ related:
 项目不假定协作者使用哪种 agent，`.claude/` / `.codex/` 等本地配置不入库（见 `.gitignore`）。但我们提供通用守卫 `scripts/pretool-read-guard`，任何支持 PreToolUse hook 的 harness 都能接入：
 
 - 命中 `docs/dev/adr/deprecated/**` 或 `docs/_deprecated/**` 的 `Read` → block（归档，stderr 指引走 `docs-read --force`）
-- 命中仓库根 `README.md` 的 `Read` → block（门面，stderr 指引走 `docs-read --force`）
-- 其他一切 Read → 放行（含 `AGENTS.md` / `CONTRIBUTING.md` / `CHANGELOG.md` / active 的 `docs/**/*.md`）
+- 命中仓库根 `README.md` / `CONTRIBUTING.md` 的 `Read` → block（外部导向，stderr 指引走 `docs-read --force`）
+- 其他一切 Read → 放行（含 `AGENTS.md` / `CHANGELOG.md` / active 的 `docs/**/*.md`）
 
 #### Claude Code 集成示例
 

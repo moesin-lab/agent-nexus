@@ -68,6 +68,6 @@
     - **双重真相清理**：`docs/dev/README.md` §读取方式、`docs/dev/standards/metadata.md` §读取规则 从"必须走 docs-read"更新为路径层机制
     - **banner 降级**：`AGENTS.md` §作废工作流 和 `adr/README.md` §Superseded 工作流 把"建议加 banner"从步骤里移出，明确为可选 UX 建议（路径已承担主责）
     - **subagent 拆分规则软化**：`docs/dev/process/subagent-usage.md` §任务拆分 "能拆就必须拆"改为"默认倾向拆分"，新增 §反向信号（倾向不拆）收录耦合/短任务/澄清场景，规模目标改为经验参考而非硬规则
-  - **三轮修订**：把仓库根 `README.md` 纳入 hook 拦截。理由：README 是外部门面（产品介绍语气），常规开发任务从中推断架构/契约会失真；agent 应读 `AGENTS.md` / `docs/dev/**` / 代码本身。`AGENTS.md` / `CONTRIBUTING.md` / `CHANGELOG.md` 仍放行（权威规则与事实类）。hook 的拦截信息按"归档 / README 门面"两类分别给出指引；两类都通过 `scripts/docs-read --force` 显式读取。
+  - **三轮修订**：把仓库根 `README.md` 与 `CONTRIBUTING.md` 纳入 hook 拦截。理由：两者是面向外部读者（用户、贡献者）的文档，语气偏产品化与友好化；常规开发任务从中推断架构/契约会失真；agent 应读 `AGENTS.md`（内部协作规则）、`docs/dev/**`（架构/spec/ADR）或代码本身。`AGENTS.md` / `CHANGELOG.md` 仍放行（权威规则与事实类）。hook 的拦截信息按"归档 / 外部导向"两类分别给出指引；两类都通过 `scripts/docs-read --force` 显式读取。`docs-read` 本身不新增模式，`--force` 对无 frontmatter 文件直接 cat 全文，语义足够。
 - 新增 `CLAUDE.md` 符号链接指向 `AGENTS.md`，方便 Claude Code 自动识别项目规则；规范化入口仍是 `AGENTS.md`。
 - `.gitignore` 调整：不假定协作者使用哪种 agent，`.claude/` / `.codex/` / `.gemini/` / `.continue/` / `.cursor/` 全部忽略（不再把 settings.json / hooks 入库）；新增 `eval-runs/`、`HANDOFF.md`、`HANDOFF-*.md`、`*.scratch.*` 条目。

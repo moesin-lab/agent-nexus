@@ -157,7 +157,16 @@ Session {
     agentBackend: "claudecode"
     ccPid: int?
     transcriptFile: path
-    budget: { tokensUsed, costUsd, limit }
+    counters: {                          // 一等计量（订阅/API 通用）
+        turnsUsed: int
+        toolCallsUsed: int
+        wallClockMs: int
+        tokensUsed: int                  // 累计 input+output
+        costUsd: float | null            // 订阅模式可能为 null
+    }
+    budget: {                            // 可选；opt-in $ 预算层
+        limitUsd: float | null           // null 表示未启用
+    }
     traceId: 当前请求链的 traceId
 }
 ```

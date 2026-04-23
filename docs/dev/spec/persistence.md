@@ -53,8 +53,12 @@ contracts:
 | `agent_backend` | TEXT NOT NULL | 当前仅 `"claudecode"` |
 | `working_dir` | TEXT NOT NULL | |
 | `transcript_path` | TEXT NOT NULL | 相对 `~/.agent-nexus/` |
-| `budget_used_usd` | REAL NOT NULL DEFAULT 0 | |
-| `budget_limit_usd` | REAL | NULL 表示继承全局 |
+| `turns_used` | INTEGER NOT NULL DEFAULT 0 | 一等计量 |
+| `tool_calls_used` | INTEGER NOT NULL DEFAULT 0 | 一等计量 |
+| `wall_clock_ms` | INTEGER NOT NULL DEFAULT 0 | 一等计量（累计） |
+| `tokens_used` | INTEGER NOT NULL DEFAULT 0 | input+output 累计 |
+| `cost_used_usd` | REAL | NULL 表示订阅模式未归因 |
+| `budget_limit_usd` | REAL | NULL 表示 $ 预算未启用（opt-in） |
 | `meta_json` | TEXT | 任意扩展 JSON |
 
 索引：`idx_sessions_last_activity`。
@@ -86,22 +90,25 @@ contracts:
 
 索引 `(session_key, created_at)`。
 
-### budget_events
+### usage_events
 
 | 列 | 类型 | 说明 |
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY | |
 | `session_key` | TEXT NOT NULL | |
 | `trace_id` | TEXT NOT NULL | |
+| `turn_sequence` | INTEGER | 本 session 的 turn 序号 |
+| `tool_calls_this_turn` | INTEGER | 本 turn 的工具调用数 |
+| `wall_clock_ms` | INTEGER | 本 turn 墙钟时长 |
 | `input_tokens` | INTEGER | |
 | `output_tokens` | INTEGER | |
 | `cache_read_tokens` | INTEGER | |
 | `cache_write_tokens` | INTEGER | |
-| `cost_usd` | REAL | |
+| `cost_usd` | REAL | NULL 允许（订阅模式） |
 | `model` | TEXT | |
 | `recorded_at` | TEXT NOT NULL | |
 
-用于成本审计与报表。
+用于使用量审计与复盘。表名从 `budget_events` 改为 `usage_events`（原表名暗示以 $ 为主轴，已不准确）。
 
 ## Transcript 文件
 
@@ -168,9 +175,10 @@ interface Store {
     // messages（可选）
     appendMessage(record) -> void
 
-    // budget
-    recordBudgetEvent(event) -> void
-    getSessionBudget(key) -> BudgetSnapshot
+    // usage / budget
+    recordUsageEvent(event) -> void
+    getSessionCounters(key) -> SessionCounters      // turns, toolCalls, wallClockMs, tokens, costUsd
+    getSessionBudget(key) -> BudgetSnapshot?        // null 当 $ 预算未启用
 }
 ```
 
@@ -196,7 +204,7 @@ MVP 不内置备份功能。用户可自行备份 `~/.agent-nexus/state.db` 与 
 ## 数据留存
 
 - `idempotency`：TTL 24h，后台 GC
-- `messages`、`budget_events`：默认 90 天，用户可配置
+- `messages`、`usage_events`：默认 90 天，用户可配置
 - `transcripts`：默认永久，用户可配置轮转
 - `logs`：默认 30 天
 

@@ -87,7 +87,7 @@ EvalCase {
 | `02-file-read-simple` | 读一个文件 | `tool_called("Read")`、`text_contains`（文件内容摘要） |
 | `03-permission-denied` | 非 allowlist 用户发消息 | `error_raised("auth_denied")`、无 CC 调用 |
 | `04-tool-not-whitelisted` | CC 尝试调用未在白名单的工具 | `tool_not_called("Bash")`、`text_contains`（拒绝提示） |
-| `05-budget-exceeded` | 输入预计超 session 预算 | `error_raised("budget_exceeded")`、用户通知 |
+| `05-resource-limit-hit` | turn / wall-clock / tool-call 任一硬限触发 | `error_raised("turn_limit" / "wallclock_timeout" / "tool_limit")`、用户通知、session 归档或 Errored |
 | `06-idempotency` | 同一 messageId 重发两次 | 第二次被拦截，CC 只被调用一次 |
 | `07-gateway-reconnect` | 模拟 gateway 断连后恢复 | session 保活、消息不丢 |
 | `08-long-context` | 多轮对话（10+ 轮） | 最后一轮正确指代前面内容 |

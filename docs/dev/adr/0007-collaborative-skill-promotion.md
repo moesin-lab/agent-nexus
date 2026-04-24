@@ -18,7 +18,7 @@ superseded_by: null
 
 - **状态**：Proposed
 - **日期**：2026-04-24
-- **决策者**：moux
+- **决策者**：senticx@foxmail.com
 - **相关 ADR**：`docs/dev/adr/deprecated/0005-subscription-as-first-class-path.md`（已归档，仅作编号背景）
 
 ## 状态变更日志

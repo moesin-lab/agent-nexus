@@ -20,7 +20,7 @@ superseded_by: null
 
 - **状态**：Accepted
 - **日期**：2026-04-22
-- **决策者**：项目发起人
+- **决策者**：senticx@foxmail.com
 - **相关 ADR**：ADR-0001、ADR-0002
 
 ## 状态变更日志

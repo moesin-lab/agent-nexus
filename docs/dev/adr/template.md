@@ -17,7 +17,7 @@ superseded_by: null
 
 - **状态**：Proposed | Accepted | Deprecated | Superseded by XXXX | Rejected
 - **日期**：YYYY-MM-DD（最近一次状态变更的日期）
-- **决策者**：<姓名或 handle>
+- **决策者**：<email>
 - **相关 ADR**：无 / ADR-NNNN
 
 ## 状态变更日志

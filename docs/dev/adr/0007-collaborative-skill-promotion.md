@@ -24,6 +24,7 @@ superseded_by: null
 ## 状态变更日志
 
 - 2026-04-24：Proposed
+- 2026-04-24：revised per PR #7 self-review — skill 分层拆为 harness-neutral 通用入口 + per-harness 执行器（见 Decision 第 5 点）
 
 ## Context
 
@@ -77,7 +78,11 @@ AI coding agent 的 skill 文件（如 Claude Code 的 `~/.claude/skills/<name>/
    - **多人共用**（不只是"我自己"的偏好）
 3. 纯个人偏好 skill 留 harness-local（`.claude/skills/` / `.codex/skills/` / ...）
 4. **挂接机制由 process / scripts 层定义，ADR 不锁死具体实现**（symlink / copy / manifest / hook 等将来都可能合适）
-5. 首个实例化：`pre-decision-analysis`（`docs/dev/process/pre-decision-analysis/README.md` 定义约定，`skills/pre-decision-analysis/` 为 Claude Code 薄执行器）
+5. **Skill 目录分层**：
+   - `skills/<name>/SKILL.md` 是 **harness-neutral 通用入口**（触发描述、跨 harness 通用流程、与其他 skill 的协作关系），不点名特定 harness 的工具或 skill
+   - harness 特定执行细节放 `skills/<name>/harnesses/<harness>/SKILL.md`（如 `harnesses/claude-code/SKILL.md`），承载该 harness 下的具体派发方式、工具调用、路径约定
+   - 规则权威源仍在 `docs/dev/process/<name>.md`，agent-agnostic
+6. 首个实例化：`pre-decision-analysis`（`docs/dev/process/pre-decision-analysis/README.md` 定义约定；`skills/pre-decision-analysis/SKILL.md` 通用入口；`skills/pre-decision-analysis/harnesses/claude-code/SKILL.md` Claude Code 执行器）
 
 ### 范围（**外推**）
 
@@ -87,8 +92,8 @@ AI coding agent 的 skill 文件（如 Claude Code 的 `~/.claude/skills/<name>/
 
 ### 不在本 ADR 内锁死的（交给下级）
 
-- **具体挂接机制**（symlink / copy / manifest）→ `AGENTS.md` "协作性 skill 挂接" 节 + `scripts/sync-claude-skills.sh`
-- **各 harness 的 skill 格式要求** → 各 harness 自己定
+- **具体挂接机制**（symlink / copy / manifest）→ `docs/dev/process/skill-setup.md` + `scripts/sync-claude-skills.sh`
+- **各 harness 的 skill 格式要求** → 各 harness 自己定；harness 特定执行器住 `skills/<name>/harnesses/<harness>/`
 - **协作约定的规则内容** → 进 `docs/dev/process/<name>.md` 权威源；skill 文件退成薄执行器指向 docs
 
 ## Consequences
@@ -112,7 +117,7 @@ AI coding agent 的 skill 文件（如 Claude Code 的 `~/.claude/skills/<name>/
 
 ## Out of scope
 
-- **具体的 symlink 命令 / `sync-claude-skills.sh` 脚本实现**：见 `AGENTS.md` 和 `scripts/` 层，ADR 不锁死
+- **具体的 symlink 命令 / `sync-claude-skills.sh` 脚本实现**：见 `docs/dev/process/skill-setup.md` 和 `scripts/` 层，ADR 不锁死
 - **其他 harness（Codex / Cursor / ...）的挂接**：本 ADR 只要求"规则 agent-agnostic 放 docs"；各 harness 如何落地交给自身约定。当前 MVP 只实现 Claude Code，未来扩展无需改本 ADR
 - **skill 的 description 调优 / 触发准确率**：属 skill 质量工程，与入库规范无关
 - **单次 skill 落地的 PR 结构**：是否单 PR 合并、是否拆多 PR 取决于具体 skill；本 ADR 不规定

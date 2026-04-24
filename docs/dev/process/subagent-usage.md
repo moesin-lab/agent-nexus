@@ -86,6 +86,12 @@ related:
 - <范围外的事>
 ```
 
+### 探索类 agent 的回报格式
+
+Explore / general-purpose 这类"抓事实回主 session"的 agent，默认产出叙述化长报告——主 session 吞下后上下文会被占满且真事实埋得深。派发时在 prompt 末尾贴硬约束片段，模板见 [`subagent-recon-prompt-template.md`](subagent-recon-prompt-template.md)。
+
+review / plan / simplify 类 agent 不适用该模板——产出结构不同。
+
 ## 反模式
 
 ### 命令式短 prompt

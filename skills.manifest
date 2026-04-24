@@ -1,0 +1,5 @@
+# 协作性 skill manifest
+# 每行一个 skill 名；对应 skills/<name>/
+# 由 AGENTS.md "协作性 skill 挂接" 节定义的入库判据决定入住。
+# 注释行（`#` 开头）和空行忽略。
+pre-decision-analysis

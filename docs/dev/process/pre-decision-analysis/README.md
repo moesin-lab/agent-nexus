@@ -12,8 +12,8 @@ related:
 # Pre-Decision Analysis
 
 > 本文件是 `pre-decision-analysis` 协作约定的**权威源**（agent-agnostic）。
-> Claude Code 通过 `skills/slotted-deliberation/` 薄执行器引用；其他 harness（Codex / Cursor）参照本 docs 自行实现。
-> 子流程 / 模板 / 完整反模式住在同目录下的 `pre-decision-analysis-reference/` 子目录。
+> Claude Code 通过 `skills/pre-decision-analysis/` 薄执行器引用；其他 harness（Codex / Cursor）参照本 docs 自行实现。
+> 子流程 / 模板 / 完整反模式住在同目录下的 `pre-decision-analysis/` 子目录。
 
 ## 核心前提
 
@@ -60,7 +60,7 @@ related:
 
 触发条件：跨多文件 OR 架构级 OR agent 对方向拿不准。单文件 + 已有先例 + agent 有把握可跳。
 
-argue 要点 + agent 回应**贴 PR body** 的"异议 & 回应"小节。见 `pre-decision-analysis-reference/subflow-argue.md`。
+argue 要点 + agent 回应**贴 PR body** 的"异议 & 回应"小节。见 `pre-decision-analysis/subflow-argue.md`。
 
 ### 步骤 3：识别任务类型
 
@@ -122,7 +122,7 @@ Git reset 零成本后，Checkpoint 不强制。只在以下场景用：
 
 路径固定 `.tasks/<topic>-<purpose>.scratch.md`（`.tasks/*.scratch.md` 已 gitignore）。
 
-起了 scratch 后按 `pre-decision-analysis-reference/output-template.md` 的格式。段结构自由但每段独立可 review，段末可埋"想问你"作定向引导。
+起了 scratch 后按 `pre-decision-analysis/output-template.md` 的格式。段结构自由但每段独立可 review，段末可埋"想问你"作定向引导。
 
 ## 段内内容原则（scratch 场景）
 
@@ -138,7 +138,7 @@ Git reset 零成本后，Checkpoint 不强制。只在以下场景用：
 
 ## 核心反模式
 
-完整清单见 `pre-decision-analysis-reference/anti-patterns.md`。最要命的几条：
+完整清单见 `pre-decision-analysis/anti-patterns.md`。最要命的几条：
 
 - **Default scratch 而非直接执行**：git 便宜 + agent 便宜 + review 贵——默认直接干
 - **Review 塞给用户批改**：让用户打字在 HTML comment 里回"Q1=a"就是 review 成本转嫁
@@ -149,7 +149,7 @@ Git reset 零成本后，Checkpoint 不强制。只在以下场景用：
 
 ## 子流程索引
 
-按对象类型按需读 `pre-decision-analysis-reference/` 下对应文件：
+按对象类型按需读 `pre-decision-analysis/` 下对应文件：
 
 | 对象类型 | 读哪个 reference | 何时读 |
 |---|---|---|
@@ -163,7 +163,7 @@ Git reset 零成本后，Checkpoint 不强制。只在以下场景用：
 
 ## Harness 配套
 
-- **Claude Code** 用户：`skills/slotted-deliberation/` skill 是本 docs 的薄执行器；skill 的 description 让 Claude 触发时加载本 docs
+- **Claude Code** 用户：`skills/pre-decision-analysis/` skill 是本 docs 的薄执行器；skill 的 description 让 Claude 触发时加载本 docs
 - **其他 harness**（Codex / Cursor / ...）：按本 docs 手工遵守，或自行实现对等 skill / rule 指向本 docs
 
 无论 harness，**规则以本 docs 为准**。

@@ -1,9 +1,9 @@
-> 本文件是 `docs/dev/process/pre-decision-analysis.md` 的组件，agent-agnostic。
-> Claude Code 通过 `skills/slotted-deliberation/` 引用；其他 harness 可同样引用。
+> 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
+> Claude Code 通过 `skills/pre-decision-analysis/` 引用；其他 harness 可同样引用。
 
 # 反模式 + 完整强制规则
 
-**何时用**：产出方案 / PR / scratch 后自 review 时对照；或遇到 reviewer 指出流程问题想定位根因。`pre-decision-analysis.md` 主体只保留最关键的几条，完整清单在此。
+**何时用**：产出方案 / PR / scratch 后自 review 时对照；或遇到 reviewer 指出流程问题想定位根因。`pre-decision-analysis/README.md` 主体只保留最关键的几条，完整清单在此。
 
 ## 完整反模式表
 

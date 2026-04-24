@@ -1,9 +1,9 @@
-> 本文件是 `docs/dev/process/pre-decision-analysis.md` 的组件，agent-agnostic。
-> Claude Code 通过 `skills/slotted-deliberation/` 引用；其他 harness 可同样引用。
+> 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
+> Claude Code 通过 `skills/pre-decision-analysis/` 引用；其他 harness 可同样引用。
 
 # scratch 输出模板
 
-**何时用**：仅在 scratch 硬触发场景（见 `pre-decision-analysis.md` "Scratch 硬触发"）才起 scratch 时，首次起草对照本模板。默认不起 scratch，走 PR diff 后审。
+**何时用**：仅在 scratch 硬触发场景（见 `pre-decision-analysis/README.md` "Scratch 硬触发"）才起 scratch 时，首次起草对照本模板。默认不起 scratch，走 PR diff 后审。
 
 ## 核心规范
 
@@ -82,6 +82,6 @@
 
 ## 命名
 
-- `<topic>`：对象的短名，连字符分隔，如 `agentic-engineering-framework` / `promote-slotted-deliberation`
+- `<topic>`：对象的短名，连字符分隔，如 `agentic-engineering-framework` / `promote-pre-decision-analysis`
 - `<purpose>` ∈ `review` / `options` / `plan` / `survey` / `debate`
 - 对应 `.gitignore`：`.tasks/*.scratch.*` 必须命中；缺失则先补 gitignore 再起草

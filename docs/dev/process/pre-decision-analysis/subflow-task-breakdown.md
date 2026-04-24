@@ -1,5 +1,5 @@
-> 本文件是 `docs/dev/process/pre-decision-analysis.md` 的组件，agent-agnostic。
-> Claude Code 通过 `skills/slotted-deliberation/` 引用；其他 harness 可同样引用。
+> 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
+> Claude Code 通过 `skills/pre-decision-analysis/` 引用；其他 harness 可同样引用。
 
 # 子流程 C：对象是大任务拆解
 

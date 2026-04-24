@@ -31,7 +31,7 @@ AI coding agent 的 skill 文件（如 Claude Code 的 `~/.claude/skills/<name>/
 
 这对**纯个人偏好**类 skill（提示语风格、输出 verbosity、个人习惯）是对的——它们只影响"我自己与 agent 互动的方式"，不影响他人。
 
-但**协作性 skill**不同——它们影响 **agent 产出的格式 / 协作产物（PR / scratch / 决议记录）/ 需要其他协作者或未来协作者能读懂**。比如 `slotted-deliberation` 定义了"决策前结构化分析"的协作约定——scratch 格式、PR body 的"异议 & 回应"、review 以"选择不批改"为原则——这些是**协作约定**，不是个人偏好。
+但**协作性 skill**不同——它们影响 **agent 产出的格式 / 协作产物（PR / scratch / 决议记录）/ 需要其他协作者或未来协作者能读懂**。比如 `pre-decision-analysis` 定义了"决策前结构化分析"的协作约定——scratch 格式、PR body 的"异议 & 回应"、review 以"选择不批改"为原则——这些是**协作约定**，不是个人偏好。
 
 当前机制缺口：
 
@@ -39,7 +39,7 @@ AI coding agent 的 skill 文件（如 Claude Code 的 `~/.claude/skills/<name>/
 2. 使用其他 harness（Codex / Cursor）的协作者完全看不到协作约定的存在——即使他们也想遵守也没法
 3. 即使只有一个协作者使用 Claude Code，skill 规则的变更无 review 就是本地 drift——和 `AGENTS.md` 核心原则"文档先行 / 契约先行"原则矛盾
 
-本 ADR 为这类 skill 立入库规范。范围**外推**——适用于当前及未来所有协作性 skill，不只是 `slotted-deliberation`。
+本 ADR 为这类 skill 立入库规范。范围**外推**——适用于当前及未来所有协作性 skill，不只是 `pre-decision-analysis`。
 
 ## Options
 
@@ -77,11 +77,11 @@ AI coding agent 的 skill 文件（如 Claude Code 的 `~/.claude/skills/<name>/
    - **多人共用**（不只是"我自己"的偏好）
 3. 纯个人偏好 skill 留 harness-local（`.claude/skills/` / `.codex/skills/` / ...）
 4. **挂接机制由 process / scripts 层定义，ADR 不锁死具体实现**（symlink / copy / manifest / hook 等将来都可能合适）
-5. 首个实例化：`slotted-deliberation`（`docs/dev/process/pre-decision-analysis.md` 定义约定，`skills/slotted-deliberation/` 为 Claude Code 薄执行器）
+5. 首个实例化：`pre-decision-analysis`（`docs/dev/process/pre-decision-analysis/README.md` 定义约定，`skills/pre-decision-analysis/` 为 Claude Code 薄执行器）
 
 ### 范围（**外推**）
 
-本决策适用于当前及未来所有协作性 skill；不是"特批 slotted-deliberation 一个"。未来新协作性 skill 按本 ADR 的判据直接归位 `skills/`，不需要重起 ADR。
+本决策适用于当前及未来所有协作性 skill；不是"特批 pre-decision-analysis 一个"。未来新协作性 skill 按本 ADR 的判据直接归位 `skills/`，不需要重起 ADR。
 
 纯个人偏好 skill 不适用本 ADR——它们依然留 local，不用 review。
 

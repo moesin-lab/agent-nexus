@@ -170,7 +170,7 @@ ln -sfn "../../skills/<name>" ".claude/skills/<name>"
 | 写日志 | `docs/dev/standards/logging.md` + `docs/dev/spec/infra/observability.md` |
 | 处理错误 | `docs/dev/standards/errors.md` |
 | 做架构决策 | `docs/dev/adr/README.md` + `docs/dev/adr/template.md` |
-| 做需要人类拍板的结构化分析（评估 / 对比 / 拆解） | `docs/dev/process/pre-decision-analysis.md` |
+| 做需要人类拍板的结构化分析（评估 / 对比 / 拆解） | `docs/dev/process/pre-decision-analysis/README.md` |
 | 增 / 删协作性 skill | `docs/dev/adr/0007-collaborative-skill-promotion.md` + `skills.manifest` + `scripts/sync-claude-skills.sh` |
 | 接入新 IM 平台 | `docs/dev/spec/platform-adapter.md` |
 | 集成新 agent 后端 | `docs/dev/spec/agent-runtime.md` + `docs/dev/spec/agent-backends/claude-code-cli.md` |

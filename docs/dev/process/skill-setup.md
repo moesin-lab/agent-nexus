@@ -35,8 +35,8 @@ skills/<name>/
 
 无论 harness，挂接逻辑都是：
 
-1. 检索 `skills/<name>/SKILL.md` 是否标注本 harness
-2. 若有 harness-specific 执行器（`skills/<name>/harnesses/<harness>/SKILL.md`），优先用作入口
+1. 检索 `skills/<name>/harnesses/<harness>/SKILL.md` 是否存在
+2. 若存在，优先用作入口（per-harness 执行器）
 3. 否则回退到 `skills/<name>/SKILL.md` 通用入口
 4. 通过 harness 自身机制（symlink / copy / hook）把执行器挂到本地 skill 目录
 

@@ -56,7 +56,7 @@ related:
 
 ### 步骤 2：argue 自检
 
-有推荐 / 倾向的决策必派 argue subagent（异构视角反方分析）——防止 agent 照镜子看不到盲点。首选 `codex-review`（OpenAI Codex 异构模型），备选 `general-purpose` subagent（独立 context 代码库交叉）。多段并行派。
+有推荐 / 倾向的决策必派 argue subagent（异构视角反方分析）——防止 agent 照镜子看不到盲点。首选异构模型反方分析（Claude Code: `codex-review`，内部 OpenAI Codex / gpt-5 系列），备选独立 context 代码库交叉（Claude Code: `general-purpose` subagent）。多段并行派。
 
 触发条件：跨多文件 OR 架构级 OR agent 对方向拿不准。单文件 + 已有先例 + agent 有把握可跳。
 

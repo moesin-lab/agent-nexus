@@ -84,7 +84,7 @@ type EventHandler = fn(NormalizedEvent) -> void
 
 ## OutboundMessage
 
-Core 调用 `send()` 时传入的对象。Adapter 负责映射到平台格式。
+daemon 调用 `send()` 时传入的对象。Adapter 负责映射到平台格式。
 
 ```text
 OutboundMessage {
@@ -120,7 +120,7 @@ CapabilitySet {
 }
 ```
 
-Core 在发送前检查能力：超出 `maxTextLength` 的文本必须切片；不支持的能力不使用。
+daemon 在发送前检查能力：超出 `maxTextLength` 的文本必须切片；不支持的能力不使用。
 
 ## MessageRef
 

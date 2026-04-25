@@ -24,7 +24,6 @@ superseded_by: null
 ## 状态变更日志
 
 - 2026-04-24：Proposed
-- 2026-04-24：revised per PR #7 self-review — skill 分层拆为 harness-neutral 通用入口 + per-harness 执行器（见 Decision 第 5 点）
 
 ## Context
 

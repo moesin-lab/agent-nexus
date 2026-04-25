@@ -65,7 +65,7 @@ interface AgentSession {
 
 ## SessionConfig
 
-Core 启动 agent session 时传入的配置。
+daemon 启动 agent session 时传入的配置。
 
 ```text
 SessionConfig {

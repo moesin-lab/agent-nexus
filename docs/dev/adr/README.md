@@ -42,6 +42,13 @@ Proposed ──(评审通过)──> Accepted
 - 在文件顶部追加新状态头与变更日期、理由
 - 方便未来审计"当时为什么这么决定"
 
+**两类变更日志，分两节存：**
+
+- §状态变更日志：只接受离散状态跳变（Proposed / Accepted / Deprecated / Superseded / Rejected）
+- §Amendments：Accepted 之后对决策**内容 / 范围 / 命名**的非反转修订
+
+两节都**只记意图，不记内容**——具体改了什么字段 / 路径 / 数量 / 命名活在 body 当前状态与 git diff 里，不在变更日志里复述。详见 [`template.md`](template.md)。
+
 ## 什么情况写 ADR
 
 触发 ADR 的改动（非穷举，见 [`../process/workflow.md`](../process/workflow.md)）：

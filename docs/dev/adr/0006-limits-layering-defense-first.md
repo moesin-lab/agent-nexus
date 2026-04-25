@@ -21,7 +21,7 @@ superseded_by: null
 ## 状态变更日志
 
 - 2026-04-22：Proposed
-- 2026-04-22：Accepted（取代 0005；同日收敛）
+- 2026-04-22：Accepted
 
 ## Context
 

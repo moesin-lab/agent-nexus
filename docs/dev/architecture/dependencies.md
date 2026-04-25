@@ -13,7 +13,7 @@ related:
 
 本文件定义仓库内模块间**允许**与**禁止**的 import 关系。违反即拒绝合并。
 
-> **本文按 package 维度讨论 import 关系**——`protocol` / `daemon` / `agent/<name>` / `platform/<name>` / `cli` / `vscode` / `web` 都是 npm package 名（前缀 `@agent-nexus/`，详见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7）。模块概念名（cmd / core / agent / platform）作为职责分类在 [`overview.md`](overview.md) §模块结构 讨论；本文 §checklist 第 1 条仍用此分类。
+> **本文按 package 维度讨论 import 关系**——`protocol` / `daemon` / `agent/<name>` / `platform/<name>` / `cli` / `vscode` / `web` 都是 npm package 名（前缀 `@agent-nexus/`，详见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7）。模块结构与职责划分见 [`overview.md`](overview.md) §模块结构。
 >
 > 带点的 namespace prefix（`daemon.logger` / `daemon.idempotency`）= `@agent-nexus/daemon` 的 import path 内的横切能力子模块；类型契约（`NormalizedEvent` / `AgentEvent` 等）住 `@agent-nexus/protocol`，import 时直接用类型名（不带 prefix）。
 >
@@ -109,7 +109,7 @@ cli 里可以写一些 glue 代码，但禁止写业务逻辑。
 
 开新模块（新 agent、新 platform、或新的 daemon 子模块）前：
 
-- [ ] 这个模块属于哪个角色（cmd / core / agent / platform）？（角色分类见 [`overview.md`](overview.md) §模块结构）
+- [ ] 这个模块属于哪个角色（cli / daemon / agent / platform）？（角色分类见 [`overview.md`](overview.md) §模块结构）
 - [ ] 它依赖哪些 package？是否只依赖 `daemon` 与 `protocol`？
 - [ ] 是否需要在 daemon 增加新接口？若是，**先改 daemon 发 PR**，再开这个模块
 - [ ] 是否需要在 protocol 增加新接口契约？若是，**先改 protocol 发 PR**，再开实现 package

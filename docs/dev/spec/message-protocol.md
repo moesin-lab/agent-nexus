@@ -161,7 +161,7 @@ Discord 单条消息上限 2000 字符。超过时：
 ### 附件
 
 - 由 adapter 决定走内联（<8MB）还是 CDN（>8MB）
-- Core 产出 `OutboundAttachment { content, filename, contentType }`
+- daemon 产出 `OutboundAttachment { content, filename, contentType }`
 
 ## 流式语义
 

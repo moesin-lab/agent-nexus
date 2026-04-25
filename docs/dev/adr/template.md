@@ -22,11 +22,11 @@ superseded_by: null
 
 ## 状态变更日志
 
-> 新增状态头追加在此段顶部，原有记录保留。
+> **本节只接受离散状态跳变**：Proposed / Accepted / Deprecated / Superseded by XXXX / Rejected。每条一行，写**为何状态变了**，不写"我们做了什么动作"（评审过程、argue、修订内容均不属于此处）。
 
 - YYYY-MM-DD：Proposed
 - YYYY-MM-DD：Accepted（评审通过，见 PR #N）
-- （后续变更追加）
+- （后续状态跳变追加）
 
 ## Context
 
@@ -83,6 +83,14 @@ superseded_by: null
 - 不决定具体接口字段（那是 spec 的事）
 - 不决定部署细节（那是另一个 ADR）
 - 不决定未来是否扩展到其他平台（留给后续 ADR）
+
+## Amendments
+
+> Accepted 之后对决策**内容 / 范围 / 命名**的非反转修订。每条只写**意图**——不写改了什么字段、路径、数量、命名（这些活在 body 与 git diff 里）。判据：如果不知道这次修订背后的判断，重读 body 时会误解什么？写下那个误解。
+>
+> 决策反转走 supersede 流程（见 [`README.md`](README.md) §Superseded 工作流），不进本节。
+
+- YYYY-MM-DD：<修订名> —— <为何需要这次修订>
 
 ## 参考
 

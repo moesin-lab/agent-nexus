@@ -24,8 +24,8 @@ superseded_by: null
 
 ## 状态变更日志
 
-- 2026-04-22：Proposed（对话中提出）
-- 2026-04-22：Accepted（对话中锁定，无其他候选被深入评审）
+- 2026-04-22：Proposed
+- 2026-04-22：Accepted
 
 ## Context
 

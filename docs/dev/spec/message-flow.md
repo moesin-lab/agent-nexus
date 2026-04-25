@@ -177,7 +177,7 @@ AgentRuntime 实现内调用 daemon.toolguard
 ## 反模式
 
 - **跨 transfer import**：platform-* 或 agent-* 直接 import 另一个 platform-* / agent-* package（违反 [`architecture/dependencies.md`](../architecture/dependencies.md) 禁止方向）
-- **adapter 自实现横切**：platform / agent transfer 自己写 logger / 自己做幂等 / 自己管 session（违反 [`architecture/overview.md`](../architecture/overview.md) §"比 cc-connect 更严的约束" 第 2 条）
+- **adapter 自实现横切**：platform / agent transfer 自己写 logger / 自己做幂等 / 自己管 session（违反 [`architecture/overview.md`](../architecture/overview.md) §"强约束" 第 2 条）
 - **跳过 redact**：在某条出站路径上偷偷绕过 redact
 - **打破入站顺序**：把 auth 移到 idempotency 之后 / 在限流之前不做 idempotency / 等
 

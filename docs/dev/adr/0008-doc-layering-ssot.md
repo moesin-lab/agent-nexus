@@ -92,9 +92,9 @@ superseded_by: null
 
 选 **Option E：事实归属判定 + process 编排边界**。
 
-具体规则本体（事实 owner 矩阵 + process 编排边界 + 冲突裁决 + 既有违反迁移决议）住 [`docs/dev/process/doc-layering.md`](../process/doc-layering.md)——本 ADR 只承载**为什么选这条路**，规则清单本身是"是什么"，按本 ADR 确立的分类规则不属于 ADR。
+具体规则本体（事实 owner 矩阵 + process 编排边界 + 冲突裁决）住 [`docs/dev/process/doc-layering.md`](../process/doc-layering.md)——本 ADR 只承载**为什么选这条路**，规则清单本身是"是什么"，按本 ADR 确立的分类规则不属于 ADR。
 
-禁入清单是机器可判的——`interface X` 出现在 ADR 文件、`因为...所以选...` 出现在 spec 文件、接口签名出现在 architecture 文件、`process/` 展开 frontmatter 字段表或测试分层细节，都可以由 reviewer 直接拒绝，不依赖语义级判断。
+禁入类型是 reviewer 可判的：非 owner 文档出现可独立还原的事实定义，或 `process/` 展开被编排规则本体，都应直接拒绝并要求改成 owner 链接。
 
 不引入 owns 字段、不引入 pre-commit hook、不引入一致性测试、不引入 lint 工具——**所有机械补丁都被本 ADR 显式拒绝**。如果未来事实归属判定实践证明不足，再单独开 ADR 引入工具，不在本 ADR 演进。
 

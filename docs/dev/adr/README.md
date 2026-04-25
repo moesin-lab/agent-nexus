@@ -91,6 +91,8 @@ Proposed ──(评审通过)──> Accepted
 | [0004](0004-language-runtime.md) | 实现语言与运行时选型 | Proposed |
 | [0005](deprecated/0005-subscription-as-first-class-path.md) | 订阅计费为一等用户路径 | Superseded by 0006 |
 | [0006](0006-limits-layering-defense-first.md) | Limits 分层——失控保护为一等，配额控制按用户路径可选 | Accepted |
+| [0007](0007-collaborative-skill-promotion.md) | 协作性 skill 入库与挂接 | Accepted |
+| [0008](0008-doc-layering-ssot.md) | 文档分层职责互斥实现 SSOT | Proposed |
 
 ## 引用规则
 
@@ -112,9 +114,30 @@ Proposed ──(评审通过)──> Accepted
 
 > **可选的 UX 增强**：被取代 ADR 正文顶部可加 banner（例：`> **已被 [ADR-MMMM](../MMMM-...md) 取代，仅供审计追溯**`）帮助人类读者快速识别。不强制，不作工作流步骤——路径已承担防污染主责。
 
+## 准入与禁入
+
+ADR 这一层只回答 **"为什么选 X 不选 Y"**——决策、权衡、放弃理由是 ADR 的本体。三层职责互斥的完整矩阵见 [`../process/doc-layering.md`](../process/doc-layering.md)。
+
+**准入清单**：
+
+- 选项对比与权衡论述
+- 决策的约束、前提、触发事件
+- 放弃其他选项的理由
+- 状态变更日志（Proposed / Accepted / Deprecated / Superseded / Rejected）
+
+**禁入清单**（出现即拒，要求拆到对应层）：
+
+- 接口签名、`type` / `interface` 定义、字段表 → 拆到 `spec/`
+- 默认值字面量（如 `maxTurnsPerSession=50`）→ 拆到 `spec/`
+- 操作流程、规则清单本体（如"准入清单 / 禁入清单"这种结构化规则）→ 拆到 `process/` 或 `standards/`
+- 模块拓扑图、数据流详图 → 拆到 `architecture/`
+
+ADR 引用 spec / architecture / process 内容时**只 link，不复述**——读者跳到目标文件读细节。
+
 ## 不做的事
 
 - 不把 ADR 当长篇论文写；60–200 行为宜
 - 不在 ADR 里写实现细节（实现细节放 spec）
+- 不在 ADR 里写规则清单本体（规则本体放 process / spec / standards，ADR 只承载"为什么这样定规则"）
 - 不把还没做的决策写成 ADR（没决策就没 ADR）
 - 不删除任何已合入的 ADR 文件（被取代的 ADR 移到 `deprecated/` 保留）

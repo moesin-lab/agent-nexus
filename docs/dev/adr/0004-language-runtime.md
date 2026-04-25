@@ -71,7 +71,6 @@ superseded_by: null
 - **优点**：
   - 单二进制分发，无 runtime 依赖（在不需要跨端共享时是优势）
   - goroutine + channel 在长连接 / 子进程 stdio 流式处理上 idiom 顺手——但能力优势仅在并发数量 > 1000 或 CPU-bound 多核场景显现
-  - 与 cc-connect 同栈，经验可迁移
   - `testing` + `testify` + `pprof` 内置工具链稳
   - 标准库 / 纯 Go 库覆盖：`os/exec` + `creack/pty` + `modernc.org/sqlite` + `zalando/go-keyring`
   - macOS 跨架构（amd64 / arm64）交叉编译干净
@@ -163,7 +162,6 @@ superseded_by: null
 | TDD 工具链 | ★★★（vitest） | ★★★（testing） | ★★★（pytest） |
 | fixture / 动态数据工装 | ★★★ | ★★ | ★★★ |
 | 类型表达力 | ★★★（联合 / 条件 / mapped / template literal） | ★★ | ★ |
-| 与 cc-connect 经验迁移 | — | ★★★ | — |
 
 ## 评审历史（含修正声明）
 

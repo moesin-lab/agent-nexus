@@ -53,7 +53,7 @@ related:
 
 ### Claude Code 集成示例（其他 harness 按自身 hook 机制对等挂接）
 
-Claude Code 示例：本地创建 `.claude/settings.json`（不会被提交）：
+本地创建 `.claude/settings.json`（不会被提交）：
 
 ```json
 {

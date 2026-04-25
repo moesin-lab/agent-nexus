@@ -1,6 +1,6 @@
 ---
 name: self-refinement
-description: 当用户显式说"沉淀 / 反思 / refine / 复盘 / 记下来 / reflect / /reflect"时触发；被纠正后 agent 可隐式自检是否值得沉淀。本文件是 harness-neutral 通用入口；规则权威源在 `docs/dev/process/self-refinement/README.md`。关键词：经验沉淀、反馈闭环、rule promotion、分流矩阵、跨层判据、auto-memory。
+description: 当用户显式说"沉淀 / 反思 / refine / 复盘 / 记下来 / reflect / /reflect"时触发；被纠正后 agent 可隐式自检是否值得沉淀。本文件是 harness-neutral 通用入口；规则权威源在 `docs/dev/process/self-refinement/README.md`。关键词：经验沉淀、反馈闭环、rule promotion、分流矩阵、跨层判据、本地记忆。
 ---
 
 # self-refinement（通用入口）
@@ -19,11 +19,11 @@ description: 当用户显式说"沉淀 / 反思 / refine / 复盘 / 记下来 / 
 
 - **显式触发识别**：匹配"沉淀 / 反思 / refine / 复盘 / 记下来"等关键词后强制走 4 步
 - **隐式触发自检**：被纠正后 agent 完成纠正再决定是否启动自检；stay quiet by default，不自动附建议
-- **同主题检索**：执行前检索 harness 本地持久化规则（如 Claude Code 的 auto-memory）和 `docs/` 是否有同主题条目（具体方法 harness 特定）
+- **同主题检索**：执行前检索 harness 本地记忆和 `docs/` 是否有同主题条目（具体方法 harness 特定）
 - **三选一判断**：命中时判补充修订 / 覆盖 / 新开
 - **分支操作**：沉淀到有 PR 必要的层必须起新分支，不在 `main` 上直接改 docs
 - **用户确认**：沉淀到有 PR 必要的层必须先与用户确认再开分支动手
-- **持久化规则写入**：遵守 harness 全局规则文件（如 Claude Code 的 `~/.claude/CLAUDE.md` 记忆节）的约束；具体路径与命名按各 harness
+- **本地记忆写入**：遵守 harness 全局规则文件中"记忆"节的约束；具体路径与命名按各 harness
 
 ## 3. 触发词典（description 之外的补充信号）
 
@@ -48,7 +48,7 @@ description: 当用户显式说"沉淀 / 反思 / refine / 复盘 / 记下来 / 
 
 **禁止静默降级**：
 
-- 本节列的是**能力声明**，不是可执行指令。若当前 harness 有对应执行器（见上表），agent **必须**按执行器列出的具体工具执行（Claude Code 用 `AskUserQuestion` / `Write` / `Bash` 等；其他 harness 用执行器声明的对应工具），不得停在本通用入口的抽象描述上，用普通对话文本代替 harness 特色路径
-- 若无对应执行器（fallback 把本文件挂为触发器时；如 Claude Code 的 `scripts/sync-claude-skills.sh`），应按 `docs/dev/process/self-refinement/README.md` agent-agnostic 权威源 + 本 harness 自身能力兜底；某能力本 harness 做不到时**在 PR 里显式声明缺口**，不装作走了特色路径
+- 本节列的是**能力声明**，不是可执行指令。若当前 harness 有对应执行器（见上表），agent **必须**按执行器（`harnesses/<harness>/SKILL.md`）列出的具体工具执行，不得停在本通用入口的抽象描述上，用普通对话文本代替 harness 特色路径
+- 若无对应执行器（挂接脚本宽容 fallback 把本文件挂为触发器时），应按 `docs/dev/process/self-refinement/README.md` agent-agnostic 权威源 + 本 harness 自身能力兜底；某能力本 harness 做不到时**在 PR 里显式声明缺口**，不装作走了特色路径
 
 任一场景下，"用更弱的做法冒充原路径"都视为违反 skill 契约。

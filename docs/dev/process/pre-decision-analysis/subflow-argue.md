@@ -1,5 +1,5 @@
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
-> Claude Code 通过 `skills/pre-decision-analysis/` 引用；其他 harness 可同样引用。
+> 各 harness 通过 `skills/pre-decision-analysis/` 下自身执行器引用。
 
 # 子流程：argue 派发
 
@@ -15,11 +15,16 @@
 
 ## 派给谁
 
-| 场景 | 调度方式 | 特征 |
+| 场景 | 调度类型 | 特征 |
 |---|---|---|
-| **默认 — 异构模型反方分析** | 调异构模型 review skill（Claude Code: `codex-review`，内部 OpenAI Codex / gpt-5 系列） | 不同训练数据 + 不同 reasoning style，能挑出同模型盲点；尤其对"方法论包装"、"隐含假设"敏感 |
-| **代码库交叉验证** | 派独立 context subagent（Claude Code: `general-purpose`） | 同模型但无当前对话包袱；适合"这个方案在项目中是否已有先例 / 冲突"类问题 |
+| **默认 — 异构模型反方分析** | 调异构模型 review subagent / skill | 不同训练数据 + 不同 reasoning style，能挑出同模型盲点；尤其对"方法论包装"、"隐含假设"敏感 |
+| **代码库交叉验证** | 派独立 context subagent | 同模型但无当前对话包袱；适合"这个方案在项目中是否已有先例 / 冲突"类问题 |
 | **两者都适合时** | 并行派两路，收两份独立 argue | 成本高但信号最强；留给关键决策 |
+
+### Per-harness 实现
+
+- **Claude Code**：异构模型 → `codex-review` skill（内部 OpenAI Codex / gpt-5 系列）；独立 context → `general-purpose` subagent
+- **其他 harness**：按自身 subagent / external review 机制对等；规则以本 docs 为准
 
 ## 调度 prompt 样板
 

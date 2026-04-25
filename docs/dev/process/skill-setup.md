@@ -31,19 +31,7 @@ skills/<name>/
 - 通用入口 `SKILL.md` 描述跨 harness 通用行为，不点名特定工具
 - per-harness 执行器住 `harnesses/<harness>/SKILL.md`，承载该 harness 特定细节
 
-## 通用挂接原理（harness-agnostic）
-
-无论 harness，挂接逻辑都是：
-
-1. 检索 `skills/<name>/harnesses/<harness>/SKILL.md` 是否存在
-2. 若存在，优先用作入口（per-harness 执行器）
-3. 否则回退到 `skills/<name>/SKILL.md` 通用入口
-4. 通过 harness 自身机制（symlink / copy / hook）把执行器挂到本地 skill 目录
-
-各 harness 的具体实现：
-
-- **Claude Code**：见下文 §"Claude Code 协作者"
-- **其他 harness**：参考 Claude Code 的脚本逻辑自行实现（见 §"其他 harness"）
+挂接的通用逻辑：优先挂 `skills/<name>/harnesses/<harness>/`（per-harness 执行器），不存在则回退挂 `skills/<name>/`（通用入口）。各 harness 按自身机制（symlink / copy / hook）实现，下两节给出具体实现。
 
 ## Claude Code 协作者
 
@@ -93,9 +81,9 @@ ln -sfn "../../skills/<name>" ".claude/skills/<name>"
 
 1. 权威源进 `docs/dev/process/<name>/` 或 `docs/dev/process/<name>.md`（agent-agnostic）
 2. `skills/<name>/SKILL.md` — harness-neutral 通用入口
-3. `skills/<name>/harnesses/<harness>/SKILL.md` — 至少一个 harness 的执行器（否则脚本会 fallback 挂通用入口，对 Claude Code 触发质量可能打折）
+3. `skills/<name>/harnesses/<harness>/SKILL.md` — 至少一个 harness 的执行器（否则挂接脚本只能 fallback 挂通用入口，触发质量打折）
 4. 在 `skills.manifest` 加一行 `<name>`
-5. Claude Code 协作者跑 `bash scripts/sync-claude-skills.sh` 验证挂接生效
+5. 在自己的 harness 上跑挂接脚本（具体命令见上文 per-harness 子节）验证挂接生效
 6. 开 PR 前回答 AGENTS.md "三问"（对应哪条 ADR / 哪个 spec / 哪些测试）
 
 ## 范围

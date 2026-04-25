@@ -2,7 +2,7 @@
 title: Spec 索引
 type: index
 status: active
-summary: 接口契约与跨层协议索引，分"核心三件套"与"横切四件套"
+summary: 接口契约与跨抽象层协议索引，分"核心三件套"与"横切四件套"
 tags: [spec, navigation]
 related:
   - dev/architecture/overview
@@ -13,7 +13,7 @@ related:
 
 # Spec（接口契约）
 
-本目录定义**跨模块接口**与**跨层协议**。所有契约**语言无关**（用伪代码 + 字段表），具体实现在代码里对齐本目录。
+本目录定义**跨模块接口**与**跨抽象层协议**（这里"层"指 IM ↔ daemon ↔ agent 数据流的接口/抽象层，不是已废止的架构 layered architecture 概念；详见 [`../architecture/overview.md`](../architecture/overview.md) §模块结构）。所有契约**语言无关**（用伪代码 + 字段表），具体实现在代码里对齐本目录。
 
 ## 核心原则
 

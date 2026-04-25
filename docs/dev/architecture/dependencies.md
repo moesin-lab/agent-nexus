@@ -13,7 +13,7 @@ related:
 
 本文件定义仓库内模块间**允许**与**禁止**的 import 关系。违反即拒绝合并。
 
-> **命名维度 disambiguation**：下文 `cmd/` / `core/` / `agent/` / `platform/` 是**模块概念名**（按职责分类），各自物理对应独立 npm package（详见 [`overview.md`](overview.md) §模块结构 §职责划分）。带点的 namespace prefix（如 `daemon.NormalizedEvent`）= `@agent-nexus/daemon` 的 import path。
+> **命名维度 disambiguation**：下文 `cmd/` / `core/` / `agent/` / `platform/` 是**模块概念名**（按职责分类），各自物理对应独立 npm package（详见 [`overview.md`](overview.md) §模块结构 §职责划分）。带点的 namespace prefix（如 `daemon.logger` / `daemon.idempotency`）= `@agent-nexus/daemon` 的 import path——指 daemon 包的横切能力子模块；类型契约（`NormalizedEvent` / `AgentEvent` 等）住 `@agent-nexus/protocol`，import 时直接用类型名（不带 prefix）。
 >
 > **本项目不使用 "三层结构 / layered architecture" 措辞**，采用 hub-and-spoke 模块模型；旧版"三层"措辞已归档到 [`docs/_deprecated/architecture/three-layer-vocabulary.md`](../../_deprecated/architecture/three-layer-vocabulary.md)。
 
@@ -77,7 +77,7 @@ platform/agent 可自由引入所需的 SDK 与工具库，但：
 - 所有业务接口通过 core 提供的抽象类型
 - 不把 platform/agent 特有类型从"对外边界"暴露（只在内部使用，边界上转为 core 定义的归一化类型）
 
-例：`platform/discord` 内部用 discord.js/discordgo 的 `Message` 类型随便使，但在**对 core 返回**时必须构造 `daemon.NormalizedEvent`。
+例：`platform/discord` 内部用 discord.js 的 `Message` 类型随便使，但在**对 daemon 返回**时必须构造 `NormalizedEvent`（类型住 `@agent-nexus/protocol`，import 即用）。
 
 ## cmd/ 的职责
 

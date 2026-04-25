@@ -114,16 +114,9 @@ Proposed ──(评审通过)──> Accepted
 
 > **可选的 UX 增强**：被取代 ADR 正文顶部可加 banner（例：`> **已被 [ADR-MMMM](../MMMM-...md) 取代，仅供审计追溯**`）帮助人类读者快速识别。不强制，不作工作流步骤——路径已承担防污染主责。
 
-## 准入与禁入
+## 职责边界
 
-ADR 这一层只回答 **"为什么选 X 不选 Y"**——决策、权衡、放弃理由是 ADR 的本体。三层职责互斥的完整矩阵见 [`../process/doc-layering.md`](../process/doc-layering.md)。
-
-**准入清单**：
-
-- 选项对比与权衡论述
-- 决策的约束、前提、触发事件
-- 放弃其他选项的理由
-- 状态变更日志（Proposed / Accepted / Deprecated / Superseded / Rejected）
+ADR 这一层只回答 **"为什么选 X 不选 Y"**。三层职责互斥的完整矩阵见 [`../process/doc-layering.md`](../process/doc-layering.md)；ADR 文档内部结构见 [`../standards/docs-style.md#结构约定`](../standards/docs-style.md#结构约定)。
 
 **禁入清单**（出现即拒，要求拆到对应层）：
 

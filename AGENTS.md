@@ -14,7 +14,7 @@ related:
 
 # AGENTS.md
 
-> 本文件是协作规则的**入口索引**，叠加在全局 `~/.claude/CLAUDE.md` 之上。具体规则展开在 `docs/dev/process/` 下对应文件。规则冲突时，本文件和 `docs/dev/` 下的项目文档优先。
+> 本文件是协作规则的**入口索引**，叠加在各自 harness 的全局规则之上（如 Claude Code 的 `~/.claude/CLAUDE.md`）。具体规则展开在 `docs/dev/process/` 下对应文件。规则冲突时，本文件和 `docs/dev/` 下的项目文档优先。
 
 ## 核心原则（不可违反）
 
@@ -75,6 +75,27 @@ related:
 ## 协作性 skill 挂接
 
 协作性 skill（见 [ADR-0007](docs/dev/adr/0007-collaborative-skill-promotion.md)）入库在仓库根 `skills/`，由 [`skills.manifest`](skills.manifest) 声明；各 harness 的 skill 目录 gitignored，**首次 clone 或 skill 结构变更后必须挂接**，否则静默不触发。挂接方式与新增清单见 [`docs/dev/process/skill-setup.md`](docs/dev/process/skill-setup.md)。
+
+## harness-neutral 文档约定
+
+仓库的协作文档（`AGENTS.md` / `docs/dev/**` / `skills/<name>/SKILL.md`）默认是 **harness-neutral**——任何 agent harness 的 reader 都应能读懂，不被默认假设为某个具体 harness。
+
+判定矩阵：
+
+| 类别 | 处理 |
+|---|---|
+| 通用协作概念（跨 harness 共通词，如 `subagent` / `主 session` / `session`） | **不限定**——直接用 |
+| harness 特有具体执行器 / API（具体 skill 名、subagent 类型、原生工具名） | **限定**：`<harness>: <X>` 或 "如 `<harness>` 的 `<X>`" |
+| harness 特有路径 / 脚本 / 概念（全局规则文件、挂接脚本、harness 特定术语） | **限定** |
+| 项目事实陈述（ADR / spec 决策本身就锁定具体 harness） | 直陈即可 |
+
+**harness-specific 区域不受本约定**（可直接用具体 harness 工具名 / 路径 / 脚本）：
+
+- 各 harness 私有配置目录（`.claude/` / `.codex/` / `.cursor/` 等）
+- `skills/<name>/harnesses/<harness>/SKILL.md`（per-harness 执行器）
+- `.tasks/` / `handoff/`（运行时草稿与状态）
+
+**违反后果**：reviewer 看到 harness-neutral 文档主体把 reader 默认成某个具体 harness 应要求修正——其他 harness reader 会误判自己该用什么工具。
 
 ## 文件定位速查
 

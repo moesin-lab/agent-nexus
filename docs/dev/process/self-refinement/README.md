@@ -2,7 +2,7 @@
 title: Self-Refinement（经验沉淀与规则分流协作约定）
 type: process
 status: active
-summary: 被纠正后或用户显式要求沉淀经验时的 agent-agnostic 协作约定——stay quiet by default、显式触发必走 4 步、分流矩阵保证沉淀到正确层级、auto-memory 遵守全局规则
+summary: 被纠正后或用户显式要求沉淀经验时的 agent-agnostic 协作约定——stay quiet by default、显式触发必走 4 步、分流矩阵保证沉淀到正确层级、harness 本地持久化规则（如 Claude Code 的 auto-memory）遵守全局规则
 tags: [process, memory, workflow, review]
 related:
   - dev/adr/0007-collaborative-skill-promotion
@@ -17,15 +17,15 @@ related:
 ## 核心前提
 
 1. **LLM 无跨 session 持久记忆**——会话 A 中被纠正的错误在会话 B 中会以相同概率复发，除非经验被外化为持久化上下文
-2. **持久化上下文分层**：不同性质的经验要住不同层（auto-memory / `docs/process/` / ADR / spec / skills），错层会污染协作或沉在本地无法共享
-3. **手动沉淀一直在发生**：本仓库现有协作者的 auto-memory 条目证明这个机制本身 work；本 skill 不替代手动沉淀，只在"经验已决定要沉淀"时提供**结构化流程**确保落位正确
+2. **持久化上下文分层**：不同性质的经验要住不同层（harness 本地持久化规则 / `docs/process/` / ADR / spec / skills），错层会污染协作或沉在本地无法共享
+3. **手动沉淀一直在发生**：本仓库现有协作者的持久化规则条目证明这个机制本身 work；本 skill 不替代手动沉淀，只在"经验已决定要沉淀"时提供**结构化流程**确保落位正确
 
 ## 核心原则
 
 - **Stay quiet by default**：不在每次回复末尾自动附"沉淀建议"；自动触发是反模式（边界不可控 + 死循环风险 + 误报噪音）
 - **显式触发必走 4 步**：用户主动要求沉淀时 agent 有明确 SOP，不即兴发挥
 - **分层优先**：沉淀前先判"个人 scope 还是项目 scope"，再定具体落点
-- **auto-memory 是最窄 scope**：没把握时走项目 scope（让 reviewer 兜底），不私藏进 memory
+- **harness 本地持久化规则（如 Claude Code 的 auto-memory）是最窄 scope**：没把握时走项目 scope（让 reviewer 兜底），不私藏进 memory
 
 ## 触发场景
 
@@ -49,14 +49,14 @@ related:
 ### 步骤 3：走对应执行约束
 
 - **仓库内任何文件改动**：遵守 AGENTS.md 核心原则 1（分支先行）——`git checkout -b` 起新分支后再 Edit；`main` 上禁止直接改
-- **auto-memory**：遵守全局 `~/.claude/CLAUDE.md` 的"记忆"节（去溯源化、自洽、不对抗 harness `originSessionId`）
-- **auto-memory 的具体路径与文件命名**按各 harness 约定（Claude Code 下见 §Harness 实现注记）
+- **harness 本地持久化规则**：遵守 harness 的全局规则文件（如 Claude Code 的 `~/.claude/CLAUDE.md`）中关于"记忆"的节（去溯源化、自洽、不对抗 harness `originSessionId`）
+- **持久化规则的具体路径与文件命名**按各 harness 约定（Claude Code 下见 §Harness 实现注记）
 
 ### 步骤 4：复核与落位
 
 执行前检索同主题条目：
 
-- **auto-memory 层**：用本 harness 的检索方式（Claude Code 下 Read `MEMORY.md` 索引 + 按需读 `<type>_<slug>.md` 全文）
+- **harness 本地持久化规则层**：用本 harness 的检索方式（Claude Code 下 Read `MEMORY.md` 索引 + 按需读 `<type>_<slug>.md` 全文；其他 harness 按自身机制检索）
 - **docs / skills 层**：`grep -r` 关键词 + 读命中文件全文
 
 **命中时判断三选一**：
@@ -76,15 +76,15 @@ related:
 > **"其他协作者 clone 仓库后也该遵守这条吗？"**
 >
 > - 是 → 项目 scope（走 PR 落到 `docs/` / ADR / spec / skills）
-> - 否，仅对本用户与本 agent 的协作偏好适用 → 个人 scope（auto-memory）
+> - 否，仅对本用户与本 agent 的协作偏好适用 → 个人 scope（harness 本地持久化规则，如 Claude Code 的 auto-memory）
 
-同一条经验可能两义皆可——此时走"是"。auto-memory 是**最窄 scope**，没把握就不私藏。
+同一条经验可能两义皆可——此时走"是"。harness 本地持久化规则是**最窄 scope**，没把握就不私藏。
 
 ### 矩阵
 
 | 经验性质 | 沉淀层 | 是否需 PR |
 |---|---|---|
-| 用户个人偏好 / 身份锚点 / **对本 agent 的**协作反馈（如"回复长度"、"用中文还是英文"、"是否追问"）/ 当前项目状态 / 外部系统指针 | auto-memory | 否 |
+| 用户个人偏好 / 身份锚点 / **对本 agent 的**协作反馈（如"回复长度"、"用中文还是英文"、"是否追问"）/ 当前项目状态 / 外部系统指针 | harness 本地持久化规则（如 Claude Code 的 auto-memory） | 否 |
 | 项目流程规则 / 编码与错误标准 / 对项目协作流程的反馈（"本项目 PR 必走 codex review"、"issue 不套模板"等） | `docs/dev/process/` 或 `docs/dev/standards/` | 是 |
 | 架构级决策（新模块、选型、跨层影响、数据流变更） | `docs/dev/adr/NNNN-*.md`（新 ADR） | 是 |
 | 接口契约（模块边界、API 签名、数据结构） | `docs/dev/spec/**/*.md` | 是 |
@@ -93,7 +93,7 @@ related:
 ### 误归位红线
 
 - **个人偏好写进 `docs/`** → 污染 reviewer / 其他协作者（读到一条强制规则其实只是某个作者偏好）
-- **项目规则写进 auto-memory** → 只活在本地、他人 clone 后无感、协作漂移
+- **项目规则写进 harness 本地持久化规则（auto-memory 等）** → 只活在本地、他人 clone 后无感、协作漂移
 - **架构级决策只进 `process/` 不起 ADR** → 决策无锚点、未来无法审计
 - **接口契约变更只改实现不改 spec** → 违反核心原则 4（契约先行）
 
@@ -104,7 +104,7 @@ related:
 | 自动在回复末尾追加沉淀建议（原外部 skill 默认行为） | Stay quiet by default；仅显式触发或明确判定值得时再动 |
 | 自动越权改文件（跨层写 docs / ADR 不征求确认） | 沉淀到有 PR 必要的层，必须先和用户确认再开分支动手 |
 | 在 `main` 上直接改 docs | 任何仓库内文件改动都遵守核心原则 1（分支先行） |
-| 写 auto-memory 时保留会话级溯源（session id / jsonl 路径 / "本 session" 措辞） | 全局 `~/.claude/CLAUDE.md` 记忆节明禁——memory 正文必须自洽，溯源走 handoff 或日报 |
+| 写 harness 本地持久化规则时保留会话级溯源（session id / jsonl 路径 / "本 session" 措辞） | harness 的全局规则文件（如 Claude Code 的 `~/.claude/CLAUDE.md`）记忆节明禁——memory 正文必须自洽，溯源走 handoff 或日报 |
 | 一个 PR 打包多个沉淀 | 违反核心原则 7（范围收敛）——每个 PR 只沉淀一个主题 |
 | 把 agent 能自决的细节塞 memory（命名风格、输出格式细节） | 只沉淀"跨 session 复发风险"级别的模式；琐碎细节的沉淀是噪音 |
 | 盲目新建条目忽略已有同主题 | 步骤 4 的三选一判断必走——补充 / 覆盖 / 新开 |
@@ -112,17 +112,19 @@ related:
 
 ## Harness 实现注记
 
+各 harness 的"本地持久化规则"机制不同，但层级定义（个人 scope vs 项目 scope）和分流矩阵以本 docs 为准，不因 harness 差异而漂移。
+
 ### Claude Code
 
 - **auto-memory 位置**：`~/.claude/projects/<project-slug>/memory/`
 - **索引文件**：同目录下的 `MEMORY.md`（每条 memory 一行指针）
 - **单条 memory 文件命名惯例**：`<type>_<slug>.md`（type ∈ {user, feedback, project, reference}）
-- **memory frontmatter 与三段式**：全局 `~/.claude/CLAUDE.md` 有 feedback 类型的 "Rule + **Why** + **How to apply**" 三段式惯例；本 skill 沉淀时遵循
+- **memory frontmatter 与三段式**：`~/.claude/CLAUDE.md` 有 feedback 类型的 "Rule + **Why** + **How to apply**" 三段式惯例；本 skill 沉淀时遵循
 
 ### 其他 harness
 
-- Codex / Cursor / ...：按自身文档的 memory / rules 机制实现。规则以本 docs 为准，不因 harness 差异而漂移。
-- 若某 harness 无 auto-memory 机制 → 第一行矩阵对该 harness 降级为"在 harness 本地 rules 文件追加"；若连本地 rules 也无 → 该 harness 用户需要把个人偏好口头重复给 agent，是该 harness 的能力缺口不是本 skill 的缺陷
+- Codex / Cursor / ...：按自身文档的 memory / rules 机制实现。规则以本 docs 为准。
+- 若某 harness 无本地持久化规则机制 → 第一行矩阵对该 harness 降级为"在 harness 本地 rules 文件追加"；若连本地 rules 也无 → 该 harness 用户需要把个人偏好口头重复给 agent，是该 harness 的能力缺口不是本 skill 的缺陷
 
 ## 与其他 skill 的边界
 

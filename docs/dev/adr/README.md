@@ -92,7 +92,7 @@ Proposed ──(评审通过)──> Accepted
 | [0005](deprecated/0005-subscription-as-first-class-path.md) | 订阅计费为一等用户路径 | Superseded by 0006 |
 | [0006](0006-limits-layering-defense-first.md) | Limits 分层——失控保护为一等，配额控制按用户路径可选 | Accepted |
 | [0007](0007-collaborative-skill-promotion.md) | 协作性 skill 入库与挂接 | Accepted |
-| [0008](0008-doc-layering-ssot.md) | 文档分层职责互斥实现 SSOT | Proposed |
+| [0008](0008-doc-layering-ssot.md) | 文档事实归属判定实现 SSOT | Proposed |
 
 ## 引用规则
 
@@ -116,7 +116,7 @@ Proposed ──(评审通过)──> Accepted
 
 ## 职责边界
 
-ADR 这一层只回答 **"为什么选 X 不选 Y"**。三层职责互斥的完整矩阵见 [`../process/doc-layering.md`](../process/doc-layering.md)；ADR 文档内部结构见 [`../standards/docs-style.md#结构约定`](../standards/docs-style.md#结构约定)。
+ADR 这一层只回答 **"为什么选 X 不选 Y"**。事实归属与冲突裁决见 [`../process/doc-layering.md`](../process/doc-layering.md)；ADR 文档内部结构见 [`../standards/docs-style.md#结构约定`](../standards/docs-style.md#结构约定)。
 
 **禁入清单**（出现即拒，要求拆到对应层）：
 

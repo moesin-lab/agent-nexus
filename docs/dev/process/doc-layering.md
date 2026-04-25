@@ -1,8 +1,8 @@
 ---
-title: 文档分层职责
+title: 文档分类判定
 type: process
 status: active
-summary: ADR / spec / architecture 三层职责互斥定义、判定流程与既有错位的迁移指引
+summary: docs/dev 下事实归属 owner、process 编排边界、跨目录冲突裁决与既有错位迁移指引
 tags: [docs, layering, ssot, process]
 related:
   - dev/adr/0008-doc-layering-ssot
@@ -10,39 +10,54 @@ related:
   - dev/process/workflow
 ---
 
-# 文档分层职责
+# 文档分类判定
 
-本文件定义 `docs/dev/` 下三层文档（ADR / spec / architecture）各自的**唯一职责**与**禁入清单**，以及任何一段内容应该落在哪一层的判定流程。
+本文件定义 `docs/dev/` 下事实归属 owner、`process/` 的编排边界、跨目录冲突裁决，以及任何一段内容应该落在哪一类文档的判定流程。
 
-> **决策依据**见 [ADR-0008](../adr/0008-doc-layering-ssot.md)：之所以采用"层职责互斥"作为单一信息源（SSOT）的实现路径，而非引入 owns 字段、改源反查 hook、一致性测试等机械补丁，理由在 ADR 里论证。本文件只承载规则本体。
+> **决策依据**见 [ADR-0008](../adr/0008-doc-layering-ssot.md)：之所以采用"职责判定 + link 不复述"作为单一信息源（SSOT）的实现路径，而非引入 owns 字段、改源反查 hook、一致性测试等机械补丁，理由在 ADR 里论证。本文件只承载规则本体。
 
-## 三层职责矩阵
+## 判定轴
 
-每层只回答一个问题；每条事实只属于回答其类型问题的那一层。
-各层文档内部应包含哪些章节，见 [`../standards/docs-style.md#结构约定`](../standards/docs-style.md#结构约定)。
+先按**内容约束的对象**判定 owner，不按内容出现的场景判定。文档内部章节结构、标题、篇幅、frontmatter 见 [`../standards/docs-style.md#结构约定`](../standards/docs-style.md#结构约定)，不在本文件定义。
 
-| 层 | 唯一回答的问题 | 禁入清单 |
+| 目录 | owner 的事实类型 | 禁入清单 |
 |---|---|---|
-| **ADR**（`docs/dev/adr/`） | **为什么**选 X 不选 Y | 接口签名、数据结构定义、字段表、默认值字面量、操作流程、规则清单本体 |
-| **spec**（`docs/dev/spec/`） | X **是什么** / X **长什么样** | 决策权衡论述（"因为 ... 所以选这个"）、模块拓扑图、跨模块组合关系 |
-| **architecture**（`docs/dev/architecture/`） | X、Y、Z **怎么组合** | 接口签名、字段表、默认值字面量、决策权衡论述 |
+| **ADR**（`docs/dev/adr/`） | 决策依据：**为什么**选 X 不选 Y | 接口签名、数据结构定义、字段表、默认值字面量、操作流程、规则清单本体 |
+| **spec**（`docs/dev/spec/`） | 契约事实：系统 / 模块对外承诺**是什么** | 决策权衡论述（"因为 ... 所以选这个"）、模块拓扑图、跨模块组合关系、执行流程 |
+| **architecture**（`docs/dev/architecture/`） | 组合事实：模块、依赖、数据流**怎么组合** | 接口签名、字段表、默认值字面量、决策权衡论述、PR / 测试 / 写作流程 |
+| **testing**（`docs/dev/testing/`） | 验证证据模型：用什么测试、fixture、eval、CI 证据证明行为正确 | 系统接口契约、代码 / 文档写法规范、PR 执行顺序 |
+| **standards**（`docs/dev/standards/`） | 静态产物形态：代码、文档、日志、错误处理等产物应如何书写 | 执行顺序、门禁编排、系统接口契约、测试层级策略 |
+| **process**（`docs/dev/process/`） | 编排事实：人 / agent 在什么时候做什么、谁负责、门禁怎么触发、失败后怎么处理 | 被编排规则的本体：字段表、格式规范、测试分层、代码写法、文档结构 |
 
-**横切补充**：`docs/dev/process/`（流程）与 `docs/dev/standards/`（规范）独立于上述三层，承载"协作怎么做"和"代码风格 / 日志 / 错误处理规范"，本规则不约束它们之间的关系——但它们引用上述三层时同样遵守"link 不复述"。
+`process/` 可以列 checklist，但 checklist 项只能写"检查 X 是否符合 owner 文档"，不能复述 X 的规则本体。
 
 ## 判定流程
 
 写一段内容前，按顺序问自己：
 
-1. **它在回答"为什么这样选"吗？**——如果是，落 ADR；其他层只能 link 到这条 ADR
-2. **它在回答"X 是什么 / 长什么样"吗？**——如果是，落 spec；其他层只能 link
-3. **它在回答"X、Y、Z 怎么组合"吗？**——如果是，落 architecture；其他层只能 link
-4. **三个都答不出来？**——这段不该写，或属于 process / standards
+1. **它在解释为什么选 X 吗？**——落 ADR
+2. **它在定义系统 / 模块承诺的接口、字段、状态、错误码、默认值吗？**——落 spec
+3. **它在说明模块、依赖、数据流、状态机如何组合吗？**——落 architecture
+4. **它在定义验证证据模型、测试层级、fixture、eval、CI 证据吗？**——落 testing
+5. **它在定义静态产物的写法、格式、命名、文风、日志 / 错误处理写法吗？**——落 standards
+6. **它在编排什么时候做、谁来做、门禁何时触发、失败后如何处理吗？**——落 process
 
 **强制单选**：一段内容只能命中一个问题。如果同时像两层（例如"为什么 + 是什么"），把它**拆成两段**分别落到两层，互相 link，**不要在同一层里写两段**。
 
+## 冲突裁决
+
+| 冲突 | 裁决 |
+|---|---|
+| `process` vs `standards` | 标准本体归 `standards`；`process` 只写何时检查、谁检查、失败后怎么处理 |
+| `process` vs `testing` | 测试先后顺序、门禁触发归 `process`；测试层级、mock 边界、fixture / eval 归 `testing` |
+| `standards` vs `testing` | 只服务测试资产的格式、命名、fixture 规则归 `testing`；跨产物通用写法归 `standards` |
+| `standards` vs `spec` | 字段契约、错误码、事件类型归 `spec`；代码中如何记录、传播、呈现归 `standards` |
+| `architecture` vs `spec` | 依赖关系、数据流归 `architecture`；接口签名、字段表、默认值归 `spec` |
+| `ADR` vs 任意目录 | 决策理由归 ADR；被决策后的规则本体归对应 owner |
+
 ## 引用规则
 
-跨层引用统一遵守：**只 link，不复述**。
+跨目录引用统一遵守：**只 link，不复述**。
 
 允许形式：
 - `详见 [ADR-0006](../adr/0006-limits-layering-defense-first.md)`
@@ -62,6 +77,8 @@ Reviewer 在 PR 里看到下列模式，应直接要求修正或拒绝：
 - `interface X` / `type X = ...` / 字段表出现在 ADR 文件 → 拒，要求拆到 spec
 - `因为 ... 所以选 ...` / 选项对比论述出现在 spec 或 architecture 文件 → 拒，要求拆到 ADR
 - 接口签名、字段表、默认值字面量出现在 architecture 文件 → 拒，要求拆到 spec
+- `process/` 文件展开 frontmatter、标题层级、代码写法、测试分层等规则本体 → 拒，要求改成 link 到 owner 文档
+- `standards/` 文件编排 PR 流程、执行顺序、门禁触发 → 拒，要求拆到 process
 - 同一份契约 / schema / 接口定义在两个文件出现 → 拒，保留 owner 层定义，其他改 link
 - 同一段决策论述在两个文件出现 → 拒，保留 ADR 论述，其他改 link
 
@@ -82,7 +99,6 @@ Reviewer 在 PR 里看到下列模式，应直接要求修正或拒绝：
 
 ## 不属于本规则
 
-- **process / standards 之间的关系**——`docs/dev/process/` 与 `docs/dev/standards/` 独立于三层文档体系
 - **代码与文档的 SSOT**——代码层通过语言机制（单一 export）和 import 约束实现，详见 [ADR-0008](../adr/0008-doc-layering-ssot.md) Consequences §"代码与设计维度"
-- **机械工具**（lint、hook、一致性测试、owns frontmatter 字段）——本规则**不引入**这些机制；如果未来层职责互斥实践证明不足以挡住所有 drift，再单独开 ADR 引入工具，不在本文件演进
-- **placeholder 文档**——只承载信息架构占位，不属于本三层判定范围
+- **机械工具**（lint、hook、一致性测试、owns frontmatter 字段）——本规则**不引入**这些机制；如果未来事实归属判定仍不足以挡住所有 drift，再单独开 ADR 引入工具，不在本文件演进
+- **placeholder 文档**——只承载信息架构占位，不属于本判定范围

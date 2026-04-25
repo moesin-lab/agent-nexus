@@ -13,6 +13,8 @@ related:
 
 本项目文档的语言、结构、风格统一规则。
 
+本文件只定义文档作为静态产物应长什么样，不定义事实归属。某段内容应该落到 ADR / spec / architecture / testing / standards / process 的哪一类，见 [`../process/doc-layering.md`](../process/doc-layering.md)。
+
 ## 元信息（YAML Frontmatter）
 
 **所有 Markdown 文档必须**以 YAML frontmatter 起头。详细 schema 见 [`metadata.md`](metadata.md)。

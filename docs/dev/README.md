@@ -2,7 +2,7 @@
 title: 开发文档中心
 type: index
 status: active
-summary: 开发文档六大支柱（architecture/adr/spec/process/testing/standards）的索引与阅读顺序
+summary: 开发文档目录（architecture/adr/spec/process/testing/standards）的索引、主判定轴与阅读顺序
 tags: [navigation, dev-docs]
 related:
   - docs/README
@@ -16,18 +16,18 @@ related:
 
 面向**实现者**。本中心是本项目当前阶段的文档主线，其他中心（`product/`、`ops/`）仅占位。
 
-## 六大支柱
+## 目录分类
 
-开发文档由六个独立但互相引用的部分组成。各部分职责严格分离：
+开发文档按主判定轴组织。分类冲突时，以 [`process/doc-layering.md`](process/doc-layering.md) 的 owner 判定与冲突裁决为准。
 
-| 目录 | 职责 | 读者的核心问题 |
+| 目录 | 主判定轴 | 读者的核心问题 |
 |---|---|---|
-| [`architecture/`](architecture/) | 系统设计与模块结构（hub-and-spoke） | 代码整体怎么组织？谁依赖谁？ |
-| [`adr/`](adr/) | 架构决策记录 | 为什么这么做？考虑过什么替代方案？ |
-| [`spec/`](spec/) | 接口契约与协议 | 模块之间交换什么数据？签名是什么？ |
-| [`process/`](process/) | 开发流程规范 | 我该怎么做事？PR 流程是什么？ |
-| [`testing/`](testing/) | 测试策略 | 我该写什么测试？在哪一层？ |
-| [`standards/`](standards/) | 代码与文档规范 | 该怎么写日志/错误/文档？ |
+| [`architecture/`](architecture/) | 组合事实 | 代码整体怎么组织？谁依赖谁？ |
+| [`adr/`](adr/) | 决策依据 | 为什么这么做？考虑过什么替代方案？ |
+| [`spec/`](spec/) | 契约事实 | 模块之间交换什么数据？签名是什么？ |
+| [`process/`](process/) | 编排事实 | 什么时候做？谁负责？门禁怎么触发？ |
+| [`testing/`](testing/) | 验证证据模型 | 用什么测试、fixture、eval、CI 证据证明正确？ |
+| [`standards/`](standards/) | 静态产物形态 | 代码、日志、错误、文档应该怎么写？ |
 
 每条规则只在一个地方被**定义**，其他地方只能**引用**。发现重复定义或冲突，视为文档 bug。
 
@@ -82,12 +82,12 @@ ADR 和 spec 有专属扩展字段。完整 schema 见 [`standards/metadata.md`]
 2. `architecture/dependencies.md` — 确认改动不违反依赖方向
 3. 写完 ADR 先走 [`process/code-review.md`](process/code-review.md) 的评审流程
 
-## 六大支柱的相互引用规则
+## 目录间引用规则
 
-- `spec/` 引用 `architecture/`（契约基于架构设计），**不反向**
+- `spec/` 引用 `architecture/`（契约基于架构设计），不反向复述接口细节
 - `standards/` 引用 `spec/`（例如 `standards/logging.md` 按 `spec/observability.md` 的字段）
 - `testing/` 引用 `spec/` 与 `architecture/`（测试按契约写断言）
-- `process/` 引用其他所有（流程把各部分串起来）
+- `process/` 引用其他所有（流程只编排何时检查，不复述被检查规则）
 - `adr/` 可被任何部分引用；ADR 自身只引用其他 ADR
 
 ## 不做的事

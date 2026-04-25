@@ -76,6 +76,27 @@ related:
 
 协作性 skill（见 [ADR-0007](docs/dev/adr/0007-collaborative-skill-promotion.md)）入库在仓库根 `skills/`，由 [`skills.manifest`](skills.manifest) 声明；各 harness 的 skill 目录 gitignored，**首次 clone 或 skill 结构变更后必须挂接**，否则静默不触发。挂接方式与新增清单见 [`docs/dev/process/skill-setup.md`](docs/dev/process/skill-setup.md)。
 
+## harness-neutral 文档约定
+
+仓库的协作文档（`AGENTS.md` / `docs/dev/**` / `skills/<name>/SKILL.md`）默认是 **harness-neutral**——任何 agent harness（Claude Code / Codex / Cursor / Cline / ...）reader 都应能读懂，不被默认假设为 Claude Code。
+
+判定矩阵：
+
+| 类别 | 例 | 处理 |
+|---|---|---|
+| 通用协作概念（跨 harness 共通词） | `subagent` / `子代理` / `主 session` / `session` | **不限定**——直接用 |
+| CC 特有具体执行器 / API | `AskUserQuestion` / `codex-review` skill / `general-purpose` subagent / `Explore` subagent | **限定**："Claude Code: `X`" 或 "如 Claude Code 的 `X`" |
+| CC 特有路径 / 脚本 / 概念 | `~/.claude/CLAUDE.md` / `sync-claude-skills.sh` / `auto-memory` / `pretool-read-guard` hook | **限定** |
+| 项目事实陈述（非"reader 是 CC"默认） | "ADR-0002 选 Claude Code CLI 作为 agent 后端" / 评审历史里的 "codex argue" | 直陈即可 |
+
+**harness-specific 区域不受本约定**（可直接用 harness 工具名 / 路径 / 脚本）：
+
+- `.claude/**`（Claude Code 私有配置）
+- `skills/<name>/harnesses/<harness>/SKILL.md`（per-harness 执行器）
+- `.tasks/` / `handoff/`（运行时草稿与状态）
+
+**违反后果**：reviewer 看到 harness-neutral 文档主体把 reader 默认成 Claude Code（要求调用 CC 特有 API / 用 CC 特定路径不加限定）应要求修正——其他 harness reader 会误判自己该用什么工具。判据见 PR #15 决策链。
+
 ## 文件定位速查
 
 | 想做什么 | 先看哪里 |

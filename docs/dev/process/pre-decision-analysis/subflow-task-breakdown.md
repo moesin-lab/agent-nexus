@@ -25,7 +25,7 @@
 用户挑中某种拆法后：
 
 - 若第一个子任务 agent 有把握 → 直接走路径 A 开分支落地
-- 若仍需讨论 → 起 `plan` scratch 或 AskUserQuestion 进一步收敛
+- 若仍需讨论 → 起 `plan` scratch 或向用户推选项进一步收敛
 - 长期 track 用 issue
 
 本子流程 scratch 本身归档，不再追加实施细节。

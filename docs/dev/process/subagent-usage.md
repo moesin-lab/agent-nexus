@@ -2,7 +2,7 @@
 title: Subagent 使用规范
 type: process
 status: active
-summary: 何时派发子代理、如何写 prompt、主 session 收敛职责与并行策略
+summary: 何时派发独立 agent、如何写 prompt、当前 session 收敛职责与并行策略
 tags: [subagent, process]
 related:
   - root/AGENTS
@@ -11,18 +11,18 @@ related:
 
 # Subagent 使用规范
 
-在 Claude Code / Codex 这类多代理环境里，**何时派发子代理、如何写 prompt** 直接决定效率与上下文质量。cc-connect 的教训之一是主 session 把所有事都自己做，上下文很快被日志、代码片段、搜索结果腐败。
+在支持派发独立 agent 的环境里，**何时派发独立任务 agent、如何写 prompt** 直接决定效率与上下文质量。cc-connect 的教训之一是当前 session 把所有事都自己做，上下文很快被日志、代码片段、搜索结果腐败。
 
 ## 核心原则
 
-**主 session 只做收敛与决策；探索、长读、独立可验证的子任务全部派发。**
+**当前 session 只做收敛与决策；探索、长读、独立可验证的子任务全部派发。**
 
-**单个 subagent 的工作量应收敛到可并行化的最小单元。** 宁可派 4 个并行的小 agent，也不要派一个串行扫全局的大 agent。串行大 agent 把延迟全加在一条链路上，且产出体量超出 200 行后主 session 很难可靠收敛。
+**单个独立任务 agent 的工作量应收敛到可并行化的最小单元。** 宁可派 4 个并行的小 agent，也不要派一个串行扫全局的大 agent。串行大 agent 把延迟全加在一条链路上，且产出体量超出 200 行后当前 session 很难可靠收敛。
 
 ## 何时派发（强烈建议）
 
 - **跨文件探索**：不知道功能在哪实现、需要 grep + 多文件 read
-- **长日志/长输出分析**：CC CLI 几千行输出、测试失败长 traceback
+- **长日志/长输出分析**：agent 工具运行的大量输出、测试失败长 traceback
 - **独立可验证子任务**：写一个独立工具函数、写一批 fixture、生成一段样板代码
 - **第二意见**：让另一个模型（codex）给出独立判断（见 [`code-review.md`](code-review.md)）
 - **批量同质操作**：在多个文件里做相似改动
@@ -30,22 +30,22 @@ related:
 
 ## 何时不派发
 
-- 任务粒度小（1–2 个文件、明确入口）——主 session 直接做更快
+- 任务粒度小（1–2 个文件、明确入口）——当前 session 直接做更快
 - 需要与用户来回澄清——中间结论需要用户实时参与
 - 任务需要强依赖上下文记忆（前面几轮对话里讨论过的约束）——子代理没有这些上下文，抓不准
 - 低风险可回滚的快速操作（小的 edit、单条命令）
 
 ## 派发哪个子代理
 
-按 `~/.claude/CLAUDE.md` 的全局约定，常用：
+按 harness 的全局约定（如 Claude Code 的 `~/.claude/CLAUDE.md`），常用类型：
 
-| 场景 | 子代理类型 |
+| 场景 | 独立 agent 类型 |
 |---|---|
-| 代码/文件探索 | `Explore`（快速）或 `general-purpose`（深度） |
-| 实现方案设计 | `Plan` |
-| 独立 review | `superpowers:code-reviewer` 或 codex-review skill |
-| 第二意见/盲点检查 | `codex:codex-rescue` 或 codex-review skill |
-| 简化改进既有代码 | `code-simplifier` |
+| 代码/文件探索 | 快速探索或深度通用 agent（Claude Code: `Explore` / `general-purpose`；其他 harness 参考自身对等） |
+| 实现方案设计 | 规划类 agent（Claude Code: `Plan`；其他 harness 参考自身对等） |
+| 独立 review | 异构模型 review（Claude Code: `superpowers:code-reviewer` 或 `codex-review` skill；其他 harness 参考自身对等） |
+| 第二意见/盲点检查 | 异构模型反方分析（Claude Code: `codex:codex-rescue` 或 `codex-review` skill；其他 harness 参考自身对等） |
+| 简化改进既有代码 | 代码简化 agent（Claude Code: `code-simplifier`；其他 harness 参考自身对等） |
 
 本项目专属补充：待 ADR 0004 语言定后，如有需要可新增项目专属子代理（如"spec 合约测试生成器"），届时在本文件登记。
 
@@ -88,7 +88,7 @@ related:
 
 ### 探索类 agent 的回报格式
 
-Explore / general-purpose 这类"抓事实回主 session"的 agent，默认产出叙述化长报告——主 session 吞下后上下文会被占满且真事实埋得深。派发时在 prompt 末尾贴硬约束片段，模板见 [`subagent-recon-prompt-template.md`](subagent-recon-prompt-template.md)。
+探索 / 通用型这类"抓事实回调用方"的 agent，默认产出叙述化长报告——当前 session 吞下后上下文会被占满且真事实埋得深。派发时在 prompt 末尾贴硬约束片段，模板见 [`subagent-recon-prompt-template.md`](subagent-recon-prompt-template.md)。
 
 review / plan / simplify 类 agent 不适用该模板——产出结构不同。
 
@@ -102,13 +102,13 @@ review / plan / simplify 类 agent 不适用该模板——产出结构不同。
 
 "我们项目是做 X 的，背景是 Y，规范是 Z...（5000 字）"——子代理抓不到重点。只给**与本任务相关的**背景。
 
-### 派发后主 session 又做一遍
+### 派发后当前 session 又做一遍
 
-子代理报告回来后，主 session 又去跑一遍搜索、读一遍文件——浪费上下文，且容易产生不一致结论。**相信子代理的产出，有疑问再追问**。
+独立 agent 报告回来后，当前 session 又去跑一遍搜索、读一遍文件——浪费上下文，且容易产生不一致结论。**相信独立 agent 的产出，有疑问再追问**。
 
 ### 派发巨型单 agent
 
-一个子代理扫全部、审全部、比对全部——看起来省事，实际上把延迟全加在一条链路上，产出体量还容易超出主 session 可靠收敛的上限。见 §任务拆分与并行派发。
+一个独立 agent 扫全部、审全部、比对全部——看起来省事，实际上把延迟全加在一条链路上，产出体量还容易超出当前 session 可靠收敛的上限。见 §任务拆分与并行派发。
 
 ### 用子代理做需要持续互动的任务
 
@@ -118,20 +118,20 @@ review / plan / simplify 类 agent 不适用该模板——产出结构不同。
 
 子代理默认可能去改文件。如果只想研究，明确说"只做研究，不要修改任何文件"。
 
-## 主 session 的职责
+## 当前 session 的职责
 
-派发子代理后，主 session 的职责是：
+派发独立 agent 后，当前 session 的职责是：
 
-1. **收敛**：把多个子代理的产出整合成一致结论
-2. **决策**：基于产出做出选择（子代理不替你决策）
+1. **收敛**：把多个独立 agent 的产出整合成一致结论
+2. **决策**：基于产出做出选择（独立 agent 不替你决策）
 3. **落盘**：把最终产物写入正确位置（代码文件、文档、ADR）
-4. **追问**：子代理结论有漏洞，补问或重新派发
+4. **追问**：独立 agent 结论有漏洞，补问或重新派发
 
-主 session **不应**：
+当前 session **不应**：
 
-- 复制粘贴子代理的结论不做过滤
-- 把子代理当 oracle（把决策责任转移给它）
-- 发出子代理后自己也做一遍同样的事
+- 复制粘贴独立 agent 的结论不做过滤
+- 把独立 agent 当 oracle（把决策责任转移给它）
+- 发出独立 agent 后自己也做一遍同样的事
 
 ## 任务拆分与并行派发
 
@@ -148,8 +148,8 @@ review / plan / simplify 类 agent 不适用该模板——产出结构不同。
 
 - 子任务之间**上下文耦合高**：需要共享同一批约束、同一批中间结论——拆分后每个子 agent 都要重复收到整套背景，净收益变负
 - **收敛成本 > 并行收益**：4 个并行 agent 若合成一份一致报告的工作量本身很大，不如一个 agent 串行做
-- **任务本身很短**：主 session 直接做都在几分钟内，引入 subagent 的 prompt 开销反而更慢
-- **需要来回澄清**：subagent 单次往返，碰到边界歧义要重派，主 session 直接做可中途问用户
+- **任务本身很短**：当前 session 直接做都在几分钟内，引入独立 agent 的 prompt 开销反而更慢
+- **需要来回澄清**：独立 agent 单次往返，碰到边界歧义要重派，当前 session 直接做可中途问用户
 
 ### 常用拆分维度
 
@@ -166,7 +166,7 @@ review / plan / simplify 类 agent 不适用该模板——产出结构不同。
 拆分颗粒建议对齐这几条，**但都是经验值**——对具体任务需要时放宽都行：
 
 - **预期运行时间 ~5 分钟内**：明显更久通常意味着还能继续拆
-- **产出 ~200 行内**：明显更多说明子代理在替你做本该主 session 做的收敛
+- **产出 ~200 行内**：明显更多说明独立 agent 在替你做本该当前 session 做的收敛
 - **结论自洽**：子报告能独立阅读，不依赖其他子报告
 
 上述三条是"想判断是不是 over-coarse"的尺，不是"必须满足才派发"。
@@ -175,7 +175,7 @@ review / plan / simplify 类 agent 不适用该模板——产出结构不同。
 
 > 派一个 Explore 扫遍 `docs/dev/` 下 40 份 markdown，逐文件审计矛盾、缺失、stale。
 
-正确做法：派 3 个并行 Explore，分别审计 `adr/` + `architecture/` / `spec/` 核心三件套 + `agent-backends/` / `spec/infra/` + `spec/security/` + `standards/` + `testing/`，主 session 再做一次跨分区收敛。
+正确做法：派 3 个并行探索 agent，分别审计 `adr/` + `architecture/` / `spec/` 核心三件套 + `agent-backends/` / `spec/infra/` + `spec/security/` + `standards/` + `testing/`，当前 session 再做一次跨分区收敛。
 
 ### 串行不可避免的场景
 

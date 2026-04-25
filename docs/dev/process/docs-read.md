@@ -51,9 +51,9 @@ related:
 - 命中仓库根 `README.md` / `CONTRIBUTING.md` 的 `Read` → block（外部导向，stderr 指引走 `docs-read --force`）
 - 其他一切 Read → 放行（含 `AGENTS.md` / `CHANGELOG.md` / active 的 `docs/**/*.md`）
 
-### Claude Code 集成示例
+### Claude Code 集成示例（其他 harness 按自身 hook 机制对等挂接）
 
-本地创建 `.claude/settings.json`（不会被提交）：
+Claude Code 示例：本地创建 `.claude/settings.json`（不会被提交）：
 
 ```json
 {

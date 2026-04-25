@@ -17,8 +17,8 @@
 
 | 场景 | 调度方式 | 特征 |
 |---|---|---|
-| **默认 — 异构模型反方分析** | 调 `codex-review` skill（内部用 OpenAI Codex / gpt-5 系列） | 不同训练数据 + 不同 reasoning style，能挑出同模型盲点；尤其对"方法论包装"、"隐含假设"敏感 |
-| **代码库交叉验证** | 派 `general-purpose` subagent（独立 context） | 同模型但无当前对话包袱；适合"这个方案在项目中是否已有先例 / 冲突"类问题 |
+| **默认 — 异构模型反方分析** | 调异构模型 review（如 Claude Code 的 `codex-review` skill，内部用 OpenAI Codex / gpt-5 系列；其他 harness 参考自身对等） | 不同训练数据 + 不同 reasoning style，能挑出同模型盲点；尤其对"方法论包装"、"隐含假设"敏感 |
+| **代码库交叉验证** | 派独立上下文 agent（如 Claude Code 的 `general-purpose` 独立 context；其他 harness 参考自身对等） | 同模型但无当前对话包袱；适合"这个方案在项目中是否已有先例 / 冲突"类问题 |
 | **两者都适合时** | 并行派两路，收两份独立 argue | 成本高但信号最强；留给关键决策 |
 
 ## 调度 prompt 样板

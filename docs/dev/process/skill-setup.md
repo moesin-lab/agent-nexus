@@ -31,6 +31,20 @@ skills/<name>/
 - 通用入口 `SKILL.md` 描述跨 harness 通用行为，不点名特定工具
 - per-harness 执行器住 `harnesses/<harness>/SKILL.md`，承载该 harness 特定细节
 
+## 通用挂接原理（harness-agnostic）
+
+无论 harness，挂接逻辑都是：
+
+1. 检索 `skills/<name>/SKILL.md` 是否标注本 harness
+2. 若有 harness-specific 执行器（`skills/<name>/harnesses/<harness>/SKILL.md`），优先用作入口
+3. 否则回退到 `skills/<name>/SKILL.md` 通用入口
+4. 通过 harness 自身机制（symlink / copy / hook）把执行器挂到本地 skill 目录
+
+各 harness 的具体实现：
+
+- **Claude Code**：见下文 §"Claude Code 协作者"
+- **其他 harness**：参考 Claude Code 的脚本逻辑自行实现（见 §"其他 harness"）
+
 ## Claude Code 协作者
 
 首次 clone 后（以及 `skills.manifest` 或 skill 目录结构变更后）运行一次：

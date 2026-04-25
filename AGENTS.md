@@ -14,7 +14,7 @@ related:
 
 # AGENTS.md
 
-> 本文件是协作规则的**入口索引**，叠加在全局 `~/.claude/CLAUDE.md` 之上。具体规则展开在 `docs/dev/process/` 下对应文件。规则冲突时，本文件和 `docs/dev/` 下的项目文档优先。
+> 本文件是协作规则的**入口索引**，叠加在各自 harness 的全局规则之上（如 Claude Code 的 `~/.claude/CLAUDE.md`）。具体规则展开在 `docs/dev/process/` 下对应文件。规则冲突时，本文件和 `docs/dev/` 下的项目文档优先。
 
 ## 核心原则（不可违反）
 
@@ -26,7 +26,7 @@ related:
 3. **TDD 强制**：先 spec → 先 failing test → 再 impl。细节见 [`docs/dev/process/tdd.md`](docs/dev/process/tdd.md)。
 4. **契约先行**：跨层交互必须走 `docs/dev/spec/` 定义的接口。新增能力先改 spec，再改代码。
 5. **Code review 不走过场**：每个 PR 必须过 codex review（大变更走 ultrareview）。流程见 [`docs/dev/process/code-review.md`](docs/dev/process/code-review.md)。
-6. **Subagent 优先**：探索类、长研究类任务优先派发子代理，主 session 只做收敛与决策。细节见 [`docs/dev/process/subagent-usage.md`](docs/dev/process/subagent-usage.md)。
+6. **Subagent 优先**：探索类、长研究类任务优先派发独立 agent，当前 session 只做收敛与决策。细节见 [`docs/dev/process/subagent-usage.md`](docs/dev/process/subagent-usage.md)。
 7. **范围收敛**：每个 PR 只做一件事，禁止"顺手重构"无关代码。
 8. **Conventional Commits**：所有提交遵循 [`docs/dev/process/commit-and-branch.md`](docs/dev/process/commit-and-branch.md)。
 9. **作废文档物化到归档目录**：Superseded ADR 和明确 Deprecated 的文档必须住在 `docs/dev/adr/deprecated/` 或 `docs/_deprecated/`——路径本身就是"别当事实"的信号。active 路径下的文档（含 placeholder）可直接 `Read`；归档路径的文档由 hook 拦截，必须走 `scripts/docs-read --force`。详见下文"读文档的防污染规则"。
@@ -70,7 +70,7 @@ related:
 - 在 IM 里回显绝对路径、env、token、内部错误栈——必须经过 `core` 的脱敏层
 - PR 里混多件事（"顺便改了下 X"）——单一关注点原则
 - 为了赶时间跳过 codex review——大变更必须 review
-- 派发 subagent 后主 session 又把同样的探索做一遍——相信子代理的产出，主 session 只做收敛
+- 派发独立 agent 后当前 session 又把同样的探索做一遍——相信独立 agent 的产出，当前 session 只做收敛
 
 ## 协作性 skill 挂接
 

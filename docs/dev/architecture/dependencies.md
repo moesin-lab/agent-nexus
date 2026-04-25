@@ -2,8 +2,8 @@
 title: 模块依赖方向
 type: architecture
 status: active
-summary: 定义仓库内模块间允许与禁止的 import 关系；core 只依赖 stdlib，agent/platform 只依赖 core
-tags: [architecture, layering, dependencies]
+summary: 定义仓库内模块间允许与禁止的 import 关系；core 只依赖 stdlib，agent/platform 只依赖 core/protocol
+tags: [architecture, hub-and-spoke, modules, dependencies]
 related:
   - dev/architecture/overview
   - dev/standards/coding
@@ -13,7 +13,9 @@ related:
 
 本文件定义仓库内模块间**允许**与**禁止**的 import 关系。违反即拒绝合并。
 
-> **命名 disambiguation**：下文 `cmd/` / `core/` / `agent/` / `platform/` 是**架构分层维度**的路径名，不是 npm package 名。ADR-0004 monorepo 布局下四层全部住在 `@agent-nexus/daemon` package 内按职责子目录平铺（详见 [`overview.md`](overview.md) §三层结构）；带点的 namespace prefix（如 `daemon.NormalizedEvent`）= `@agent-nexus/daemon` 的 import path。
+> **命名维度 disambiguation**：下文 `cmd/` / `core/` / `agent/` / `platform/` 是**模块概念名**（按职责分类），各自物理对应独立 npm package（详见 [`overview.md`](overview.md) §模块结构 §职责划分）。带点的 namespace prefix（如 `daemon.NormalizedEvent`）= `@agent-nexus/daemon` 的 import path。
+>
+> **本项目不使用 "三层结构 / layered architecture" 措辞**，采用 hub-and-spoke 模块模型；旧版"三层"措辞已归档到 [`docs/_deprecated/architecture/three-layer-vocabulary.md`](../../_deprecated/architecture/three-layer-vocabulary.md)。
 
 ## 允许方向
 
@@ -33,7 +35,7 @@ core/       ────> stdlib + 少量白名单通用库
 - **core** 是中枢，只依赖语言标准库与少量通用基础库（日志库、结构化编码、SQLite 驱动等）。白名单见下文。
 - **agent/** 每个子包只能引用 core，不能引用其他 agent，也不能引用任何 platform。
 - **platform/** 对称：只能引用 core。
-- **cmd/** 是唯一"什么都能引用"的层，负责拼装。
+- **cmd/** 是唯一"什么都能引用"的模块，负责拼装。
 
 ## 禁止方向（硬性）
 
@@ -105,7 +107,7 @@ cmd 里可以写一些 glue 代码，但禁止写业务逻辑。
 
 开新模块（新 agent、新 platform、或新的 core 子模块）前：
 
-- [ ] 这个模块属于哪一层？
+- [ ] 这个模块属于哪个角色（cmd / core / agent / platform）？
 - [ ] 它依赖哪些上层？是否只依赖 core？
 - [ ] 是否需要在 core 增加新接口？若是，**先改 core 发 PR**，再开这个模块
 - [ ] 在本文件附录索引登记（若是新 agent/platform）

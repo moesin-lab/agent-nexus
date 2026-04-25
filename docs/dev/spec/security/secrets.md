@@ -15,7 +15,7 @@ related:
 
 定义密钥的获取与约束。配套 [`redaction.md`](redaction.md)（出口过滤）、[`persistence.md`](../infra/persistence.md)（禁止落盘项）、[`observability.md`](../infra/observability.md)（禁止打印字段）共同构成"防泄露"体系。
 
-对应模块：`core.secrets`。
+对应模块：`daemon.secrets`。
 
 ## 存储层级（优先顺序）
 

@@ -17,7 +17,7 @@ contracts:
 
 定义 CC CLI 可以**做什么**的硬边界。`auth.md` 决定**谁**能触发；本 spec 决定**能做哪些操作**。两者正交。
 
-对应模块：`core.toolguard`（伞标题，具体实现可能分 tool-whitelist / workdir-guard 两部分）。
+对应模块：`daemon.toolguard`（伞标题，具体实现可能分 tool-whitelist / workdir-guard 两部分）。
 
 ## 规则
 

@@ -18,7 +18,7 @@ contracts:
 
 定义 Discord 身份到 agent-nexus 的权限映射。与 `security.md`（威胁模型 + 安全索引）、`tool-boundary.md`（能做什么）、`redaction.md`（出口脱敏）、`secrets.md`（密钥）一起构成 security 分区。
 
-对应模块：`core.auth`。
+对应模块：`daemon.auth`。
 
 ## Allowlist
 
@@ -42,7 +42,7 @@ contracts:
 
 ## 权限检查位置
 
-- 在 `core.auth` 模块，位于 `core.Engine.dispatch` **最前**（见 `../architecture/overview.md` 数据流）
+- 在 `daemon.auth` 模块，位于 `daemon.Engine.dispatch` **最前**（见 `../architecture/overview.md` 数据流）
 - 先过 auth，再执行 idempotency checkAndSet，再限流/预算（见 [`idempotency.md`](../infra/idempotency.md) §流程）
 - 拒绝时：打 `auth_denied` 日志（字段含 `guildId` / `channelId` / `userId` / `reason`）+ 可选 DM 通知
 

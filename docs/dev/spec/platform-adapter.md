@@ -195,7 +195,7 @@ Adapter 必须有下列合约测试：
 ## 反模式
 
 - Adapter 自己做幂等（应由 core）
-- Adapter 自己打非结构化日志（应用 core.logger）
+- Adapter 自己打非结构化日志（应用 daemon.logger）
 - Adapter 暴露 Discord SDK 类型给 core
 - Adapter 在 `send` 里做复杂的业务逻辑（只做协议翻译）
 - Adapter 与 agent 互相引用（违反依赖方向，见 architecture/dependencies）

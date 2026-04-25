@@ -18,7 +18,7 @@ contracts:
 
 定义"同一条 IM 事件只处理一次"的契约。Discord gateway **at-least-once** 语义下，同一 user message 可能被 adapter 收到多次——不能让 CC CLI 被触发多次。
 
-对应模块：`core.idempotency`。
+对应模块：`daemon.idempotency`。
 
 ## 规则
 
@@ -41,11 +41,11 @@ contracts:
 ```
 adapter 归一化 NormalizedEvent
     │
-    └─> core.Engine.dispatch(event)
+    └─> daemon.Engine.dispatch(event)
            │
-           ├─ core.auth 权限检查（先；拒绝直接返回，不插入幂等表）
+           ├─ daemon.auth 权限检查（先；拒绝直接返回，不插入幂等表）
            │
-           ├─ core.idempotency.checkAndSet(sessionKey, messageId)
+           ├─ daemon.idempotency.checkAndSet(sessionKey, messageId)
            │     ├─ 命中 "processed" → 丢弃事件（已经处理过）
            │     ├─ 命中 "processing" → 跳过（上一次还在进行中）
            │     ├─ 命中 "failed" 且在可重试窗口内 → 重试（标回 "processing"）

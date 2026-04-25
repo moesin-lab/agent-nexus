@@ -153,7 +153,7 @@ enum EventType {
 | `wallclock_timeout` | **core 注入** | `perInputTimeoutMs` 命中 |
 | `budget_exceeded` | **core 注入** | opt-in $ 预算耗尽 |
 
-**core 注入**的 `turn_finished` 由 `core.toolguard` / `core.quota-enforcer` 主动构造并追加到事件流（见 `claude-code-cli-contract.md` §"stop_reason 映射"）。adapter 收到 core 中断信号后也必须产出一条对应 reason 的 `turn_finished`，避免事件流不完整。
+**core 注入**的 `turn_finished` 由 `daemon.toolguard` / `daemon.quota-enforcer` 主动构造并追加到事件流（见 `claude-code-cli-contract.md` §"stop_reason 映射"）。adapter 收到 core 中断信号后也必须产出一条对应 reason 的 `turn_finished`，避免事件流不完整。
 
 ### UsageRecord（`usage` 事件 payload）
 
@@ -172,7 +172,7 @@ UsageRecord {
 }
 ```
 
-**`usage` 事件与 `llm_call_finished` 日志事件的映射**：`core.counters` 收到 `AgentEvent{type: usage}` 后，按上表字段**原样**产出 `llm_call_finished` 结构化日志（见 [`observability.md`](infra/observability.md) §"LLM 调用事件必含字段"）。字段名一一对应；不存在"两套名字"。
+**`usage` 事件与 `llm_call_finished` 日志事件的映射**：`daemon.counters` 收到 `AgentEvent{type: usage}` 后，按上表字段**原样**产出 `llm_call_finished` 结构化日志（见 [`observability.md`](infra/observability.md) §"LLM 调用事件必含字段"）。字段名一一对应；不存在"两套名字"。
 
 ### 顺序保证
 

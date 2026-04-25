@@ -13,6 +13,8 @@ related:
 
 本文件定义仓库内模块间**允许**与**禁止**的 import 关系。违反即拒绝合并。
 
+> **命名 disambiguation**：下文 `cmd/` / `core/` / `agent/` / `platform/` 是**架构分层维度**的路径名，不是 npm package 名。ADR-0004 monorepo 布局下四层全部住在 `@agent-nexus/daemon` package 内按职责子目录平铺（详见 [`overview.md`](overview.md) §三层结构）；带点的 namespace prefix（如 `daemon.NormalizedEvent`）= `@agent-nexus/daemon` 的 import path。
+
 ## 允许方向
 
 ```
@@ -73,7 +75,7 @@ platform/agent 可自由引入所需的 SDK 与工具库，但：
 - 所有业务接口通过 core 提供的抽象类型
 - 不把 platform/agent 特有类型从"对外边界"暴露（只在内部使用，边界上转为 core 定义的归一化类型）
 
-例：`platform/discord` 内部用 discord.js/discordgo 的 `Message` 类型随便使，但在**对 core 返回**时必须构造 `core.NormalizedEvent`。
+例：`platform/discord` 内部用 discord.js/discordgo 的 `Message` 类型随便使，但在**对 core 返回**时必须构造 `daemon.NormalizedEvent`。
 
 ## cmd/ 的职责
 

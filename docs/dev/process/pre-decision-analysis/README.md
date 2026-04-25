@@ -160,9 +160,9 @@ Git reset 零成本后，Checkpoint 不强制。只在以下场景用：
 | **起 scratch 时** | `output-template.md` | scratch 骨架 + slot 格式 |
 | **调试自己的产物 / 自 review** | `anti-patterns.md` | 产出后回检 |
 
-## Harness 配套
+## Per-harness 实现
 
-- **Claude Code** 用户：`skills/pre-decision-analysis/` skill 是本 docs 的薄执行器；skill 的 description 让 Claude 触发时加载本 docs
+- **Claude Code**：`skills/pre-decision-analysis/` skill 是本 docs 的薄执行器；skill 的 description 让触发时加载本 docs
 - **其他 harness**（Codex / Cursor / ...）：按本 docs 手工遵守，或自行实现对等 skill / rule 指向本 docs
 
 无论 harness，**规则以本 docs 为准**。

@@ -1,5 +1,5 @@
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
-> Claude Code 通过 `skills/pre-decision-analysis/` 引用；其他 harness 可同样引用。
+> 各 harness 通过 `skills/pre-decision-analysis/` 下自身执行器引用。
 
 # 反模式 + 完整强制规则
 

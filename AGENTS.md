@@ -94,6 +94,8 @@ related:
 - `skills/<name>/harnesses/<harness>/SKILL.md`（per-harness 执行器）
 - harness-neutral 文档内的显式 per-harness 子节（如 §"Harness 实现注记 / Claude Code"）
 
+本约定**仅约束协作文档**（前述三类：`AGENTS.md` / `docs/dev/**` / `skills/<name>/SKILL.md`）；运行时草稿（`.tasks/` / `handoff/`）不属于协作文档，自然不在管辖范围。
+
 **违反后果**：reviewer 看到 harness-neutral 文档正文把读者默认成某个 harness，应要求修正——其他 harness 的读者会误判自己该用什么工具，"参考实现"被误读成"标准做法"。
 
 ## 文件定位速查

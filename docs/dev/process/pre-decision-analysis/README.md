@@ -11,8 +11,7 @@ related:
 
 # Pre-Decision Analysis
 
-> 本文件是 `pre-decision-analysis` 协作约定的**权威源**（agent-agnostic）。
-> Claude Code 通过 `skills/pre-decision-analysis/` 薄执行器引用；其他 harness（Codex / Cursor）参照本 docs 自行实现。
+> 本文件是 `pre-decision-analysis` 协作约定的**权威源**（agent-agnostic）。各 harness 通过自身薄执行器引用本 docs（实现见仓库 `skills/pre-decision-analysis/` 下各 harness 子目录）。
 > 子流程 / 模板 / 完整反模式住在同目录下的 `pre-decision-analysis/` 子目录。
 
 ## 核心前提
@@ -56,7 +55,7 @@ related:
 
 ### 步骤 2：argue 自检
 
-有推荐 / 倾向的决策必派 argue subagent（异构视角反方分析）——防止 agent 照镜子看不到盲点。首选异构模型反方分析（Claude Code: `codex-review`，内部 OpenAI Codex / gpt-5 系列），备选独立 context 代码库交叉（Claude Code: `general-purpose` subagent）。多段并行派。
+有推荐 / 倾向的决策必派 argue subagent（异构视角反方分析）——防止 agent 照镜子看不到盲点。首选**异构模型反方分析**（不同训练数据 + 不同 reasoning style），备选**独立 context 同模型交叉验证**（无当前对话包袱）。多段并行派。具体调度方式与 per-harness 工具映射见 `subflow-argue.md`。
 
 触发条件：跨多文件 OR 架构级 OR agent 对方向拿不准。单文件 + 已有先例 + agent 有把握可跳。
 

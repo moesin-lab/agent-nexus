@@ -20,33 +20,33 @@ related:
 ## 允许方向
 
 ```
-cmd/        ──┬──> core/
-              ├──> agent/*
-              ├──> platform/*
-              └──> config/（如有）
-
-agent/*     ────> core/             （且仅 core/）
-platform/*  ────> core/             （且仅 core/）
-core/       ────> stdlib + 少量白名单通用库
+protocol               # leaf（无依赖）—— 类型 + 接口契约（PlatformAdapter / AgentRuntime / NormalizedEvent...）
+daemon          ───>   protocol
+agent/<name>    ───>   daemon, protocol
+platform/<name> ───>   daemon, protocol
+vscode / web    ───>   protocol（仅类型；运行时通过 stdio/WebSocket 接 daemon 进程，不直接 import daemon）
+cli             ───>   daemon, platform/*, agent/*, protocol（拼装层）
 ```
 
 说明：
 
-- **core** 是中枢，只依赖语言标准库与少量通用基础库（日志库、结构化编码、SQLite 驱动等）。白名单见下文。
-- **agent/** 每个子包只能引用 core，不能引用其他 agent，也不能引用任何 platform。
-- **platform/** 对称：只能引用 core。
-- **cmd/** 是唯一"什么都能引用"的模块，负责拼装。
+- **protocol** 是 leaf 包，只导出类型和接口契约，无任何运行时代码依赖。
+- **daemon** 是中枢（hub），只依赖 protocol + 语言标准库 + 少量通用基础库（日志库、结构化编码、SQLite 驱动等）；白名单见下文。daemon 不感知具体 platform / agent 实现。
+- **agent/<name>** / **platform/<name>** 每个独立 package 只能 import daemon 和 protocol，不能引用其他 agent / platform package，彼此也不互引。
+- **vscode / web** 客户端 package 只 import protocol（共享 IPC schema 类型）；运行时通过 stdio / WebSocket 跟 daemon 进程通信，不直接 link daemon 代码。
+- **cli** 是唯一"什么都能引用"的模块，负责按配置选择启用哪些 platform-* / agent-* 并启动 daemon。
 
 ## 禁止方向（硬性）
 
 | 禁止 | 理由 |
 |---|---|
-| `core/` → `agent/*` | core 是抽象，不应知道具体实现 |
-| `core/` → `platform/*` | 同上 |
-| `agent/<a>` → `agent/<b>` | agent 之间独立，共享逻辑上提到 core |
+| `daemon` → `agent/*` | daemon 是抽象中枢，不应知道具体实现 |
+| `daemon` → `platform/*` | 同上 |
+| `agent/<a>` → `agent/<b>` | agent 之间独立，共享逻辑上提到 daemon |
 | `platform/<a>` → `platform/<b>` | 同上 |
-| `agent/*` → `platform/*` 或反向 | 通过 core 传递事件，不直接互引 |
-| 任何模块 → `cmd/` | cmd 是终端消费者 |
+| `agent/*` → `platform/*` 或反向 | 通过 daemon 传递事件，不直接互引 |
+| 任何 package → `cli` | cli 是终端消费者 |
+| `vscode` / `web` → `daemon` 或 `platform/*` 或 `agent/*` | UI 客户端只通过 protocol 类型 + IPC 跟 daemon 进程通信，不 link 进程内代码 |
 
 ## 为什么这么严
 
@@ -112,13 +112,16 @@ cmd 里可以写一些 glue 代码，但禁止写业务逻辑。
 - [ ] 是否需要在 core 增加新接口？若是，**先改 core 发 PR**，再开这个模块
 - [ ] 在本文件附录索引登记（若是新 agent/platform）
 
-## 附录：当前模块清单
+## 附录：当前 package 清单
 
-| 模块 | 路径 | 状态 |
-|---|---|---|
-| core | `core/` | 规划中（spec 先行） |
-| agent/claudecode | `agent/claudecode/` | 规划中 |
-| platform/discord | `platform/discord/` | 规划中 |
-| cmd/agent-nexus | `cmd/agent-nexus/` | 规划中 |
+| package | 物理路径 | npm name | 状态 |
+|---|---|---|---|
+| protocol | `packages/protocol/` | `@agent-nexus/protocol` | 规划中（spec 先行） |
+| daemon | `packages/daemon/` | `@agent-nexus/daemon` | 规划中 |
+| platform-discord | `packages/platform/discord/` | `@agent-nexus/platform-discord` | 规划中 |
+| agent-claudecode | `packages/agent/claudecode/` | `@agent-nexus/agent-claudecode` | 规划中 |
+| vscode | `packages/vscode/` | `@agent-nexus/vscode` | 规划中 |
+| web | `packages/web/` | `@agent-nexus/web` | 规划中 |
+| cli | `packages/cli/` | `@agent-nexus/cli` | 规划中 |
 
-（代码目录在 ADR 0004 语言选型完成后建立。）
+（代码目录在 ADR-0004 语言选型完成后建立；详见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7。）

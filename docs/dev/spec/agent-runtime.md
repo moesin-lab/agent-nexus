@@ -22,6 +22,8 @@ contracts:
 
 定义 agent 后端适配层的接口契约。当前唯一实现是 `claudecode`（Claude Code CLI，见 ADR-0002）。接口保持**可扩展**，未来接其他后端（Codex / Gemini）时不应破坏本契约。
 
+> **package 归属**：`AgentRuntime` 接口与相关类型（`AgentSession` / `SessionConfig` / `AgentInput` / `AgentEvent`）定义在 `@agent-nexus/protocol` package；**具体后端实现** 住在 `@agent-nexus/agent-<name>` 独立 package（如 `@agent-nexus/agent-claudecode`）。详见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7。
+
 ## 目标
 
 - 为 core 提供统一的 agent 接口，屏蔽具体后端（CLI 子进程、HTTP API、SDK）差异

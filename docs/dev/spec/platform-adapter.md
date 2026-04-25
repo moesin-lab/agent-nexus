@@ -18,7 +18,9 @@ contracts:
 
 # Spec：Platform Adapter 接口
 
-定义 IM 平台适配层的接口契约。每个 IM 平台（当前仅 Discord）实现此接口并注册到 `core`。
+定义 IM 平台适配层的接口契约。每个 IM 平台（当前仅 Discord）实现此接口并注册到 daemon。
+
+> **package 归属**：`PlatformAdapter` 接口与相关类型（`OutboundMessage` / `MessageRef` / `CapabilitySet`）定义在 `@agent-nexus/protocol` package；**具体平台实现** 住在 `@agent-nexus/platform-<name>` 独立 package（如 `@agent-nexus/platform-discord`）。详见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7。
 
 ## 目标
 

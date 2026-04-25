@@ -19,6 +19,8 @@ contracts:
 
 CC CLI 是 agent-nexus 的**产品依赖**，不是稳定库 API。本 spec 把本项目对 CC CLI 的具体期望**显式锁定**，避免"写入实现时锁定"的模糊造成返工与未知兼容性故障。
 
+> **package 归属**：本契约是 `@agent-nexus/agent-claudecode` package 必须遵守的**外部约束**。该 package 实现 [`agent-runtime.md`](../agent-runtime.md) 定义的 `AgentRuntime` 接口，并在内部把 CC CLI 子进程行为按本契约固化。详见 [`adr/0004-language-runtime.md`](../../adr/0004-language-runtime.md) §TS-P7。
+
 任何 CC CLI 行为偏离本契约 → 实现层通过自检拒绝启动，而不是默默试错。
 
 ## 支持版本（MVP 基线）

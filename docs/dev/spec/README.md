@@ -49,6 +49,19 @@ related:
 
 - [`agent-backends/claude-code-cli.md`](agent-backends/claude-code-cli.md) — Claude Code CLI 的版本、命令模板、stream-json 协议、事件映射、UsageCompleteness、兼容性自检
 
+## Spec 与 Package 对应关系
+
+按 ADR-0004 §TS-P7 的 monorepo 包结构（详见 [`../adr/0004-language-runtime.md`](../adr/0004-language-runtime.md)）：
+
+| Spec | 接口/类型住哪 | 实现住哪 |
+|---|---|---|
+| `platform-adapter.md` | `@agent-nexus/protocol`（`PlatformAdapter` 接口） | `@agent-nexus/platform-<name>`（如 `platform-discord`） |
+| `agent-runtime.md` | `@agent-nexus/protocol`（`AgentRuntime` 接口） | `@agent-nexus/agent-<name>`（如 `agent-claudecode`） |
+| `message-protocol.md` | `@agent-nexus/protocol`（`NormalizedEvent` / `AgentEvent` / `OutboundMessage` 等类型） | N/A（纯类型契约） |
+| `agent-backends/*.md` | N/A（外部契约） | 各 `@agent-nexus/agent-<name>` 必须遵守 |
+| `infra/*.md` | N/A | `@agent-nexus/daemon`（核心引擎 + 横切） |
+| `security/*.md` | N/A | `@agent-nexus/daemon`（横切） |
+
 ## 阅读顺序
 
 1. 先读 [`../architecture/overview.md`](../architecture/overview.md) 建立心智

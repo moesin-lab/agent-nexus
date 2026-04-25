@@ -19,7 +19,9 @@ contracts:
 
 # Spec：Message Protocol（归一化消息与事件）
 
-定义系统内部的**归一化消息格式**与**幂等/顺序/分片语义**。所有 platform adapter 把入站事件翻译成本格式；core 与 agent runtime 只看本格式。
+定义系统内部的**归一化消息格式**与**幂等/顺序/分片语义**。所有 platform adapter 把入站事件翻译成本格式；daemon 与 agent runtime 只看本格式。
+
+> **package 归属**：本 spec 定义的所有类型（`NormalizedEvent` / `SessionKey` / `Attachment` / `CommandPayload` / `InteractionPayload` / `ReactionPayload` 等）住在 `@agent-nexus/protocol` package（leaf 包，无依赖；所有其他 package 共享 import）。详见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7。
 
 ## NormalizedEvent
 

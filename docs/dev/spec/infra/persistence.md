@@ -200,7 +200,7 @@ interface Store {
 
 ## 迁移
 
-- 首版 schema 由 `core/migrations/` 管理
+- 首版 schema 由 `@agent-nexus/daemon` 包内 `migrations/` 子目录管理
 - 每次 schema 变更 +1 migration
 - 启动时检查 schema version，自动跑 pending migrations
 - 禁止手工改 schema

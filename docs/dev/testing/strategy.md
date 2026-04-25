@@ -22,7 +22,7 @@ related:
  ├──────────────┤
  │     E2E      │  真实 CC CLI + mock Discord
  ├──────────────┤
- │  Integration │  模块间（adapter ↔ core、core ↔ store）
+ │  Integration │  模块间（adapter ↔ daemon、daemon ↔ store）
  ├──────────────┤
  │    Unit      │  单函数/类；覆盖最广
  └──────────────┘ ← 最多量
@@ -50,10 +50,10 @@ related:
 
 ### Integration
 
-- Adapter ↔ Core：给 adapter 喂 fixture 事件 → 断言 core 被正确调用；给 core 一个 OutboundMessage → 断言 adapter 发出的平台调用
-- Core ↔ Store：SQLite 真跑，断言数据落盘与读出
-- Core ↔ Redactor：输入含敏感 → 输出脱敏
-- Core ↔ RateLimiter / BudgetTracker：触发各种阈值
+- Adapter ↔ Daemon：给 adapter 喂 fixture 事件 → 断言 daemon 被正确调用；给 daemon 一个 OutboundMessage → 断言 adapter 发出的平台调用
+- Daemon ↔ Store：SQLite 真跑，断言数据落盘与读出
+- Daemon ↔ Redactor：输入含敏感 → 输出脱敏
+- Daemon ↔ RateLimiter / BudgetTracker：触发各种阈值
 
 ### E2E
 

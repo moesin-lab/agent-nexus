@@ -24,7 +24,7 @@ related:
   c. 为未来分支保护、自动化 CI/review hook、required reviewers 留出落点。细节见 [`docs/dev/process/commit-and-branch.md`](docs/dev/process/commit-and-branch.md)。
 2. **文档先行**：新模块没进 `docs/dev/spec/` 不接受 PR；架构级改动没进 `docs/dev/adr/` 不接受 PR。
 3. **TDD 强制**：先 spec → 先 failing test → 再 impl。细节见 [`docs/dev/process/tdd.md`](docs/dev/process/tdd.md)。
-4. **契约先行**：跨层交互必须走 `docs/dev/spec/` 定义的接口。新增能力先改 spec，再改代码。
+4. **契约先行**：跨模块交互必须走 `docs/dev/spec/` 定义的接口。新增能力先改 spec，再改代码。
 5. **Code review 不走过场**：每个 PR 必须过 codex review（大变更走 ultrareview）。流程见 [`docs/dev/process/code-review.md`](docs/dev/process/code-review.md)。
 6. **Subagent 优先**：探索类、长研究类任务优先派发子代理，主 session 只做收敛与决策。细节见 [`docs/dev/process/subagent-usage.md`](docs/dev/process/subagent-usage.md)。
 7. **范围收敛**：每个 PR 只做一件事，禁止"顺手重构"无关代码。
@@ -65,9 +65,9 @@ related:
 
 - 没有 ADR 就做架构级改动（例如新增一个 IM 平台、换 agent 后端、改 session 模型）
 - 没有 spec 就开始写模块代码
-- 把观测性、幂等、限流"留到以后做"——这些在 `core` 层强制，第一版就必须有
-- 适配器（platform、agent）自己实现日志格式、错误处理、重试策略——必须复用 `core` 提供的基础设施
-- 在 IM 里回显绝对路径、env、token、内部错误栈——必须经过 `core` 的脱敏层
+- 把观测性、幂等、限流"留到以后做"——这些由 daemon 强制提供，第一版就必须有
+- 适配器（platform、agent）自己实现日志格式、错误处理、重试策略——必须复用 daemon 提供的基础设施
+- 在 IM 里回显绝对路径、env、token、内部错误栈——必须经过 daemon 的脱敏层
 - PR 里混多件事（"顺便改了下 X"）——单一关注点原则
 - 为了赶时间跳过 codex review——大变更必须 review
 - 派发 subagent 后主 session 又把同样的探索做一遍——相信子代理的产出，主 session 只做收敛

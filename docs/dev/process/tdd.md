@@ -33,7 +33,7 @@ Refactor → 在测试保持绿的前提下，整理代码与命名
 按 [`../testing/strategy.md`](../testing/strategy.md) 的四层模型选择：
 
 - **新增函数/类** → 单元测试先行
-- **模块间交互** → 集成测试先行（例如 adapter ↔ core）
+- **模块间交互** → 集成测试先行（例如 adapter ↔ daemon）
 - **端到端流程** → e2e 用真实 CC CLI + mock Discord；但不是每个功能都要 e2e
 - **对话质量** → eval；当且仅当改动影响 agent 提示或工具集
 

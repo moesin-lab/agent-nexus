@@ -17,7 +17,7 @@ contracts:
 
 定义所有出口数据的最后一道**文本过滤**，防止敏感信息通过日志、IM 消息、transcript 泄露。与 [`secrets.md`](secrets.md)（源头控制）、[`auth.md`](auth.md)（访问控制）正交：即使密钥被误放入业务数据，redactor 仍能在最后一跳拦截。
 
-对应模块：`core.redact`。
+对应模块：`daemon.redact`。
 
 ## 必过滤项
 

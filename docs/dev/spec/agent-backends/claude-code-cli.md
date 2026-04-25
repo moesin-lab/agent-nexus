@@ -19,6 +19,8 @@ contracts:
 
 CC CLI 是 agent-nexus 的**产品依赖**，不是稳定库 API。本 spec 把本项目对 CC CLI 的具体期望**显式锁定**，避免"写入实现时锁定"的模糊造成返工与未知兼容性故障。
 
+> **package 归属**：本契约是 `@agent-nexus/agent-claudecode` package 必须遵守的**外部约束**。该 package 实现 [`agent-runtime.md`](../agent-runtime.md) 定义的 `AgentRuntime` 接口，并在内部把 CC CLI 子进程行为按本契约固化。详见 [`adr/0004-language-runtime.md`](../../adr/0004-language-runtime.md) §TS-P7。
+
 任何 CC CLI 行为偏离本契约 → 实现层通过自检拒绝启动，而不是默默试错。
 
 ## 支持版本（MVP 基线）
@@ -160,11 +162,11 @@ MVP 用最小集合：
 | `interrupted` / 用户 SIGINT | `user_interrupt` |
 | 其他错误态 | `error` |
 
-**core 注入的额外 reason**（不来自 CC 本身）：`tool_limit` / `wallclock_timeout` / `budget_exceeded`（由 core 在判定命中时主动构造 turn_finished 事件，见 `cost-and-limits.md`）。完整枚举见 [`agent-runtime.md`](../agent-runtime.md) §TurnEndReason 枚举。
+**daemon 注入的额外 reason**（不来自 CC 本身）：`tool_limit` / `wallclock_timeout` / `budget_exceeded`（由 daemon 在判定命中时主动构造 turn_finished 事件，见 `cost-and-limits.md`）。完整枚举见 [`agent-runtime.md`](../agent-runtime.md) §TurnEndReason 枚举。
 
 ## UsageCompleteness
 
-CC 输出的 `result.usage` 在不同路径下字段齐全度不同。core 在记 `usage` 事件时必须标注完整度：
+CC 输出的 `result.usage` 在不同路径下字段齐全度不同。daemon 在记 `usage` 事件时必须标注完整度：
 
 | 级别 | 条件 | 行为 |
 |---|---|---|

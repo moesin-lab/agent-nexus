@@ -119,7 +119,7 @@ contracts:                              # 本 spec 定义的对外契约名
 
 ### 架构与核心概念
 
-- `architecture`, `layering`, `dependencies`
+- `architecture`, `hub-and-spoke`, `modules`, `dependencies`
 - `session`, `session-model`, `lifecycle`
 - `idempotency`, `ordering`, `concurrency`
 
@@ -165,8 +165,8 @@ contracts:                              # 本 spec 定义的对外契约名
 title: 架构总览
 type: architecture
 status: active
-summary: agent-nexus 的三层结构、数据流、横切关注点与禁止的架构反模式
-tags: [architecture, layering, session, discord, cc-cli]
+summary: agent-nexus 的模块结构、数据流、横切关注点与禁止的架构反模式
+tags: [architecture, hub-and-spoke, modules, session, discord, cc-cli]
 related:
   - dev/architecture/session-model
   - dev/architecture/dependencies

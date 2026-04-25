@@ -23,11 +23,11 @@ related:
 
 | 主题 | Spec | 对应模块 |
 |---|---|---|
-| 谁能触发 agent | [`auth.md`](auth.md) | `core.auth` |
-| 能做什么操作 | [`tool-boundary.md`](tool-boundary.md) | `core.toolguard` |
-| 密钥怎么放 | [`secrets.md`](secrets.md) | `core.secrets` |
-| 出口脱敏 | [`redaction.md`](redaction.md) | `core.redact` |
-| 去重防重放 | [`idempotency.md`](../infra/idempotency.md) | `core.idempotency` |
+| 谁能触发 agent | [`auth.md`](auth.md) | `daemon.auth` |
+| 能做什么操作 | [`tool-boundary.md`](tool-boundary.md) | `daemon.toolguard` |
+| 密钥怎么放 | [`secrets.md`](secrets.md) | `daemon.secrets` |
+| 出口脱敏 | [`redaction.md`](redaction.md) | `daemon.redact` |
+| 去重防重放 | [`idempotency.md`](../infra/idempotency.md) | `daemon.idempotency` |
 
 ## 威胁模型
 

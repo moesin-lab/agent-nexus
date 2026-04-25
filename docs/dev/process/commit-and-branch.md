@@ -26,7 +26,7 @@ related:
 ```
 
 - `type`：见下表
-- `scope`：可选，模块或子系统名（`core` / `adapter-discord` / `agent-cc` / `docs` / `ci` / ...）
+- `scope`：可选，模块或子系统名（`daemon` / `platform-discord` / `agent-claudecode` / `protocol` / `cli` / `docs` / `ci` / ...）
 - `subject`：祈使句、小写开头、结尾不加句号
 - `body`：解释**为什么**要做这个改动，而不是做了什么
 - `footer`：Breaking change、关联 issue、Co-Authored-By 等
@@ -63,7 +63,7 @@ Closes: #42
 在 footer 里用 `BREAKING CHANGE:` 或在 type 后加 `!`：
 
 ```
-feat(core)!: change session key to include threadId
+feat(daemon)!: change session key to include threadId
 
 BREAKING CHANGE: session key 从 (platform, channelId, userId) 改为
 (platform, channelId, threadId, userId)。所有 adapter 需要同步升级。

@@ -19,11 +19,13 @@ contracts:
 
 # Spec：Message Protocol（归一化消息与事件）
 
-定义系统内部的**归一化消息格式**与**幂等/顺序/分片语义**。所有 platform adapter 把入站事件翻译成本格式；core 与 agent runtime 只看本格式。
+定义系统内部的**归一化消息格式**与**幂等/顺序/分片语义**。所有 platform adapter 把入站事件翻译成本格式；daemon 与 agent runtime 只看本格式。
+
+> **package 归属**：本 spec 定义的所有类型（`NormalizedEvent` / `SessionKey` / `Attachment` / `CommandPayload` / `InteractionPayload` / `ReactionPayload` 等）住在 `@agent-nexus/protocol` package（leaf 包，无依赖；所有其他 package 共享 import）。详见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7。
 
 ## NormalizedEvent
 
-平台入站事件的归一化形态。Adapter 构造，core 消费。
+平台入站事件的归一化形态。Adapter 构造，daemon 消费。
 
 ```text
 NormalizedEvent {
@@ -128,7 +130,7 @@ ReactionPayload {
 
 见独立 spec：[`idempotency.md`](infra/idempotency.md)。
 
-**要点**：`(sessionKey, messageId)` TTL 窗口内最多处理一次；**adapter 不做去重**，由 core 在 `auth → idempotency → 限流 → 队列` 流程中执行 `checkAndSet`。本 spec 只定义 `NormalizedEvent` 与相关数据结构；幂等的规则、存储、流程、GC、合约测试全部集中在 `idempotency.md`。
+**要点**：`(sessionKey, messageId)` TTL 窗口内最多处理一次；**adapter 不做去重**，由 daemon 在 `auth → idempotency → 限流 → 队列` 流程中执行 `checkAndSet`。本 spec 只定义 `NormalizedEvent` 与相关数据结构；幂等的规则、存储、流程、GC、合约测试全部集中在 `idempotency.md`。
 
 ## 顺序
 
@@ -138,7 +140,7 @@ ReactionPayload {
 
 ## OutboundMessage
 
-core → adapter 的出站消息。见 [`platform-adapter.md`](platform-adapter.md) 的定义。以下是**分片/合并**的协议。
+daemon → adapter 的出站消息。见 [`platform-adapter.md`](platform-adapter.md) 的定义。以下是**分片/合并**的协议。
 
 ### 文本切片
 
@@ -159,7 +161,7 @@ Discord 单条消息上限 2000 字符。超过时：
 ### 附件
 
 - 由 adapter 决定走内联（<8MB）还是 CDN（>8MB）
-- Core 产出 `OutboundAttachment { content, filename, contentType }`
+- daemon 产出 `OutboundAttachment { content, filename, contentType }`
 
 ## 流式语义
 
@@ -219,6 +221,6 @@ MVP 优先实现模式 A，模式 B 作为后续增强（在独立 ADR 中评审
 
 - 在 NormalizedEvent 里塞 Discord 特定类型（应留在 rawPayload）
 - 把 `text` 字段当生日礼物塞 mention / emoji 原文（都要归一化或剥离）
-- 切片策略在 adapter 里做（应在 core 的公共模块）
+- 切片策略在 adapter 里做（应在 daemon 的公共模块）
 - 跨语言序列化用非 UTF-8 或 BOM
 - 新增字段时不更新本 spec（代码与 spec 漂移）

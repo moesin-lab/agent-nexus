@@ -22,7 +22,7 @@ related:
 
 | 目录 | 职责 | 读者的核心问题 |
 |---|---|---|
-| [`architecture/`](architecture/) | 系统设计与分层 | 代码整体怎么组织？谁依赖谁？ |
+| [`architecture/`](architecture/) | 系统设计与模块结构（hub-and-spoke） | 代码整体怎么组织？谁依赖谁？ |
 | [`adr/`](adr/) | 架构决策记录 | 为什么这么做？考虑过什么替代方案？ |
 | [`spec/`](spec/) | 接口契约与协议 | 模块之间交换什么数据？签名是什么？ |
 | [`process/`](process/) | 开发流程规范 | 我该怎么做事？PR 流程是什么？ |

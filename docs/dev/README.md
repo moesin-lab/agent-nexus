@@ -48,17 +48,9 @@ related: [...]       # 相对 docs/ 的路径
 
 ADR 和 spec 有专属扩展字段。完整 schema 见 [`standards/metadata.md`](standards/metadata.md)，强制要求见 [`standards/docs-style.md`](standards/docs-style.md)。
 
-**读取方式**：active 路径下的文档（含 `placeholder` 骨架）可直接 `Read`；归档路径（`docs/dev/adr/deprecated/` / `docs/_deprecated/`）的文档由 hook 拦截，需走 `scripts/docs-read --force`。这是 2026-04 重构后的新机制——文档状态**物化到路径**，不再要求所有 `docs/**` 都经 `docs-read`。
+**读取方式**：active 路径下的文档（含 `placeholder` 骨架）可直接 `Read`；归档路径（`docs/dev/adr/deprecated/` / `docs/_deprecated/`）和外部导向文档（仓库根 `README.md` / `CONTRIBUTING.md`）的 `Read` 由 hook 拦截，需走 `scripts/docs-read --force`。
 
-`scripts/docs-read` 仍服务三个场景（非强制）：
-
-| 命令 | 场景 |
-|---|---|
-| `scripts/docs-read --head <path>` | **泛读**：先看 summary/tags 决定要不要读全文 |
-| `scripts/docs-read --force <path>` | **归档强读**：hook 拦归档 Read 后的唯一合法入口（读 Superseded ADR 时必走此） |
-| `scripts/docs-read <path>` | **兜底**：placeholder 或状态漂移文档降级为 frontmatter + 告警 |
-
-详见 [`../../AGENTS.md`](../../AGENTS.md) §"读文档的防污染规则"。
+完整规则见 [`../../AGENTS.md`](../../AGENTS.md) §"读文档的防污染规则"；机制细节（三模式、作废工作流、hook 集成）见 [`process/docs-read.md`](process/docs-read.md)。
 
 **使用建议**（给 agent）：
 

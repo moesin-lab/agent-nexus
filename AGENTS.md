@@ -95,7 +95,7 @@ related:
 - `skills/<name>/harnesses/<harness>/SKILL.md`（per-harness 执行器）
 - `.tasks/` / `handoff/`（运行时草稿与状态）
 
-**违反后果**：reviewer 看到 harness-neutral 文档主体把 reader 默认成某个具体 harness 应要求修正——其他 harness reader 会误判自己该用什么工具。判据演进见 PR #15 决策链。
+**违反后果**：reviewer 看到 harness-neutral 文档主体把 reader 默认成某个具体 harness 应要求修正——其他 harness reader 会误判自己该用什么工具。
 
 ## 文件定位速查
 

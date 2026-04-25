@@ -234,16 +234,7 @@ related:
 
 2026-04 重构后，防污染主责已从"所有 docs 都必须走 docs-read"下放到**路径层**：作废文档物化到归档目录（`docs/dev/adr/deprecated/` / `docs/_deprecated/`），active 路径下的文档可直接 `Read`。
 
-- active 路径文档（含 `placeholder`）：`Read` 放行
-- 归档路径文档：hook 拦截 `Read`，必须走 `scripts/docs-read --force`
-
-`scripts/docs-read` 不再是强制入口，但保留三种辅助模式：
-
-- **泛读**：`scripts/docs-read --head <path>` —— 仅 frontmatter，判断文档相关性
-- **强读**：`scripts/docs-read --force <path>` —— 读归档文档时的唯一合法入口
-- **兜底**：`scripts/docs-read <path>` —— 对 active 路径下状态为 `placeholder` / `deprecated` 的文档降级为 frontmatter + 告警
-
-完整机制与理由见 [`../../../AGENTS.md`](../../../AGENTS.md) §"读文档的防污染规则"。
+完整规则见 [`../../../AGENTS.md`](../../../AGENTS.md) §"读文档的防污染规则"；`scripts/docs-read` 三模式（`--head` / `--force` / 默认兜底）与作废工作流、hook 集成等细节见 [`../process/docs-read.md`](../process/docs-read.md)。
 
 ## 校验（后续工具化）
 

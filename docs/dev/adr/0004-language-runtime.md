@@ -301,7 +301,34 @@ packages/
 - core 横切代码（pty / 信号 / 重连 / FIFO 队列）心智成本比 Go 高一档——靠 `execa` / `node-pty` / `p-queue` 等成熟库压住
 - 单二进制分发不如 Go 干净——MVP 接受 npm 安装路径
 - 类型系统不如 Go / Rust 严格——靠 strict 模式 + 边界处显式契约（`@agent-nexus/protocol` package）压住
-- Bun / Deno 等替代 runtime 在未来可能消解部分 native 依赖痛点（Bun 自带 sqlite）——若 prebuilt 维护成本失控可重审，但当前不为 hypothetical 收益放弃 Node 稳定性
+- Bun / Deno 等替代 runtime 在未来可能消解部分 native 依赖痛点。当前不引入的具体事实依据 + ops/ 阶段重审的检查清单见 §"未来重审 Bun 的 checklist（ops/ 阶段）"
+
+## 未来重审 Bun 的 checklist（ops/ 阶段）
+
+当 ops/ 阶段评审单二进制分发 / runtime 替代时，以下事实点与触发条件决定 Bun 是否成为可采纳候选——避免重做事实调研。
+
+### 当前不引入 Bun 的事实依据（来自 codex 异构 argue, 2026-04-25）
+
+- Bun 1.x 已 production-credible（Claude Code / Midjourney 在用），但 Node 兼容矩阵中 `child_process` 仅 **84.56%** / Node-API **~95%**——agent-nexus 的 CC CLI 子进程 + `node-pty` 链路正好命中此脆弱区
+- 三个 native deps（`node-pty` / `better-sqlite3` / `keytar`）与 Bun 兼容均为 known unknown，其中 `node-pty` 命中核心热路径，是最高风险项
+- `bun build --compile` 对 native addon 装载路径要求"静态可分析"，对 `better-sqlite3` / `keytar` / `node-pty` 的 `bindings` + `prebuild-install` 模式不友好；**Windows arm64 未进入 `--compile` target**
+- `bun:sqlite` 不是 `better-sqlite3` 的 drop-in 替代——切换属于 F1 级 runtime 架构变更（API + 事务/pragma/backup 行为重测）
+- `bun build` 作 bundler 不输出 `.d.ts`，仍需 `tsc`；agent-nexus 5 packages 规模下速度优势不构成决策级收益
+- 引入 Bun 增加用户机器运行时矩阵——Node 已被 CC CLI 满足是 Option A 选定的核心论据之一，不应被新 runtime 摊薄
+
+### Reopen 触发条件（任一关键项达成 → ops/ 阶段开新 ADR 重审）
+
+- [ ] `node-pty` 在 Bun 上有官方或权威社区的兼容背书 / 可参考 production case
+- [ ] Bun 官方 `child_process` 兼容率提升到 95%+ 区间
+- [ ] `bun build --compile` 对 `bindings` / `prebuild-install` 路径的处理进入 stable
+- [ ] Windows arm64 进入 `bun build --compile` 官方 target
+- [ ] `bun:sqlite` 提供 `better-sqlite3` 风格的 API 兼容层（避免 F1 改写代价）
+- [ ] `keytar` 替代方案（Bun secrets API 或第三方库）有稳定生产案例
+
+### 数据来源
+
+- codex argue prompt（gitignored）：`.tasks/bun-toolchain-argue.scratch.md`
+- Bun 官方：[Node 兼容矩阵](https://bun.sh/docs/runtime/nodejs-compat) / [Bundler executables](https://bun.sh/docs/bundler/executables) / [bun:sqlite](https://bun.sh/docs/api/sqlite)
 
 ## Out of scope
 

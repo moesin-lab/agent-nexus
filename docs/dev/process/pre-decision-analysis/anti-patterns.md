@@ -26,9 +26,9 @@
 | 定向问题问"你觉得怎么样" | 具体 + 带选项 + 带默认建议；一段最多 1-2 个 |
 | "不采纳 / 不借鉴"清单只列条目不给理由 | 每条一句"为什么不"，否则被追问 |
 | REVIEW slot 紧贴正文没有空行 | slot 前后各一空行；slot 内部标签行与 `-->` 之间留空行 |
-| 调用方 agent 替用户决定转 ADR / issue（路径 B scratch 场景） | 停在 scratch，等 slot 反馈再决定 |
+| 主 session 替用户决定转 ADR / issue（路径 B scratch 场景） | 停在 scratch，等 slot 反馈再决定 |
 | 外部仓库评估时逐个文件 fetch | 先拿 tree，挑代表性文件（见子流程 A） |
-| scratch 里放调用方 agent 报告性的收尾语 | scratch 只放分析 + slot；收尾语走调用方 agent 对话 |
+| scratch 里放主 session 报告性的收尾语 | scratch 只放分析 + slot；收尾语走主 session 对话 |
 | review 还没回就追加新维度 | 停手等；需要补维度也等用户先回 |
 | 用户已说"直接做"还强行走 slot | 用户让渡决策权时，skill 退出，直接执行 |
 | 第二轮深挖塞进第一轮 scratch | 开新 scratch，purpose 改 `deep-dive`（见子流程 D） |

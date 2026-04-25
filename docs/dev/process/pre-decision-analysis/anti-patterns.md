@@ -11,7 +11,7 @@
 |---|---|
 | **默认起 scratch 而非直接执行** | git 回滚便宜 + agent 执行便宜 + review 昂贵——默认走路径 A 直接落地开 PR；scratch 只在硬触发条件满足时起 |
 | **Review 塞给用户批改**（打字在 HTML comment 里回"Q1=a"） | review 做"选择"不做"批改"——用户 PR diff 点 merge / close / inline comment |
-| **把 agent 能自决的细节塞 AskUserQuestion** | 命名 / 格式 / 文件数 / 这种 agent 有把握的不问；真分叉 = agent 自己没把握 OR 违反 ADR OR 用户反对过 |
+| **把 agent 能自决的细节塞进选项推送** | 命名 / 格式 / 文件数 / 这种 agent 有把握的不问；真分叉 = agent 自己没把握 OR 违反 ADR OR 用户反对过 |
 | **一次问超过 3 个真分叉** | 砍到 3 个或分批；问多了就是 agent 自己该想清楚 |
 | **能自验的问题占 review 带宽** | 有 test / lint / typecheck / 脚本能自证的 agent 自验过就不问 |
 | **Argue 结果 agent 吸收但不贴 PR body** | 用户看 diff 时看不到考量背景——argue 要点 + agent 回应必须贴 PR body 透明化 |
@@ -43,16 +43,16 @@
 3. 能自验的（test / lint / 文件断言）自验过再 push；自验通不过不开 PR。
 4. PR 被 close 或有 comment 反馈 → agent 读 comment 修，新 commit push；不争辩。
 
-### 路径 B（AskUserQuestion）
+### 路径 B（向用户推选项）
 
 5. 只问"真分叉"（≤ 3 个）：agent 自己拿不准 OR 违反已有 ADR OR 用户反对过相关方向。
-6. 把 agent 能自决的细节（命名 / 格式 / 文件数）塞 AskUserQuestion → 返工。
-7. AskUserQuestion 答完走路径 A。
+6. 把 agent 能自决的细节（命名 / 格式 / 文件数）塞进选项推送 → 返工。
+7. 选项答完走路径 A。
 
 ### Scratch（仅硬触发时）
 
 8. scratch 路径固定：`.tasks/<topic>-<purpose>.scratch.md`；`.tasks/*.scratch.md` 必须 gitignore。
-9. 起 scratch 的条件至少满足一条：AskUserQuestion 连续 2 轮没定 OR 明确跨会话 OR 涉及 ≥ 2 个 ADR OR 用户显式要 scratch。
+9. 起 scratch 的条件至少满足一条：选项推送连续 2 轮没定方向 OR 明确跨会话 OR 涉及 ≥ 2 个 ADR OR 用户显式要 scratch。
 10. 每段必须能独立被 review——明确结论或"想问你"定向问题。
 11. "不采纳 / 不借鉴"类清单每条必须带理由。
 12. 每个 REVIEW slot 前后各留一个空行；slot 内部标签行与 `-->` 之间留空行。

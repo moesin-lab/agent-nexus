@@ -2,7 +2,7 @@
 title: Pre-Decision Analysis（决策前结构化分析协作约定）
 type: process
 status: active
-summary: 当用户提出需要人类拍板但必须先做结构化分析的问题时的 agent-agnostic 协作约定；agent-first 执行、review 做"选择"不做"批改"、真分叉才走 AskUserQuestion、PR diff 作为后审载体
+summary: 当用户提出需要人类拍板但必须先做结构化分析的问题时的 agent-agnostic 协作约定；agent-first 执行、review 做"选择"不做"批改"、真分叉才向用户推选项、PR diff 作为后审载体
 tags: [process, review, scratch, argue, ask-user]
 related:
   - dev/adr/0007-collaborative-skill-promotion
@@ -84,10 +84,10 @@ agent 直接：
 当 agent 有多个方案都无把握、或需要用户业务 / 历史知识时：
 
 - 筛 ≤ 3 个**真分叉**（判据：agent 自己没把握 / 违反已有 ADR 需特批 / 用户之前反对过相关方向）
-- AskUserQuestion 推送（点按钮秒答）
+- 向用户推送选项让其点选（单轮；harness 有按钮式工具时优先用，否则普通对话列选项）
 - 用户答完 → 走路径 A
 
-**禁止**：把 agent 能自决的细节（命名 / 格式 / 文件数量合并）塞进 AskUserQuestion。
+**禁止**：把 agent 能自决的细节（命名 / 格式 / 文件数量合并）塞进推送给用户的选项里。
 
 ### 步骤 5：PR diff 后审
 
@@ -115,7 +115,7 @@ Git reset 零成本后，Checkpoint 不强制。只在以下场景用：
 
 默认不起。仅在以下**至少一条成立**时起：
 
-- AskUserQuestion 连续 2 轮都没定方向（讨论复杂到要归档）
+- 向用户推选项连续 2 轮都没定方向（讨论复杂到要归档）
 - 用户明确要跨会话继续讨论
 - 涉及 ≥ 2 个 ADR 需跨决策协调（PR 描述塞不下）
 - 用户显式说"起 scratch"
@@ -142,7 +142,7 @@ Git reset 零成本后，Checkpoint 不强制。只在以下场景用：
 
 - **Default scratch 而非直接执行**：git 便宜 + agent 便宜 + review 贵——默认直接干
 - **Review 塞给用户批改**：让用户打字在 HTML comment 里回"Q1=a"就是 review 成本转嫁
-- **把 agent 能自决的细节塞 AskUserQuestion**：命名 / 格式 / 文件数这种 agent 有把握的不问
+- **把 agent 能自决的细节塞进选项推送**：命名 / 格式 / 文件数这种 agent 有把握的不问
 - **一次问超过 3 个真分叉**：砍到 3 个或分批；问多了就是 agent 自己该想清楚
 - **Argue 结果不贴 PR body**：用户看 diff 时看不到 agent 考虑过哪些反对点，追溯困难
 - **多方案要选时问抽象文本而非做出来**：能并行做就并行做让用户 diff 选

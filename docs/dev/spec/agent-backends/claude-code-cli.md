@@ -162,11 +162,11 @@ MVP 用最小集合：
 | `interrupted` / 用户 SIGINT | `user_interrupt` |
 | 其他错误态 | `error` |
 
-**core 注入的额外 reason**（不来自 CC 本身）：`tool_limit` / `wallclock_timeout` / `budget_exceeded`（由 core 在判定命中时主动构造 turn_finished 事件，见 `cost-and-limits.md`）。完整枚举见 [`agent-runtime.md`](../agent-runtime.md) §TurnEndReason 枚举。
+**daemon 注入的额外 reason**（不来自 CC 本身）：`tool_limit` / `wallclock_timeout` / `budget_exceeded`（由 daemon 在判定命中时主动构造 turn_finished 事件，见 `cost-and-limits.md`）。完整枚举见 [`agent-runtime.md`](../agent-runtime.md) §TurnEndReason 枚举。
 
 ## UsageCompleteness
 
-CC 输出的 `result.usage` 在不同路径下字段齐全度不同。core 在记 `usage` 事件时必须标注完整度：
+CC 输出的 `result.usage` 在不同路径下字段齐全度不同。daemon 在记 `usage` 事件时必须标注完整度：
 
 | 级别 | 条件 | 行为 |
 |---|---|---|

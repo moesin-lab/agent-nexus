@@ -133,7 +133,7 @@ AgentRuntime 实现内调用 daemon.toolguard
         └─ maxToolCallsPerTurn 命中
               → daemon.quota-enforcer 注入
               → 产出 AgentEvent{type: turn_finished, payload: {reason: "tool_limit"}}
-                (权威源：agent-runtime.md §TurnEndReason，"core 注入"行)
+                (权威源：agent-runtime.md §TurnEndReason，"daemon 注入"行)
 ```
 
 > **TurnEndReason 完整枚举**（权威源 agent-runtime.md §TurnEndReason）：
@@ -150,9 +150,9 @@ AgentRuntime 实现内调用 daemon.toolguard
 | 幂等命中 "processing" | 上一次还在进行中 | 跳过 | [`infra/idempotency.md`](infra/idempotency.md) |
 | 限流/预算拒绝 | 触发 turn / tool / wallclock / token 硬限或 $ 预算上限 | 流程终止；按策略产生用户提示 | [`infra/cost-and-limits.md`](infra/cost-and-limits.md) |
 | 工具白名单外 | agent 调用未授权工具 | adapter 不转发；产出 `AgentEvent{type: error}` | [`security/tool-boundary.md`](security/tool-boundary.md) §合约测试 |
-| `tool_limit` 命中 | maxToolCallsPerTurn 命中 | core 注入 `turn_finished{reason: "tool_limit"}` | [`agent-runtime.md`](agent-runtime.md) §TurnEndReason |
-| `wallclock_timeout` | perInputTimeoutMs 命中 | core 注入 `turn_finished{reason: "wallclock_timeout"}` | [`agent-runtime.md`](agent-runtime.md) §TurnEndReason |
-| `budget_exceeded` | opt-in $ 预算耗尽 | core 注入 `turn_finished{reason: "budget_exceeded"}` | [`agent-runtime.md`](agent-runtime.md) §TurnEndReason |
+| `tool_limit` 命中 | maxToolCallsPerTurn 命中 | daemon 注入 `turn_finished{reason: "tool_limit"}` | [`agent-runtime.md`](agent-runtime.md) §TurnEndReason |
+| `wallclock_timeout` | perInputTimeoutMs 命中 | daemon 注入 `turn_finished{reason: "wallclock_timeout"}` | [`agent-runtime.md`](agent-runtime.md) §TurnEndReason |
+| `budget_exceeded` | opt-in $ 预算耗尽 | daemon 注入 `turn_finished{reason: "budget_exceeded"}` | [`agent-runtime.md`](agent-runtime.md) §TurnEndReason |
 | redact 失败 | 脱敏规则匹配但替换异常 | 兜底丢弃可疑片段；打 redact 失败日志 | [`security/redaction.md`](security/redaction.md) |
 | agent 子进程崩溃 | CC CLI 子进程退出码非 0 / SIGKILL | 产出 `AgentEvent{type: error}` + 按策略重启 | [`agent-backends/claude-code-cli.md`](agent-backends/claude-code-cli.md) §退出码 |
 | platform 发送失败 | IM API 错误 / gateway 断连 | 重试指数退避 / 兜底丢弃 / 用户层降级提示 | [`platform-adapter.md`](platform-adapter.md) §发送语义 |
@@ -193,7 +193,7 @@ AgentRuntime 实现内调用 daemon.toolguard
 | `AgentEvent` 完整 EventType 枚举与 payload 字段 | [`agent-runtime.md`](agent-runtime.md) §AgentEvent |
 | `AgentInput` 字段 | [`agent-runtime.md`](agent-runtime.md) §AgentInput |
 | `OutboundMessage` / `MessageRef` / `CapabilitySet` 字段 | [`platform-adapter.md`](platform-adapter.md) |
-| `TurnEndReason` 枚举（含 core 注入项） | [`agent-runtime.md`](agent-runtime.md) §TurnEndReason |
+| `TurnEndReason` 枚举（含 daemon 注入项） | [`agent-runtime.md`](agent-runtime.md) §TurnEndReason |
 | `UsageRecord` 字段 → `llm_call_finished` 日志映射 | [`agent-runtime.md`](agent-runtime.md) §UsageRecord + [`infra/observability.md`](infra/observability.md) |
 | PlatformAdapter / AgentRuntime 接口签名 | [`platform-adapter.md`](platform-adapter.md) / [`agent-runtime.md`](agent-runtime.md) |
 | 各横切能力具体规则 | [`security/`](security/) / [`infra/`](infra/) |

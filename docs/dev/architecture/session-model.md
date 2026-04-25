@@ -152,7 +152,7 @@ Discord gateway 会重发事件（at-least-once）。同一条用户消息可能
 ### 在本 session 模型中的角色（要点）
 
 - 每条入站 `NormalizedEvent` 带唯一 `messageId`（Discord 给的消息 snowflake）
-- **Adapter 只负责归一化与投递，不做去重**；由 core 在 dispatch 阶段（auth 检查之后、session 入队之前）执行 `checkAndSet(sessionKey, messageId)`
+- **Adapter 只负责归一化与投递，不做去重**；由 daemon 在 dispatch 阶段（auth 检查之后、session 入队之前）执行 `checkAndSet(sessionKey, messageId)`
 - 去重表条目 TTL 默认 24 小时
 - 本机 SQLite 表 `idempotency`（主键 `(sessionKey, messageId)`），内存 LRU 缓存热数据
 
@@ -162,7 +162,7 @@ Discord gateway 会重发事件（at-least-once）。同一条用户消息可能
 
 **严格串行**。原因：CC CLI 是有状态的对话，并发输入会把会话搞乱。
 
-- core 为每个活跃 session 维护一个 FIFO 队列
+- daemon 为每个活跃 session 维护一个 FIFO 队列
 - 队列头任务完成前，后续事件排队
 - 用户在短时间内发多条消息 → 串行处理，前一条完成才处理下一条
 

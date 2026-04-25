@@ -27,7 +27,7 @@ related:
 
 - `timestamp`：RFC3339 含毫秒
 - `level`：`trace | debug | info | warn | error`
-- `component`：发生日志的模块名（如 `adapter-discord`、`core-engine`）
+- `component`：发生日志的模块名（如 `adapter-discord`、`daemon-engine`）
 - `event`：事件名（动宾短语，小写加下划线，如 `message_received`）
 - `traceId`：贯穿一次请求链的 ID
 - `sessionKey`：涉及会话时必填

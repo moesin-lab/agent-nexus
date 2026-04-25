@@ -142,7 +142,7 @@ base = 1000ms, cap 见上表, jitter = 0.2
 
 ## 定价表（供 opt-in $ 预算使用）
 
-- 由 core 维护，配置 `pricing.<model>.<key>`（$/MTok）
+- 由 daemon 维护，配置 `pricing.<model>.<key>`（$/MTok）
 - 缺定价表的模型：跳过 $ 记账 + 打一次 `warn`（不中断业务）
 - 不再把"最贵已知模型"估算作为默认行为（订阅场景下会产生误导性报警）
 

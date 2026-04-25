@@ -2,7 +2,7 @@
 title: 模块依赖方向
 type: architecture
 status: active
-summary: 定义仓库内模块间允许与禁止的 import 关系；core 只依赖 stdlib，agent/platform 只依赖 core/protocol
+summary: 定义仓库内模块间允许与禁止的 import 关系；daemon 只依赖 protocol + stdlib，agent-*/platform-* 只依赖 daemon + protocol
 tags: [architecture, hub-and-spoke, modules, dependencies]
 related:
   - dev/architecture/overview

@@ -145,12 +145,12 @@ interface Engine {
 
 - Session 由 `(platform, channelId, userId)` 作为 key
 - 同 key 的消息串行处理
-- messageId 幂等表由 core 统一维护
-- gateway 断连恢复策略由 core 驱动，platform 只负责重建连接
+- messageId 幂等表由 daemon 统一维护
+- gateway 断连恢复策略由 daemon 驱动，platform 只负责重建连接
 
 ## 横切关注点
 
-下列能力由 `core/` 提供给 platform/agent 使用，**禁止重复实现**：
+下列能力由 daemon 提供给 platform/agent 使用，**禁止重复实现**：
 
 | 能力 | 入口 | spec |
 |---|---|---|
@@ -178,7 +178,7 @@ interface Engine {
 - `platform/discord` 引用 `agent/claudecode`（违反模块边界 / 依赖方向）
 - `core` 模块引用具体 platform 或 agent（违反中枢定位）
 - 在 adapter 里自己写日志、自己做重试、自己管 session（横切能力重复实现）
-- 用全局变量共享状态（一律走 core 的 registry 与依赖注入）
+- 用全局变量共享状态（一律走 daemon 的 registry 与依赖注入）
 - 跨 adapter 复用 Discord 特定结构（必须先归一化到 NormalizedEvent）
 
 ## 不做的事

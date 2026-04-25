@@ -16,7 +16,7 @@ contracts:
 
 # Spec：Persistence（本地存储）
 
-定义本机桌面形态（ADR-0003）下的数据存储契约。所有持久化走 core 提供的存储抽象；platform/agent 不直接触碰存储层。
+定义本机桌面形态（ADR-0003）下的数据存储契约。所有持久化走 daemon 提供的存储抽象；platform/agent 不直接触碰存储层。
 
 ## 存储根路径
 
@@ -167,7 +167,7 @@ contracts:
 
 详见 [`security.md`](../security/README.md)。
 
-## 存储接口（core）
+## 存储接口（daemon）
 
 ```text
 interface Store {

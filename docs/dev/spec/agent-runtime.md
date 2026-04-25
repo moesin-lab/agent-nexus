@@ -26,7 +26,7 @@ contracts:
 
 ## 目标
 
-- 为 core 提供统一的 agent 接口，屏蔽具体后端（CLI 子进程、HTTP API、SDK）差异
+- 为 daemon 提供统一的 agent 接口，屏蔽具体后端（CLI 子进程、HTTP API、SDK）差异
 - 管理 session 级的 agent 进程生命周期
 - 把 agent 输出归一化为 `AgentEvent` 流
 - 暴露权限与资源约束入口
@@ -47,7 +47,7 @@ interface AgentRuntime {
     // 输入
     sendInput(session: AgentSession, input: AgentInput) -> void
 
-    // 输出流（core 在 startSession 时订阅）
+    // 输出流（daemon 在 startSession 时订阅）
     onEvent(session, handler: fn(AgentEvent) -> void)
 
     // 控制
@@ -143,19 +143,19 @@ enum EventType {
 
 ### TurnEndReason 枚举
 
-合并了"后端原生原因"与"core 注入的原因"：
+合并了"后端原生原因"与"daemon 注入的原因"：
 
 | 值 | 来源 | 含义 |
 |---|---|---|
 | `stop` | 后端 | 正常完成（CC `stop_reason=end_turn`） |
 | `max_tokens` | 后端 | CC 达到 output token 上限 |
 | `user_interrupt` | 后端（SIGINT） | 用户主动中断 |
-| `error` | 后端 / core | 工具错误 / CC 崩溃 / 其他异常 |
-| `tool_limit` | **core 注入** | `maxToolCallsPerTurn` 命中（见 `cost-and-limits.md`） |
-| `wallclock_timeout` | **core 注入** | `perInputTimeoutMs` 命中 |
-| `budget_exceeded` | **core 注入** | opt-in $ 预算耗尽 |
+| `error` | 后端 / daemon | 工具错误 / CC 崩溃 / 其他异常 |
+| `tool_limit` | **daemon 注入** | `maxToolCallsPerTurn` 命中（见 `cost-and-limits.md`） |
+| `wallclock_timeout` | **daemon 注入** | `perInputTimeoutMs` 命中 |
+| `budget_exceeded` | **daemon 注入** | opt-in $ 预算耗尽 |
 
-**core 注入**的 `turn_finished` 由 `daemon.toolguard` / `daemon.quota-enforcer` 主动构造并追加到事件流（见 `claude-code-cli-contract.md` §"stop_reason 映射"）。adapter 收到 core 中断信号后也必须产出一条对应 reason 的 `turn_finished`，避免事件流不完整。
+**daemon 注入**的 `turn_finished` 由 `daemon.toolguard` / `daemon.quota-enforcer` 主动构造并追加到事件流（见 `claude-code-cli-contract.md` §"stop_reason 映射"）。adapter 收到 daemon 中断信号后也必须产出一条对应 reason 的 `turn_finished`，避免事件流不完整。
 
 ### UsageRecord（`usage` 事件 payload）
 
@@ -217,7 +217,7 @@ Agent runtime 实现必须有：
 3. `interrupt` → 产出 `turn_finished { reason: "user_interrupt" }`
 4. 超时 → 产出 `turn_finished { reason: "error" }` + `error` 事件
 5. 子进程崩溃 fixture → 产出 `error` + `session_stopped`
-6. `usage` 事件的 token 数可被 core 成功记账
+6. `usage` 事件的 token 数可被 daemon 成功记账
 
 transcript fixture 放在 `testdata/cc-cli/` 下（见 [`../testing/fixtures.md`](../testing/fixtures.md)）。
 
@@ -238,7 +238,7 @@ transcript fixture 放在 `testdata/cc-cli/` 下（见 [`../testing/fixtures.md`
 
 ## 反模式
 
-- 把 CC 原生 JSON 结构暴露给 core（违反归一化）
+- 把 CC 原生 JSON 结构暴露给 daemon（违反归一化）
 - 在 AgentEvent 上塞平台特有字段
 - 不实现 interrupt（让用户长任务无法取消）
 - 错过 `usage` 事件（无法做成本归因）

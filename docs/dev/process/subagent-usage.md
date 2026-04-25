@@ -156,7 +156,7 @@ review / plan / simplify 类 agent 不适用该模板——产出结构不同。
 | 维度 | 例子 |
 |---|---|
 | 按目录 | `docs/dev/adr/` / `docs/dev/architecture/` / `docs/dev/spec/` 分三路扫 |
-| 按模块 | `core/` / `platform/` / `agent/` 分三路搜同一 pattern |
+| 按模块 | `daemon/` / `platform/` / `agent/` 分三路搜同一 pattern |
 | 按关注点 | "安全盲点" / "内部矛盾" / "缺失文档" 分三路审同一批文件 |
 | 按层级 | contract 扫一路、implementation 扫一路、test 扫一路 |
 | 按方案 | 方案 A 可行性、方案 B 可行性、方案 C 可行性 并行对比 |

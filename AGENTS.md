@@ -15,8 +15,6 @@ related:
 # AGENTS.md
 
 > 本文件是协作规则的**入口索引**，叠加在全局 `~/.claude/CLAUDE.md` 之上。具体规则展开在 `docs/dev/process/` 下对应文件。规则冲突时，本文件和 `docs/dev/` 下的项目文档优先。
->
-> 沟通与输出遵循全局 `~/.claude/CLAUDE.md`，本仓库无追加。
 
 ## 核心原则（不可违反）
 
@@ -35,20 +33,21 @@ related:
 
 ## 读文档的防污染规则
 
-防污染靶子是"让 agent 把非事实内容当事实用"。两类非权威源由 hook 拦截 `Read`，必须走 `scripts/docs-read --force`：① 归档文档；② 外部导向文档。
-
 | 路径 | Read 行为 |
 |---|---|
 | `AGENTS.md` / `CHANGELOG.md` / active 的 `docs/**` | **放行** |
-| `docs/**` 下 `status: placeholder` 骨架 | **放行**（不归档；`placeholder` 承担信息架构占位作用，搬去归档会误读为主题废弃。骨架正文极短 + frontmatter 软告警足以兜底） |
+| `docs/**` 下 `status: placeholder` 骨架 | **放行**（不归档；`placeholder` 承担信息架构占位作用，搬去归档会误读为主题废弃） |
 | `docs/dev/adr/deprecated/**` / `docs/_deprecated/**`（归档） | **拦截** → `scripts/docs-read --force` |
 | 仓库根 `README.md` / `CONTRIBUTING.md`（外部导向） | **拦截** → `scripts/docs-read --force` |
 
 `scripts/docs-read --force` 是被 hook 拦后的**唯一合法入口**——为"研究历史 / 核对外部文案"等正当用途留的兜底，不是常规读法。
 
-`pretool-read-guard` 是协作约束，不是强一致安全边界——拦不住 shell（`cat`/`curl`/`grep`）。最终防线是路径本身的"已作废"信号 + reviewer 把关：**reviewer 在 PR 里看到基于归档文档做的决策（作者未显式声明研究历史），应要求重做**——过时内容进决策链后整条链条都要重新验证。
+**违反后果**：reviewer 在 PR 里看到基于归档文档做的决策（作者未显式声明研究历史），应要求重做——过时内容进决策链后整条链条都要重新验证。
 
-完整机制（作废工作流、`docs-read` 三模式、`pretool-read-guard` hook 集成与 Claude Code 配置示例、不配 hook 的后果）见 [`docs/dev/process/docs-read.md`](docs/dev/process/docs-read.md)。
+更多入口：
+
+- 把文档作废 / 改 status → 见 [`docs/dev/process/docs-read.md` §"作废工作流"](docs/dev/process/docs-read.md#作废工作流)
+- `docs-read` 三模式 / `pretool-read-guard` hook 集成 → 见 [`docs/dev/process/docs-read.md`](docs/dev/process/docs-read.md)
 
 ## 每个 PR 必答三问
 
@@ -99,3 +98,9 @@ related:
 | 改 limits / 预算 | `docs/dev/spec/infra/cost-and-limits.md` |
 | 改存储 schema | `docs/dev/spec/infra/persistence.md` |
 | 威胁模型与跨分区安全索引 | `docs/dev/spec/security/README.md` |
+
+## 本文件不做的事
+
+- 不展开具体规则——展开在 `docs/dev/` 下
+- 不替代全局 `AGENTS.md` 文件——只在项目内追加与覆盖
+- 不对使用者做说明——使用者文档在 `docs/product/`

@@ -101,11 +101,55 @@ related:
 
 汇总数据用于阶段 3 决策。
 
+### 阶段 2.5：全仓库逐节扫描（独立 PR）
+
+**触发原因**：tdd.md 暴露 explore agent 文件级判定的系统性盲点——一份文件可能融合三种 owner（process 顺序 + standards 价值本体 + ADR 决策论述），文件级"判 OK"会全部漏判。本 PR 内的 explore 扫描结果不可信任，需要重做一遍。
+
+**本 PR 不处理**——PR #19 已含 12 commit 跨 17 文件，再扩 scope 会让 reviewer 失焦。本阶段在 PR #19 合入后单独起 PR。
+
+#### 扫描方法论改进（吸取 tdd.md 教训）
+
+1. **逐节审视**而非文件级——每个 `## ` 段独立标 owner 性质，不允许"整份文件 OK"判定
+2. **四档分类**而非两档：
+   - **process**（流程编排）：trigger / role / step / failure handling
+   - **standards**（价值标准本体）："必须 X / 不许 Y" / 做不做对照 / 禁入清单 / 合格条件
+   - **ADR-rationale**（决策论述）：选项对比 / 权衡论证 / 放弃理由
+   - **engineering-philosophy**（前提论证 / 流程导言）：背景假设 / 触发推论 / 元层观念
+3. **比例阈值**：文件主体若 < 50% 真 owner 内容，强制拆分；导言/前提段 < 20% 可保留
+4. **可疑信号词**速判：
+   - 看到 "为什么 X / 因为 Y" → ADR
+   - 看到 "X 必须 / 不许 / 合格条件" → standards
+   - 看到 "先 X 再 Y / 何时 X / 由谁 X" → process
+   - 看到 "本质是 X / 假设 X / 前提是 X" → engineering-philosophy（保留还是迁出按比例阈值判）
+
+#### 高度可疑文件清单（按 tdd.md 教训预判）
+
+按可疑度排，每文件需逐节审：
+
+- [ ] `process/subagent-usage.md` —— 派子代理流程 + 好 prompt 价值标准混合
+- [ ] `process/skill-setup.md` —— 挂接流程 + skills.manifest schema（产物形态）混合
+- [ ] `process/docs-read.md` —— 防污染流程 + "什么 case 必须 force"价值判据混合
+- [ ] `process/pre-decision-analysis/anti-patterns.md` —— 名字就是 anti-patterns，按定义是禁入清单（应在 standards 而非 process）
+- [ ] `process/pre-decision-analysis/output-template.md` —— 输出模板 = 产物形态价值标准
+- [ ] `process/pre-decision-analysis/subflow-*.md` 5 份 —— 大概率有"argue 应该怎么写"等价值判据
+- [ ] `process/self-refinement/README.md` —— explore 自己标"边界 case"，没仔细审
+- [ ] `process/subagent-recon-prompt-template.md` —— 模板 = 产物形态
+- [ ] `standards/coding.md` 反向：可能有"PR 时检查 X"流程编排塞进来
+- [ ] `standards/errors.md` 反向：可能有"何时打错误日志 / 何时熔断"流程混入
+- [ ] `standards/logging.md` 反向：可能有"何时记日志"流程混入
+
+#### 执行步骤
+
+1. 派改进版 explore agent，brief 强制四档分类 + 逐节 + 比例阈值
+2. **抽样复核**——本 PR 教训：explore 输出 100% 信任不可取，每份至少独立 1 处复核
+3. 按真违反清单做拆分 PR（一个 PR 一个文件 / 一组相关文件）
+4. 每个拆分 PR 维持 instrumentation 要求（doc-ownership 判据稳定性 / 边界 case / 新规则需求）
+
 ### 阶段 3：按清理证据决定后续
 
-完成阶段 2（共 12 处清理，2a 八处 + 2b 四处）后回看：
+完成阶段 2（含 2.5）后回看：
 
-- [ ] 复盘：12 次清理中现有规则的稳定性如何？
+- [ ] 复盘：阶段 2 + 2.5 全部清理中现有规则的稳定性如何？
 - [ ] 决策：是否引入 Codex 的"实现充分性"判据（替换或加强"提及 vs 复述"）
 - [ ] 决策：是否引入 Codex 的"决策权威 vs 操作权威"区分
 - [ ] 决策：是否需要更深层结构重组（开 ADR-0009/0010）

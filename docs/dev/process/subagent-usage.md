@@ -175,7 +175,14 @@ review / plan / simplify 类 agent 不适用该模板——产出结构不同。
 
 > 派一个 Explore 扫遍 `docs/dev/` 下 40 份 markdown，逐文件审计矛盾、缺失、stale。
 
-正确做法：派 3 个并行 Explore，分别审计 `adr/` + `architecture/` / `spec/` 核心三件套 + `agent-backends/` / `spec/infra/` + `spec/security/` + `standards/` + `testing/`，主 session 再做一次跨分区收敛。
+正确做法：派 ≥2 个并行 `general-purpose`（**不是 Explore**——Explore 优化"快速查找"，不擅穷举判定），按目录或维度切片（如 `adr/` + `architecture/` / `spec/` 核心三件套 + `agent-backends/` / `spec/infra/` + `spec/security/` + `standards/` + `testing/`），主 session 再做一次跨分区收敛。
+
+派发 prompt 还要满足两点，否则即使并行也会漏报：
+
+1. **要求逐文件 enumerate + 三态判定**（违反 / 合规 / 不适用），不允许"找够显著的就停"——审计类任务的产出必须能让主 session 看出子代理是不是漏看了
+2. **不在 prompt 里替子代理预设范围豁免**（"不要审计 X / 跳过 Y"），除非能指向具体 ADR / docs 章节解释豁免依据；脑补豁免会让子代理永远看不到那块
+
+收敛阶段同样关键：**verify（核对子代理报的对不对）和 sweep（看它没说的有没有问题）都要做**，不能只 verify。
 
 ### 串行不可避免的场景
 

@@ -102,6 +102,7 @@ Proposed ──(评审通过)──> Accepted
 | [0006](0006-limits-layering-defense-first.md) | Limits 分层——失控保护为一等，配额控制按用户路径可选 | Accepted |
 | [0007](0007-collaborative-skill-promotion.md) | 协作性 skill 入库与挂接 | Proposed |
 | [0008](0008-doc-layering-ssot.md) | 文档事实归属判定实现 SSOT | Proposed |
+| [0009](0009-tdd-mandatory.md) | 强制 TDD（先 spec → 先 failing test → 再 impl） | Proposed |
 
 ## 引用规则
 

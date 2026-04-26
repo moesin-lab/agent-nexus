@@ -56,20 +56,31 @@ related:
 **不**引入 Codex 提的两条精细化规则（"实现充分性"判据 / "决策权威 vs 操作权威"区分）
 ——它们的价值要在阶段 2 清理场景里被验证后再考虑正式引入。
 
-### 阶段 2：清理 ADR-0008 列出的 8 处既有重复（每处一个小 PR）
+### 阶段 2：清理既有 owner 违反（每处一个小 PR）
 
-清理对象（ADR-0008 Context 列出）：
+#### 2a. ADR-0008 Context 列出的 8 处跨文件重复
 
 - [ ] SessionKey 完整定义重复（architecture/session-model + spec/platform-adapter + spec/agent-runtime）
 - [ ] PlatformAdapter / AgentRuntime / Engine 接口签名（architecture/overview 伪代码 + spec/* 权威）
 - [ ] 限流默认阈值（ADR-0006 声明"不决定阈值" vs spec/infra/cost-and-limits 已写死值）
 - [ ] 横切能力清单（architecture/overview 14 项表 + spec 子目录散落引用）
-- [ ] 限流"一等机制 vs 二等机制"论述（ADR-0006 + spec/infra/cost-and-limits）
+- [ ] PR #19：限流"一等机制 vs 二等机制"论述（ADR-0006 + spec/infra/cost-and-limits）—— 进行中
 - [ ] NormalizedEvent 字段表（spec/message-protocol 完整 + spec/platform-adapter 重列）
 - [ ] Session vs AgentSession 状态枚举（命名混淆 → 改名消歧）
 - [ ] AgentEvent / usage 字段映射（spec/agent-runtime 内部组织松散，单文件重组）
 
-**清理过程的 instrumentation 要求**：每个 PR 在描述里强制回答：
+#### 2b. PR #18 后扫描发现的 standards/process 内部 owner 违反
+
+PR #18 合入后用 explore agent 系统扫描 6 standards + 11 process 文件，新增以下违反——standards 全部 OK，process 4 处需清理：
+
+- [ ] 🔴 **重写**：`process/commit-and-branch.md` L14-99 → 主体是产物形态价值标准（Conventional Commits format / 分支命名规则）。新建 `standards/commit-style.md` 承载产物形态本体；process 只剩生命周期编排 + link
+- [ ] 🟡 **小补**：`process/workflow.md` L65-82 → 准入条件清单（"满足任一条件就需要 ADR：..."）属价值标准本体。迁到 `adr/README.md`（已有 ADR 准入清单）
+- [ ] 🟡 **小补**：`process/code-review.md` L78-88 → Review 优先级表（正确性 > 安全 > 契约 > 可维护性 > 风格）属价值判据。迁到 `standards/coding.md` 或新建 `standards/code-review-criteria.md`
+- [ ] 🟡 **小补**：`process/pre-decision-analysis/README.md` L18-33 → 核心原则（"Agent-first / review 做选择不批改"等）属工程哲学/价值判断。迁到 ADR 或 `standards/collaboration-model.md`
+
+#### Instrumentation 要求
+
+每个清理 PR 在描述里强制回答：
 
 1. doc-ownership.md 的六步判定 + 冲突裁决表能否稳定决定 owner？
 2. 还是诉诸语感？哪一段判据最难用？
@@ -79,9 +90,9 @@ related:
 
 ### 阶段 3：按清理证据决定后续
 
-完成阶段 2 后回看：
+完成阶段 2（共 12 处清理，2a 八处 + 2b 四处）后回看：
 
-- [ ] 复盘：八次清理中现有规则的稳定性如何？
+- [ ] 复盘：12 次清理中现有规则的稳定性如何？
 - [ ] 决策：是否引入 Codex 的"实现充分性"判据（替换或加强"提及 vs 复述"）
 - [ ] 决策：是否引入 Codex 的"决策权威 vs 操作权威"区分
 - [ ] 决策：是否需要更深层结构重组（开 ADR-0009/0010）

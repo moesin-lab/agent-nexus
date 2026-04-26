@@ -27,14 +27,22 @@ related:
 ## 状态机
 
 ```
-Proposed ──(评审通过)──> Accepted
-   │                       │
-   │                       ├──(被新决策取代)──> Superseded by XXXX
-   │                       │
-   │                       └──(问题已不存在)──> Deprecated
+Proposed ──(显式签字盖章)──> Accepted
+   │                          │
+   │                          ├──(被新决策取代)──> Superseded by XXXX
+   │                          │
+   │                          └──(问题已不存在)──> Deprecated
    │
    └──(评审拒绝)──> Rejected（罕见，一般会修 ADR 而非拒绝）
 ```
+
+**状态语义**：
+
+- **Proposed = 入库可执行**——ADR PR 经 review 合入 main 后即视为项目已采纳的事实依据，下游 spec / standards / process 可以引用并按此 ADR 落地。本项目实际约定如此（ADR-0007 / 0008 / 0009 均以 Proposed 状态合入并被引用）。
+- **Accepted = 显式签字盖章**——标志该决策经过更正式的人工复盘 / 跨项目周期审视。仅在需要为某条 ADR 提供"额外稳定性背书"时手工推进；不是合入 main 的默认产物。
+- **Superseded / Deprecated**——见 §"Superseded 工作流"。
+
+如果未来要把 Proposed → Accepted 升级为合入流程的强制环节，需要单独发 ADR 修订本节。
 
 **状态变更只追加，不覆盖**：
 
@@ -77,10 +85,10 @@ Proposed ──(评审通过)──> Accepted
 1. 作者基于 [`template.md`](template.md) 写 ADR，状态设为 `Proposed`
 2. PR 发起 review，至少跑一次 codex review
 3. Review 反馈逐条响应
-4. 讨论收敛后改状态为 `Accepted`（或 `Rejected`）
-5. 合并
+4. 讨论收敛后合并 PR——状态保持 `Proposed`（按 §"状态机"，Proposed = 入库可执行）
+5. 如需"显式签字盖章"，单独发后续 PR 把状态推到 `Accepted`（不强制）
 
-**禁止**：未经评审直接提交 `Accepted` 状态的 ADR。
+**禁止**：未经 review 直接合并任何 ADR PR；或在未经 review 的情况下把 `Proposed` 改 `Accepted`。
 
 ## 书写要点
 

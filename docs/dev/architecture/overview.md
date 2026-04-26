@@ -116,7 +116,9 @@ platform/discord.Send(sessionKey, OutboundMessage)
 
 - **`PlatformAdapter`**：IM 平台适配层契约 → [`../spec/platform-adapter.md`](../spec/platform-adapter.md)
 - **`AgentRuntime` / `AgentSession`**：agent 后端适配层契约 → [`../spec/agent-runtime.md`](../spec/agent-runtime.md)
-- **`Engine`**：daemon 中枢调度——本架构层视角下，Engine 接收 `NormalizedEvent` 并按"权限 → 幂等 → 限流 → session 路由"流程处理（流程见上文"最小数据流"）；内部持有 sessions、idempotency store、rateLimiter、budgetTracker、redactor 五项横切能力（清单见下文"横切关注点"）。Engine 暂无独立 spec 文件，签名细节随实现演进。
+- **`Engine`**：daemon 中枢调度。暂无独立 spec 文件（住在 daemon 内部，签名细节随实现演进）。架构层视角下：
+  - **调度流程**：见上文"最小数据流"——Engine 接收 `NormalizedEvent` 后按权限 → 幂等 → 限流 → session 路由的顺序处理
+  - **持有的横切能力**：见下文"横切关注点"——sessions / idempotency / ratelimit / counters / redact 等
 
 本节不复述签名——读者跳到对应 spec 看完整字段与契约不变量。
 

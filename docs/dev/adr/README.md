@@ -51,14 +51,23 @@ Proposed ──(评审通过)──> Accepted
 
 ## 什么情况写 ADR
 
-触发 ADR 的改动（非穷举，见 [`../process/workflow.md`](../process/workflow.md)）：
+满足任一条件就需要 ADR：
 
-- 引入/替换外部依赖大类（IM 平台、agent 后端、数据库、框架）
-- 改变模块依赖方向
-- 改变对外契约（spec/ 下任意文件的接口）
-- 改变部署形态
-- 改变安全模型
+- 引入 / 替换一个外部依赖的大类（IM 平台、agent 后端、数据库、框架）
+- 改变模块依赖方向（见 [`../architecture/dependencies.md`](../architecture/dependencies.md)）
+- 改变对外契约（`spec/` 下任意文件的接口签名或字段）
+- 改变部署形态（单机 → 多机、桌面 → 服务端）
+- 改变安全模型（权限边界、密钥存储、脱敏规则）
 - 选定实现语言、运行时、核心库
+
+## 可跳过的情形
+
+流程主路径每一步都保留，但以下改动允许在该步"判断为不需要"后跳过 ADR / spec / 测试。**分支、PR、review、squash merge 不可跳过**——见 [`../process/workflow.md` §分支先行](../process/workflow.md#分支先行不可跳过)。
+
+- 文档错别字、链接修复、术语统一 → 跳过 ADR / spec / test
+- 依赖的补丁版本升级（无 breaking change）→ 跳过 ADR / spec；是否需要 test 看风险
+- 代码注释修改 → 跳过 ADR / spec / test
+- 本地开发脚本的小调整（不影响 CI）→ 跳过 ADR / spec；是否需要 test 看风险
 
 ## 评审流程
 

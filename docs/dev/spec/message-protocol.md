@@ -75,17 +75,19 @@ enum EventType {
 
 ## SessionKey
 
-见 [`../architecture/session-model.md`](../architecture/session-model.md)。
+入站事件归一化的会话路由 key。
 
 ```text
 SessionKey {
-    platform: string
-    channelId: string
-    initiatorUserId: string
+    platform: string                // IM 平台标识，例 "discord"
+    channelId: string               // 会话容器 ID（Discord channel ID 或 thread ID）
+    initiatorUserId: string         // 发起者 ID
 }
 ```
 
-在日志与持久化中序列化为字符串：`<platform>:<channelId>:<userId>`。
+序列化（日志、持久化）：`<platform>:<channelId>:<initiatorUserId>`。
+
+**SessionKey 不唯一跨时间**——同一 SessionKey 可以随时间对应多个已归档 + 一个活跃的 session 实例。会话本体的持久化主键是 `sessionId`，不是 SessionKey。SessionKey 与 sessionId 的关系、生命周期、Discord thread 映射等组合语义见 [`../architecture/session-model.md`](../architecture/session-model.md)。
 
 ## Attachment
 

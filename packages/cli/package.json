@@ -1,0 +1,22 @@
+{
+  "name": "@agent-nexus/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "agent-nexus": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --build",
+    "test": "vitest run",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@agent-nexus/agent-claudecode": "workspace:*",
+    "@agent-nexus/daemon": "workspace:*",
+    "@agent-nexus/platform-discord": "workspace:*",
+    "@agent-nexus/protocol": "workspace:*"
+  }
+}

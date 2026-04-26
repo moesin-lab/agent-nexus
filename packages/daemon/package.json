@@ -1,0 +1,24 @@
+{
+  "name": "@agent-nexus/daemon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@agent-nexus/protocol": "workspace:*",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0"
+  }
+}

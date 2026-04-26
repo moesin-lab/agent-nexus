@@ -6,6 +6,7 @@ out/
 bin/
 vendor/
 target/
+*.tsbuildinfo
 __pycache__/
 *.pyc
 .venv/

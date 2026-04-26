@@ -156,11 +156,21 @@ related:
 
 **默认不重组**——只有清理证据明确指向"现有六步判定不够用"才进入重组讨论。
 
-## 下一阶段（预留）
+## 下一阶段（实现进行中）
 
-- [ ] ADR 0004 决定后：建立代码目录骨架（`core/`、`agent/claudecode/`、`platform/discord/`、`cmd/`）
-- [ ] TDD 起步：第一个模块的 spec 合约测试
-- [ ] 基础工具链搭建（测试 runner、lint、CI）
+- [x] ADR-0004 决定后：建立代码目录骨架（`packages/protocol`、`packages/daemon`、`packages/agent/claudecode`、`packages/platform/discord`、`packages/cli`）—— MVP walking skeleton PR
+- [x] 基础工具链搭建（pnpm workspaces + TS strict + vitest）—— 同上 PR
+- [ ] CI（GitHub Actions：pnpm install + typecheck + vitest）
+- [ ] 升级 CC adapter 到 stream-json 主路径（`--input-format stream-json` + 子进程持久化 + 流式 edit Discord）→ `docs/dev/spec/agent-backends/claude-code-cli.md` §交互式 session
+- [ ] 接入横切能力（按 spec 顺序）：idempotency / ratelimit / redact / auth allowlist
+- [ ] sessionStore 持久化 + 状态机 → `docs/dev/architecture/session-model.md`
+- [ ] secrets keychain（第 1 级）+ env（第 2 级）→ `docs/dev/spec/security/secrets.md`
+- [ ] CompatibilityProbe step 3（stream-json 验证）
+- [ ] 长文本切片保代码块边界 → `docs/dev/spec/message-protocol.md` §文本切片
+
+### MVP walking skeleton PR（feat/mvp-walking-skeleton，进行中）
+
+最小可跑通路径：Discord @mention → daemon Engine → CC CLI one-shot（`--print --output-format stream-json --verbose`） → Discord 回复。`/new` 文本前缀重置内存 sessionStore。22 vitest 用例全过、整 monorepo typecheck 0 error。横切能力全部留 TODO 注释 + 链 spec。
 
 ## 暂搁待议
 

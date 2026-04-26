@@ -1,0 +1,6 @@
+packages:
+  - 'packages/protocol'
+  - 'packages/daemon'
+  - 'packages/cli'
+  - 'packages/agent/*'
+  - 'packages/platform/*'

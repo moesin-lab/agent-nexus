@@ -75,7 +75,7 @@ cli 里可以写一些 glue 代码，但禁止写业务逻辑。
 
 ## 测试代码的依赖
 
-测试代码依赖准入标准见 [`dependencies.md`](../standards/dependencies.md)。新增模块流程见 [`workflow.md`](../process/workflow.md)。
+测试代码依赖准入标准见 [`dependencies.md`](../standards/dependencies.md)。新增模块/包的判定与登记顺序见 [`workflow.md` §新增模块 / 包](../process/workflow.md#新增模块--包)。
 
 ## 附录：当前 package 清单
 

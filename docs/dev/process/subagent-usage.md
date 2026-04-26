@@ -91,28 +91,15 @@ related:
 | 按层级 | contract 扫一路、implementation 扫一路、test 扫一路 |
 | 按方案 | 方案 A 可行性、方案 B 可行性、方案 C 可行性 并行对比 |
 
-### 单个子任务的规模目标（经验参考，非硬规则）
+### 子任务规模 / 审计类 prompt / 收敛产物的合格条件
 
-拆分颗粒建议对齐这几条，**但都是经验值**——对具体任务需要时放宽都行：
-
-- **预期运行时间 ~5 分钟内**：明显更久通常意味着还能继续拆
-- **产出 ~200 行内**：明显更多说明子代理在替你做本该主 session 做的收敛
-- **结论自洽**：子报告能独立阅读，不依赖其他子报告
-
-上述三条是"想判断是不是 over-coarse"的尺，不是"必须满足才派发"。
+见 [`../standards/subagent-usage.md` §子任务规模 / §审计类派发 prompt / §收敛阶段产物](../standards/subagent-usage.md)。
 
 ### 反例
 
 > 派一个 Explore 扫遍 `docs/dev/` 下 40 份 markdown，逐文件审计矛盾、缺失、stale。
 
-正确做法：派 ≥2 个并行 `general-purpose`（**不是 Explore**——Explore 优化"快速查找"，不擅穷举判定），按目录或维度切片（如 `adr/` + `architecture/` / `spec/` 核心三件套 + `agent-backends/` / `spec/infra/` + `spec/security/` + `standards/` + `testing/`），主 session 再做一次跨分区收敛。
-
-派发 prompt 还要满足两点，否则即使并行也会漏报：
-
-1. **要求逐文件 enumerate + 三态判定**（违反 / 合规 / 不适用），不允许"找够显著的就停"——审计类任务的产出必须能让主 session 看出子代理是不是漏看了
-2. **不在 prompt 里替子代理预设范围豁免**（"不要审计 X / 跳过 Y"），除非能指向具体 ADR / docs 章节解释豁免依据；脑补豁免会让子代理永远看不到那块
-
-收敛阶段同样关键：**verify（核对子代理报的对不对）和 sweep（看它没说的有没有问题）都要做**，不能只 verify。
+正确做法：派 ≥2 个并行 `general-purpose`（**不是 Explore**——Explore 优化"快速查找"，不擅穷举判定），按目录或维度切片（如 `adr/` + `architecture/` / `spec/` 核心三件套 + `agent-backends/` / `spec/infra/` + `spec/security/` + `standards/` + `testing/`），主 session 再做一次跨分区收敛。审计类 prompt 还需满足 standards 里列出的硬约束（逐文件 enumerate + 三态判定 / 不预设豁免），收敛阶段做完整 verify + sweep。
 
 ### 串行不可避免的场景
 

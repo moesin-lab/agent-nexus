@@ -88,6 +88,18 @@ related:
 | Codex review | 收到反馈，逐条回应（采纳或说明理由） |
 | Merge | CI 全绿、commit 信息符合规范、CHANGELOG 更新（若影响用户） |
 
+## 新增模块 / 包
+
+开新模块（新 agent、新 platform、或新的 daemon 子模块）按下面顺序走，每步达到 DoD 才进下一步：
+
+1. **判定角色**：cli / daemon / agent / platform 哪一个？分类与 import 方向见 [`../architecture/dependencies.md`](../architecture/dependencies.md)
+2. **判定依赖**：只能 import `daemon` 与 `protocol`？依赖准入清单见 [`../standards/dependencies.md`](../standards/dependencies.md)
+3. **若需扩 daemon 接口**：先改 daemon 发 PR 合入，再开这个模块
+4. **若需扩 protocol 接口契约**：先改 protocol 发 PR 合入，再开实现 package
+5. **在 [`../architecture/dependencies.md`](../architecture/dependencies.md) §附录 package 清单登记**（若是新 agent / platform）
+
+每步如需 ADR / spec / test 按本文件 §"何时需要 / 可跳过" 判定。
+
 ## 流程图里不画但必须做的事
 
 - **及时同步文档**：代码改了接口，同 PR 改 spec；不接受"下 PR 再补"。

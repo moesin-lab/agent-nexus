@@ -27,7 +27,7 @@ related:
 - **入站事件路由**：给定入站 `NormalizedEvent`，由 SessionKey 定位**当前活跃**的 session 实例
 - **串行队列键**：同 SessionKey 的事件串行；跨 SessionKey 并发
 - **幂等键的一部分**：见 [`../spec/infra/idempotency.md`](../spec/infra/idempotency.md)
-- **非唯一性**：同一 SessionKey 可以随时间对应**多个**已归档 + 一个活跃的 session 实例（新用户 `/end` 后再次对话就是新实例）
+- **非唯一性**：跨时间允许同 key 多 generation 共存——入站路由必须先按 SessionKey 找当前活跃实例（字段定义与跨时间唯一性陈述见 [`../spec/message-protocol.md` §SessionKey](../spec/message-protocol.md#sessionkey)）
 
 ### sessionId（持久化层）
 

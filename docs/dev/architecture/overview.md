@@ -124,10 +124,10 @@ platform/discord.Send(sessionKey, OutboundMessage)
 
 ## 会话模型
 
-详见 [`session-model.md`](session-model.md)。核心：
+详见 [`session-model.md`](session-model.md)。核心组合关系：
 
-- Session 由 `(platform, channelId, userId)` 作为 key
-- 同 key 的消息串行处理
+- 按 SessionKey 路由（字段定义见 [`../spec/message-protocol.md` §SessionKey](../spec/message-protocol.md#sessionkey)）
+- 同 SessionKey 的消息串行处理
 - messageId 幂等表由 daemon 统一维护
 - gateway 断连恢复策略由 daemon 驱动，platform 只负责重建连接
 

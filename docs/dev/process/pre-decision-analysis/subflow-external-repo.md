@@ -6,7 +6,7 @@ summary: 外部仓库、框架或方法论评估时的层级定位、高效 fetc
 tags: [process, review]
 related:
   - dev/process/pre-decision-analysis/README
-  - dev/standards/pre-decision-analysis
+  - dev/standards/pre-decision-analysis/README
 ---
 
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
@@ -48,4 +48,4 @@ related:
 
 ## 本子流程专属标准
 
-产物标准见 [`../../standards/pre-decision-analysis.md`](../../standards/pre-decision-analysis.md)。
+产物标准见 [`../../standards/pre-decision-analysis/README.md`](../../standards/pre-decision-analysis/README.md)。

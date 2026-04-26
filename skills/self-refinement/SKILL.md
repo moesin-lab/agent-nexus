@@ -1,17 +1,17 @@
 ---
 name: self-refinement
-description: 当用户显式说"沉淀 / 反思 / refine / 复盘 / 记下来 / reflect / /reflect"时触发；被纠正后 agent 可隐式自检是否值得沉淀。本文件是 harness-neutral 通用入口；规则权威源在 `docs/dev/process/self-refinement/README.md`。关键词：经验沉淀、反馈闭环、rule promotion、分流矩阵、跨层判据、本地记忆。
+description: 当用户显式说"沉淀 / 反思 / refine / 复盘 / 记下来 / reflect / /reflect"时触发；被纠正后 agent 可隐式自检是否值得沉淀。本文件是 harness-neutral 通用入口；规则权威源在 skill 本目录下 `process/README.md`（symlink 到 docs/dev/）。关键词：经验沉淀、反馈闭环、rule promotion、分流矩阵、跨层判据、本地记忆。
 ---
 
 # self-refinement（通用入口）
 
-> ⚠️ **规则权威源**：`docs/dev/process/self-refinement/README.md`。规则冲突时以 docs 为准。
+> ⚠️ **规则权威源**：本 skill 目录下的 `process/`（symlink 到 `docs/dev/process/self-refinement/`），受 doc-ownership 体系治理。规则冲突时以 docs 物理位置内容为准。
 >
 > ⚠️ **本文件是 harness-neutral 通用入口**，只描述跨 harness 通用的触发 / 先读 / 协作关系。harness 特定执行细节（具体工具映射、memory 路径、分支操作）见 `harnesses/<harness>/SKILL.md`。
 
 ## 1. 先读
 
-触发时加载 `docs/dev/process/self-refinement/README.md`：核心前提 + 原则 + 触发场景 + 自检 4 步 + 分流矩阵（含跨层判据和误归位红线）+ 反模式 + 与其他 skill 的边界。
+触发时加载本 skill 目录下 `process/README.md`：核心前提 + 原则 + 触发场景 + 自检 4 步 + 分流矩阵（含跨层判据和误归位红线）+ 反模式 + 与其他 skill 的边界。
 
 ## 2. 通用流程映射
 
@@ -49,6 +49,6 @@ description: 当用户显式说"沉淀 / 反思 / refine / 复盘 / 记下来 / 
 **禁止静默降级**：
 
 - 本节列的是**能力声明**，不是可执行指令。若当前 harness 有对应执行器（见上表），agent **必须**按执行器（`harnesses/<harness>/SKILL.md`）列出的具体工具执行，不得停在本通用入口的抽象描述上，用普通对话文本代替 harness 特色路径
-- 若无对应执行器（挂接脚本宽容 fallback 把本文件挂为触发器时），应按 `docs/dev/process/self-refinement/README.md` agent-agnostic 权威源 + 本 harness 自身能力兜底；某能力本 harness 做不到时**在 PR 里显式声明缺口**，不装作走了特色路径
+- 若无对应执行器（挂接脚本宽容 fallback 把本文件挂为触发器时），应按本 skill 目录下 `process/README.md`（symlink 到 docs/dev）agent-agnostic 权威源 + 本 harness 自身能力兜底；某能力本 harness 做不到时**在 PR 里显式声明缺口**，不装作走了特色路径
 
 任一场景下，"用更弱的做法冒充原路径"都视为违反 skill 契约。

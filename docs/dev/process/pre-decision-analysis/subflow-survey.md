@@ -6,7 +6,7 @@ summary: 现状调研报告场景的两轮 scratch 模式、展开 slot、深挖
 tags: [process, scratch, review]
 related:
   - dev/process/pre-decision-analysis/README
-  - dev/standards/pre-decision-analysis
+  - dev/standards/pre-decision-analysis/README
 ---
 
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
@@ -33,4 +33,4 @@ related:
 
 ## 本子流程专属标准
 
-调研产物标准见 [`../../standards/pre-decision-analysis.md`](../../standards/pre-decision-analysis.md)。
+调研产物标准见 [`../../standards/pre-decision-analysis/README.md`](../../standards/pre-decision-analysis/README.md)。

@@ -7,7 +7,7 @@ tags: [process, argue, subagent, review]
 related:
   - dev/process/pre-decision-analysis/README
   - dev/process/subagent-usage
-  - dev/standards/pre-decision-analysis
+  - dev/standards/pre-decision-analysis/README
 ---
 
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
@@ -40,7 +40,7 @@ related:
 
 ## 调度 prompt
 
-给 argue subagent 的 prompt 按 [`../../standards/pre-decision-analysis.md`](../../standards/pre-decision-analysis.md) 的 argue 自检产物标准组织。
+给 argue subagent 的 prompt 按 [`../../standards/pre-decision-analysis/README.md`](../../standards/pre-decision-analysis/README.md) 的 argue 自检产物标准组织。
 
 ## 并发策略
 
@@ -82,4 +82,4 @@ API error / 超时 → 不阻塞推进；PR body 加 `⚠ argue unavailable` 让
 
 ## 反模式
 
-反模式表见 [`../../standards/pre-decision-analysis.md`](../../standards/pre-decision-analysis.md)。
+反模式表见 [`../../standards/pre-decision-analysis/README.md`](../../standards/pre-decision-analysis/README.md)。

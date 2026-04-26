@@ -80,6 +80,29 @@ Reviewer 在 PR 里看到下列模式，应直接要求修正或拒绝：
 - 决策论述（"因为 ... 所以选 ..."）出现在 spec / architecture / standards → 拒，要求拆到 ADR
 - 同一事实在两个文件中可独立成立 → 拒，保留 owner 定义，其他改 link
 
+## 协作性 skill docs 子目录约定
+
+按 [ADR-0007 Amendments](../adr/0007-collaborative-skill-promotion.md#amendments)（2026-04-26）：协作性 skill 的 docs **物理位置仍按 owner 矩阵**（`docs/dev/process/<skill>/` + `docs/dev/standards/<skill>/`），通过 symlink 在 `skills/<skill>/` 下聚合呈现，给 agent 触发链路 + 人类浏览看到完整 unit。
+
+### 物理位置约定
+
+- 协作性 skill 的流程编排住 `docs/dev/process/<skill>/`（子目录形态）
+- 协作性 skill 的产物合格条件 / 反模式 / 触发判据 / 模板住 `docs/dev/standards/<skill>/`（子目录形态——单文件 `<skill>.md` 升格为 `<skill>/README.md` + 同目录其他主题文件如 `scratch-template.md`）
+- 形态级决策（跨 skill 复用）住 `docs/dev/adr/NNNN-*.md`，不进 skill 目录
+
+### symlink 聚合约定
+
+- `skills/<name>/process` → `../../docs/dev/process/<name>/`
+- `skills/<name>/standards` → `../../docs/dev/standards/<name>/`（如该 skill 有 standards 内容）
+- symlink 用相对路径，git 跟踪 mode 120000
+- SKILL.md 内 link 用 skill 内相对路径（`./process/README.md` / `./standards/scratch-template.md`），不直引 docs/dev 物理路径
+
+### Reviewer 验收口径
+
+- 协作性 skill 的 docs 内部仍按 owner 矩阵治理（process 子目录里只放流程编排，standards 子目录里只放产物合格条件）—— Reviewer 按 path 判 owner 与本文件 §Reviewer 判据 一致
+- 跨 owner link 在 GitHub Web 视图下通过 symlink 路径解析可能 broken（已知缺陷）；agent 通过 SKILL.md 触发链路 + IDE follow symlink 不受影响
+- 不允许"协作性 skill 例外"——skill 内容仍受所有 owner 矩阵规则（含禁入类型、单选判定、跨 owner 不复述）约束
+
 ## 既有违反处理
 
 本文件不维护具体迁移清单；否则标准文档会反过来复述被治理的事实。初始问题诊断见 [ADR-0008](../adr/0008-doc-layering-ssot.md#context)，具体清理按后续 PR 逐项处理。

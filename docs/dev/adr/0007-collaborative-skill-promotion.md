@@ -114,6 +114,10 @@ AI coding agent 的 skill 文件（如 Claude Code 的 `~/.claude/skills/<name>/
 - `.claude/skills/<name>` 仍 gitignored（仍是本地挂载点）；只是真实住处从 `.claude/` 迁到 `skills/`
 - 入库判据依赖人判断（"影响协作产出格式"有软性），不是纯机械规则——但 reviewer 环节能兜住
 
+## Amendments
+
+- **2026-04-26：skill 内 docs 通过 symlink 聚合呈现** —— 第 5 条原文要求"规则权威源仍在 `docs/dev/process/<name>.md`，agent-agnostic"。SSOT 清理后实践发现：协作性 skill 的内容按 owner 矩阵被切到多个 owner 后（process 流程编排 / standards 反模式 / scratch 模板），skill 视角下不再是一个完整 unit——agent 触发后要跨 4 个目录读，人类浏览也分散。本次修订引入"两个视图共存"机制：物理位置仍按 owner 矩阵治理（`docs/dev/<owner>/<skill>/` 子目录），但在 `skills/<name>/` 下用 symlink 把各 owner 子目录聚合呈现（`skills/<name>/process` → `docs/dev/process/<name>/`，`skills/<name>/standards` → `docs/dev/standards/<name>/`）。SKILL.md 内的 link 改用 skill 内相对路径（`./process/README.md` / `./standards/scratch-template.md`），让 agent 触发链路 + 人类浏览都看到完整 unit；docs/dev 视图保持 owner 治理纯洁性，path 判据 + reviewer 习惯不破。具体 symlink 约定与 frontmatter 处理见 `docs/dev/standards/doc-ownership.md` §"协作性 skill docs 子目录约定"。
+
 ## Out of scope
 
 - **具体的 symlink 命令 / `sync-claude-skills.sh` 脚本实现**：见 `docs/dev/process/skill-setup.md` 和 `scripts/` 层，ADR 不锁死

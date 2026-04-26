@@ -6,7 +6,7 @@ summary: 在多代理 harness 协作场景中，pre-decision-analysis 选 agent-
 tags: [adr, decision, pre-decision-analysis, collaboration]
 related:
   - dev/process/pre-decision-analysis/README
-  - dev/standards/pre-decision-analysis
+  - dev/standards/pre-decision-analysis/README
   - dev/adr/0007-collaborative-skill-promotion
 adr_status: Proposed
 adr_number: "0010"
@@ -82,7 +82,7 @@ superseded_by: null
 具体触发判据、产物合格条件、子流程编排住 process / standards：
 
 - 流程编排（主轴、Checkpoint、Scratch 硬触发条件）→ [`docs/dev/process/pre-decision-analysis/README.md`](../process/pre-decision-analysis/README.md)
-- 产物形态、反模式、触发判据合格条件 → [`docs/dev/standards/pre-decision-analysis.md`](../standards/pre-decision-analysis.md)
+- 产物形态、反模式、触发判据合格条件 → [`docs/dev/standards/pre-decision-analysis/README.md`](../standards/pre-decision-analysis/README.md)
 - per-harness 执行器 → `skills/pre-decision-analysis/` 下各 harness 子目录
 
 ## Consequences
@@ -107,7 +107,7 @@ superseded_by: null
 
 ## Out of scope
 
-- 不决定 scratch 文件的 slot 格式（属 [`docs/dev/standards/pre-decision-analysis-scratch.md`](../standards/pre-decision-analysis-scratch.md)）
+- 不决定 scratch 文件的 slot 格式（属 [`docs/dev/standards/pre-decision-analysis/scratch-template.md`](../standards/pre-decision-analysis/scratch-template.md)）
 - 不决定具体 subagent 调度方式（per harness，住 `skills/pre-decision-analysis/harnesses/<harness>/SKILL.md`）
 - 不决定何时触发 / 不该触发（属 standards 触发判据）
 - 不决定其他协作约定的形态（其他协作性 skill 若要采用不同形态，需自行起 ADR）

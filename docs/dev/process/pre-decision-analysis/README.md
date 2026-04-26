@@ -7,19 +7,19 @@ tags: [process, review, scratch, argue, ask-user]
 related:
   - dev/adr/0010-pre-decision-agent-first
   - dev/adr/0007-collaborative-skill-promotion
-  - dev/standards/pre-decision-analysis
-  - dev/standards/pre-decision-analysis-scratch
+  - dev/standards/pre-decision-analysis/README
+  - dev/standards/pre-decision-analysis/scratch-template
   - root/AGENTS
 ---
 
 # Pre-Decision Analysis
 
 > 本文件是 `pre-decision-analysis` 协作约定的**权威源**（agent-agnostic）。各 harness 通过自身薄执行器引用本 docs（实现见仓库 `skills/pre-decision-analysis/` 下各 harness 子目录）。
-> 子流程住在同目录下的 `pre-decision-analysis/` 子目录；形态决策依据见 [ADR-0010](../../adr/0010-pre-decision-agent-first.md)；触发判据 / 核心原则 / Scratch 硬触发 / 反模式等产物合格条件见 [`../../standards/pre-decision-analysis.md`](../../standards/pre-decision-analysis.md)；scratch 模板见 [`../../standards/pre-decision-analysis-scratch.md`](../../standards/pre-decision-analysis-scratch.md)。
+> 子流程住在同目录下的 `pre-decision-analysis/` 子目录；形态决策依据见 [ADR-0010](../../adr/0010-pre-decision-agent-first.md)；触发判据 / 核心原则 / Scratch 硬触发 / 反模式等产物合格条件见 [`../../standards/pre-decision-analysis/README.md`](../../standards/pre-decision-analysis/README.md)；scratch 模板见 [`../../standards/pre-decision-analysis/scratch-template.md`](../../standards/pre-decision-analysis/scratch-template.md)。
 
 ## 何时进入本流程
 
-判据见 [`../../standards/pre-decision-analysis.md` §触发判据](../../standards/pre-decision-analysis.md#触发判据)。本文件只编排进入后做什么。
+判据见 [`../../standards/pre-decision-analysis/README.md` §触发判据](../../standards/pre-decision-analysis/README.md#触发判据)。本文件只编排进入后做什么。
 
 ## 主轴 6 步
 
@@ -33,7 +33,7 @@ related:
 
 触发条件：跨多文件 OR 架构级 OR agent 对方向拿不准。单文件 + 已有先例 + agent 有把握可跳。
 
-argue 要点 + agent 回应**贴 PR body** 的"异议 & 回应"小节。argue prompt 合格条件见 [`../../standards/pre-decision-analysis.md` §Argue 自检产物标准](../../standards/pre-decision-analysis.md#argue-自检产物标准)。
+argue 要点 + agent 回应**贴 PR body** 的"异议 & 回应"小节。argue prompt 合格条件见 [`../../standards/pre-decision-analysis/README.md` §Argue 自检产物标准](../../standards/pre-decision-analysis/README.md#argue-自检产物标准)。
 
 ### 步骤 3：识别任务类型
 
@@ -60,7 +60,7 @@ agent 直接：
 - 向用户推送选项让其点选（单轮；harness 有按钮式工具时优先用，否则普通对话列选项）
 - 用户答完 → 走路径 A
 
-禁入条件见 [`../../standards/pre-decision-analysis.md` §路径 B 的禁入条件](../../standards/pre-decision-analysis.md#路径-b-的禁入条件)。
+禁入条件见 [`../../standards/pre-decision-analysis/README.md` §路径 B 的禁入条件](../../standards/pre-decision-analysis/README.md#路径-b-的禁入条件)。
 
 ### 步骤 5：PR diff 后审
 
@@ -78,9 +78,9 @@ agent 直接：
 
 ## Checkpoint / Scratch 触发
 
-Checkpoint 与 Scratch 默认不起，只在硬触发条件满足时起。条件见 [`../../standards/pre-decision-analysis.md` §Checkpoint 触发条件](../../standards/pre-decision-analysis.md#checkpoint-触发条件可选) 与 [§Scratch 硬触发条件](../../standards/pre-decision-analysis.md#scratch-硬触发条件)。
+Checkpoint 与 Scratch 默认不起，只在硬触发条件满足时起。条件见 [`../../standards/pre-decision-analysis/README.md` §Checkpoint 触发条件](../../standards/pre-decision-analysis/README.md#checkpoint-触发条件可选) 与 [§Scratch 硬触发条件](../../standards/pre-decision-analysis/README.md#scratch-硬触发条件)。
 
-起 scratch 后按 [`../../standards/pre-decision-analysis-scratch.md`](../../standards/pre-decision-analysis-scratch.md) 的格式。
+起 scratch 后按 [`../../standards/pre-decision-analysis/scratch-template.md`](../../standards/pre-decision-analysis/scratch-template.md) 的格式。
 
 ## 子流程索引
 
@@ -93,8 +93,8 @@ Checkpoint 与 Scratch 默认不起，只在硬触发条件满足时起。条件
 | 内部 ADR / 多方案对比 | `subflow-adr-options.md` | 路径 B 填候选方案结构 |
 | 大任务拆解 | `subflow-task-breakdown.md` | 路径 B 的 WBS 分析 |
 | 现状调研报告 | `subflow-survey.md` | scratch 场景，分两轮"摘要 → 深挖" |
-| **起 scratch 时** | `../../standards/pre-decision-analysis-scratch.md` | scratch 骨架 + slot 格式 |
-| **调试自己的产物 / 自 review** | `../../standards/pre-decision-analysis.md` | 产出后回检 |
+| **起 scratch 时** | `../../standards/pre-decision-analysis/scratch-template.md` | scratch 骨架 + slot 格式 |
+| **调试自己的产物 / 自 review** | `../../standards/pre-decision-analysis/README.md` | 产出后回检 |
 
 ## Per-harness 实现
 

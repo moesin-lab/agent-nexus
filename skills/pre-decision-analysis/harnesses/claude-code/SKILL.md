@@ -1,17 +1,17 @@
 ---
 name: pre-decision-analysis
-description: 当用户提出需要人类拍板但必须先做结构化分析的问题（评估、对比、讨论、值不值得、该不该、拆不拆、要不要起 ADR）时触发。本文件是该 skill 在 Claude Code 下的执行器；通用入口在 `../../SKILL.md`，规则权威源在 `docs/dev/process/pre-decision-analysis/README.md`。关键词：决策分析、多方案对比、argue subagent、codex review、PR diff review、AskUserQuestion、scratch 协作。
+description: 当用户提出需要人类拍板但必须先做结构化分析的问题（评估、对比、讨论、值不值得、该不该、拆不拆、要不要起 ADR）时触发。本文件是该 skill 在 Claude Code 下的执行器；通用入口在 `../../SKILL.md`，规则权威源在 skill 顶层 `process/` 与 `standards/`（symlink 到 docs/dev/）。关键词：决策分析、多方案对比、argue subagent、codex review、PR diff review、AskUserQuestion、scratch 协作。
 ---
 
 # pre-decision-analysis（Claude Code 执行器）
 
-> ⚠️ **规则权威源**：`docs/dev/process/pre-decision-analysis/README.md`、同目录 subflow，以及 `docs/dev/standards/pre-decision-analysis*.md`。规则冲突时以 docs 为准。
+> ⚠️ **规则权威源**：skill 顶层 `process/` 与 `standards/`（symlink 到 docs/dev/）。规则冲突时以 docs 物理位置内容为准。
 >
 > ⚠️ **通用入口**：`../../SKILL.md`（harness-neutral 触发 / 先读 / 能力映射）。本文件只负责 Claude Code 下的具体执行细节。
 
 ## 1. 先读
 
-同通用入口 §1：加载 `docs/dev/process/pre-decision-analysis/README.md` + 按需 subflow + `docs/dev/standards/pre-decision-analysis*.md`。
+同通用入口 §1：从 skill 顶层（`../../`）加载 `process/README.md` + 按需 `process/subflow-*.md` + `standards/README.md` + `standards/scratch-template.md`（仅 scratch 硬触发）。
 
 ## 2. Claude Code 执行细节
 

@@ -78,7 +78,7 @@ Proposed ──(显式签字盖章)──> Accepted
 - 本地开发脚本的小调整（不影响 CI）
 - spec / standards / process 内部措辞调整（决策语义未变）
 
-跳过 ADR ≠ 跳过流程——**分支、PR、review、squash merge 不可跳过**，见 [`../process/workflow.md` §分支先行](../process/workflow.md#分支先行不可跳过)。同 PR 是否还要写 spec / 测试，分别按 [`../spec/README.md` §何时可跳过 spec](../spec/README.md#何时可跳过-spec) 与 [`../testing/strategy.md` §何时可跳过测试](../testing/strategy.md#何时可跳过测试) 判定。
+跳过 ADR ≠ 跳过流程——**分支、PR、review、squash merge 不可跳过**，见 [`../process/workflow.md` §分支先行](../process/workflow.md#分支先行不可跳过)。同 PR 是否还要写 spec / 测试，分别按 [`../spec/README.md` §何时可跳过 spec](../spec/README.md#何时可跳过-spec) 与 [`../process/tdd.md` §何时可跳过新增/修改测试](../process/tdd.md#何时可跳过新增修改测试) 判定。
 
 ## 评审流程
 

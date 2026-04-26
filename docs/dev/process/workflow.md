@@ -70,7 +70,7 @@ related:
 |---|---|---|
 | ADR | [`../adr/README.md` §什么情况写 ADR](../adr/README.md#什么情况写-adr) | [`../adr/README.md` §何时可跳过 ADR](../adr/README.md#何时可跳过-adr) |
 | spec | [`../spec/README.md` §什么情况写 spec](../spec/README.md#什么情况写-spec) | [`../spec/README.md` §何时可跳过 spec](../spec/README.md#何时可跳过-spec) |
-| 测试 | [`tdd.md`](tdd.md) + [`../testing/strategy.md`](../testing/strategy.md) | [`../testing/strategy.md` §何时可跳过测试](../testing/strategy.md#何时可跳过测试) |
+| 测试 | [`tdd.md`](tdd.md) + [`../testing/strategy.md`](../testing/strategy.md) | [`tdd.md` §何时可跳过新增/修改测试](tdd.md#何时可跳过新增修改测试) |
 
 无论某步骤判定为不需要 ADR / spec / test，**分支、PR、review、squash merge 都不可跳过**——见上文"分支先行"。
 

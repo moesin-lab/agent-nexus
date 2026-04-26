@@ -2,7 +2,7 @@
 title: Spec 索引
 type: index
 status: active
-summary: 接口契约与跨抽象层协议索引，分"核心三件套"与"横切四件套"
+summary: 接口契约与跨抽象层协议索引，分核心接口、横切基础设施、安全分区与 agent 后端契约
 tags: [spec, navigation]
 related:
   - dev/architecture/overview
@@ -36,6 +36,7 @@ related:
 - [`infra/persistence.md`](infra/persistence.md) — 本地存储契约
 - [`infra/observability.md`](infra/observability.md) — 日志/trace/metric 字段契约
 - [`infra/cost-and-limits.md`](infra/cost-and-limits.md) — Limits（一等：失控保护 + 观测）/ $ 预算（二等 opt-in）
+- [`infra/errors.md`](infra/errors.md) — daemon 内部错误对象与错误上下文字段契约
 
 ### `security/` — 安全分区（伞 + 四份子 spec）
 
@@ -87,7 +88,7 @@ related:
 - 测试代码新增 / 重构（spec 契约未变）
 - 性能优化但接口与可观测行为未变
 
-跳过 spec ≠ 跳过流程——**分支、PR、review、squash merge 不可跳过**，见 [`../process/workflow.md` §分支先行](../process/workflow.md#分支先行不可跳过)。是否同 PR 改 ADR / 测试，分别按 [`../adr/README.md` §何时可跳过 ADR](../adr/README.md#何时可跳过-adr) 与 [`../testing/strategy.md` §何时可跳过测试](../testing/strategy.md#何时可跳过测试) 判定。
+跳过 spec ≠ 跳过流程——**分支、PR、review、squash merge 不可跳过**，见 [`../process/workflow.md` §分支先行](../process/workflow.md#分支先行不可跳过)。是否同 PR 改 ADR / 测试，分别按 [`../adr/README.md` §何时可跳过 ADR](../adr/README.md#何时可跳过-adr) 与 [`../process/tdd.md` §何时可跳过新增/修改测试](../process/tdd.md#何时可跳过新增修改测试) 判定。
 
 ## 与 ADR 的关系
 

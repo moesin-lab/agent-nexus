@@ -6,6 +6,7 @@ summary: 外部仓库、框架或方法论评估时的层级定位、高效 fetc
 tags: [process, review]
 related:
   - dev/process/pre-decision-analysis/README
+  - dev/standards/pre-decision-analysis
 ---
 
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
@@ -45,8 +46,6 @@ related:
 4. **Caveat**（方法论包装、选型偏差、团队规模差异、技术栈差异）
 5. **下一步优先级**（按"改动面 × 价值"排序，从最轻量起步）
 
-## 本子流程专属硬规则
+## 本子流程专属标准
 
-- 第一段必须是 Layer 定位；不得跳过。
-- "明确不借鉴"清单每条必给理由，不接受只列条目。
-- 未拉全 tree 就逐文件 fetch → 返工。
+产物标准见 [`../../standards/pre-decision-analysis.md`](../../standards/pre-decision-analysis.md)。

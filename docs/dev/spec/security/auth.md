@@ -50,7 +50,7 @@ contracts:
 
 一个 session 绑定 **一个** initiator user。其他用户发到同 channel 的消息 → **一律丢弃**，不进入 agent context、不记入 session transcript、不触发任何动作。
 
-**MVP 不提供 `shared_channel_mode`**：曾考虑过"非发起者消息可作为 agent 可见 context"，但被识别为明显的 prompt injection 入口——攻击者无需触发 agent，只要把恶意文本塞进共享 channel，下一次 allowlisted 用户触发时就会中招。如果未来确有需要，必须：
+MVP 不提供 `shared_channel_mode`。安全依据见 security threat model；如果未来确有需要，必须：
 
 - 先发独立 ADR 评审
 - 非发起者内容必须打 `untrusted` 标，且默认不拼接进 agent prompt

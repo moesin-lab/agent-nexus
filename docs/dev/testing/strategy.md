@@ -2,7 +2,7 @@
 title: 测试策略
 type: testing
 status: active
-summary: 四层测试模型（Unit/Integration/E2E/Eval）的职责、Mock 策略、运行节奏与 CI 门槛
+summary: 四层测试模型（Unit/Integration/E2E/Eval）的职责、Mock 策略、组织命名与覆盖目标
 tags: [testing, strategy]
 related:
   - dev/process/tdd
@@ -12,18 +12,7 @@ related:
 
 # 测试策略
 
-定义测试的分层、覆盖目标、mock 边界、运行节奏。配套 [`../process/tdd.md`](../process/tdd.md) 使用——tdd 讲"怎么写"，本文件讲"写哪一层"。
-
-## 何时可跳过测试
-
-以下改动允许在主路径"是否新增/修改测试"那一步直接跳过：
-
-- 文档错别字、链接修复、注释调整
-- 依赖的补丁版本升级（无 breaking change，且既有测试套通过）
-- 本地开发脚本的小调整（不影响 CI 与产品代码）
-- 纯重命名 / 纯格式化（被测行为未变，依赖既有测试套保护）
-
-跳过测试 ≠ 跳过流程——**分支、PR、review、squash merge 不可跳过**，见 [`../process/workflow.md` §分支先行](../process/workflow.md#分支先行不可跳过)。是否同 PR 改 ADR / spec，分别按 [`../adr/README.md` §何时可跳过 ADR](../adr/README.md#何时可跳过-adr) 与 [`../spec/README.md` §何时可跳过 spec](../spec/README.md#何时可跳过-spec) 判定。
+定义测试的分层、覆盖目标、mock 边界、组织命名。配套 [`../process/tdd.md`](../process/tdd.md) 使用：process 讲何时跑与门禁，testing 讲用哪类证据证明行为正确。
 
 ## 四层模型
 
@@ -131,21 +120,6 @@ CC 是黑盒，输出格式可能变。维护两种 mock：
 - 不追求百分比指标
 - **关键路径必须接近 100%**：消息流、脱敏、权限检查、预算、熔断
 - 新增代码无测试覆盖：reviewer 追问
-
-## 运行节奏
-
-| 层 | 本地开发 | PR CI | main CI | 定时 |
-|---|---|---|---|---|
-| Unit | 每次 save 跑受影响的 | 全跑 | 全跑 | — |
-| Integration | 相关模块变更时 | 全跑 | 全跑 | — |
-| E2E | 可选 | 改核心时触发 | 全跑 | — |
-| Eval | 改 prompt/工具集时 | 选择性跑（标签触发） | — | 每晚 |
-
-## CI 门槛
-
-- Unit + Integration：**必须全绿**才能合并
-- E2E：PR 标签 `requires-e2e` 时跑；默认 main CI 每次跑
-- Eval：定时跑；回归则自动开 Issue 但不 block 合并
 
 ## 测试工具链
 

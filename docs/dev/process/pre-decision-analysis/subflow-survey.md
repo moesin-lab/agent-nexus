@@ -2,10 +2,11 @@
 title: Pre-Decision Analysis 子流程：现状调研
 type: process
 status: active
-summary: 现状调研报告场景的两轮 scratch 模式、摘要限制、展开 slot 与深挖规则
+summary: 现状调研报告场景的两轮 scratch 模式、展开 slot、深挖流程与产物标准链接
 tags: [process, scratch, review]
 related:
   - dev/process/pre-decision-analysis/README
+  - dev/standards/pre-decision-analysis
 ---
 
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
@@ -30,8 +31,6 @@ related:
 
 一次把所有维度深挖完，多半是浪费——用户真关心的往往只有 1–2 段。第一轮摘要帮用户快速筛选，第二轮针对点中的维度做详细调研。
 
-## 本子流程专属硬规则
+## 本子流程专属标准
 
-- 第一轮每段限制在 10 行内；超了说明你在深挖，不是摘要。
-- 第二轮深挖启动前必须有用户"展开"的明确 slot 回复；主 agent 不得自行决定展开哪段。
-- 第二轮深挖产出应当开新的 scratch（purpose 改 `deep-dive`），不在第一轮文件内追加。
+调研产物标准见 [`../../standards/pre-decision-analysis.md`](../../standards/pre-decision-analysis.md)。

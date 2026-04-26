@@ -7,17 +7,12 @@ tags: [subagent, process]
 related:
   - root/AGENTS
   - dev/process/code-review
+  - dev/standards/subagent-usage
 ---
 
 # Subagent 使用规范
 
-在多代理 harness 环境里，**何时派发子代理、如何写 prompt** 直接决定效率与上下文质量。主 session 若把所有事都自己做，上下文很快会被日志、代码片段、搜索结果腐败。
-
-## 核心原则
-
-**主 session 只做收敛与决策；探索、长读、独立可验证的子任务全部派发。**
-
-**单个 subagent 的工作量应收敛到可并行化的最小单元。** 宁可派 4 个并行的小 agent，也不要派一个串行扫全局的大 agent。串行大 agent 把延迟全加在一条链路上，且产出体量超出 200 行后主 session 很难可靠收敛。
+在多代理 harness 环境里，**何时派发子代理、派发后如何收敛**直接决定效率与上下文质量。Prompt 与产物合格条件见 [`../standards/subagent-usage.md`](../standards/subagent-usage.md)。
 
 ## 何时派发（强烈建议）
 
@@ -49,74 +44,9 @@ related:
 
 本项目专属补充：待 ADR 0004 语言定后，如有需要可新增项目专属子代理（如"spec 合约测试生成器"），届时在本文件登记。
 
-## Prompt 写作原则
+## Prompt 与回报格式
 
-子代理没有你的对话上下文。Prompt 必须**自带上下文**。
-
-### 好 prompt 具备的要素
-
-- **目标**：一句话说清想要什么产物
-- **背景**：为什么做这件事，有哪些已知约束
-- **锚点**：相关文件路径、关键函数名、已有设计文档
-- **产出格式**：列表 / diff / 报告 / 代码；字数或篇幅上限
-- **范围外**：明确不要做什么
-
-### Prompt 模板
-
-```
-目标：<一句话>
-
-背景：
-- <为什么做>
-- <已知约束 1>
-- <已知约束 2>
-
-锚点：
-- <文件路径 1>
-- <文件路径 2>
-- <相关 spec 或 ADR>
-
-请产出：
-- <具体产物 1>
-- <具体产物 2>
-格式：<markdown / json / diff / 代码块>
-篇幅上限：<例如 300 字 / 50 行>
-
-不要做：
-- <范围外的事>
-```
-
-### 探索类 agent 的回报格式
-
-Explore / general-purpose 这类"抓事实回主 session"的 agent，默认产出叙述化长报告——主 session 吞下后上下文会被占满且真事实埋得深。派发时在 prompt 末尾贴硬约束片段，模板见 [`subagent-recon-prompt-template.md`](subagent-recon-prompt-template.md)。
-
-review / plan / simplify 类 agent 不适用该模板——产出结构不同。
-
-## 反模式
-
-### 命令式短 prompt
-
-"查一下 xxx" / "帮我写一个 yyy"——子代理只能做字面理解，产出浅。
-
-### 把整个世界都塞给子代理
-
-"我们项目是做 X 的，背景是 Y，规范是 Z...（5000 字）"——子代理抓不到重点。只给**与本任务相关的**背景。
-
-### 派发后主 session 又做一遍
-
-子代理报告回来后，主 session 又去跑一遍搜索、读一遍文件——浪费上下文，且容易产生不一致结论。**相信子代理的产出，有疑问再追问**。
-
-### 派发巨型单 agent
-
-一个子代理扫全部、审全部、比对全部——看起来省事，实际上把延迟全加在一条链路上，产出体量还容易超出主 session 可靠收敛的上限。见 §任务拆分与并行派发。
-
-### 用子代理做需要持续互动的任务
-
-例如"和用户讨论方案"——子代理单次往返，不适合。
-
-### 派发时不说明"是否要写代码"
-
-子代理默认可能去改文件。如果只想研究，明确说"只做研究，不要修改任何文件"。
+派发前按 [`../standards/subagent-usage.md`](../standards/subagent-usage.md) 检查 prompt；探索类回报格式使用 [`subagent-recon-prompt-template.md`](../standards/subagent-recon-prompt-template.md)。
 
 ## 主 session 的职责
 

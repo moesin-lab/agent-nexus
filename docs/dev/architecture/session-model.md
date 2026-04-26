@@ -22,23 +22,12 @@ related:
 
 ### SessionKey（路由层）
 
-```text
-SessionKey = (platform, channelId, initiatorUserId)
-```
+字段定义见 [`../spec/message-protocol.md` §SessionKey](../spec/message-protocol.md#sessionkey)。本节只讲它在架构里的角色：
 
-| 字段 | 含义 | Discord 场景取值 |
-|---|---|---|
-| `platform` | IM 平台标识 | `"discord"` |
-| `channelId` | 会话容器 ID | Discord channel ID 或 thread ID |
-| `initiatorUserId` | 发起者 ID | Discord user ID |
-
-**用途**：
-
-- 入站事件路由：给定入站 `NormalizedEvent`，由 SessionKey 定位**当前活跃**的 session 实例
-- 串行队列键：同 SessionKey 的事件串行；跨 SessionKey 并发
-- 幂等键的一部分：见 [`../spec/idempotency.md`](../spec/infra/idempotency.md)
-
-**非唯一性**：同一 SessionKey 可以随时间对应**多个**已归档 + 一个活跃的 session 实例（新用户 `/end` 后再次对话就是新实例）。
+- **入站事件路由**：给定入站 `NormalizedEvent`，由 SessionKey 定位**当前活跃**的 session 实例
+- **串行队列键**：同 SessionKey 的事件串行；跨 SessionKey 并发
+- **幂等键的一部分**：见 [`../spec/infra/idempotency.md`](../spec/infra/idempotency.md)
+- **非唯一性**：同一 SessionKey 可以随时间对应**多个**已归档 + 一个活跃的 session 实例（新用户 `/end` 后再次对话就是新实例）
 
 ### sessionId（持久化层）
 

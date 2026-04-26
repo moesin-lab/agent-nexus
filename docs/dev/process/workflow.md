@@ -62,34 +62,17 @@ related:
 3. **强制范围收敛**：分支命名（`<type>/<short-description>`）本身就是"这次只做这一件事"的承诺，与"PR 单一关注点"形成双约束。
 4. **为未来留位**：分支保护规则、PR 触发的 CI、自动 review hook、required reviewers——都需要"分支 → PR"已经是默认习惯才能挂上去。
 
-## 何时需要 ADR
+## 何时需要 / 可跳过 ADR / spec / 测试
 
-满足任一条件就需要 ADR：
+主路径中第 3、4、5 步的判定不在 process 编排——它们是各 owner 的准入条件（价值标准）：
 
-- 引入/替换一个外部依赖的大类（IM 平台、agent 后端、数据库、框架）
-- 改变模块依赖方向（参见 `architecture/dependencies.md`）
-- 改变对外契约（`spec/` 下任意文件的接口签名或字段）
-- 改变部署形态（单机 → 多机、桌面 → 服务端）
-- 改变安全模型（权限边界、密钥存储、脱敏规则）
+| 步骤 | 该不该写 | 何时可跳过 |
+|---|---|---|
+| ADR | [`../adr/README.md` §什么情况写 ADR](../adr/README.md#什么情况写-adr) | [`../adr/README.md` §何时可跳过 ADR](../adr/README.md#何时可跳过-adr) |
+| spec | [`../spec/README.md` §什么情况写 spec](../spec/README.md#什么情况写-spec) | [`../spec/README.md` §何时可跳过 spec](../spec/README.md#何时可跳过-spec) |
+| 测试 | [`tdd.md`](tdd.md) + [`../testing/strategy.md`](../testing/strategy.md) | [`../testing/strategy.md` §何时可跳过测试](../testing/strategy.md#何时可跳过测试) |
 
-## 何时需要 spec
-
-- 新增模块或新增模块间交互
-- 改变已有接口的字段、语义、错误码
-- 新增横切约束（observability 字段、限流策略、session 存储）
-
-只改单一模块内部实现、不影响外部契约的，不需要改 spec。
-
-## 可跳过 ADR / spec / TDD 的情形
-
-流程主路径的每一步都保留，但以下改动允许在该步"判断为不需要"后直接跳过，而**分支、PR、review、squash merge 不可跳过**：
-
-- 文档错别字、链接修复、术语统一 → 跳过 ADR / spec / test
-- 依赖的补丁版本升级（无 breaking change） → 跳过 ADR / spec；是否需要 test 看风险
-- 代码注释修改 → 跳过 ADR / spec / test
-- 本地开发脚本的小调整（不影响 CI） → 跳过 ADR / spec；是否需要 test 看风险
-
-上述改动同样需要独立分支、Conventional Commit 和 PR 范围收敛。
+无论某步骤判定为不需要 ADR / spec / test，**分支、PR、review、squash merge 都不可跳过**——见上文"分支先行"。
 
 ## 完成定义（Definition of Done）
 

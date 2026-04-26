@@ -68,6 +68,27 @@ related:
 2. 再读本目录核心三件套
 3. 最后按需查阅横切四件套
 
+## 什么情况写 spec
+
+满足任一条件就需要新增或修改 spec：
+
+- 新增模块或新增模块间交互
+- 改变已有接口的字段、语义、错误码
+- 新增横切约束（observability 字段、限流策略、session 存储）
+
+只改单一模块内部实现、不影响外部契约的，不需要改 spec。
+
+## 何时可跳过 spec
+
+以下改动允许在主路径"判断是否需要 spec"那一步直接跳过：
+
+- 单一模块内部实现细节（无对外接口字段 / 错误码 / 语义变化）
+- 文档错别字、链接修复、注释调整
+- 测试代码新增 / 重构（spec 契约未变）
+- 性能优化但接口与可观测行为未变
+
+跳过 spec ≠ 跳过流程——**分支、PR、review、squash merge 不可跳过**，见 [`../process/workflow.md` §分支先行](../process/workflow.md#分支先行不可跳过)。是否同 PR 改 ADR / 测试，分别按 [`../adr/README.md` §何时可跳过 ADR](../adr/README.md#何时可跳过-adr) 与 [`../testing/strategy.md` §何时可跳过测试](../testing/strategy.md#何时可跳过测试) 判定。
+
 ## 与 ADR 的关系
 
 - ADR 决定**选择什么**（例：Discord、CC CLI）

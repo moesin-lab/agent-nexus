@@ -80,6 +80,10 @@ related:
 - [x] 🟡 **小补**：`process/code-review.md` Review 优先级表 → `standards/coding.md` 新增"Review 反馈处理优先级"段
 - [⊘] **跳过**：`process/pre-decision-analysis/README.md` 核心原则段——抽样复核显示 explore 误判：6 条核心原则中多数是 process 形态（trigger / role / default behaviour），只有"核心前提"段（git 便宜 / agent 便宜 / review 贵）是 ADR 形态根因论证。整段迁出会割裂阅读链，保留为流程内嵌哲学
 
+#### 2c. 用户指出的 explore 漏判
+
+- [x] 🔴 **重写**：`process/tdd.md` —— explore 整体判 OK 但实际三种 owner 内容混在一起。新建 ADR-0009 承载决策依据；新建 `standards/testing.md` 承载合格条件本体（探针、反模式、断言写法、命名、覆盖率、合约测试）；process/tdd.md 精简为 Red-Green-Refactor 节奏 + 层级触发 + 失败处理 + 自查 checklist
+
 #### Instrumentation 数据汇总（PR #19 八处清理 + 三处判合规）
 
 每个清理 PR 在描述里强制回答（结果汇总）：
@@ -90,7 +94,7 @@ related:
 2. **诉诸语感的边界**：
    - "机制级设计意图脚注" vs "决策论述"（出现 1 次）
    - "Conventional Commits 行为禁止 vs 产物形态禁止"（混合在原 process 文件里，需手工拆分）
-3. **explore 报告抽样复核**：4 处中 1 处误判（pre-decision-analysis 核心原则）；ADR-0008 列 8 处中 3 处是伪违反（已判合规跳过）。提示扫描方法论应区分"流程导言 / 工程哲学论证 / 价值标准本体"三档而非两档
+3. **explore 报告抽样复核**：4 处中 1 处误判（pre-decision-analysis 核心原则）；ADR-0008 列 8 处中 3 处是伪违反（已判合规跳过）；用户事后指出 tdd.md 也被 explore 漏判（整体判 OK 但实际三种 owner 混在一起）。提示扫描方法论应区分"流程导言 / 工程哲学论证 / 价值标准本体 / 决策论述"四档而非两档，且应**逐节审视**而非文件级判定
 4. **新规则需求信号**：
    - "机制级设计意图脚注"边界出现 ≥1 次但暂未达到引入新规则阈值
    - 抽样复核显示现有规则在多数情况稳定可用，**不引入新判据**

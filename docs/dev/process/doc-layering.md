@@ -27,9 +27,11 @@ related:
 | **architecture**（`docs/dev/architecture/`） | 组合事实：模块、依赖、数据流**怎么组合** | 契约定义、决策论述、协作流程、静态产物规范 |
 | **testing**（`docs/dev/testing/`） | 验证证据模型：用什么测试、fixture、eval、CI 证据证明行为正确 | 契约定义、静态产物规范、协作流程 |
 | **standards**（`docs/dev/standards/`） | 静态产物形态：代码、文档、日志、错误处理等产物应如何书写 | 协作流程、契约定义、测试策略 |
-| **process**（`docs/dev/process/`） | 编排事实：人 / agent 在什么时候做什么、谁负责、门禁怎么触发、失败后怎么处理 | 被编排规则的本体 |
+| **process**（`docs/dev/process/`） | 编排事实：人 / agent 在什么时候做什么、谁负责、门禁怎么触发、失败后怎么处理；以及编排作者写文档时 owner 选择的元规则（仅本文件） | 下游 owner 的规则本体（决策依据 / 契约 / 组合 / 验证模型 / 产物形态） |
 
 `process/` 可以列 checklist，但 checklist 项只能写"检查 X 是否符合 owner 文档"，不能复述 X 的规则本体。
+
+**自指说明**：本文件本身是规则本体，但所规则的对象是"作者写文档时如何选 owner"——这是协作行为的编排，落 process 与判定轴一致。该例外仅覆盖本文件；其他 `process/` 文件仍受"不得展开下游 owner 规则本体"约束。决策依据见 [ADR-0008 Decision §"关于 doc-layering.md 自身"](../adr/0008-doc-layering-ssot.md#decision)。
 
 ## 判定流程
 

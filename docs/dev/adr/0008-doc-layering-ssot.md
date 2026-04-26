@@ -19,7 +19,7 @@ superseded_by: null
 
 - **状态**：Proposed
 - **日期**：2026-04-25
-- **决策者**：mouxinc@gmail.com
+- **决策者**：senticx@foxmail.com
 - **相关 ADR**：无
 
 ## 状态变更日志
@@ -84,7 +84,7 @@ superseded_by: null
 
 把每段内容按其约束对象判定 owner：ADR 管决策依据，spec 管契约事实，architecture 管组合事实，testing 管验证证据模型，standards 管静态产物形态；process 不抢规则本体，只编排时序、触发、门禁、责任人与失败处理。每条事实只能落在唯一合适的 owner；其他目录只能 link，复述本身就被分类规则拒绝。
 
-- **优点**：根因解——SSOT 成为分类判定清晰的自然推论，不引入新机制；reviewer 判据机器可判（禁入清单就是 lint 规则的语义形式）；既有重复事实有统一处理规则
+- **优点**：根因解——SSOT 成为分类判定清晰的自然推论，不引入新机制；reviewer 凭对照清单可稳定判定（禁入清单结构化到接近 lint 规则的形式，但仍含"提及 vs 复述"的语义边界）；既有重复事实有统一处理规则
 - **缺点**：作者必须先识别"我在回答哪个问题"才能动笔，习惯转变需要时间；现有 architecture 文档需一次性瘦身（删除复述的接口签名与决策论点，改为 link）
 - **主要风险**：分类判定仍可能不够穷尽——出现多轴交叉内容时容易回到凭语感归类；缓解 = 在规则本体里维护冲突裁决表，尤其明确 process 只做编排
 
@@ -94,7 +94,9 @@ superseded_by: null
 
 具体规则本体（事实 owner 矩阵 + process 编排边界 + 冲突裁决）住 [`docs/dev/process/doc-layering.md`](../process/doc-layering.md)——本 ADR 只承载**为什么选这条路**，规则清单本身是"是什么"，按本 ADR 确立的分类规则不属于 ADR。
 
-禁入类型是 reviewer 可判的：非 owner 文档出现可独立还原的事实定义，或 `process/` 展开被编排规则本体，都应直接拒绝并要求改成 owner 链接。
+禁入类型对照 `process/doc-layering.md` 的清单稳定可判：非 owner 文档出现可独立还原的事实定义，或 `process/` 展开下游 owner 规则本体，都应直接拒绝并要求改成 owner 链接。
+
+**关于 doc-layering.md 自身**：本规则文件住在 `process/`，是因为它编排作者写文档时的 owner 选择，属于"协作时怎么落字"的元编排，是 process 的合法 owner 范畴。它不是被 process 编排的下游规则本体（决策依据 / 契约 / 组合 / 验证模型 / 产物形态），因此不触发 process 的禁入条款。这一例外仅适用于 doc-layering.md 自身——其他 process 文件不得援引此条作为展开下游规则本体的借口。
 
 不引入 owns 字段、不引入 pre-commit hook、不引入一致性测试、不引入 lint 工具——**所有机械补丁都被本 ADR 显式拒绝**。如果未来事实归属判定实践证明不足，再单独开 ADR 引入工具，不在本 ADR 演进。
 
@@ -107,7 +109,7 @@ superseded_by: null
 **正向**
 
 - SSOT 成为分类判定清晰的自然推论，不需要新机制；既有协作工具链（PR / codex review / reviewer）足以承载执行
-- Reviewer 判据机器可判——禁入清单就是清晰拒绝条件，不靠语义级判断
+- Reviewer 凭禁入清单可稳定判定——大多数违例（接口签名进 ADR、决策论述进 spec、字段表进 architecture）结构化到无需语义辩论，仅"提及 vs 复述"边界保留语义判断
 - 既有重复事实有统一判定规则：先识别 owner，再把非 owner 处改为 link；完整清理清单不在 ADR 内维护
 - 为后续可能的代码层 SSOT（package 职责互斥 + import 复用）建立同构思路
 

@@ -116,16 +116,9 @@ Proposed ──(评审通过)──> Accepted
 
 ## 职责边界
 
-ADR 这一层只回答 **"为什么选 X 不选 Y"**。事实归属与冲突裁决见 [`../process/doc-layering.md`](../process/doc-layering.md)；ADR 文档内部结构见 [`../standards/docs-style.md#结构约定`](../standards/docs-style.md#结构约定)。
+ADR 这一层只回答 **"为什么选 X 不选 Y"**。ADR 的禁入清单与跨目录冲突裁决统一住 [`../process/doc-layering.md`](../process/doc-layering.md)（ADR 行 + Reviewer 判据），本 README 不复述；ADR 文档内部结构见 [`../standards/docs-style.md#结构约定`](../standards/docs-style.md#结构约定)。
 
-**禁入清单**（出现即拒，要求拆到对应层）：
-
-- 接口签名、`type` / `interface` 定义、字段表 → 拆到 `spec/`
-- 默认值字面量（如 `maxTurnsPerSession=50`）→ 拆到 `spec/`
-- 操作流程、规则清单本体（如"准入清单 / 禁入清单"这种结构化规则）→ 拆到 `process/` 或 `standards/`
-- 模块拓扑图、数据流详图 → 拆到 `architecture/`
-
-ADR 引用 spec / architecture / process 内容时**只 link，不复述**——读者跳到目标文件读细节。
+ADR 引用 spec / architecture / process / testing / standards 内容时**只 link，不复述**——读者跳到目标文件读细节。
 
 ## 不做的事
 

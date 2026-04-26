@@ -44,19 +44,11 @@ related:
 
 ## 错误处理
 
-具体规则在 [`errors.md`](errors.md)。核心：
-
-- 永远不吞异常/错误（禁止空 catch）
-- 边界处处理错误（I/O、解析），内部传递
-- 错误要分类，不要只给一个 string
+见 [`errors.md`](errors.md)（owner）。
 
 ## 日志
 
-具体规则在 [`logging.md`](logging.md)。核心：
-
-- 用结构化日志，不拼字符串
-- 日志字段必须符合 [`../spec/observability.md`](../spec/infra/observability.md) 的字段表
-- 禁止打印密钥、token、绝对路径、env 原值
+见 [`logging.md`](logging.md)（owner）；字段契约见 [`../spec/infra/observability.md`](../spec/infra/observability.md)；禁止打印项见 [`../spec/security/redaction.md`](../spec/security/redaction.md)。
 
 ## 注释
 
@@ -118,12 +110,4 @@ related:
 
 ## Review 反馈处理优先级
 
-当 review 反馈超出可一次处理量时，按下表优先级处理。优先级是**质量判据**（哪类问题更重要），不是流程顺序——流程编排与触发条件见 [`../process/code-review.md`](../process/code-review.md)。
-
-1. **正确性**：bug、错误处理缺失、边界条件
-2. **安全**：权限、脱敏、注入风险、密钥泄露
-3. **契约一致性**：代码与 spec 是否一致
-4. **可维护性**：命名、模块边界、复杂度
-5. **风格**：格式、注释
-
-下一级问题不阻塞合并，但要开 Issue 追踪。**上一级问题必须修掉才能合并**。
+见 [`review.md`](review.md)。

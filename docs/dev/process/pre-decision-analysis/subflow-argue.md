@@ -7,6 +7,7 @@ tags: [process, argue, subagent, review]
 related:
   - dev/process/pre-decision-analysis/README
   - dev/process/subagent-usage
+  - dev/standards/pre-decision-analysis/README
 ---
 
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
@@ -37,18 +38,9 @@ related:
 - **Claude Code**：异构模型 → `codex-review` skill（内部 OpenAI Codex / gpt-5 系列）；独立 context → `general-purpose` subagent
 - **其他 harness**：按自身 subagent / external review 机制对等；规则以本 docs 为准
 
-## 调度 prompt 样板
+## 调度 prompt
 
-给 argue subagent 的 prompt 要包含：
-
-1. **方案正文全文**（不要只给摘要；argue 需要细节）
-2. **周边上下文**（已锁定的约束 / 相关 ADR / 用户已表明的偏好）
-3. **明确任务**：
-   - 找**事实性错误**（命名、路径、编号、命令有没有搞错）
-   - 挑战**推荐 / 倾向**（"倾向 A"——A 的反例是什么？B 其实更好的场景？）
-   - 列**被忽视的风险 / 成本**（主 agent 没提到的 failure mode）
-   - 评估**定向问题设计**（问题是否切中真正 ambiguity？选项是否有遗漏？默认建议是否过于诱导？）
-4. **禁止要求**：不要让 argue agent 写新方案 / 给实施代码 / 夸赞 ("looks good" 类输出直接拒收)——只要反方 / 挑错 / 建设性质疑
+给 argue subagent 的 prompt 按 [`../../standards/pre-decision-analysis/README.md`](../../standards/pre-decision-analysis/README.md) 的 argue 自检产物标准组织。
 
 ## 并发策略
 
@@ -90,11 +82,4 @@ API error / 超时 → 不阻塞推进；PR body 加 `⚠ argue unavailable` 让
 
 ## 反模式
 
-| 反模式 | 正确做法 |
-|---|---|
-| 有明确推荐却跳过 argue | 跨多文件 / 架构级决策必派；单文件 + 有先例可跳 |
-| 串行派 argue 一段接一段 | 并行派，同 turn 开多个 subagent |
-| argue 回"looks good" 就收下 | 要求反方、挑错、质疑；夸赞说明 prompt 太松，重派 |
-| argue 结果 agent 自己吸收但不贴 PR body | 用户看 diff 时看不到考量背景——必须透明化 |
-| argue 颠覆推荐但 agent 硬辩保留原文 | 重写方案；别为了省事保留有破绽的推荐 |
-| 传给 argue 的 prompt 只有方案标题没有正文 | 传方案全文 + 上下文；argue 需要细节才能挑错 |
+反模式表见 [`../../standards/pre-decision-analysis/README.md`](../../standards/pre-decision-analysis/README.md)。

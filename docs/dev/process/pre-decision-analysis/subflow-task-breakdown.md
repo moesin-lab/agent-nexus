@@ -6,6 +6,7 @@ summary: 大任务拆解场景的 WBS 三段脚手架、候选拆法要求、tra
 tags: [process, review]
 related:
   - dev/process/pre-decision-analysis/README
+  - dev/standards/pre-decision-analysis/README
 ---
 
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
@@ -25,10 +26,9 @@ related:
    每种一段，给 trade-off：迭代速度 / 并行度 / 回滚面 / 首个可用 milestone 何时出现。
 3. **推荐优先级**：基于"改动面 × 价值"排序，给 top 3 子任务。
 
-## 本子流程专属硬规则
+## 本子流程专属标准
 
-- 候选拆法 < 2 → 不是拆解问题，是执行问题，退出本 skill。
-- trade-off 四维（速度 / 并行 / 回滚 / milestone）至少给出其中 2 维，不得只说"A 更好"。
+产物标准见 [`../../standards/pre-decision-analysis/README.md`](../../standards/pre-decision-analysis/README.md)。
 
 ## 收敛后的动作
 

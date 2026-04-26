@@ -78,7 +78,17 @@ Proposed ──(显式签字盖章)──> Accepted
 - 本地开发脚本的小调整（不影响 CI）
 - spec / standards / process 内部措辞调整（决策语义未变）
 
-跳过 ADR ≠ 跳过流程——**分支、PR、review、squash merge 不可跳过**，见 [`../process/workflow.md` §分支先行](../process/workflow.md#分支先行不可跳过)。同 PR 是否还要写 spec / 测试，分别按 [`../spec/README.md` §何时可跳过 spec](../spec/README.md#何时可跳过-spec) 与 [`../testing/strategy.md` §何时可跳过测试](../testing/strategy.md#何时可跳过测试) 判定。
+跳过 ADR ≠ 跳过流程——**分支、PR、review、squash merge 不可跳过**，见 [`../process/workflow.md` §分支先行](../process/workflow.md#分支先行不可跳过)。同 PR 是否还要写 spec / 测试，分别按 [`../spec/README.md` §何时可跳过 spec](../spec/README.md#何时可跳过-spec) 与 [`../standards/testing.md` §何时可跳过新增/修改测试](../standards/testing.md#何时可跳过新增修改测试) 判定。
+
+## 产物合格条件（DoD）
+
+ADR 合格的判据：
+
+- frontmatter 字段齐（`adr_status` / `adr_number` / `decision_date` / `supersedes` / `superseded_by`），按 [`template.md`](template.md)
+- body 含 Context / Options / Decision / Consequences / Out of scope 五段，按 [`template.md`](template.md) 结构
+- Options 段列出至少 2 个认真比较过的候选
+- Decision 段一句话说选哪个；不模糊措辞
+- 状态至少推到 `Proposed`（合入 main 后即视为入库可执行）；合入前已通过 codex review 并逐条回应
 
 ## 评审流程
 

@@ -70,23 +70,34 @@ related:
 |---|---|---|
 | ADR | [`../adr/README.md` §什么情况写 ADR](../adr/README.md#什么情况写-adr) | [`../adr/README.md` §何时可跳过 ADR](../adr/README.md#何时可跳过-adr) |
 | spec | [`../spec/README.md` §什么情况写 spec](../spec/README.md#什么情况写-spec) | [`../spec/README.md` §何时可跳过 spec](../spec/README.md#何时可跳过-spec) |
-| 测试 | [`tdd.md`](tdd.md) + [`../testing/strategy.md`](../testing/strategy.md) | [`../testing/strategy.md` §何时可跳过测试](../testing/strategy.md#何时可跳过测试) |
+| 测试 | [`tdd.md`](tdd.md) + [`../testing/strategy.md`](../testing/strategy.md) | [`../standards/testing.md` §何时可跳过新增/修改测试](../standards/testing.md#何时可跳过新增修改测试) |
 
 无论某步骤判定为不需要 ADR / spec / test，**分支、PR、review、squash merge 都不可跳过**——见上文"分支先行"。
 
 ## 完成定义（Definition of Done）
 
-每一步都必须达到其 DoD 才能进入下一步：
+每一步达到对应 owner 的产物合格条件才能进入下一步。本表只编排顺序，合格条件本体在 owner：
 
-| 步骤 | 完成定义 |
+| 步骤 | DoD 在哪 |
 |---|---|
-| ADR | 状态为 Accepted，Context/Options/Decision/Consequences 四段齐全 |
-| spec | 至少包含字段表或伪代码接口，有 reviewer 通读确认 |
-| failing test | 运行确实失败，且失败原因是"功能未实现"而非"语法错" |
-| 实现 | 所有相关测试通过，无测试被跳过或删除 |
-| 自查 | 清单每一项打勾；新增的 public 接口都在 spec 中 |
-| Codex review | 收到反馈，逐条回应（采纳或说明理由） |
-| Merge | CI 全绿、commit 信息符合规范、CHANGELOG 更新（若影响用户） |
+| ADR | [`../adr/README.md` §产物合格条件（DoD）](../adr/README.md#产物合格条件dod) |
+| spec | [`../spec/README.md` §产物合格条件（DoD）](../spec/README.md#产物合格条件dod) |
+| failing test / 实现 / refactor | [`../standards/testing.md` §TDD 各阶段产物合格条件](../standards/testing.md#tdd-各阶段产物合格条件) |
+| 自查 | [`../standards/code-review.md` §自查清单合格条件](../standards/code-review.md#自查清单合格条件) |
+| Codex review | [`../standards/code-review.md` §Codex review 反馈响应合格条件](../standards/code-review.md#codex-review-反馈响应合格条件) |
+| Merge | [`../standards/commit-style.md` §Merge 阶段产物合格条件](../standards/commit-style.md#merge-阶段产物合格条件) |
+
+## 新增模块 / 包
+
+开新模块（新 agent、新 platform、或新的 daemon 子模块）按下面顺序走，每步达到 DoD 才进下一步：
+
+1. **判定角色**：cli / daemon / agent / platform 哪一个？分类与 import 方向见 [`../architecture/dependencies.md`](../architecture/dependencies.md)
+2. **判定依赖**：只能 import `daemon` 与 `protocol`？依赖准入清单见 [`../standards/dependencies.md`](../standards/dependencies.md)
+3. **若需扩 daemon 接口**：先改 daemon 发 PR 合入，再开这个模块
+4. **若需扩 protocol 接口契约**：先改 protocol 发 PR 合入，再开实现 package
+5. **在 [`../architecture/dependencies.md`](../architecture/dependencies.md) §附录 package 清单登记**（若是新 agent / platform）
+
+每步如需 ADR / spec / test 按本文件 §"何时需要 / 可跳过" 判定。
 
 ## 流程图里不画但必须做的事
 

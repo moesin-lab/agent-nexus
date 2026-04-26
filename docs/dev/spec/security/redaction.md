@@ -27,7 +27,13 @@ contracts:
 | 已知密钥前缀（`sk-ant-...`、`MTk...`（Discord token 特征）等） | `<redacted:secret>` |
 | 含敏感字样的 env：形如 `*_KEY=...`、`*_TOKEN=...`、`*_SECRET=...` | `*_KEY=<redacted>` |
 | 邮箱 | `<redacted:email>`（可配置） |
+| 手机号 | `<redacted:phone>`（可配置） |
+| 姓名全称 | `<redacted:name>`（可配置） |
 | IPv4/IPv6 地址 | `<redacted:ip>`（可配置） |
+| 用户消息正文（IM 入站原文） | 摘要或 hash；完整正文走 transcript 落盘，不进 log / outbound |
+| Agent 子进程完整输出原文（CC CLI stdout） | 摘要或 hash；完整输出走专门的 transcript 落盘 |
+
+本表是**全出口必过滤项的权威源**——日志、IM outbound、transcript 等任何出口均按此过滤。日志写法约束见 [`../../standards/logging.md`](../../standards/logging.md)（写法）；observability 的字段契约见 [`../infra/observability.md`](../infra/observability.md)（字段表）。
 
 ## 配置
 

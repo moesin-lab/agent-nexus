@@ -2,7 +2,7 @@
 title: 日志规范
 type: standards
 status: active
-summary: 结构化日志写法约束；字段契约、等级语义、禁止打印清单与测试对日志的约束
+summary: 结构化日志写法约束；字段契约见 observability spec，本文只定义等级语义、禁止打印清单与测试对日志的约束
 tags: [logging, standards, observability]
 related:
   - dev/spec/infra/observability
@@ -12,7 +12,7 @@ related:
 
 # 日志规范
 
-本文件是 [`../spec/observability.md`](../spec/infra/observability.md) 的代码侧落地。spec 定义**字段契约**，本文件定义**写法约束**。
+本文件是 [`../spec/observability.md`](../spec/infra/observability.md) 的代码侧落地。spec 定义**字段与事件契约**，本文件定义**写法约束**。
 
 ## 基本原则
 
@@ -21,19 +21,9 @@ related:
 - **人机双读**：生产用 JSONL（机器读），开发可选彩色 pretty（人读）；内容一致
 - **非阻塞**：日志 I/O 不能阻塞主业务路径
 
-## 字段契约
+## 字段来源
 
-所有日志必须包含下列字段（见 `spec/observability.md` §2）：
-
-- `timestamp`：RFC3339 含毫秒
-- `level`：`trace | debug | info | warn | error`
-- `component`：发生日志的模块名（如 `adapter-discord`、`daemon-engine`）
-- `event`：事件名（动宾短语，小写加下划线，如 `message_received`）
-- `traceId`：贯穿一次请求链的 ID
-- `sessionKey`：涉及会话时必填
-- `messageId`：涉及消息时必填
-
-特定事件有额外字段（见 spec）。**缺字段不是"info 级别不严格"的借口，是 bug**。
+日志字段、事件名和事件附加字段只以 [`observability.md`](../spec/infra/observability.md) 为准。实现侧不得在 log site 自创新字段、同义字段或改写事件契约；字段缺失按 bug 处理。
 
 ## 等级语义
 
@@ -56,13 +46,7 @@ related:
 
 ## 禁止打印的内容
 
-- **密钥/Token**：Discord bot token、Anthropic API key、OAuth secret
-- **环境变量的原值**（尤其带 `KEY`、`SECRET`、`TOKEN` 字样）
-- **用户的绝对路径**（替换为项目相对路径或 `~/`）
-- **用户消息正文在 IM 级别**（sessionKey + messageId 引用即可；需要时另存脱敏快照）
-- **CC CLI 的完整输出原文**（摘要或 hash；要完整输出走专门的 transcript 落盘）
-
-脱敏在日志系统入口拦截，详见 [`../spec/security.md`](../spec/security/README.md) §3。
+清单见 [`../spec/security/redaction.md` §必过滤项](../spec/security/redaction.md#必过滤项)（owner）。日志 sink 的 formatter 在出口前调用 redactor 拦截，本文件不复述清单。
 
 ## 输出格式
 
@@ -82,14 +66,9 @@ related:
 - 字段构造用 lazy / guard：`if isDebugEnabled() { log.debug(...) }`（具体语言机制随 ADR 0004）
 - 禁止在循环内同步 flush
 
-## 错误日志的必含字段
+## 错误日志
 
-当 level 为 `error`：
-
-- `errorKind`：错误分类（来自 [`errors.md`](errors.md) 的分类）
-- `cause`：原始错误信息（字符串化）
-- `stack`：完整栈（如有）
-- 触发时的上下文字段（`sessionKey`、`messageId`、业务入参摘要）
+错误字段契约见 [`observability.md`](../spec/infra/observability.md) 与 [`errors.md`](../spec/infra/errors.md)。这里的写法约束是：错误日志必须能定位错误类别、原始原因和相关上下文，但不得把结构化信息塞进 `msg` 文本里。
 
 ## 测试对日志的约束
 

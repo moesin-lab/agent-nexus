@@ -5,6 +5,7 @@ status: active
 summary: 错误四分类（user/platform/agent/internal）、传播规则、用户可见反馈与熔断重试策略
 tags: [errors, standards]
 related:
+  - dev/spec/infra/errors
   - dev/spec/infra/cost-and-limits
   - dev/spec/security/README
   - dev/standards/logging
@@ -23,17 +24,9 @@ related:
 | `agent` | Agent 后端故障 | CC CLI 崩溃、超时、工具执行失败 | 是（通用提示） | `error` |
 | `internal` | 本项目 bug | panic、状态不变量破坏、代码逻辑错 | 是（通用提示 + 错误 ID） | `error` |
 
-## 错误结构（契约）
+## 错误结构
 
-每个错误必须携带：
-
-- `kind`：上面四类之一
-- `code`：细分错误码（同一 kind 内唯一）
-- `message`：给开发者看的简短原因（英文或中文均可，项目内统一）
-- `cause`：原始错误（如有），便于追溯
-- `traceId` / `sessionKey` / `messageId`：上下文
-
-具体语言侧实现（struct / enum / class）等 ADR 0004 后定。
+错误对象字段契约见 [`errors.md`](../spec/infra/errors.md)。本文件只定义分类语义、传播写法和用户反馈标准。
 
 ## 传播规则
 

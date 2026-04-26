@@ -42,8 +42,6 @@ related:
 - `limits.maxToolCallsPerTurn`（默认 `30`）：单 turn 内最大工具调用数；超限 → 触发 `turn_finished { reason: "tool_limit" }`
 - `limits.maxConsecutiveToolErrors`（默认 `5`）：单 turn 内连续工具失败数；超限 → 触发 `turn_finished { reason: "error" }`
 
-理由：订阅配额以 messages/turns 计，turn 硬限是对订阅用户**直接有效**的保护。
-
 ### Wall-clock 硬限
 
 - `limits.perInputTimeoutMs`（默认 `300000` = 5 分钟）：单次 `sendInput` 到 `turn_finished` 的墙钟超时
@@ -56,6 +54,14 @@ related:
 - `limits.maxConcurrentLlmCalls`（默认 `3`）：全局 in-flight LLM 调用数
 - `limits.globalMessagesPerSec`（默认 `5`）：全局入站消息限速
 - 超限行为：排队（最多 `limits.sessionQueueMaxWaitMs` = 30s）→ 仍超则拒绝 + 用户可见提示
+
+### Session 生命周期 timeout
+
+session 在状态机里的空闲与中断超时，状态机本体见 [`../../architecture/session-model.md`](../../architecture/session-model.md)。
+
+- `limits.session.idleTimeoutMs`（默认 `1800000` = 30 分钟）：Active → Idle，距离最近一条消息/事件超过该值
+- `limits.session.idleToArchiveMs`（默认 `7200000` = 2 小时）：Idle → Archived
+- `limits.session.interruptedToArchiveMs`（默认 `86400000` = 24 小时）：进程重启后 Interrupted 实例若未被 `/resume` 或 `/end`，到期后自动 Archived
 
 ### 出站 Rate Limit（Discord）
 
@@ -103,7 +109,7 @@ base = 1000ms, cap 见上表, jitter = 0.2
 - 软阈值（50%/80%/100%）发 `info/warn`
 - 硬阈值（100%）拒绝新 turn，session → Errored（单 session）或全局 BudgetHalted（每日/每月）
 
-**订阅路径下不应启用**：CC CLI 在订阅模式下 `costUsd` 可能为 null 或不可靠，启用后结果失真。
+订阅路径下默认保持关闭；机制选择依据见 [ADR-0006](../../adr/0006-limits-layering-defense-first.md)。
 
 ### 订阅配额跟踪（适合订阅路径，MVP 未实现）
 
@@ -138,7 +144,7 @@ base = 1000ms, cap 见上表, jitter = 0.2
 - `toolCallsThisTurn`
 - `wallClockMs`
 
-这份记账是 spec 的强制契约：两类用户都需要它做事后回溯——订阅用户查 turn 消耗、API 用户查成本归因。语义定位（为何与计费解耦）见 [ADR-0006](../../adr/0006-limits-layering-defense-first.md)。
+这份记账是 spec 的强制契约。语义定位见 [ADR-0006](../../adr/0006-limits-layering-defense-first.md)。
 
 ## 定价表（供 opt-in $ 预算使用）
 
@@ -163,6 +169,11 @@ maxConcurrentSessions = 3
 maxConcurrentLlmCalls = 3
 globalMessagesPerSec = 5
 sessionQueueMaxWaitMs = 30000
+
+[limits.session]
+idleTimeoutMs = 1800000          # 30 分钟
+idleToArchiveMs = 7200000        # 2 小时
+interruptedToArchiveMs = 86400000 # 24 小时
 
 [circuit]
 consecutiveFailureThreshold = 3
@@ -222,16 +233,18 @@ cacheWrite = 18.75
 
 ## 反模式
 
-- 把`$ 预算`作为默认保护（对订阅用户无效 + 误导）
-- 把"订阅配额跟踪"作为默认保护（对 API 用户无意义；两类机制都必须 opt-in）
-- 把**用户类型**当一等公民（API 用户 / 订阅用户哪个该是一等都是错问题——分层应按机制类别）；论证见 [ADR-0006](../../adr/0006-limits-layering-defense-first.md)
-- 把"最贵已知模型"作为缺失定价的兜底估算（订阅模式会产生虚假报警）
-- 缺 turn 硬限只靠 $ 预算（订阅用户撞配额墙前得不到任何保护）
-- 无退避地重试（打爆平台）
-- 熔断后永不恢复（必须有冷却 + 用户可恢复）
-- 指数退避不加 jitter（雷鸣群）
+机制分层依据（为何 $ 预算 / 订阅配额都默认关闭、为何按机制类别而非用户类型分一等二等）见 [ADR-0006](../../adr/0006-limits-layering-defense-first.md)。本 spec 不复述论证。
+
+- 把 `$ 预算` 作为默认保护
+- 把"订阅配额跟踪"作为默认保护
+- 把**用户类型**当一等公民
+- 把"最贵已知模型"作为缺失定价的兜底估算
+- 缺 turn 硬限只靠 $ 预算
+- 无退避地重试
+- 熔断后永不恢复
+- 指数退避不加 jitter
 - 在本 spec 维护幂等相关规则（已迁移至 `idempotency.md`）
-- 预算/限流超限时静默跳过（必须显式拒绝 + 通知）
+- 预算/限流超限时静默跳过
 
 ## Out of spec
 

@@ -5,6 +5,7 @@ status: active
 summary: 安全分区总索引 + 威胁模型 + 跨分区综合缓解（prompt injection）+ 启动自检清单
 tags: [spec, security]
 related:
+  - dev/spec/infra/errors
   - dev/spec/security/auth
   - dev/spec/security/tool-boundary
   - dev/spec/security/secrets

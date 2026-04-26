@@ -35,6 +35,10 @@ Refactor → 在测试保持绿的前提下，整理代码与命名
 - **端到端流程** → e2e 用真实 CC CLI + mock Discord；不是每个功能都要 e2e
 - **对话质量** → eval；当且仅当改动影响 agent 提示或工具集
 
+## 何时可跳过新增/修改测试
+
+跳过判据见 [`../standards/testing.md` §何时可跳过新增/修改测试](../standards/testing.md#何时可跳过新增修改测试)。本文件只编排：跳过判定后仍走分支 / PR / review / 合并门禁。
+
 ## 触发与失败处理
 
 - **触发**：每次新增功能、修 bug、改契约——按 `workflow.md` 主路径第 5 步进入 Red 阶段
@@ -43,6 +47,29 @@ Refactor → 在测试保持绿的前提下，整理代码与命名
   - Red 阶段测试本应 fail 却跑成 green（断言写错了）→ 修测试再走
   - Green 阶段实现没让测试过 → 缩小实现粒度或拆测试
   - Refactor 阶段测试从绿变红 → 立刻回滚到上一个绿状态再重做
+
+## 运行节奏与 CI 门槛
+
+按 [`../testing/strategy.md`](../testing/strategy.md) 的四层模型执行：
+
+| 层 | 本地开发 | PR CI | main CI | 定时 |
+|---|---|---|---|---|
+| Unit | 每次 save 跑受影响的 | 全跑 | 全跑 | — |
+| Integration | 相关模块变更时 | 全跑 | 全跑 | — |
+| E2E | 可选 | 改核心时触发 | 全跑 | — |
+| Eval | 改 prompt/工具集时 | 选择性跑（标签触发） | — | 每晚 |
+
+- Unit + Integration 必须全绿才能合并。
+- E2E 在核心路径变更或 PR 标记要求时跑；main CI 默认跑。
+- Eval 定时跑；回归自动开 issue，不阻塞普通合并。
+
+## Reviewer 验收
+
+reviewer 按 [`../standards/testing.md`](../standards/testing.md) 检查测试产物形态：
+
+- 发现不合格模式时要求作者按 standards 修正后再合入。
+- 作者声明无需测试时，必须在 PR 中解释原因。
+- spec 改动涉及契约行为时，确认同 PR 是否包含合约测试更新；例外必须写明理由。
 
 ## 反复出错的 checklist
 

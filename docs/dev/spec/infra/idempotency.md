@@ -33,8 +33,8 @@ contracts:
 - **Adapter** 只负责归一化与投递，**不做去重**
 - **Daemon** 在 `Engine.dispatch` 流程中执行 `checkAndSet(sessionKey, messageId)`
 - 顺序：**auth → idempotency → 限流/预算 → session 队列**
-  - 为什么 auth 先于 idempotency：避免攻击者用伪造 messageId 持续刷满幂等表
-  - 见 [`../../architecture/overview.md`](../../architecture/overview.md) §入站数据流
+  - 顺序的安全依据见 [`../security/auth.md` §权限检查位置](../security/auth.md#权限检查位置)（`auth_denied` 不进 idempotency 表，避免上游伪造 messageId 刷表）
+  - 数据流见 [`../../architecture/overview.md`](../../architecture/overview.md) §入站数据流
 
 ## 流程
 
@@ -66,7 +66,7 @@ adapter 归一化 NormalizedEvent
 - TTL 写入 `expires_at`，后台 GC 清理
 - 内存 LRU 缓存热数据加速
 
-**为什么幂等键用 `session_key` 而不是 `sessionId`**：幂等是**路由层**概念。Discord gateway 重发一条 messageId 时，我们不知道（也不关心）当前 SessionKey 下是哪个 generation 活跃；只要同 SessionKey 在 TTL 窗口内见过同 messageId 就丢弃。这样 Archived 后 generation+1 的新实例收到重发的旧 messageId 也能被挡住（否则新实例会重复处理）。
+幂等键使用路由层的 `session_key`，不使用持久化主键 `session_id`。会话分代与路由关系见 [`session-model.md`](../../architecture/session-model.md)。
 
 ## 后台 GC
 

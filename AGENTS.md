@@ -32,7 +32,7 @@ related:
 7. **范围收敛**：每个 PR 只做一件事，禁止"顺手重构"无关代码。
 8. **Conventional Commits**：所有提交遵循 [`docs/dev/process/commit-and-branch.md`](docs/dev/process/commit-and-branch.md)。
 9. **作废文档物化到归档目录**：Superseded ADR 和明确 Deprecated 的文档必须住在 `docs/dev/adr/deprecated/` 或 `docs/_deprecated/`——路径本身就是"别当事实"的信号。active 路径下的文档（含 placeholder）可直接 `Read`；归档路径的文档由 hook 拦截，必须走 `scripts/docs-read --force`。详见下文"读文档的防污染规则"。
-10. **SSOT（单一信息源）**：每条事实只在唯一合适的 owner 定义一次，其他地方只 link 不复述。文档维度的 owner 矩阵、冲突裁决与 reviewer 判据见 [`docs/dev/process/doc-layering.md`](docs/dev/process/doc-layering.md)；为什么走"事实归属判定 + process 编排边界"而非 lint / hook / 一致性测试，见 [ADR-0008](docs/dev/adr/0008-doc-layering-ssot.md)。代码与设计同理：跨模块契约只在 spec 定义，下游 import 而非重声明。
+10. **SSOT（单一信息源）**：每条事实只在唯一合适的 owner 定义一次，其他地方只 link 不复述。本条覆盖**文档维度**——owner 矩阵、冲突裁决与 reviewer 判据见 [`docs/dev/process/doc-layering.md`](docs/dev/process/doc-layering.md)；为什么走"事实归属判定 + process 编排边界"而非 lint / hook / 一致性测试，见 [ADR-0008](docs/dev/adr/0008-doc-layering-ssot.md)。代码层 SSOT（package 职责互斥 + import 约束）是同构方向，但具体机制留给后续 ADR 形式化，**目前不是核心原则的执行项**。
 
 ## 读文档的防污染规则
 

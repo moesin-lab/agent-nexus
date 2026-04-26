@@ -5,7 +5,7 @@ status: active
 summary: 开发文档目录（architecture/adr/spec/process/testing/standards）的索引、主判定轴与阅读顺序
 tags: [navigation, dev-docs]
 related:
-  - README
+  - root/README
   - dev/architecture/overview
   - dev/adr/README
   - dev/spec/README

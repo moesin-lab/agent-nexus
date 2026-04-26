@@ -5,7 +5,7 @@ status: placeholder
 summary: 面向使用者的文档中心；本阶段仅占位，等 MVP 可运行后填写
 tags: [product, navigation]
 related:
-  - README
+  - root/README
   - product/user-guide
   - product/platforms/discord
   - product/faq

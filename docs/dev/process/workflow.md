@@ -62,13 +62,15 @@ related:
 3. **强制范围收敛**：分支命名（`<type>/<short-description>`）本身就是"这次只做这一件事"的承诺，与"PR 单一关注点"形成双约束。
 4. **为未来留位**：分支保护规则、PR 触发的 CI、自动 review hook、required reviewers——都需要"分支 → PR"已经是默认习惯才能挂上去。
 
-## 何时需要 ADR / spec / TDD
+## 何时需要 / 可跳过 ADR / spec / 测试
 
 主路径中第 3、4、5 步的判定不在 process 编排——它们是各 owner 的准入条件（价值标准）：
 
-- **何时需要 ADR**：见 [`../adr/README.md` §什么情况写 ADR](../adr/README.md#什么情况写-adr)
-- **何时需要 spec**：见 [`../spec/README.md` §什么情况写 spec](../spec/README.md#什么情况写-spec)
-- **何时可跳过 ADR / spec / 测试**：见 [`../adr/README.md` §可跳过的情形](../adr/README.md#可跳过的情形)
+| 步骤 | 该不该写 | 何时可跳过 |
+|---|---|---|
+| ADR | [`../adr/README.md` §什么情况写 ADR](../adr/README.md#什么情况写-adr) | [`../adr/README.md` §何时可跳过 ADR](../adr/README.md#何时可跳过-adr) |
+| spec | [`../spec/README.md` §什么情况写 spec](../spec/README.md#什么情况写-spec) | [`../spec/README.md` §何时可跳过 spec](../spec/README.md#何时可跳过-spec) |
+| 测试 | [`tdd.md`](tdd.md) + [`../testing/strategy.md`](../testing/strategy.md) | [`../testing/strategy.md` §何时可跳过测试](../testing/strategy.md#何时可跳过测试) |
 
 无论某步骤判定为不需要 ADR / spec / test，**分支、PR、review、squash merge 都不可跳过**——见上文"分支先行"。
 

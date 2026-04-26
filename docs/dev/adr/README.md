@@ -60,14 +60,17 @@ Proposed ──(评审通过)──> Accepted
 - 改变安全模型（权限边界、密钥存储、脱敏规则）
 - 选定实现语言、运行时、核心库
 
-## 可跳过的情形
+## 何时可跳过 ADR
 
-流程主路径每一步都保留，但以下改动允许在该步"判断为不需要"后跳过 ADR / spec / 测试。**分支、PR、review、squash merge 不可跳过**——见 [`../process/workflow.md` §分支先行](../process/workflow.md#分支先行不可跳过)。
+以下改动允许在主路径"判断是否需要 ADR"那一步直接跳过：
 
-- 文档错别字、链接修复、术语统一 → 跳过 ADR / spec / test
-- 依赖的补丁版本升级（无 breaking change）→ 跳过 ADR / spec；是否需要 test 看风险
-- 代码注释修改 → 跳过 ADR / spec / test
-- 本地开发脚本的小调整（不影响 CI）→ 跳过 ADR / spec；是否需要 test 看风险
+- 文档错别字、链接修复、术语统一
+- 依赖的补丁版本升级（无 breaking change）
+- 代码注释修改
+- 本地开发脚本的小调整（不影响 CI）
+- spec / standards / process 内部措辞调整（决策语义未变）
+
+跳过 ADR ≠ 跳过流程——**分支、PR、review、squash merge 不可跳过**，见 [`../process/workflow.md` §分支先行](../process/workflow.md#分支先行不可跳过)。同 PR 是否还要写 spec / 测试，分别按 [`../spec/README.md` §何时可跳过 spec](../spec/README.md#何时可跳过-spec) 与 [`../testing/strategy.md` §何时可跳过测试](../testing/strategy.md#何时可跳过测试) 判定。
 
 ## 评审流程
 

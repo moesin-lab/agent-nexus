@@ -112,32 +112,13 @@ platform/discord.Send(sessionKey, OutboundMessage)
 
 ## 核心接口（概览）
 
-具体字段见各 spec 文件。此处只列**形状**：
+接口签名是契约事实，住在 spec：
 
-```text
-interface PlatformAdapter {
-    start(ctx)                              // 建立 gateway / 注册 webhook
-    stop(ctx)
-    onEvent(handler: (NormalizedEvent) -> void)
-    send(sessionKey, OutboundMessage) -> MessageRef
-    edit(messageRef, OutboundMessage) -> void
-    delete(messageRef) -> void
-    // 能力声明：支持的富交互形式
-    capabilities() -> CapabilitySet
-}
+- **`PlatformAdapter`**：IM 平台适配层契约 → [`../spec/platform-adapter.md`](../spec/platform-adapter.md)
+- **`AgentRuntime` / `AgentSession`**：agent 后端适配层契约 → [`../spec/agent-runtime.md`](../spec/agent-runtime.md)
+- **`Engine`**：daemon 中枢调度——本架构层视角下，Engine 接收 `NormalizedEvent` 并按"权限 → 幂等 → 限流 → session 路由"流程处理（流程见上文"最小数据流"）；内部持有 sessions、idempotency store、rateLimiter、budgetTracker、redactor 五项横切能力（清单见下文"横切关注点"）。Engine 暂无独立 spec 文件，签名细节随实现演进。
 
-interface AgentRuntime {
-    startSession(sessionKey, config) -> AgentSession
-    sendInput(sessionSession, input) -> void
-    stopSession(agentSession) -> void
-    onEvent(handler: (AgentEvent) -> void)
-}
-
-interface Engine {
-    dispatch(NormalizedEvent) -> void
-    // 内部持有：sessions, idempotencyStore, rateLimiter, budgetTracker, redactor
-}
-```
+本节不复述签名——读者跳到对应 spec 看完整字段与契约不变量。
 
 ## 会话模型
 

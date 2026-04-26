@@ -89,3 +89,4 @@ Reviewer 在 PR 里看到下列模式，应直接要求修正或拒绝：
 - **代码与文档的 SSOT**——代码层通过语言机制（单一 export）和 import 约束实现，详见 [ADR-0008](../adr/0008-doc-layering-ssot.md) Consequences §"代码与设计维度"
 - **机械工具**（lint、hook、一致性测试、owns frontmatter 字段）——本规则**不引入**这些机制；如果未来事实归属判定仍不足以挡住所有 drift，再单独开 ADR 引入工具，不在本文件演进
 - **placeholder 文档**——只承载信息架构占位，不属于本判定范围
+- **元层文档**——目录索引（`README.md`）、ADR / 模板（`template.md`）、归档说明（`deprecated/README.md`）、状态汇总等约束**文档体系自身**而非系统行为的脚手架文档，不受 owner 矩阵约束。它们的内容性质是"导航 / 模板 / 引用聚合"，不是事实定义；禁入清单不适用，但仍遵守"只 link 不复述"——元层文档不能复述被它索引的内容

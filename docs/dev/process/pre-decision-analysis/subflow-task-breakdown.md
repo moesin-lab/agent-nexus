@@ -1,3 +1,13 @@
+---
+title: Pre-Decision Analysis 子流程：任务拆解
+type: process
+status: active
+summary: 大任务拆解场景的 WBS 三段脚手架、候选拆法要求、trade-off 维度与收敛动作
+tags: [process, review]
+related:
+  - dev/process/pre-decision-analysis/README
+---
+
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
 > 各 harness 通过 `skills/pre-decision-analysis/` 下自身执行器引用。
 

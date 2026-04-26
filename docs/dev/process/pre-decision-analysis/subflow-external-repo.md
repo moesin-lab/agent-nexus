@@ -1,3 +1,13 @@
+---
+title: Pre-Decision Analysis 子流程：外部仓库评估
+type: process
+status: active
+summary: 外部仓库、框架或方法论评估时的层级定位、高效 fetch 与推荐维度模板
+tags: [process, review]
+related:
+  - dev/process/pre-decision-analysis/README
+---
+
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
 > 各 harness 通过 `skills/pre-decision-analysis/` 下自身执行器引用。
 

@@ -8,7 +8,7 @@ related:
   - dev/spec/message-protocol
   - dev/architecture/overview
   - dev/spec/infra/cost-and-limits
-  - dev/spec/security
+  - dev/spec/security/README
 contracts:
   - PlatformAdapter
   - OutboundMessage

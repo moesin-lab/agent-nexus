@@ -1,3 +1,13 @@
+---
+title: Pre-Decision Analysis 反模式
+type: process
+status: active
+summary: pre-decision-analysis 协作流程的完整反模式表、强制规则与违反后的处理方式
+tags: [process, review, scratch]
+related:
+  - dev/process/pre-decision-analysis/README
+---
+
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
 > 各 harness 通过 `skills/pre-decision-analysis/` 下自身执行器引用。
 

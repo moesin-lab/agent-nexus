@@ -8,7 +8,7 @@ related:
   - dev/adr/0002-agent-backend-claude-code-cli
   - dev/spec/agent-backends/claude-code-cli
   - dev/spec/message-protocol
-  - dev/spec/security
+  - dev/spec/security/README
   - dev/spec/infra/cost-and-limits
 contracts:
   - AgentRuntime

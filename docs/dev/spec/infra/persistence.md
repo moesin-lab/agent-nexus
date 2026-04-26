@@ -9,7 +9,7 @@ related:
   - dev/architecture/session-model
   - dev/spec/infra/idempotency
   - dev/spec/security/secrets
-  - dev/spec/security
+  - dev/spec/security/README
 contracts:
   - Store
 ---

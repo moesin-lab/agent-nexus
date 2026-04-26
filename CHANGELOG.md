@@ -1,3 +1,14 @@
+---
+title: Changelog
+type: root
+status: active
+summary: 按 Keep a Changelog 组织的项目变更记录，记录未发布变更与历史调整
+tags: [changelog, release]
+related:
+  - root/README
+  - root/AGENTS
+---
+
 # Changelog
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 规范，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。

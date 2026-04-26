@@ -5,7 +5,7 @@ status: active
 summary: 协作性 skill（影响产出格式 / 要他人理解 / 多人共用）入库到仓库根 `skills/`；个人偏好 skill 留 harness-local；挂接机制由 process/scripts 层定义，ADR 不锁死
 tags: [adr, decision, skills, collaboration]
 related:
-  - dev/process/pre-decision-analysis
+  - dev/process/pre-decision-analysis/README
   - root/AGENTS
 adr_status: Proposed
 adr_number: "0007"

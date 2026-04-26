@@ -9,7 +9,7 @@ related:
   - dev/spec/infra/observability
   - dev/spec/infra/persistence
   - dev/spec/infra/cost-and-limits
-  - dev/spec/security
+  - dev/spec/security/README
 ---
 
 # 运维手册（占位）

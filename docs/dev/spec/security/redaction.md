@@ -5,7 +5,7 @@ status: active
 summary: 出口脱敏的必过滤项、配置开关、实现要点；与 secrets.md 共同构成防泄露体系
 tags: [spec, security, redaction]
 related:
-  - dev/spec/security
+  - dev/spec/security/README
   - dev/spec/security/secrets
   - dev/spec/infra/observability
   - dev/standards/logging

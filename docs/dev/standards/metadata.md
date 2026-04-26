@@ -122,12 +122,14 @@ contracts:                              # 本 spec 定义的对外契约名
 - `architecture`, `hub-and-spoke`, `modules`, `dependencies`
 - `session`, `session-model`, `lifecycle`
 - `idempotency`, `ordering`, `concurrency`
+- `layering`, `layered-architecture`, `ssot`
 
 ### 集成侧
 
 - `discord`, `platform-adapter`, `gateway`
 - `cc-cli`, `claude-code`, `agent-runtime`, `subprocess`
 - `message-protocol`, `normalized-event`
+- `agent-event`, `message-flow`, `dispatch`, `tool-boundary`
 
 ### 横切
 
@@ -135,15 +137,20 @@ contracts:                              # 本 spec 定义的对外契约名
 - `security`, `auth`, `allowlist`, `redaction`, `secrets`
 - `persistence`, `sqlite`, `storage`
 - `rate-limit`, `budget`, `cost`, `circuit-breaker`
+- `pollution`, `archive`, `deprecated`, `superseded`
 
 ### 流程与规范
 
 - `workflow`, `tdd`, `code-review`, `subagent`, `commit`, `release`
 - `coding`, `errors`, `docs-style`
+- `process`, `standards`, `spec`, `review`, `argue`, `ask-user`, `scratch`
+- `skills`, `setup`, `recon`, `hook`, `memory`, `collaboration`, `template`
+- `metadata`, `vocabulary`, `docs`
+- `changelog`
 
 ### 测试
 
-- `testing`, `fixtures`, `eval`
+- `testing`, `fixtures`, `eval`, `strategy`, `pipeline`
 
 ### ADR / 决策
 
@@ -153,6 +160,7 @@ contracts:                              # 本 spec 定义的对外契约名
 
 - `product`, `user-guide`, `faq`
 - `ops`, `runbook`
+- `project`, `navigation`, `dev-docs`
 
 新增 tag 前先查词汇表；必须新增时在此追加。
 

@@ -2,10 +2,10 @@
 title: ADR-0008 文档事实归属判定实现 SSOT
 type: adr
 status: active
-summary: 选择"事实归属判定 + process 编排边界"作为单一信息源（SSOT）的实现路径，拒绝引入 owns 字段、改源反查 hook、一致性测试等机械补丁
+summary: 选择"事实归属判定 + standards/process 边界互斥"作为单一信息源（SSOT）的实现路径，拒绝引入 owns 字段、改源反查 hook、一致性测试等机械补丁
 tags: [adr, decision, docs, ssot, layering]
 related:
-  - dev/process/doc-layering
+  - dev/standards/doc-ownership
   - dev/adr/README
   - dev/adr/0006-limits-layering-defense-first
 adr_status: Proposed
@@ -80,9 +80,11 @@ superseded_by: null
 - **缺点**：所有机制都建立在"分类判定模糊但靠工具治理"的前提上——owner 是索引不是约束，无法阻止另一类文档重写定义；改源反查只挡 rename 类 drift，挡不住"作者顺手在 overview 重写接口签名"；reviewer 判据靠文体约束会被持续侵蚀
 - **主要风险**：工具与规则越积越多，作者认知负担上升；根因（分类判定模糊）未解，drift 表层处理换形态继续发生
 
-### Option E：事实归属判定 + process 编排边界
+### Option E：事实归属判定 + standards/process 边界互斥
 
-把每段内容按其约束对象判定 owner：ADR 管决策依据，spec 管契约事实，architecture 管组合事实，testing 管验证证据模型，standards 管静态产物形态；process 不抢规则本体，只编排时序、触发、门禁、责任人与失败处理。每条事实只能落在唯一合适的 owner；其他目录只能 link，复述本身就被分类规则拒绝。
+把每段内容按其约束对象判定 owner：ADR 管决策依据，spec 管契约事实，architecture 管组合事实，testing 管验证证据模型，standards 管价值标准（"什么算合格 / 不合格"，含产物形态、准入禁入、命名规范、owner 矩阵本身），process 只管流程编排（"何时按哪份 standards 检查 / 谁负责 / 失败如何处理"）。每条事实只能落在唯一合适的 owner；其他目录只能 link，复述本身就被分类规则拒绝。
+
+standards 与 process 互斥这一刀切下去，doc-ownership 这种"owner 矩阵规则"自然落 standards，不需要为 process 写自指例外。
 
 - **优点**：根因解——SSOT 成为分类判定清晰的自然推论，不引入新机制；reviewer 凭对照清单可稳定判定（禁入清单结构化到接近 lint 规则的形式，但仍含"提及 vs 复述"的语义边界）；既有重复事实有统一处理规则
 - **缺点**：作者必须先识别"我在回答哪个问题"才能动笔，习惯转变需要时间；现有 architecture 文档需一次性瘦身（删除复述的接口签名与决策论点，改为 link）
@@ -90,19 +92,15 @@ superseded_by: null
 
 ## Decision
 
-选 **Option E：事实归属判定 + process 编排边界**。
+选 **Option E：事实归属判定 + standards/process 边界互斥**。
 
-具体规则本体（事实 owner 矩阵 + process 编排边界 + 冲突裁决）住 [`docs/dev/process/doc-layering.md`](../process/doc-layering.md)——本 ADR 只承载**为什么选这条路**，规则清单本身是"是什么"，按本 ADR 确立的分类规则不属于 ADR。
+具体标准本体（owner 矩阵 + 冲突裁决 + reviewer 判据）住 [`docs/dev/standards/doc-ownership.md`](../standards/doc-ownership.md)——本 ADR 只承载**为什么选这条路**。owner 矩阵是价值标准（"什么算合格 / 不合格"），按 owner 语义自然落 standards；process 不抢标准本体，只编排"何时按 doc-ownership 检查、谁检查、失败如何处理"。
 
-禁入类型对照 `process/doc-layering.md` 的清单稳定可判：非 owner 文档出现可独立还原的事实定义，或 `process/` 展开下游 owner 规则本体，都应直接拒绝并要求改成 owner 链接。
-
-**关于 doc-layering.md 自身**：本规则文件住在 `process/`，是因为它编排作者写文档时的 owner 选择，属于"协作时怎么落字"的元编排，是 process 的合法 owner 范畴。它不是被 process 编排的下游规则本体（决策依据 / 契约 / 组合 / 验证模型 / 产物形态），因此不触发 process 的禁入条款。这一例外仅适用于 doc-layering.md 自身——其他 process 文件不得援引此条作为展开下游规则本体的借口。
+禁入类型对照 `standards/doc-ownership.md` 的清单稳定可判：非 owner 文档出现可独立还原的事实定义，或 `process/` 展开 standards 本体，都应直接拒绝并要求改成 owner 链接。
 
 不引入 owns 字段、不引入 pre-commit hook、不引入一致性测试、不引入 lint 工具——**所有机械补丁都被本 ADR 显式拒绝**。如果未来事实归属判定实践证明不足，再单独开 ADR 引入工具，不在本 ADR 演进。
 
-`adr/README.md` 同步补强 ADR 自身的禁入清单，使之与本 ADR 主张的"事实归属判定"自洽——ADR 自己也必须遵守不写规则清单本体的规则（这正是本 ADR 把规则清单分到 process 的原因）。
-
-项目规则入口增加第 10 条核心原则 **SSOT**，链到本 ADR（决策依据）与 process/doc-layering.md（规则本体）。
+项目规则入口增加第 10 条核心原则 **SSOT**，链到本 ADR（决策依据）与 standards/doc-ownership.md（标准本体）。
 
 ## Consequences
 

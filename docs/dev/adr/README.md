@@ -116,7 +116,7 @@ Proposed ──(评审通过)──> Accepted
 
 ## 职责边界
 
-ADR 这一层只回答 **"为什么选 X 不选 Y"**。ADR 的禁入清单与跨目录冲突裁决统一住 [`../process/doc-layering.md`](../process/doc-layering.md)（ADR 行 + Reviewer 判据），本 README 不复述；ADR 文档内部结构见 [`../standards/docs-style.md#结构约定`](../standards/docs-style.md#结构约定)。
+ADR 这一层只回答 **"为什么选 X 不选 Y"**。ADR 的禁入清单与跨目录冲突裁决统一住 [`../standards/doc-ownership.md`](../standards/doc-ownership.md)（ADR 行 + Reviewer 判据），本 README 不复述；ADR 文档内部结构见 [`../standards/docs-style.md#结构约定`](../standards/docs-style.md#结构约定)。
 
 ADR 引用 spec / architecture / process / testing / standards 内容时**只 link，不复述**——读者跳到目标文件读细节。
 

@@ -18,7 +18,7 @@ related:
 
 ## 目录分类
 
-开发文档按主判定轴组织。分类冲突时，以 [`process/doc-layering.md`](process/doc-layering.md) 的 owner 判定与冲突裁决为准。
+开发文档按主判定轴组织。分类冲突时，以 [`standards/doc-ownership.md`](standards/doc-ownership.md) 的 owner 矩阵与冲突裁决为准。
 
 | 目录 | 主判定轴 | 读者的核心问题 |
 |---|---|---|

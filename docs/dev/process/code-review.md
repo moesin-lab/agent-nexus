@@ -30,6 +30,8 @@ related:
 - [ ] 是否跳过或注释了任何测试？（禁止）
 - [ ] CHANGELOG 是否更新？（影响用户时）
 - [ ] Commit 是否符合 Conventional Commits？
+- [ ] 改动涉及的 Markdown 文档 frontmatter 是否完整？（按 [`../standards/docs-style.md`](../standards/docs-style.md) 与 [`../standards/metadata.md`](../standards/metadata.md) 检查）
+- [ ] 代码改动对应的文档是否同 PR 改？没改清楚理由（见下方"禁止"）
 - [ ] CI 是否全绿？
 
 ## Codex review 流程
@@ -99,6 +101,8 @@ Ultrareview 的反馈响应规则同上。
 - 合并有未回应反馈的 PR
 - 跳过 review 直接合并（不存在"太小就不 review"的例外）
 - 在 `main` 上直接 commit，绕过分支 / PR / review（见 `commit-and-branch.md`"分支先行"）
+- 合入存在缺 frontmatter 的 Markdown 文件——reviewer 看到即拒，按 [`../standards/docs-style.md`](../standards/docs-style.md) 的合格条件验收
+- 合入代码改动而对应文档没同 PR 更新——文档与代码必须同 PR 改；未来发现文档与代码不一致，按 bug 处理（开 issue 追踪 + 优先级同正确性问题）
 
 ## 反模式速查
 

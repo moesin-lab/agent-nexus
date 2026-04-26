@@ -7,6 +7,7 @@ bin/
 vendor/
 target/
 *.tsbuildinfo
+*.bun-build
 __pycache__/
 *.pyc
 .venv/

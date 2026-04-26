@@ -55,6 +55,14 @@ related:
 - `limits.globalMessagesPerSec`（默认 `5`）：全局入站消息限速
 - 超限行为：排队（最多 `limits.sessionQueueMaxWaitMs` = 30s）→ 仍超则拒绝 + 用户可见提示
 
+### Session 生命周期 timeout
+
+session 在状态机里的空闲与中断超时，状态机本体见 [`../../architecture/session-model.md`](../../architecture/session-model.md)。
+
+- `limits.session.idleTimeoutMs`（默认 `1800000` = 30 分钟）：Active → Idle，距离最近一条消息/事件超过该值
+- `limits.session.idleToArchiveMs`（默认 `7200000` = 2 小时）：Idle → Archived
+- `limits.session.interruptedToArchiveMs`（默认 `86400000` = 24 小时）：进程重启后 Interrupted 实例若未被 `/resume` 或 `/end`，到期后自动 Archived
+
 ### 出站 Rate Limit（Discord）
 
 - 监听响应头 `X-RateLimit-Remaining`、`X-RateLimit-Reset-After`
@@ -161,6 +169,11 @@ maxConcurrentSessions = 3
 maxConcurrentLlmCalls = 3
 globalMessagesPerSec = 5
 sessionQueueMaxWaitMs = 30000
+
+[limits.session]
+idleTimeoutMs = 1800000          # 30 分钟
+idleToArchiveMs = 7200000        # 2 小时
+interruptedToArchiveMs = 86400000 # 24 小时
 
 [circuit]
 consecutiveFailureThreshold = 3

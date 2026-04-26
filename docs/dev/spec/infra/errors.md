@@ -19,7 +19,7 @@ related:
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `kind` | `user | platform | agent | internal` | 错误大类 |
+| `kind` | `user \| platform \| agent \| internal` | 错误大类 |
 | `code` | string | 同一 kind 内唯一的细分错误码 |
 | `message` | string | 给开发者看的简短原因 |
 | `cause` | unknown? | 原始错误（如有） |

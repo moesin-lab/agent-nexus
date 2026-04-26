@@ -104,16 +104,16 @@ SessionKey 维度上的查询索引与唯一约束见 [`persistence.md`](../spec
 |---|---|
 | Created → Active | 收到首条消息，agent 子进程 spawn 成功 |
 | Created → Errored | spawn 失败 |
-| Active → Idle | 距离最近一条消息/事件超过 idle timeout |
+| Active → Idle | 距离最近一条消息/事件超过 `limits.session.idleTimeoutMs`（默认 30 分钟，见 [`../spec/infra/cost-and-limits.md` §Session 生命周期 timeout](../spec/infra/cost-and-limits.md#session-生命周期-timeout)） |
 | Idle → Active | 收到同 SessionKey 的新消息且本 generation 未 Archived |
-| Idle → Archived | 超过 idle-to-archive 阈值 |
+| Idle → Archived | 超过 `limits.session.idleToArchiveMs`（默认 2 小时） |
 | Active → Archived | 显式 `/end` 命令 |
 | Active → Errored | 熔断触发（见 `cost-and-limits.md`）/ agent 崩溃 / wallclock_timeout |
 | Errored → Active | 用户 `/resume` 且在冷却期内或冷却期结束后的第一条新消息（见 `cost-and-limits.md` §熔断） |
 | Errored → Archived | 用户 `/end`，或冷却期后仍无新消息达到归档阈值 |
 | Active/Idle → Interrupted | **进程重启**：所有非终态 session 转入 Interrupted |
 | Interrupted → Active | 用户 `/resume` → spawn 新 agent 子进程（复用 transcript）|
-| Interrupted → Archived | 用户 `/end`，或 interrupted-to-archive 阈值 |
+| Interrupted → Archived | 用户 `/end`，或超过 `limits.session.interruptedToArchiveMs`（默认 24 小时） |
 
 **终态**：`Archived`。终态 session 不再接受任何操作；同 SessionKey 的新消息会触发 `generation + 1` 的新 Created 实例。
 
@@ -173,7 +173,7 @@ Discord gateway 会重发事件（at-least-once）。同一条用户消息可能
 - 所有上一轮的 Active/Idle session 状态转为 **Interrupted**（写回 DB）
 - 收到任何 Interrupted session 所属 SessionKey 的消息 → 先发提示"上次被中断了，是否恢复"（通过 ephemeral ACK + 按钮，按 `platform-adapter.md` 能力决定）
 - 用户 `/resume` → spawn 新 agent 子进程，复用当前 session 实例，保留历史 transcript
-- 用户 `/end` 或达到 interrupted-to-archive 阈值 → Archived，同 SessionKey 下次消息会创建新 generation 的新 Created
+- 用户 `/end` 或超过 `limits.session.interruptedToArchiveMs`（默认 24 小时）→ Archived，同 SessionKey 下次消息会创建新 generation 的新 Created
 
 ### agent 子进程崩溃
 

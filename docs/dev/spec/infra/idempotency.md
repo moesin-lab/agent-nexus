@@ -33,7 +33,7 @@ contracts:
 - **Adapter** 只负责归一化与投递，**不做去重**
 - **Daemon** 在 `Engine.dispatch` 流程中执行 `checkAndSet(sessionKey, messageId)`
 - 顺序：**auth → idempotency → 限流/预算 → session 队列**
-  - 顺序的安全依据见 [`../security/README.md`](../security/README.md)
+  - 顺序的安全依据见 [`../security/auth.md` §权限检查位置](../security/auth.md#权限检查位置)（`auth_denied` 不进 idempotency 表，避免上游伪造 messageId 刷表）
   - 数据流见 [`../../architecture/overview.md`](../../architecture/overview.md) §入站数据流
 
 ## 流程

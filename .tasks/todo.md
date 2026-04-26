@@ -46,10 +46,12 @@ related:
 经 Opus + Codex + Sonnet 三方迭代后收敛的执行计划。核心判断：当前 6-owner 不重组，
 用清理过程当探针，按发现的具体摩擦决定是否引入新规则或后续重组。
 
-### 阶段 1：本 PR 收尾（最小动作）
+### 阶段 1：本 PR 收尾（最小动作）—— ✅ 已合入（PR #18, commit 004a0f2）
 
-- [ ] doc-ownership.md "不属于本规则" 段加元层文档豁免（README / template / 索引 / 归档说明等不受 owner 矩阵约束）
-- [ ] commit + push，本 PR 准备合入
+- [x] doc-ownership.md "不属于本规则" 段加元层文档豁免（README / template / 索引 / 归档说明等不受 owner 矩阵约束）
+- [x] reviewer 后续追问的两条静默丢失 gating 补到 process/code-review.md（缺 frontmatter 拒入 / 文档落后于代码按 bug 处理）
+- [x] AGENTS.md §10 删掉代码层逃生口
+- [x] commit + push + 合入
 
 **不**引入 Codex 提的两条精细化规则（"实现充分性"判据 / "决策权威 vs 操作权威"区分）
 ——它们的价值要在阶段 2 清理场景里被验证后再考虑正式引入。

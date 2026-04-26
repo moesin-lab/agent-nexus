@@ -63,6 +63,8 @@ interface AgentSession {
 }
 ```
 
+> **`AgentSession` 与 `Session` 的区分**：本 spec 的 `AgentSession` 是 agent runtime 视角的句柄——表示某个具体 agent 后端（如 CC CLI 子进程）的运行实例，状态机是 `Spawning/Ready/Busy/Idle/Errored/Stopped`。架构层的 `Session`（见 [`../architecture/session-model.md`](../architecture/session-model.md)）是会话本体——表示一段用户对话的生命周期，状态机是 `Created/Active/Idle/Errored/Interrupted/Archived`。两者关系是 daemon 持有一个 `Session`，按需 spawn / stop 一个对应的 `AgentSession`。状态机不重叠：`AgentSession.state` 描述子进程运行态，`Session.state` 描述对话生命周期态。
+
 ## SessionConfig
 
 daemon 启动 agent session 时传入的配置。

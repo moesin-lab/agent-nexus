@@ -97,7 +97,7 @@ superseded_by: null
 
 ## Out of scope
 
-- **不决定**具体阈值默认值（spec 细节，可独立调整）
+- **不决定**具体阈值默认值——默认值见 [`../spec/infra/cost-and-limits.md`](../spec/infra/cost-and-limits.md) §"一等 limits"，可独立调整
 - **不决定**`订阅配额跟踪`的具体实现（MVP 未实现，待 Anthropic 接口支持）
 - **不决定**第三方计费后端（Bedrock/Vertex）的介入方式（将来发新 ADR）
 - **不决定**用户路径自动识别（可以让用户显式配置"我是订阅用户 / API 用户 / 混合"）

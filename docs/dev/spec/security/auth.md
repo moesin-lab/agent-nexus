@@ -5,7 +5,7 @@ status: active
 summary: Discord 身份四元组 allowlist、会话绑定、公开 channel 默认转私域；权限检查位置与流程
 tags: [spec, security, auth, allowlist]
 related:
-  - dev/spec/security
+  - dev/spec/security/README
   - dev/spec/infra/idempotency
   - dev/spec/security/tool-boundary
   - dev/architecture/overview

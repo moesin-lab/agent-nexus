@@ -5,7 +5,7 @@ status: active
 summary: CC CLI 工具白名单、默认集、危险工具启用流程、工作目录约束
 tags: [spec, security, tool-boundary, cc-cli]
 related:
-  - dev/spec/security
+  - dev/spec/security/README
   - dev/spec/security/auth
   - dev/spec/agent-backends/claude-code-cli
   - dev/spec/agent-runtime

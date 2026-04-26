@@ -5,7 +5,7 @@ status: active
 summary: OS keychain / env / 文件三层存储；命名前缀；禁止写入清单；轮换策略
 tags: [spec, security, secrets]
 related:
-  - dev/spec/security
+  - dev/spec/security/README
   - dev/spec/security/redaction
   - dev/spec/infra/persistence
   - dev/spec/infra/observability

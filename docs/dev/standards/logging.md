@@ -7,7 +7,7 @@ tags: [logging, standards, observability]
 related:
   - dev/spec/infra/observability
   - dev/standards/errors
-  - dev/spec/security
+  - dev/spec/security/README
 ---
 
 # 日志规范

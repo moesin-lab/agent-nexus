@@ -8,7 +8,7 @@ related:
   - dev/adr/0001-im-platform-discord
   - dev/adr/0002-agent-backend-claude-code-cli
   - dev/spec/infra/persistence
-  - dev/spec/security
+  - dev/spec/security/README
 adr_status: Accepted
 adr_number: "0003"
 decision_date: 2026-04-22

@@ -1,3 +1,13 @@
+---
+title: Pre-Decision Analysis 子流程：现状调研
+type: process
+status: active
+summary: 现状调研报告场景的两轮 scratch 模式、摘要限制、展开 slot 与深挖规则
+tags: [process, scratch, review]
+related:
+  - dev/process/pre-decision-analysis/README
+---
+
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
 > 各 harness 通过 `skills/pre-decision-analysis/` 下自身执行器引用。
 

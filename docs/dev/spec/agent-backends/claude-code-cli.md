@@ -7,7 +7,7 @@ tags: [spec, cc-cli, claude-code, agent-runtime, subprocess]
 related:
   - dev/adr/0002-agent-backend-claude-code-cli
   - dev/spec/agent-runtime
-  - dev/spec/security
+  - dev/spec/security/README
   - dev/spec/infra/observability
 contracts:
   - ClaudeCodeInvocation

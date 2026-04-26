@@ -91,6 +91,8 @@ Proposed ──(评审通过)──> Accepted
 | [0004](0004-language-runtime.md) | 实现语言与运行时选型 | Proposed |
 | [0005](deprecated/0005-subscription-as-first-class-path.md) | 订阅计费为一等用户路径 | Superseded by 0006 |
 | [0006](0006-limits-layering-defense-first.md) | Limits 分层——失控保护为一等，配额控制按用户路径可选 | Accepted |
+| [0007](0007-collaborative-skill-promotion.md) | 协作性 skill 入库与挂接 | Proposed |
+| [0008](0008-doc-layering-ssot.md) | 文档事实归属判定实现 SSOT | Proposed |
 
 ## 引用规则
 
@@ -112,9 +114,16 @@ Proposed ──(评审通过)──> Accepted
 
 > **可选的 UX 增强**：被取代 ADR 正文顶部可加 banner（例：`> **已被 [ADR-MMMM](../MMMM-...md) 取代，仅供审计追溯**`）帮助人类读者快速识别。不强制，不作工作流步骤——路径已承担防污染主责。
 
+## 职责边界
+
+ADR 这一层只回答 **"为什么选 X 不选 Y"**。ADR 的禁入清单与跨目录冲突裁决统一住 [`../standards/doc-ownership.md`](../standards/doc-ownership.md)（ADR 行 + Reviewer 判据），本 README 不复述；ADR 文档内部结构见 [`../standards/docs-style.md#结构约定`](../standards/docs-style.md#结构约定)。
+
+ADR 引用 spec / architecture / process / testing / standards 内容时**只 link，不复述**——读者跳到目标文件读细节。
+
 ## 不做的事
 
 - 不把 ADR 当长篇论文写；60–200 行为宜
 - 不在 ADR 里写实现细节（实现细节放 spec）
+- 不在 ADR 里写规则清单本体（规则本体放 process / spec / standards，ADR 只承载"为什么这样定规则"）
 - 不把还没做的决策写成 ADR（没决策就没 ADR）
 - 不删除任何已合入的 ADR 文件（被取代的 ADR 移到 `deprecated/` 保留）

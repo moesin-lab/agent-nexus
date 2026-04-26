@@ -1,3 +1,14 @@
+---
+title: Pre-Decision Analysis 子流程：argue 派发
+type: process
+status: active
+summary: argue subagent 的触发条件、派发对象、prompt 要素、结果落点与反模式
+tags: [process, argue, subagent, review]
+related:
+  - dev/process/pre-decision-analysis/README
+  - dev/process/subagent-usage
+---
+
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
 > 各 harness 通过 `skills/pre-decision-analysis/` 下自身执行器引用。
 

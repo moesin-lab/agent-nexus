@@ -1,3 +1,13 @@
+---
+title: Pre-Decision Analysis Scratch 输出模板
+type: process
+status: active
+summary: scratch 文件骨架、review slot 格式、段边界、定向问题与命名规则
+tags: [process, scratch, template]
+related:
+  - dev/process/pre-decision-analysis/README
+---
+
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
 > 各 harness 通过 `skills/pre-decision-analysis/` 下自身执行器引用。
 

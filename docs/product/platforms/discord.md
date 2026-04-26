@@ -8,7 +8,7 @@ related:
   - product/user-guide
   - dev/spec/platform-adapter
   - dev/spec/message-protocol
-  - dev/spec/security
+  - dev/spec/security/README
 ---
 
 # Discord 使用手册（占位）

@@ -1,3 +1,14 @@
+---
+title: Pre-Decision Analysis 子流程：ADR 多方案
+type: process
+status: active
+summary: 内部 ADR 或多方案对比场景的三段开场模板、专属硬规则与主轴衔接方式
+tags: [process, adr, decision]
+related:
+  - dev/process/pre-decision-analysis/README
+  - dev/adr/README
+---
+
 > 本文件是 `docs/dev/process/pre-decision-analysis/README.md` 的组件，agent-agnostic。
 > 各 harness 通过 `skills/pre-decision-analysis/` 下自身执行器引用。
 

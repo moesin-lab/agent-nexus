@@ -102,6 +102,15 @@ BREAKING CHANGE: session key 从 (platform, channelId, userId) 改为
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ```
 
+## Merge 阶段产物合格条件
+
+PR 合入 main 时的产物形态判据：
+
+- CI 全绿（unit + integration 必跑层全过；E2E / Eval 按 [`../process/tdd.md` §运行节奏与 CI 门槛](../process/tdd.md#运行节奏与-ci-门槛) 判定）
+- 所有 commit message 符合本文件 §Conventional Commits + §Commit 粒度
+- CHANGELOG 更新（若改动影响用户）
+- 走 squash merge（按 [`../process/commit-and-branch.md` §合并策略](../process/commit-and-branch.md#合并策略)）
+
 ## Reviewer 拒绝条件
 
 reviewer 在 PR 里看到下列模式应直接拒绝：

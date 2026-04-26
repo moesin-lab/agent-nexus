@@ -37,14 +37,7 @@ Refactor → 在测试保持绿的前提下，整理代码与命名
 
 ## 何时可跳过新增/修改测试
 
-以下改动允许在主路径"是否新增/修改测试"那一步直接跳过：
-
-- 文档错别字、链接修复、注释调整
-- 依赖的补丁版本升级（无 breaking change，且既有测试套通过）
-- 本地开发脚本的小调整（不影响 CI 与产品代码）
-- 纯重命名 / 纯格式化（被测行为未变，依赖既有测试套保护）
-
-跳过新增/修改测试不等于跳过流程；分支、PR、review、合并门禁仍按 [`workflow.md`](workflow.md) 执行。是否同 PR 改 ADR / spec，分别按 [`../adr/README.md`](../adr/README.md) 与 [`../spec/README.md`](../spec/README.md) 判定。
+跳过判据见 [`../standards/testing.md` §何时可跳过新增/修改测试](../standards/testing.md#何时可跳过新增修改测试)。本文件只编排：跳过判定后仍走分支 / PR / review / 合并门禁。
 
 ## 触发与失败处理
 

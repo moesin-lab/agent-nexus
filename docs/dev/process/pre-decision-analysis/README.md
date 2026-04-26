@@ -2,9 +2,10 @@
 title: Pre-Decision Analysis（决策前结构化分析协作约定）
 type: process
 status: active
-summary: 当用户提出需要人类拍板但必须先做结构化分析的问题时的 agent-agnostic 协作约定；agent-first 执行、review 做"选择"不做"批改"、真分叉才向用户推选项、PR diff 作为后审载体
+summary: agent-first 协作约定的流程编排——主轴 6 步、子流程索引、per-harness 实现；形态决策依据见 ADR-0010，触发与产物合格条件见 standards
 tags: [process, review, scratch, argue, ask-user]
 related:
+  - dev/adr/0010-pre-decision-agent-first
   - dev/adr/0007-collaborative-skill-promotion
   - dev/standards/pre-decision-analysis
   - dev/standards/pre-decision-analysis-scratch
@@ -14,40 +15,11 @@ related:
 # Pre-Decision Analysis
 
 > 本文件是 `pre-decision-analysis` 协作约定的**权威源**（agent-agnostic）。各 harness 通过自身薄执行器引用本 docs（实现见仓库 `skills/pre-decision-analysis/` 下各 harness 子目录）。
-> 子流程住在同目录下的 `pre-decision-analysis/` 子目录；产物合格条件与 scratch 模板分别见 [`../../standards/pre-decision-analysis.md`](../../standards/pre-decision-analysis.md) 与 [`../../standards/pre-decision-analysis-scratch.md`](../../standards/pre-decision-analysis-scratch.md)。
+> 子流程住在同目录下的 `pre-decision-analysis/` 子目录；形态决策依据见 [ADR-0010](../../adr/0010-pre-decision-agent-first.md)；触发判据 / 核心原则 / Scratch 硬触发 / 反模式等产物合格条件见 [`../../standards/pre-decision-analysis.md`](../../standards/pre-decision-analysis.md)；scratch 模板见 [`../../standards/pre-decision-analysis-scratch.md`](../../standards/pre-decision-analysis-scratch.md)。
 
-## 核心前提
+## 何时进入本流程
 
-1. **版本管理很方便**（git 回滚接近零成本）
-2. **agent 执行很廉价**（token + 时间便宜）
-3. **人类 reviewer 的 review 很昂贵**（注意力 + 认知）
-
-这三条决定了协作形态：**agent 多做、人少看、review 做"选择"不做"批改"**。传统"先摊方案拿 approval 再动手"对多数场景是过度工程——agent 有把握就直接干，错了 git reset。
-
-## 核心原则
-
-- **Agent-first 执行**：agent 有把握就直接开分支落地；**错了 git reset / close PR**，不让用户提前 review 抽象方案
-- **Review = 选择，不批改**：用户看 PR diff 点 merge / close / inline comment，不在 scratch 里打字批改抽象 trade-off
-- **真分叉才问**：判据是"**agent 有没有把握**"，不是"回滚成本"（回滚免费）。agent 自决的东西不占 review 带宽
-- **能自验的问题不进 review**：有 test / lint / typecheck / 脚本能自证的，agent 自验过就不问
-- **多方案并行 > 抽象选择**：agent 没把握时可同时起 2 个分支做出结果，用户 diff 两个 PR 选 merge 一个——比在文本 trade-off 里选强
-- **Argue 作 pre-flight self-check**：先自检，argue 要点 + agent 回应贴 PR body（透明化，给 reviewer 背景）
-- **Scratch 默认不起**；仅在跨会话 / 复杂归档时起
-
-## 何时触发
-
-**该触发**（动词 + 结构任一命中，且问题开放）：
-
-- 动词：评估 / 对比 / 审视 / 值不值得 / 该不该 / 拆不拆 / 利弊 / trade-off
-- 结构：问题开放无单一答案；候选 ≥ 2；改动跨多位置；涉及跨多文件的架构级变更
-
-**不该触发**：用户已给明确执行指令；单一事实查询；紧急修复；用户已说"直接做 / 别问了"；前文已讨论过只是待执行。
-
-**触发前三问**（agent 自问，不落盘）：
-
-1. 要决策什么？一句话写清。
-2. 决策者是谁？几乎总是人类。
-3. agent 自己能不能带着推荐直接干、错了 git reset？能 → 走路径 A，不问用户。不能 → 走路径 B。
+判据见 [`../../standards/pre-decision-analysis.md` §触发判据](../../standards/pre-decision-analysis.md#触发判据)。本文件只编排进入后做什么。
 
 ## 主轴 6 步
 
@@ -61,7 +33,7 @@ related:
 
 触发条件：跨多文件 OR 架构级 OR agent 对方向拿不准。单文件 + 已有先例 + agent 有把握可跳。
 
-argue 要点 + agent 回应**贴 PR body** 的"异议 & 回应"小节。见 `pre-decision-analysis/subflow-argue.md`。
+argue 要点 + agent 回应**贴 PR body** 的"异议 & 回应"小节。argue prompt 合格条件见 [`../../standards/pre-decision-analysis.md` §Argue 自检产物标准](../../standards/pre-decision-analysis.md#argue-自检产物标准)。
 
 ### 步骤 3：识别任务类型
 
@@ -78,7 +50,7 @@ agent 直接：
 - push + 开 PR；PR body 贴 argue 要点 + 关键决策要点
 - 等用户在 PR 做后审
 
-方案级分叉拿不准时：**多方案并行**——agent 同时起 2-3 个分支做出不同方案的完整产物，开 2-3 个 PR。用户 diff 比较，merge 一个、close 其他。代价是 agent 时间，便宜。
+方案级分叉拿不准时：**多方案并行**——agent 同时起 2-3 个分支做出不同方案的完整产物，开 2-3 个 PR。用户 diff 比较，merge 一个、close 其他。
 
 ### 步骤 4B：路径 B（真不确定才问）
 
@@ -88,7 +60,7 @@ agent 直接：
 - 向用户推送选项让其点选（单轮；harness 有按钮式工具时优先用，否则普通对话列选项）
 - 用户答完 → 走路径 A
 
-**禁止**：把 agent 能自决的细节（命名 / 格式 / 文件数量合并）塞进推送给用户的选项里。
+禁入条件见 [`../../standards/pre-decision-analysis.md` §路径 B 的禁入条件](../../standards/pre-decision-analysis.md#路径-b-的禁入条件)。
 
 ### 步骤 5：PR diff 后审
 
@@ -104,26 +76,11 @@ agent 直接：
 - PR 有 comment → agent 读 comment 修，新 commit push
 - PR merge → 完成
 
-## Checkpoint（可选）
+## Checkpoint / Scratch 触发
 
-Git reset 零成本后，Checkpoint 不强制。只在以下场景用：
+Checkpoint 与 Scratch 默认不起，只在硬触发条件满足时起。条件见 [`../../standards/pre-decision-analysis.md` §Checkpoint 触发条件](../../standards/pre-decision-analysis.md#checkpoint-触发条件可选) 与 [§Scratch 硬触发条件](../../standards/pre-decision-analysis.md#scratch-硬触发条件)。
 
-- **用户明确**说"做到一半看一眼"
-- **agent 对方向没把握**但又不够"真分叉"级别——主动 push 骨架 commit 让用户 diff 确认再继续
-- **极大改动**（20+ 文件）：建议拆成 2 个 commit，骨架在前、细节在后，方便 reviewer 分段审
-
-## Scratch 硬触发（何时落盘）
-
-默认不起。仅在以下**至少一条成立**时起：
-
-- 向用户推选项连续 2 轮都没定方向（讨论复杂到要归档）
-- 用户明确要跨会话继续讨论
-- 涉及 ≥ 2 个 ADR 需跨决策协调（PR 描述塞不下）
-- 用户显式说"起 scratch"
-
-路径固定 `.tasks/<topic>-<purpose>.scratch.md`（`.tasks/*.scratch.md` 已 gitignore）。
-
-起了 scratch 后按 [`../../standards/pre-decision-analysis-scratch.md`](../../standards/pre-decision-analysis-scratch.md) 的格式。
+起 scratch 后按 [`../../standards/pre-decision-analysis-scratch.md`](../../standards/pre-decision-analysis-scratch.md) 的格式。
 
 ## 子流程索引
 

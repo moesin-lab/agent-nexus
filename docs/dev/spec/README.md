@@ -88,7 +88,17 @@ related:
 - 测试代码新增 / 重构（spec 契约未变）
 - 性能优化但接口与可观测行为未变
 
-跳过 spec ≠ 跳过流程——**分支、PR、review、squash merge 不可跳过**，见 [`../process/workflow.md` §分支先行](../process/workflow.md#分支先行不可跳过)。是否同 PR 改 ADR / 测试，分别按 [`../adr/README.md` §何时可跳过 ADR](../adr/README.md#何时可跳过-adr) 与 [`../process/tdd.md` §何时可跳过新增/修改测试](../process/tdd.md#何时可跳过新增修改测试) 判定。
+跳过 spec ≠ 跳过流程——**分支、PR、review、squash merge 不可跳过**，见 [`../process/workflow.md` §分支先行](../process/workflow.md#分支先行不可跳过)。是否同 PR 改 ADR / 测试，分别按 [`../adr/README.md` §何时可跳过 ADR](../adr/README.md#何时可跳过-adr) 与 [`../standards/testing.md` §何时可跳过新增/修改测试](../standards/testing.md#何时可跳过新增修改测试) 判定。
+
+## 产物合格条件（DoD）
+
+spec 合格的判据：
+
+- frontmatter 字段齐（按 [`../standards/metadata.md`](../standards/metadata.md)）
+- 至少包含字段表或伪代码接口（不是纯散文描述）
+- 字段名 / 类型 / 语义清晰，无"将来再补"占位
+- 边界清晰：每个 spec 文件定义一个明确的接口或协议，不交叉
+- reviewer 通读确认，无含糊或冗余表述
 
 ## 与 ADR 的关系
 

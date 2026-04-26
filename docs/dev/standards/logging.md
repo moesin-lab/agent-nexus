@@ -46,13 +46,7 @@ related:
 
 ## 禁止打印的内容
 
-- **密钥/Token**：Discord bot token、Anthropic API key、OAuth secret
-- **环境变量的原值**（尤其带 `KEY`、`SECRET`、`TOKEN` 字样）
-- **用户的绝对路径**（替换为项目相对路径或 `~/`）
-- **用户消息正文在 IM 级别**（sessionKey + messageId 引用即可；需要时另存脱敏快照）
-- **CC CLI 的完整输出原文**（摘要或 hash；要完整输出走专门的 transcript 落盘）
-
-脱敏在日志系统入口拦截，详见 [`security/README.md`](../spec/security/README.md)。
+清单见 [`../spec/security/redaction.md` §必过滤项](../spec/security/redaction.md#必过滤项)（owner）。日志 sink 的 formatter 在出口前调用 redactor 拦截，本文件不复述清单。
 
 ## 输出格式
 

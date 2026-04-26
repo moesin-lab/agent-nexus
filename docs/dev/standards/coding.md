@@ -44,19 +44,11 @@ related:
 
 ## 错误处理
 
-具体规则在 [`errors.md`](errors.md)。核心：
-
-- 永远不吞异常/错误（禁止空 catch）
-- 边界处处理错误（I/O、解析），内部传递
-- 错误要分类，不要只给一个 string
+见 [`errors.md`](errors.md)（owner）。
 
 ## 日志
 
-具体规则在 [`logging.md`](logging.md)。核心：
-
-- 用结构化日志，不拼字符串
-- 日志字段必须符合 [`../spec/observability.md`](../spec/infra/observability.md) 的字段表
-- 禁止打印密钥、token、绝对路径、env 原值
+见 [`logging.md`](logging.md)（owner）；字段契约见 [`../spec/infra/observability.md`](../spec/infra/observability.md)；禁止打印项见 [`../spec/security/redaction.md`](../spec/security/redaction.md)。
 
 ## 注释
 

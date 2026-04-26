@@ -17,6 +17,25 @@ related:
 
 **Red-Green-Refactor 节奏 / 何时跑测试 / CI 失败处理 / reviewer 验收**等流程编排见 [`../process/tdd.md`](../process/tdd.md)；**测试分层 / mock 边界 / 各层目标**等验证证据模型见 [`../testing/strategy.md`](../testing/strategy.md)。本文件只承载"测试本身长什么样才算合格"的标准本体。
 
+## 何时可跳过新增/修改测试
+
+以下改动允许跳过新增/修改测试，对应"无需测试合格条件"判定：
+
+- 文档错别字、链接修复、注释调整
+- 依赖的补丁版本升级（无 breaking change，且既有测试套通过）
+- 本地开发脚本的小调整（不影响 CI 与产品代码）
+- 纯重命名 / 纯格式化（被测行为未变，依赖既有测试套保护）
+
+跳过新增/修改测试不等于跳过流程；分支、PR、review、合并门禁仍按 [`../process/workflow.md`](../process/workflow.md) 执行。是否同 PR 改 ADR / spec，分别按 [`../adr/README.md`](../adr/README.md) 与 [`../spec/README.md`](../spec/README.md) 判定。
+
+## TDD 各阶段产物合格条件
+
+各阶段的产物形态判据，与 [`../process/tdd.md`](../process/tdd.md) 的 Red-Green-Refactor 节奏对应：
+
+- **Red 阶段（failing test）**：测试运行确实 fail，且 fail 原因是"功能未实现"而非"语法错 / setup 错"。fail 原因不对要重写测试再走。
+- **Green 阶段（实现）**：所有相关测试通过；无测试被跳过、注释、删除。被 skip / 注释的测试视为不合格。
+- **Refactor 阶段**：测试保持绿；任何从绿变红立刻回滚到上一个绿状态。
+
 ## 探针例外（exploratory spike）
 
 允许在不知道接口形态时先写一段探针代码跑通 happy path，但探针**不是**"先写实现再补测试"的借口。区别：探针会被丢弃重写，"先写实现"不会。

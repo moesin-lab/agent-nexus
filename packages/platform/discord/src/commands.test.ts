@@ -56,15 +56,51 @@ describe('registerSlashCommands', () => {
     expect(logger.error).not.toHaveBeenCalled();
   });
 
-  it('单条成功 → create 调用 1 次 + info registered', async () => {
+  it('单条成功（不传 guildId）→ create(data, undefined) + scope=global', async () => {
     const logger = makeLogger();
     const create = vi.fn(async () => ({}));
     await registerSlashCommands({ create }, [FAKE_SPEC], logger);
     expect(create).toHaveBeenCalledOnce();
-    expect(create).toHaveBeenCalledWith(FAKE_SPEC.data);
+    expect(create).toHaveBeenCalledWith(FAKE_SPEC.data, undefined);
     expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ command: 'reply-mode' }),
+      expect.objectContaining({
+        command: 'reply-mode',
+        scope: 'global',
+        guildId: null,
+      }),
       'discord_slash_command_registered',
+    );
+  });
+
+  it('传 guildId → create(data, guildId) + scope=guild + 日志含 guildId', async () => {
+    const logger = makeLogger();
+    const create = vi.fn(async () => ({}));
+    await registerSlashCommands({ create }, [FAKE_SPEC], logger, 'GUILD123');
+    expect(create).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenCalledWith(FAKE_SPEC.data, 'GUILD123');
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'reply-mode',
+        scope: 'guild',
+        guildId: 'GUILD123',
+      }),
+      'discord_slash_command_registered',
+    );
+  });
+
+  it('传 guildId 但 create reject（如 bot 不在该 guild）→ error 日志含 scope/guildId', async () => {
+    const logger = makeLogger();
+    const create = vi.fn(async () => {
+      throw new Error('Missing Access');
+    });
+    await registerSlashCommands({ create }, [FAKE_SPEC], logger, 'GUILD_NOT_JOINED');
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'reply-mode',
+        scope: 'guild',
+        guildId: 'GUILD_NOT_JOINED',
+      }),
+      'discord_slash_command_register_failed',
     );
   });
 

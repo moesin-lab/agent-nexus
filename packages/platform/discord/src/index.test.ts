@@ -1,9 +1,28 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Message } from 'discord.js';
-import { buildBotMentionRegex, buildSlices, parseInbound, SLICE_SIZE } from './index.js';
+import {
+  buildBotMentionRegex,
+  buildSlices,
+  parseInbound,
+  SLICE_SIZE,
+  type ParsedInbound,
+} from './index.js';
+
+/** 解包 `kind: 'event'`；otherwise 抛——让断言失败时直接看到 drop reason。 */
+function expectEvent(r: ParsedInbound) {
+  if (r.kind !== 'event') {
+    throw new Error(`expected kind=event, got drop reason=${r.reason}`);
+  }
+  return r.event;
+}
 
 const BOT_ID = '900000000000000001';
 const OTHER_ID = '900000000000000002';
+
+// 默认放行集合：覆盖 fixture 里出现的所有 author id（OTHER_ID / U7 / U-init / U_X）。
+// 让既有测试聚焦于"非 allowlist 维度"（mention / bot guard / self / system）；
+// allowlist 自身的 fail-closed 行为在末尾的独立 describe 块里测。
+const ALLOWED: readonly string[] = [OTHER_ID, 'U7', 'U-init', 'U_X'];
 
 function makeMsg(overrides: {
   content: string;
@@ -92,33 +111,33 @@ describe('buildBotMentionRegex', () => {
 });
 
 describe('parseInbound', () => {
-  it('author 是 bot → null', () => {
+  it('author 是 bot → drop:noise', () => {
     const msg = makeMsg({ content: `<@${BOT_ID}> hello`, authorBot: true });
-    expect(parseInbound(msg, BOT_ID)).toBeNull();
+    expect(parseInbound(msg, BOT_ID, ALLOWED)).toEqual({ kind: 'drop', reason: 'noise' });
   });
 
-  it('Discord system message（pin / join / thread-create 等）→ null（mention 模式）', () => {
+  it('Discord system message（pin / join / thread-create 等）→ drop:noise（mention 模式）', () => {
     const msg = makeMsg({ content: `<@${BOT_ID}> someone joined`, system: true });
-    expect(parseInbound(msg, BOT_ID)).toBeNull();
+    expect(parseInbound(msg, BOT_ID, ALLOWED)).toEqual({ kind: 'drop', reason: 'noise' });
   });
 
-  it('author 是机器人本身 → null（防御 bot 标志位绕过）', () => {
+  it('author 是机器人本身 → drop:noise（防御 bot 标志位绕过）', () => {
     const msg = makeMsg({
       content: `<@${BOT_ID}> hello`,
       authorId: BOT_ID,
       authorBot: false,
     });
-    expect(parseInbound(msg, BOT_ID)).toBeNull();
+    expect(parseInbound(msg, BOT_ID, ALLOWED)).toEqual({ kind: 'drop', reason: 'noise' });
   });
 
-  it('没显式 @ 本机器人 → null', () => {
+  it('没显式 @ 本机器人 → drop:no-mention', () => {
     const msg = makeMsg({ content: 'hello world' });
-    expect(parseInbound(msg, BOT_ID)).toBeNull();
+    expect(parseInbound(msg, BOT_ID, ALLOWED)).toEqual({ kind: 'drop', reason: 'no-mention' });
   });
 
-  it('提到的是别人不是本机器人 → null', () => {
+  it('提到的是别人不是本机器人 → drop:no-mention', () => {
     const msg = makeMsg({ content: `<@${OTHER_ID}> hi` });
-    expect(parseInbound(msg, BOT_ID)).toBeNull();
+    expect(parseInbound(msg, BOT_ID, ALLOWED)).toEqual({ kind: 'drop', reason: 'no-mention' });
   });
 
   it('@bot ping → text=ping，sessionKey 取 channelId + author.id', () => {
@@ -127,40 +146,36 @@ describe('parseInbound', () => {
       channelId: 'C42',
       authorId: 'U7',
     });
-    const ev = parseInbound(msg, BOT_ID);
-    expect(ev).not.toBeNull();
-    expect(ev!.text).toBe('ping');
-    expect(ev!.sessionKey).toEqual({
+    const ev = expectEvent(parseInbound(msg, BOT_ID, ALLOWED));
+    expect(ev.text).toBe('ping');
+    expect(ev.sessionKey).toEqual({
       platform: 'discord',
       channelId: 'C42',
       initiatorUserId: 'U7',
     });
-    expect(ev!.platform).toBe('discord');
-    expect(ev!.type).toBe('message');
-    expect(ev!.messageId).toBe('m-1');
+    expect(ev.platform).toBe('discord');
+    expect(ev.type).toBe('message');
+    expect(ev.messageId).toBe('m-1');
   });
 
   it('@bot summarise what @alice said → 保留 @alice，不剥别人 mention（修 #7）', () => {
     const msg = makeMsg({
       content: `<@${BOT_ID}> summarise what <@${OTHER_ID}> said`,
     });
-    const ev = parseInbound(msg, BOT_ID);
-    expect(ev).not.toBeNull();
-    expect(ev!.text).toBe(`summarise what <@${OTHER_ID}> said`);
+    const ev = expectEvent(parseInbound(msg, BOT_ID, ALLOWED));
+    expect(ev.text).toBe(`summarise what <@${OTHER_ID}> said`);
   });
 
   it('nick 形式 mention `<@!id>` 同样可识别并剥', () => {
     const msg = makeMsg({ content: `<@!${BOT_ID}>   nick form` });
-    const ev = parseInbound(msg, BOT_ID);
-    expect(ev).not.toBeNull();
-    expect(ev!.text).toBe('nick form');
+    const ev = expectEvent(parseInbound(msg, BOT_ID, ALLOWED));
+    expect(ev.text).toBe('nick form');
   });
 
   it('text 为空但有 mention → text 是空串，仍构造事件', () => {
     const msg = makeMsg({ content: `<@${BOT_ID}>` });
-    const ev = parseInbound(msg, BOT_ID);
-    expect(ev).not.toBeNull();
-    expect(ev!.text).toBe('');
+    const ev = expectEvent(parseInbound(msg, BOT_ID, ALLOWED));
+    expect(ev.text).toBe('');
   });
 
   it('initiator 字段从 author 取', () => {
@@ -169,8 +184,8 @@ describe('parseInbound', () => {
       authorId: 'U-init',
       authorUsername: 'theuser',
     });
-    const ev = parseInbound(msg, BOT_ID);
-    expect(ev!.initiator).toEqual({
+    const ev = expectEvent(parseInbound(msg, BOT_ID, ALLOWED));
+    expect(ev.initiator).toEqual({
       userId: 'U-init',
       displayName: 'theuser',
       isBot: false,
@@ -181,45 +196,42 @@ describe('parseInbound', () => {
 describe('parseInbound: replyMode="all"', () => {
   it('没 @bot 也产事件，text 等于消息原文（无 mention 可剥）', () => {
     const msg = makeMsg({ content: 'hello world' });
-    const ev = parseInbound(msg, BOT_ID, 'all');
-    expect(ev).not.toBeNull();
-    expect(ev!.text).toBe('hello world');
-    expect(ev!.type).toBe('message');
+    const ev = expectEvent(parseInbound(msg, BOT_ID, ALLOWED, 'all'));
+    expect(ev.text).toBe('hello world');
+    expect(ev.type).toBe('message');
   });
 
-  it('author 是 bot → 仍然 null（前置 guard 不变）', () => {
+  it('author 是 bot → drop:noise（前置 guard 不变）', () => {
     const msg = makeMsg({ content: 'hello', authorBot: true });
-    expect(parseInbound(msg, BOT_ID, 'all')).toBeNull();
+    expect(parseInbound(msg, BOT_ID, ALLOWED, 'all')).toEqual({ kind: 'drop', reason: 'noise' });
   });
 
-  it('author 是机器人本身 → 仍然 null（自回环 guard）', () => {
+  it('author 是机器人本身 → drop:noise（自回环 guard）', () => {
     const msg = makeMsg({ content: 'hello', authorId: BOT_ID, authorBot: false });
-    expect(parseInbound(msg, BOT_ID, 'all')).toBeNull();
+    expect(parseInbound(msg, BOT_ID, ALLOWED, 'all')).toEqual({ kind: 'drop', reason: 'noise' });
   });
 
-  it('Discord system message → null（all 模式同样过滤，避免把"用户加入频道"投到 daemon）', () => {
+  it('Discord system message → drop:noise（all 模式同样过滤，避免把"用户加入频道"投到 daemon）', () => {
     const msg = makeMsg({ content: 'someone pinned a message', system: true });
-    expect(parseInbound(msg, BOT_ID, 'all')).toBeNull();
+    expect(parseInbound(msg, BOT_ID, ALLOWED, 'all')).toEqual({ kind: 'drop', reason: 'noise' });
   });
 
   it('用户 @bot 时 mention 仍然被剥（保持文本干净）', () => {
     const msg = makeMsg({ content: `<@${BOT_ID}> ping` });
-    const ev = parseInbound(msg, BOT_ID, 'all');
-    expect(ev).not.toBeNull();
-    expect(ev!.text).toBe('ping');
+    const ev = expectEvent(parseInbound(msg, BOT_ID, ALLOWED, 'all'));
+    expect(ev.text).toBe('ping');
   });
 
   it('保留对其他用户的 @mention', () => {
     const msg = makeMsg({ content: `summarise what <@${OTHER_ID}> said` });
-    const ev = parseInbound(msg, BOT_ID, 'all');
-    expect(ev).not.toBeNull();
-    expect(ev!.text).toBe(`summarise what <@${OTHER_ID}> said`);
+    const ev = expectEvent(parseInbound(msg, BOT_ID, ALLOWED, 'all'));
+    expect(ev.text).toBe(`summarise what <@${OTHER_ID}> said`);
   });
 
   it('sessionKey 仍按 (channelId, author.id) 构造', () => {
     const msg = makeMsg({ content: 'hi', channelId: 'C99', authorId: 'U_X' });
-    const ev = parseInbound(msg, BOT_ID, 'all');
-    expect(ev!.sessionKey).toEqual({
+    const ev = expectEvent(parseInbound(msg, BOT_ID, ALLOWED, 'all'));
+    expect(ev.sessionKey).toEqual({
       platform: 'discord',
       channelId: 'C99',
       initiatorUserId: 'U_X',
@@ -228,10 +240,66 @@ describe('parseInbound: replyMode="all"', () => {
 });
 
 describe('parseInbound: 默认参数省略时退化到 mention 模式', () => {
-  it('调用 parseInbound(msg, botId) 等价于 replyMode="mention"', () => {
+  it('调用 parseInbound(msg, botId, allowed) 等价于 replyMode="mention"', () => {
     const msg = makeMsg({ content: 'hello world without mention' });
-    expect(parseInbound(msg, BOT_ID)).toBeNull();
-    expect(parseInbound(msg, BOT_ID, 'mention')).toBeNull();
+    expect(parseInbound(msg, BOT_ID, ALLOWED)).toEqual({ kind: 'drop', reason: 'no-mention' });
+    expect(parseInbound(msg, BOT_ID, ALLOWED, 'mention')).toEqual({ kind: 'drop', reason: 'no-mention' });
+  });
+});
+
+describe('parseInbound: 用户白名单（fail-closed）', () => {
+  it('mention 模式 + author 在 allowlist + @bot → 产事件', () => {
+    const msg = makeMsg({ content: `<@${BOT_ID}> hello`, authorId: OTHER_ID });
+    expect(parseInbound(msg, BOT_ID, [OTHER_ID]).kind).toBe('event');
+  });
+
+  it('mention 模式 + author 不在 allowlist + @bot → drop:unauthorized（即便 mention 命中也拦下）', () => {
+    const msg = makeMsg({ content: `<@${BOT_ID}> hello`, authorId: 'NOT_ALLOWED' });
+    expect(parseInbound(msg, BOT_ID, [OTHER_ID])).toEqual({ kind: 'drop', reason: 'unauthorized' });
+  });
+
+  it('all 模式 + author 在 allowlist → 产事件', () => {
+    const msg = makeMsg({ content: 'hi', authorId: OTHER_ID });
+    expect(parseInbound(msg, BOT_ID, [OTHER_ID], 'all').kind).toBe('event');
+  });
+
+  it('all 模式 + author 不在 allowlist → drop:unauthorized（公开面靠这道 guard 兜住）', () => {
+    const msg = makeMsg({ content: 'hi from rando', authorId: 'NOT_ALLOWED' });
+    expect(parseInbound(msg, BOT_ID, [OTHER_ID], 'all')).toEqual({ kind: 'drop', reason: 'unauthorized' });
+  });
+
+  it('空 allowlist → 任何用户都被拒（mention 模式）', () => {
+    const msg = makeMsg({ content: `<@${BOT_ID}> hi`, authorId: OTHER_ID });
+    expect(parseInbound(msg, BOT_ID, [])).toEqual({ kind: 'drop', reason: 'unauthorized' });
+  });
+
+  it('空 allowlist → 任何用户都被拒（all 模式）', () => {
+    const msg = makeMsg({ content: 'hi', authorId: OTHER_ID });
+    expect(parseInbound(msg, BOT_ID, [], 'all')).toEqual({ kind: 'drop', reason: 'unauthorized' });
+  });
+
+  it('allowlist 多 user → 列表内全部放行', () => {
+    const allow = ['U_a', 'U_b', 'U_c'];
+    expect(parseInbound(makeMsg({ content: `<@${BOT_ID}> hi`, authorId: 'U_a' }), BOT_ID, allow).kind).toBe('event');
+    expect(parseInbound(makeMsg({ content: `<@${BOT_ID}> hi`, authorId: 'U_b' }), BOT_ID, allow).kind).toBe('event');
+    expect(parseInbound(makeMsg({ content: `<@${BOT_ID}> hi`, authorId: 'U_c' }), BOT_ID, allow).kind).toBe('event');
+    expect(
+      parseInbound(makeMsg({ content: `<@${BOT_ID}> hi`, authorId: 'U_d' }), BOT_ID, allow),
+    ).toEqual({ kind: 'drop', reason: 'unauthorized' });
+  });
+
+  it('allowlist guard 在 system / bot / self guard 之后（前三道返 drop:noise，不报 unauthorized）', () => {
+    // 这条断言把"guard 顺序"显式钉成测试——保证未来重排顺序时不会让 system / bot / self
+    // 误报成 unauthorized 触发不该有的日志。
+    expect(
+      parseInbound(makeMsg({ content: 'sys', authorId: OTHER_ID, system: true }), BOT_ID, [OTHER_ID]),
+    ).toEqual({ kind: 'drop', reason: 'noise' });
+    expect(
+      parseInbound(makeMsg({ content: 'b', authorId: OTHER_ID, authorBot: true }), BOT_ID, [OTHER_ID]),
+    ).toEqual({ kind: 'drop', reason: 'noise' });
+    expect(
+      parseInbound(makeMsg({ content: 's', authorId: BOT_ID }), BOT_ID, [BOT_ID]),
+    ).toEqual({ kind: 'drop', reason: 'noise' });
   });
 });
 

@@ -51,11 +51,11 @@ describe('replyModeCommandDefinition', () => {
 });
 
 describe('handleReplyModeInteraction：授权拦截', () => {
-  it('未命中 ownerUserIds → 不调用 reply、不修改状态、打 unauthorized 日志', async () => {
+  it('未命中 allowedUserIds → ephemeral ack 含调用方 user id，不修改状态，打 unauthorized 日志', async () => {
     const logger = makeLogger();
     const setMode = vi.fn();
     const ctx: ReplyModeContext = {
-      ownerUserIds: ['OWNER1', 'OWNER2'],
+      allowedUserIds: ['OWNER1', 'OWNER2'],
       getMode: () => 'mention',
       setMode,
       logger,
@@ -64,19 +64,23 @@ describe('handleReplyModeInteraction：授权拦截', () => {
 
     await handleReplyModeInteraction(interaction, ctx);
 
-    expect(interaction.reply).not.toHaveBeenCalled();
     expect(setMode).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledOnce();
+    const arg = interaction.reply.mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg).toHaveProperty('ephemeral', true);
+    expect(String(arg['content'])).toContain('NOT_OWNER');
+    expect(String(arg['content']).toLowerCase()).toContain('permission denied');
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 'NOT_OWNER' }),
       'discord_reply_mode_unauthorized',
     );
   });
 
-  it('ownerUserIds 为空数组 → 任意用户都被拒', async () => {
+  it('allowedUserIds 为空数组 → 任意用户都被拒（仍 ephemeral ack 含 user id）', async () => {
     const logger = makeLogger();
     const setMode = vi.fn();
     const ctx: ReplyModeContext = {
-      ownerUserIds: [],
+      allowedUserIds: [],
       getMode: () => 'mention',
       setMode,
       logger,
@@ -85,14 +89,17 @@ describe('handleReplyModeInteraction：授权拦截', () => {
 
     await handleReplyModeInteraction(interaction, ctx);
 
-    expect(interaction.reply).not.toHaveBeenCalled();
     expect(setMode).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledOnce();
+    const arg = interaction.reply.mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg).toHaveProperty('ephemeral', true);
+    expect(String(arg['content'])).toContain('ANY_USER');
   });
 
   it('日志只记 user id，不写 username（避免 PII 漂移）', async () => {
     const logger = makeLogger();
     const ctx: ReplyModeContext = {
-      ownerUserIds: ['OWNER1'],
+      allowedUserIds: ['OWNER1'],
       getMode: () => 'mention',
       setMode: vi.fn(),
       logger,
@@ -111,7 +118,7 @@ describe('handleReplyModeInteraction：授权通过 + 查询', () => {
     const logger = makeLogger();
     const setMode = vi.fn();
     const ctx: ReplyModeContext = {
-      ownerUserIds: ['OWNER1'],
+      allowedUserIds: ['OWNER1'],
       getMode: () => 'all',
       setMode,
       logger,
@@ -133,7 +140,7 @@ describe('handleReplyModeInteraction：授权通过 + 切换', () => {
     const logger = makeLogger();
     const setMode = vi.fn(async () => undefined);
     const ctx: ReplyModeContext = {
-      ownerUserIds: ['OWNER1'],
+      allowedUserIds: ['OWNER1'],
       getMode: () => 'mention',
       setMode,
       logger,
@@ -153,7 +160,7 @@ describe('handleReplyModeInteraction：授权通过 + 切换', () => {
     const logger = makeLogger();
     const setMode = vi.fn(async () => undefined);
     const ctx: ReplyModeContext = {
-      ownerUserIds: ['OWNER1'],
+      allowedUserIds: ['OWNER1'],
       getMode: () => 'all',
       setMode,
       logger,
@@ -169,7 +176,7 @@ describe('handleReplyModeInteraction：授权通过 + 切换', () => {
     const logger = makeLogger();
     const setMode = vi.fn(async () => undefined);
     const ctx: ReplyModeContext = {
-      ownerUserIds: ['OWNER1'],
+      allowedUserIds: ['OWNER1'],
       getMode: () => 'mention',
       setMode,
       logger,
@@ -198,7 +205,7 @@ describe('handleReplyModeInteraction：授权通过 + 切换', () => {
   it('打 info 日志 discord_reply_mode_changed，含 from/to', async () => {
     const logger = makeLogger();
     const ctx: ReplyModeContext = {
-      ownerUserIds: ['OWNER1'],
+      allowedUserIds: ['OWNER1'],
       getMode: () => 'mention',
       setMode: vi.fn(async () => undefined),
       logger,
@@ -219,7 +226,7 @@ describe('handleReplyModeInteraction：非法 mode 防御 branch', () => {
     const logger = makeLogger();
     const setMode = vi.fn(async () => undefined);
     const ctx: ReplyModeContext = {
-      ownerUserIds: ['OWNER1'],
+      allowedUserIds: ['OWNER1'],
       getMode: () => 'mention',
       setMode,
       logger,
@@ -245,7 +252,7 @@ describe('handleReplyModeInteraction：非法 mode 防御 branch', () => {
     const logger = makeLogger();
     const setMode = vi.fn(async () => undefined);
     const ctx: ReplyModeContext = {
-      ownerUserIds: ['OWNER1'],
+      allowedUserIds: ['OWNER1'],
       getMode: () => 'mention',
       setMode,
       logger,

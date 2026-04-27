@@ -11,7 +11,7 @@
     "build": "tsc --build",
     "typecheck": "tsc --build",
     "test": "vitest run",
-    "dev": "tsx --conditions=development watch src/index.ts"
+    "dev": "tsx watch --conditions=development src/index.ts"
   },
   "dependencies": {
     "@agent-nexus/agent-claudecode": "workspace:*",

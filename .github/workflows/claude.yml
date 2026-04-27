@@ -34,7 +34,9 @@ jobs:
 
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@v1
+        # TODO: unpin to @v1 once anthropics/claude-code-action#1187 is merged.
+        # v1.0.89+ crashes with ENOENT when CLAUDE.md is a symlink (we have CLAUDE.md -> AGENTS.md).
+        uses: anthropics/claude-code-action@v1.0.88
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           assignee_trigger: "Sentixxx"

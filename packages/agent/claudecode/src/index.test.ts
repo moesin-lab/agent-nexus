@@ -243,6 +243,44 @@ describe('createClaudeCodeRuntime.sendInput', () => {
     expect(args[toolsIdx + 1]).toBe('Read,Grep');
   });
 
+  it('per-session timeoutMs 进 execa timeout 选项（不被 runtime 默认覆盖）', async () => {
+    const lines = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-t', cwd: '/x' }),
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'ok' }] },
+      }),
+      JSON.stringify({
+        type: 'result',
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        total_cost_usd: 0.001,
+      }),
+    ];
+    mockedExeca.mockReturnValueOnce(
+      makeMockSubproc(lines) as unknown as ReturnType<typeof execa>,
+    );
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+      perInputTimeoutMs: 99_999, // runtime 兜底，不该被使用
+    });
+    const session = runtime.startSession(sessionKey, {
+      sessionId: 'sess-timeout',
+      workingDir: '/x',
+      toolWhitelist: ['Bash'],
+      timeoutMs: 123_456, // per-session 显式值，应当胜出
+    });
+
+    await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: 't-timeout' });
+
+    const opts = mockedExeca.mock.calls[0]![2] as { timeout?: number };
+    expect(opts.timeout).toBe(123_456);
+  });
+
   it('execa throw → emit error + turn_finished{error}', async () => {
     mockedExeca.mockImplementationOnce(() => {
       throw new Error('spawn failed');

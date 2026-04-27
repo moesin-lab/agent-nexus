@@ -23,7 +23,11 @@ export interface ClaudeCodeRuntimeOptions {
   allowedTools: string[];
   defaultWorkingDir: string;
   logger: Logger;
-  /** 单次 spawn 超时（ms），默认 60_000 */
+  /**
+   * runtime 级 spawn 超时（ms）兜底；当 SessionConfig.timeoutMs 缺失时才生效。
+   * 默认 300_000（5 分钟），与 spec/infra/cost-and-limits.md §perInputTimeoutMs 一致。
+   * 该 timer 仅作为 backend 进程寿命的 wallclock 兜底，与 daemon 视角的回合 UX 上限分开（ADR-0011）。
+   */
   perInputTimeoutMs?: number;
 }
 
@@ -51,7 +55,7 @@ export function createClaudeCodeRuntime(
   opts: ClaudeCodeRuntimeOptions,
 ): AgentRuntime {
   const { claudeBin, allowedTools, defaultWorkingDir, logger } = opts;
-  const perInputTimeoutMs = opts.perInputTimeoutMs ?? 60_000;
+  const defaultTimeoutMs = opts.perInputTimeoutMs ?? 300_000;
 
   const capabilities: AgentCapabilitySet = {
     supportsThinking: false,
@@ -136,6 +140,7 @@ export function createClaudeCodeRuntime(
       const sessionConfig = configMap.get(session);
       const cwd = sessionConfig?.workingDir ?? defaultWorkingDir;
       const tools = sessionConfig?.toolWhitelist ?? allowedTools;
+      const timeoutMs = sessionConfig?.timeoutMs ?? defaultTimeoutMs;
       // CC CLI 2.1.x 不接受 `--cwd` flag（出现 → exit 1 "unknown option"）；
       // 工作目录改由子进程 cwd option 传入。安全语义不变（子进程不继承 daemon cwd，
       // 必须显式锁定到 SessionConfig.workingDir）。
@@ -166,7 +171,7 @@ export function createClaudeCodeRuntime(
 
       try {
         const subproc = execa(claudeBin, args, {
-          timeout: perInputTimeoutMs,
+          timeout: timeoutMs,
           buffer: false,
           cwd,
         });

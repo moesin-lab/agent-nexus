@@ -1,3 +1,11 @@
+export {
+  parseClaudeCodeConfig,
+  type ClaudeCodeConfig,
+  ClaudeCodeConfigError,
+  DEFAULT_ALLOWED_TOOLS,
+  DEFAULT_BIN,
+} from './config.js';
+
 import { EventEmitter } from 'node:events';
 import { createInterface } from 'node:readline';
 import { execa } from 'execa';

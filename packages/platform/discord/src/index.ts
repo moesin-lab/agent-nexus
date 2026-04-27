@@ -1,3 +1,5 @@
+export { parseDiscordConfig, type DiscordConfig, DiscordConfigError } from './config.js';
+
 // TODO MVP 跳过：
 // - DM 消息（intents 没开 DirectMessages）
 // - 长文本切片保留代码块边界 → docs/dev/spec/message-protocol.md §文本切片

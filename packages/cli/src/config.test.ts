@@ -34,19 +34,21 @@ describe('config loader', () => {
     await expect(loadConfig()).rejects.toThrow(/config\.json/);
   });
 
-  it('loadConfig 缺 discord.botUserId → ConfigError', async () => {
+  it('loadConfig 缺 discord.botUserId → ConfigError（含字段名）', async () => {
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
       JSON.stringify({ claudeCode: { workingDir: '/x' } }),
     );
+    await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
     await expect(loadConfig()).rejects.toThrow(/botUserId/);
   });
 
-  it('loadConfig 缺 claudeCode.workingDir → ConfigError', async () => {
+  it('loadConfig 缺 claudeCode.workingDir → ConfigError（含字段名）', async () => {
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
       JSON.stringify({ discord: { botUserId: '12345' } }),
     );
+    await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
     await expect(loadConfig()).rejects.toThrow(/workingDir/);
   });
 
@@ -81,6 +83,21 @@ describe('config loader', () => {
     expect(cfg.claudeCode.allowedTools).toEqual(['Read', 'Bash']);
   });
 
+  it('loadConfig discord.ownerUserIds / statePath 缺省 → 路由正确传递默认值', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify({
+        discord: { botUserId: '12345' },
+        claudeCode: { workingDir: '/x' },
+      }),
+    );
+    const cfg = await loadConfig();
+    expect(cfg.discord.ownerUserIds).toEqual([]);
+    expect(cfg.discord.statePath).toBe(
+      join(tmp, '.agent-nexus', 'state', 'discord.json'),
+    );
+  });
+
   it('loadDiscordToken 缺 token 文件 → SecretsPermissionError', async () => {
     await expect(loadDiscordToken()).rejects.toBeInstanceOf(
       SecretsPermissionError,
@@ -100,77 +117,5 @@ describe('config loader', () => {
     await chmod(path, 0o600);
     const t = await loadDiscordToken();
     expect(t).toBe('token-abc');
-  });
-
-  it('discord.ownerUserIds / statePath 缺省 → 默认空数组 + ~/.agent-nexus/state/discord.json', async () => {
-    await writeFile(
-      join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        discord: { botUserId: '12345' },
-        claudeCode: { workingDir: '/x' },
-      }),
-    );
-    const cfg = await loadConfig();
-    expect(cfg.discord.ownerUserIds).toEqual([]);
-    expect(cfg.discord.statePath).toBe(
-      join(tmp, '.agent-nexus', 'state', 'discord.json'),
-    );
-  });
-
-  it('discord.ownerUserIds 显式提供 → 原样保留', async () => {
-    await writeFile(
-      join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        discord: { botUserId: '12345', ownerUserIds: ['U1', 'U2'] },
-        claudeCode: { workingDir: '/x' },
-      }),
-    );
-    const cfg = await loadConfig();
-    expect(cfg.discord.ownerUserIds).toEqual(['U1', 'U2']);
-  });
-
-  it('discord.ownerUserIds 非数组 → ConfigError', async () => {
-    await writeFile(
-      join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        discord: { botUserId: '12345', ownerUserIds: 'not-array' },
-        claudeCode: { workingDir: '/x' },
-      }),
-    );
-    await expect(loadConfig()).rejects.toThrow(/ownerUserIds/);
-  });
-
-  it('discord.ownerUserIds 含非字符串元素 → ConfigError', async () => {
-    await writeFile(
-      join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        discord: { botUserId: '12345', ownerUserIds: ['U1', 42] },
-        claudeCode: { workingDir: '/x' },
-      }),
-    );
-    await expect(loadConfig()).rejects.toThrow(/ownerUserIds/);
-  });
-
-  it('discord.statePath 显式提供 → 原样保留', async () => {
-    await writeFile(
-      join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        discord: { botUserId: '12345', statePath: '/var/lib/foo.json' },
-        claudeCode: { workingDir: '/x' },
-      }),
-    );
-    const cfg = await loadConfig();
-    expect(cfg.discord.statePath).toBe('/var/lib/foo.json');
-  });
-
-  it('discord.statePath 非字符串 → ConfigError', async () => {
-    await writeFile(
-      join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        discord: { botUserId: '12345', statePath: 123 },
-        claudeCode: { workingDir: '/x' },
-      }),
-    );
-    await expect(loadConfig()).rejects.toThrow(/statePath/);
   });
 });

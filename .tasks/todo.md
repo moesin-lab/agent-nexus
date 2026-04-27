@@ -183,13 +183,13 @@ review 修复（commit `f3b395e`）回应 codex P1 + claude bot 10 条 + codex 3
 - discord mention regex 收窄到 `botUserId`
 - `platform-discord` 抽 `parseInbound` + 12 个测试
 
-### Review deferred（PR #24 留给后续 PR / issue）
+### Review deferred（PR #24 → 已开 issue 跟踪）
 
-- [ ] **spec**：`docs/dev/spec/infra/cost-and-limits.md` 钉死 `completeness` 语义（"$ 视图可信度" vs "数据收满了没"）→ 之后回头改 `agent-claudecode/index.ts:298` 的 `total_cost_usd === 0 → partial`
-- [ ] **fix**：CC CLI 非零退出时 textBuf 已收满的 partial output 处理策略（`agent-claudecode/index.ts:241` catch 分支）
-- [ ] **nit**：`platform-discord` 启动后 assert `client.user?.id === botUserId`，漂移时 warn
-- [ ] **nit**：`platform-discord/send` 多切片返回最后一条 `MessageRef` → 加 TODO 锚点链 `spec/platform-adapter.md §edit`
-- [ ] **probe step 3**：`stream-json` 格式验证（spec 标 optional / cli/index.ts:33 已 TODO）
+- [ ] [#27](https://github.com/moesin-lab/agent-nexus/issues/27) **spec**：钉死 `UsageRecord.completeness` 语义，再回头改 zero-cost case
+- [ ] [#28](https://github.com/moesin-lab/agent-nexus/issues/28) **fix**：CC CLI 非零退出后 textBuf 已收满的 partial output 处理策略
+- [ ] [#29](https://github.com/moesin-lab/agent-nexus/issues/29) **chore**：discord 启动后 assert `client.user.id === botUserId`，漂移时 warn
+- [ ] [#30](https://github.com/moesin-lab/agent-nexus/issues/30) **enhancement**：discord send 多切片返回所有 MessageRef，支持后续 edit/delete（已加 TODO 占位）
+- [ ] [#31](https://github.com/moesin-lab/agent-nexus/issues/31) **enhancement**：probe 补 step 3 stream-json 兼容性验证
 
 ## 暂搁待议
 

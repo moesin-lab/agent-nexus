@@ -1,0 +1,23 @@
+{
+  "name": "@agent-nexus/platform-discord",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --build"
+  },
+  "dependencies": {
+    "@agent-nexus/daemon": "workspace:*",
+    "@agent-nexus/protocol": "workspace:*",
+    "discord.js": "^14.16.0"
+  }
+}

@@ -136,14 +136,15 @@ export function createClaudeCodeRuntime(
       const sessionConfig = configMap.get(session);
       const cwd = sessionConfig?.workingDir ?? defaultWorkingDir;
       const tools = sessionConfig?.toolWhitelist ?? allowedTools;
+      // CC CLI 2.1.x 不接受 `--cwd` flag（出现 → exit 1 "unknown option"）；
+      // 工作目录改由子进程 cwd option 传入。安全语义不变（子进程不继承 daemon cwd，
+      // 必须显式锁定到 SessionConfig.workingDir）。
       const args: string[] = [
         '--print',
         input.text ?? '',
         '--output-format',
         'stream-json',
         '--verbose',
-        '--cwd',
-        cwd,
         '--allowed-tools',
         tools.join(','),
       ];
@@ -167,6 +168,7 @@ export function createClaudeCodeRuntime(
         const subproc = execa(claudeBin, args, {
           timeout: perInputTimeoutMs,
           buffer: false,
+          cwd,
         });
 
         if (!subproc.stdout) {

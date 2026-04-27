@@ -41,7 +41,6 @@ claude \
     --print \
     --input-format stream-json \
     --output-format stream-json \
-    --cwd <workingDir> \
     --allowed-tools <comma-sep> \
     [--disallowed-tools <comma-sep>] \
     [--model <modelId>] \
@@ -53,7 +52,7 @@ claude \
 - **`--print`**：非交互模式（不打开 TUI），走 stdin/stdout
 - **`--input-format stream-json`**：stdin 按行读入 JSON 消息
 - **`--output-format stream-json`**：stdout 按行输出 JSON 事件
-- **`--cwd`**：锁定 CC 的工作目录（见 `security.md` §"工作目录"；MVP 必须显式传）
+- **工作目录**：CC CLI 2.1.x 起**没有 `--cwd` flag**（传入会以 `unknown option` 退出非 0）；按 OS 标准做法通过子进程 cwd 选项（如 Node `child_process.spawn({ cwd })` / execa `{ cwd }`）锁定。daemon 必须显式传 cwd，禁止子进程继承 agent-nexus 自身的 cwd。安全语义见 [`security/tool-boundary.md` §工作目录](../security/tool-boundary.md#工作目录)。
 - **`--allowed-tools` / `--disallowed-tools`**：工具白名单；**必须**显式传入，不依赖 CC 默认
 - **`--resume`**：恢复上次被 Interrupted 的 session；无则新建
 - **`--permission-mode`**：`default` 需要交互批准；`plan` 只读；MVP 不使用 `bypassPermissions` / `acceptEdits`（见 security）

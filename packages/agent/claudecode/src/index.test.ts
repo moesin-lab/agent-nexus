@@ -200,7 +200,7 @@ describe('createClaudeCodeRuntime.sendInput', () => {
     expect(textFinal.payload.text).toBe('hi');
   });
 
-  it('per-session workingDir + toolWhitelist 必须覆盖 runtime 默认值（写入 spawn argv）', async () => {
+  it('per-session workingDir 进 execa cwd 选项（非 --cwd flag），toolWhitelist 写入 argv', async () => {
     const lines = [
       JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-x', cwd: '/per-sess' }),
       JSON.stringify({
@@ -234,10 +234,11 @@ describe('createClaudeCodeRuntime.sendInput', () => {
     await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: 't-x' });
 
     const args = mockedExeca.mock.calls[0]![1] as string[];
-    const cwdIdx = args.indexOf('--cwd');
+    const opts = mockedExeca.mock.calls[0]![2] as { cwd?: string };
+    // CC CLI 2.1.x 没有 --cwd flag；工作目录通过子进程 cwd 选项传入（OS 级 inherit-once 而非 flag）
+    expect(args.indexOf('--cwd')).toBe(-1);
+    expect(opts.cwd).toBe('/per-sess');
     const toolsIdx = args.indexOf('--allowed-tools');
-    expect(cwdIdx).toBeGreaterThan(-1);
-    expect(args[cwdIdx + 1]).toBe('/per-sess');
     expect(toolsIdx).toBeGreaterThan(-1);
     expect(args[toolsIdx + 1]).toBe('Read,Grep');
   });

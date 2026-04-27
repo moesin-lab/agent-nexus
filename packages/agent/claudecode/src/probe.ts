@@ -81,11 +81,39 @@ export async function runCompatibilityProbe(
       ['--print', 'ping', '--output-format', 'json'],
       { timeout: 30_000 },
     );
-    const parsed = JSON.parse((stdout ?? '').toString());
+    const rawParsed = JSON.parse((stdout ?? '').toString());
 
-    // stop_reason 在不同版本可能位于 result.stop_reason 或顶层 stop_reason
+    // CC CLI 2.1.x 在 --output-format json 下输出整段事件**数组**（流式事件全量），
+    // 终止信号在末尾 `{type:"result", subtype:"success", stop_reason, result}` 事件里；
+    // 旧版本可能直接返回单个 envelope object。两种形态都要兼容。
+    let parsed: Record<string, unknown> | null = null;
+    if (Array.isArray(rawParsed)) {
+      const resultEvent = [...rawParsed]
+        .reverse()
+        .find(
+          (e) =>
+            e &&
+            typeof e === 'object' &&
+            (e as { type?: unknown }).type === 'result',
+        ) as Record<string, unknown> | undefined;
+      if (!resultEvent) {
+        throw new Error('no result event in probe response array');
+      }
+      parsed = resultEvent;
+    } else if (rawParsed && typeof rawParsed === 'object') {
+      parsed = rawParsed as Record<string, unknown>;
+    } else {
+      throw new Error('probe response is not an object or array');
+    }
+
+    // stop_reason 在不同形态下位置不同：
+    //  - object envelope（旧）：parsed.result.stop_reason
+    //  - array result event（2.1.x）：parsed.stop_reason（顶层）
+    const parsedResult = parsed['result'];
     const stopReason: unknown =
-      parsed?.result?.stop_reason ?? parsed?.stop_reason;
+      (parsedResult && typeof parsedResult === 'object'
+        ? (parsedResult as { stop_reason?: unknown }).stop_reason
+        : undefined) ?? parsed['stop_reason'];
     if (stopReason !== 'end_turn') {
       throw new Error(
         `unexpected stop_reason: ${JSON.stringify(stopReason)}`,
@@ -101,11 +129,16 @@ export async function runCompatibilityProbe(
     //   - parsed.result         : "result 直接就是 assistant 文本 string" 的旧变体（envelope-object 形态下 isAssistantText 自然 false，不会命中）
     //   - parsed.message.content: 顶层 message.content 形态（string 或 content blocks 数组）
     //   - parsed.text           : 顶层 text 字段
+    const message = parsed['message'];
     const candidates: unknown[] = [
-      parsed?.result?.text,
-      parsed?.result,
-      parsed?.message?.content,
-      parsed?.text,
+      parsedResult && typeof parsedResult === 'object'
+        ? (parsedResult as { text?: unknown }).text
+        : undefined,
+      parsedResult,
+      message && typeof message === 'object'
+        ? (message as { content?: unknown }).content
+        : undefined,
+      parsed['text'],
     ];
     const hasText = candidates.some((c) => isAssistantText(c));
     if (!hasText) {

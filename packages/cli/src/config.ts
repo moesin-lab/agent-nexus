@@ -1,20 +1,22 @@
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import {
+  parseDiscordConfig,
+  type DiscordConfig,
+  DiscordConfigError,
+} from '@agent-nexus/platform-discord';
+import {
+  parseClaudeCodeConfig,
+  type ClaudeCodeConfig,
+  ClaudeCodeConfigError,
+} from '@agent-nexus/agent-claudecode';
+
+export type { DiscordConfig, ClaudeCodeConfig };
 
 export interface AgentNexusConfig {
-  discord: {
-    botUserId: string;
-    /** 允许执行 /reply-mode slash command 的 user id 列表；空 = 没人能切。 */
-    ownerUserIds: string[];
-    /** reply-mode 持久化文件路径；默认 ~/.agent-nexus/state/discord.json。 */
-    statePath: string;
-  };
-  claudeCode: {
-    bin: string;
-    workingDir: string;
-    allowedTools: string[];
-  };
+  discord: DiscordConfig;
+  claudeCode: ClaudeCodeConfig;
   log: {
     level: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
   };
@@ -34,9 +36,6 @@ export class SecretsPermissionError extends Error {
   }
 }
 
-// spec/security/tool-boundary.md：默认集 Read/Grep/Glob/Edit/Write；Bash 必须显式启用
-const DEFAULT_ALLOWED_TOOLS = ['Read', 'Grep', 'Glob', 'Edit', 'Write'];
-const DEFAULT_BIN = 'claude';
 const DEFAULT_LOG_LEVEL = 'info' as const;
 
 export function configRoot(): string {
@@ -100,43 +99,27 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
   }
   const obj = parsed as Record<string, unknown>;
 
-  const discord = obj['discord'] as Record<string, unknown> | undefined;
-  const botUserId = discord?.['botUserId'];
-  if (typeof botUserId !== 'string' || botUserId.length === 0) {
-    throw new ConfigError(`${path} 缺字段 discord.botUserId（非空字符串）`);
-  }
-
-  const ownerUserIdsRaw = discord?.['ownerUserIds'];
-  let ownerUserIds: string[] = [];
-  if (ownerUserIdsRaw !== undefined) {
-    if (!Array.isArray(ownerUserIdsRaw)) {
-      throw new ConfigError(`${path} 字段 discord.ownerUserIds 必须是字符串数组`);
+  let discord: DiscordConfig;
+  try {
+    discord = parseDiscordConfig(obj['discord'], {
+      defaultStatePath: defaultDiscordStatePath(),
+    });
+  } catch (err) {
+    if (err instanceof DiscordConfigError) {
+      throw new ConfigError(`${path} ${err.message}`);
     }
-    for (const v of ownerUserIdsRaw) {
-      if (typeof v !== 'string' || v.length === 0) {
-        throw new ConfigError(`${path} 字段 discord.ownerUserIds 必须是非空字符串数组`);
-      }
+    throw err;
+  }
+
+  let claudeCode: ClaudeCodeConfig;
+  try {
+    claudeCode = parseClaudeCodeConfig(obj['claudeCode']);
+  } catch (err) {
+    if (err instanceof ClaudeCodeConfigError) {
+      throw new ConfigError(`${path} ${err.message}`);
     }
-    ownerUserIds = [...ownerUserIdsRaw];
+    throw err;
   }
-
-  const statePathRaw = discord?.['statePath'];
-  if (statePathRaw !== undefined && (typeof statePathRaw !== 'string' || statePathRaw.length === 0)) {
-    throw new ConfigError(`${path} 字段 discord.statePath 必须是非空字符串`);
-  }
-  const statePath = (statePathRaw as string | undefined) ?? defaultDiscordStatePath();
-
-  const cc = (obj['claudeCode'] as Record<string, unknown> | undefined) ?? {};
-  const workingDir = cc['workingDir'];
-  if (typeof workingDir !== 'string' || workingDir.length === 0) {
-    throw new ConfigError(`${path} 缺字段 claudeCode.workingDir（非空字符串）`);
-  }
-
-  const bin = typeof cc['bin'] === 'string' ? (cc['bin'] as string) : DEFAULT_BIN;
-  const allowedToolsRaw = cc['allowedTools'];
-  const allowedTools = Array.isArray(allowedToolsRaw)
-    ? allowedToolsRaw.filter((s): s is string => typeof s === 'string')
-    : DEFAULT_ALLOWED_TOOLS;
 
   const log = (obj['log'] as Record<string, unknown> | undefined) ?? {};
   const levelRaw = log['level'];
@@ -147,8 +130,8 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
       : DEFAULT_LOG_LEVEL;
 
   return {
-    discord: { botUserId, ownerUserIds, statePath },
-    claudeCode: { bin, workingDir, allowedTools },
+    discord,
+    claudeCode,
     log: { level },
   };
 }

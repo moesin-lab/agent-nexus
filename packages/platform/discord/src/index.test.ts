@@ -36,32 +36,32 @@ function makeMsg(overrides: {
 }
 
 describe('buildSlices', () => {
-  it('空串 → 单元素 [""]（保证至少发一条消息）', () => {
+  it('empty string → single-element [""] (guarantees at least one message)', () => {
     expect(buildSlices('')).toEqual(['']);
   });
 
-  it('短文本（< SLICE_SIZE）→ 单切片', () => {
+  it('short text (< SLICE_SIZE) → single slice', () => {
     const text = 'hello world';
     const slices = buildSlices(text);
     expect(slices).toHaveLength(1);
     expect(slices[0]).toBe(text);
   });
 
-  it('恰好等于 SLICE_SIZE → 单切片', () => {
+  it('exactly SLICE_SIZE → single slice', () => {
     const text = 'a'.repeat(SLICE_SIZE);
     const slices = buildSlices(text);
     expect(slices).toHaveLength(1);
     expect(slices[0]).toHaveLength(SLICE_SIZE);
   });
 
-  it('超过 SLICE_SIZE → 多切片，全部拼回等于原文', () => {
+  it('longer than SLICE_SIZE → multiple slices, joined back equals original', () => {
     const text = 'b'.repeat(SLICE_SIZE * 2 + 100);
     const slices = buildSlices(text);
     expect(slices).toHaveLength(3);
     expect(slices.join('')).toBe(text);
   });
 
-  it('自定义 sliceSize', () => {
+  it('custom sliceSize', () => {
     const slices = buildSlices('abcde', 2);
     expect(slices).toEqual(['ab', 'cd', 'e']);
   });
@@ -171,18 +171,18 @@ describe('parseInbound', () => {
 });
 
 /**
- * send() の MessageRef 形态テスト。
+ * send() MessageRef shape tests.
  *
- * createDiscordPlatform が内部で作る Discord.js Client をモックするには vi.mock hoisting
- * が必要なため、ここでは send() が内部で行うロジックを直接テストする白箱テストとする。
- * - buildSlices（切片数の検証）
- * - 切片 ID 収集 → MessageRef 構造（messageId = 最後の切片、messageIds = 全切片）
+ * Mocking the discord.js Client built inside createDiscordPlatform requires vi.mock
+ * hoisting, so this file tests the logic send() runs internally as a white-box test:
+ * - buildSlices (slice count)
+ * - slice ID collection → MessageRef shape (messageId = last slice, messageIds = all)
  *
- * end-to-end の send() 結合テストは integration/e2e テスト（Discord API モック込み）で
- * 別途カバーする予定（issue #30 follow-up）。
+ * The end-to-end send() integration test (with the Discord API mocked) is tracked
+ * separately as an issue #30 follow-up.
  */
-describe('send: MessageRef 形态（短文本 vs 長文本）', () => {
-  /** send() 内部ロジックを再現するヘルパー。チャンネルの send を差し替えてテスト。 */
+describe('send: MessageRef shape (short vs long text)', () => {
+  /** Reproduces send()'s internal loop with a stubbed channel send for assertions. */
   async function simulateSend(text: string, idPrefix = 'msg') {
     let seq = 0;
     const fakeSend = vi.fn(async (_content: string) => ({ id: `${idPrefix}-${++seq}` }));
@@ -195,19 +195,19 @@ describe('send: MessageRef 形态（短文本 vs 長文本）', () => {
     return { sentIds, fakeSend };
   }
 
-  it('短文本（< SLICE_SIZE）→ messageIds が1要素、messageId と一致', async () => {
+  it('short text (< SLICE_SIZE) → messageIds has 1 element, equal to messageId', async () => {
     const { sentIds } = await simulateSend('hello', 'short');
     const lastId = sentIds[sentIds.length - 1];
 
     expect(sentIds).toHaveLength(1);
     expect(lastId).toBe(sentIds[0]);
-    // MessageRef 形态確認
+    // MessageRef shape check
     const ref = { messageId: lastId, messageIds: sentIds };
     expect(ref.messageIds).toHaveLength(1);
     expect(ref.messageId).toBe(ref.messageIds[0]);
   });
 
-  it('長文本（2×SLICE_SIZE + 50）→ messageIds が3要素、messageId は最後のID', async () => {
+  it('long text (2×SLICE_SIZE + 50) → messageIds has 3 elements, messageId is the last ID', async () => {
     const longText = 'x'.repeat(SLICE_SIZE * 2 + 50);
     const { sentIds, fakeSend } = await simulateSend(longText, 'long');
     const lastId = sentIds[sentIds.length - 1];
@@ -217,13 +217,13 @@ describe('send: MessageRef 形态（短文本 vs 長文本）', () => {
     expect(lastId).toBe('long-3');
     expect(fakeSend).toHaveBeenCalledTimes(3);
 
-    // MessageRef 形态確認
+    // MessageRef shape check
     const ref = { messageId: lastId, messageIds: sentIds };
     expect(ref.messageIds).toHaveLength(3);
     expect(ref.messageId).toBe(ref.messageIds[ref.messageIds.length - 1]);
   });
 
-  it('SLICE_SIZE + 1 の文本 → messageIds が2要素', async () => {
+  it('SLICE_SIZE + 1 text → messageIds has 2 elements', async () => {
     const text = 'y'.repeat(SLICE_SIZE + 1);
     const { sentIds } = await simulateSend(text, 'm');
 

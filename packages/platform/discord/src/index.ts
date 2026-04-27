@@ -26,8 +26,8 @@ export interface DiscordPlatformOptions {
 export const SLICE_SIZE = 1900;
 
 /**
- * 已 export 用于测试。把任意文本按 sliceSize 切成若干段。
- * 空串返回 `['']`（保证至少有一条可发送的消息）。
+ * Exported for tests. Splits arbitrary text into chunks of `sliceSize`.
+ * Empty input returns `['']` so callers always have at least one sendable message.
  */
 export function buildSlices(text: string, sliceSize: number = SLICE_SIZE): string[] {
   if (text.length === 0) return [''];
@@ -202,7 +202,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
         throw new Error('platform-discord: send produced no message');
       }
 
-      // 多切片全部 ID 收集进 messageIds；messageId 指向最后一条（保单条 compat）
+      // Collect every slice's ID into messageIds; messageId points at the last one (single-slice compat)
       // → docs/dev/spec/platform-adapter.md §MessageRef
       const lastId = sentIds[sentIds.length - 1];
       return {

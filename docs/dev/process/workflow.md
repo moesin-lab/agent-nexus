@@ -106,6 +106,13 @@ related:
 - **同会话连续修复链**：同一会话内连续暴露的 bug，若 scope 差距不大、同主题、且新问题在当前 PR 合并前无法独立验证（典型：A 不修就跑不到 B 的代码路径），**应叠在当前分支继续提交（首选）或开 stacked PR 声明 `base=<当前 PR 分支>`（次选）**，禁止机械地从 `main` 拉并行 PR。判据：在新开分支前先问"这个新 fix 在当前 PR 合并前能独立 run 通 / 独立合并吗？"——答否就不该并行。"范围收敛"管的是无关顺手改，本条管的是有关连环修；两者互补不冲突。
 - **失败时暂停**：如果某一步发现前提不成立（ADR 前提错了、spec 里某字段设计不对），**回到上一步**而不是绕过。
 
+## 本地开发
+
+`pnpm dev` 直接热重启，改任意 internal package 的 `src/` 文件后**无需手动 `pnpm -r build`**。
+
+- dev 模式走 `tsx --conditions=development watch`，internal package 的 `exports.development` 条件指向各自 `src/index.ts`
+- `pnpm test` / `pnpm build` / `pnpm -r typecheck` 不带 `development` 条件，仍走 `dist/`，行为不变
+
 ## 反模式
 
 - **在 `main` 上直接实现 / commit**（违反"分支先行"，绕过 PR 与 codex review）

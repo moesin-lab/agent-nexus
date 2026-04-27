@@ -1,8 +1,8 @@
 ---
 title: Discord 使用手册
 type: product
-status: placeholder
-summary: Discord 侧的注册、权限、slash command、错误提示手册；等 MVP 后填写
+status: active
+summary: Discord bot 申请、邀请、权限与基础使用步骤
 tags: [product, discord, user-guide]
 related:
   - product/user-guide
@@ -11,33 +11,32 @@ related:
   - dev/spec/security/README
 ---
 
-# Discord 使用手册（占位）
+# Discord 使用手册
 
-> **状态**：占位。等 MVP 可运行后填写。
+这页只写 Discord 侧最先要做的事：申请 bot、拿到 token、邀请进测试 server。
 
-## 将包含的章节（规划）
+## 申请 Discord Bot
 
-- **注册 Discord Application**：创建 app、拿 client id、bot token
-- **配置 scope 与权限**：`bot` / `applications.commands` / `message_content` / 具体 permissions 数值
-- **把 bot 加入 server**：OAuth2 URL
-- **在 channel 里使用**：at mention、DM、thread
-- **Slash command 列表**：MVP 预计包含
-  - `/start` — 启动新会话（绑定当前 channel）
-  - `/end` — 结束当前会话
-  - `/reset` — 重置会话（保留历史）
-  - `/budget` — 查看预算使用
-  - `/resume` — 熔断后恢复
-- **消息切片提示**：遇到长输出的提示文本
-- **常见错误提示**：用户侧会看到的错误消息解释
+1. 打开 [Discord Developer Portal](https://discord.com/developers/applications)，创建一个新的 Application。
+2. 进入应用后，在 `Bot` 页面创建 Bot User，并复制 `Bot Token`。
+3. 立刻把 token 记到本机密钥文件里，不要发到频道、Issue 或截图里。
+4. 在 `Bot` 页面打开 `MESSAGE CONTENT INTENT`。不打开的话，bot 读不到普通消息内容。
+5. 在 `Installation` 或 `OAuth2` 的邀请配置里，至少选择 `bot` 和 `applications.commands` 两个 scope。
+6. 按实际部署模式勾选最小权限。MVP 常见是 `Send Messages`、`Read Message History`，如果要在 thread 里工作，再按需要加 thread 相关权限。
+7. 复制生成的邀请链接，把 bot 拉进测试 server。
+8. 回到本地配置，把 `bot user id` 和 `Bot Token` 填到 agent-nexus 需要的位置。
 
-## 为什么现在不写
+## 验证是否申请成功
 
-Slash command 集合、消息格式、错误模板都还没确定（见 `dev/spec/platform-adapter.md` §"发送映射"）。过早写会误导用户。
+- bot 出现在 server 成员列表里
+- portal 里 `Bot Token` 已生成并可用
+- `MESSAGE CONTENT INTENT` 已开启
+- 用 `@bot ping` 或 slash command 能收到响应
 
-## 参考规范
+## 参考
 
-本手册在填写时必须与以下开发 spec 对齐：
+本文按下面两类资料整理：
 
-- [`../../dev/spec/platform-adapter.md`](../../dev/spec/platform-adapter.md)
-- [`../../dev/spec/message-protocol.md`](../../dev/spec/message-protocol.md)
-- [`../../dev/spec/security.md`](../../dev/spec/security/README.md)（allowlist 的使用面）
+- [Discord 官方：Building your first Discord Bot](https://docs.discord.com/developers/quick-start/getting-started)
+- [Discord 官方：OAuth2 and Permissions](https://docs.discord.com/developers/platform/oauth2-and-permissions)
+- [知乎参考文章](https://zhuanlan.zhihu.com/p/1999598055972947248)

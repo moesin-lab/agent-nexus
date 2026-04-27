@@ -18,7 +18,7 @@ related:
 
 - **快速上手**：5 分钟从零到可用
 - **安装**：各平台安装方式
-- **配置 Discord bot**：注册、token、scope、加入 server
+- **配置 Discord bot**：见 [`platforms/discord.md`](platforms/discord.md) 的申请、邀请和权限步骤
 - **配置 Anthropic**：API key / 订阅
 - **配置 allowlist**：允许哪些 Discord user 使用
 - **启动与停止**：命令、自启动、日志位置

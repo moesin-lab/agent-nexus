@@ -20,7 +20,9 @@ function makeLogger() {
 
 function makeInteraction(overrides: {
   userId: string;
-  modeOption?: 'mention' | 'all' | null;
+  // 接 string 而非 'mention' | 'all'，因为 ReplyModeInteractionLike.options.getString
+  // 签名本身是 string | null——测试需要能塞 'banana' 这类非法值验证防御 branch。
+  modeOption?: string | null;
   commandName?: string;
 }): ReplyModeInteractionLike & { reply: ReturnType<typeof vi.fn> } {
   const { userId, modeOption = null, commandName = 'reply-mode' } = overrides;
@@ -209,6 +211,53 @@ describe('handleReplyModeInteraction：授权通过 + 切换', () => {
       expect.objectContaining({ from: 'mention', to: 'all', userId: 'OWNER1' }),
       'discord_reply_mode_changed',
     );
+  });
+});
+
+describe('handleReplyModeInteraction：非法 mode 防御 branch', () => {
+  it("非法 mode（如 'banana'）→ 不调 setMode、ack 含 'invalid' 且 ephemeral，不打 _changed/_noop", async () => {
+    const logger = makeLogger();
+    const setMode = vi.fn(async () => undefined);
+    const ctx: ReplyModeContext = {
+      ownerUserIds: ['OWNER1'],
+      getMode: () => 'mention',
+      setMode,
+      logger,
+    };
+    // Discord choices 理论上拦住非法值，但接 stringly-typed 输入仍要兜底；
+    // 直接塞 'banana' 验证防御 branch
+    const interaction = makeInteraction({ userId: 'OWNER1', modeOption: 'banana' });
+
+    await handleReplyModeInteraction(interaction, ctx);
+
+    expect(setMode).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledOnce();
+    const arg = interaction.reply.mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg).toHaveProperty('ephemeral', true);
+    expect(String(arg['content']).toLowerCase()).toContain('invalid');
+    // 既不打 changed 也不打 noop——非法路径走自己的 branch
+    const allEvents = logger.info.mock.calls.map((c) => c[1]);
+    expect(allEvents).not.toContain('discord_reply_mode_changed');
+    expect(allEvents).not.toContain('discord_reply_mode_noop');
+  });
+
+  it('空字符串 mode → 同样走防御 branch', async () => {
+    const logger = makeLogger();
+    const setMode = vi.fn(async () => undefined);
+    const ctx: ReplyModeContext = {
+      ownerUserIds: ['OWNER1'],
+      getMode: () => 'mention',
+      setMode,
+      logger,
+    };
+    const interaction = makeInteraction({ userId: 'OWNER1', modeOption: '' });
+
+    await handleReplyModeInteraction(interaction, ctx);
+
+    expect(setMode).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledOnce();
+    const arg = interaction.reply.mock.calls[0]![0] as Record<string, unknown>;
+    expect(String(arg['content']).toLowerCase()).toContain('invalid');
   });
 });
 

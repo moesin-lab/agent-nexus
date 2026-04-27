@@ -11,7 +11,18 @@ export interface OutboundMessage {
 export interface MessageRef {
   platform: string;
   channelId: string;
+  /**
+   * Primary message ID (last slice for multi-slice sends). Kept for single-slice compat.
+   * For the full ordered list of all sent slice IDs, use `messageIds`.
+   */
   messageId: string;
+  /**
+   * Ordered list of all sent message IDs (≥ 1 element).
+   * For single-message sends this is `[messageId]`.
+   * For multi-slice sends this contains every slice's ID in send order,
+   * enabling callers to edit or delete the complete long reply.
+   */
+  messageIds: string[];
   sentAt: Date;
 }
 

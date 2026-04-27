@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Message } from 'discord.js';
-import { buildBotMentionRegex, parseInbound } from './index.js';
+import { buildBotMentionRegex, buildSlices, parseInbound, SLICE_SIZE } from './index.js';
 
 const BOT_ID = '900000000000000001';
 const OTHER_ID = '900000000000000002';
@@ -34,6 +34,38 @@ function makeMsg(overrides: {
     },
   } as unknown as Message;
 }
+
+describe('buildSlices', () => {
+  it('空串 → 单元素 [""]（保证至少发一条消息）', () => {
+    expect(buildSlices('')).toEqual(['']);
+  });
+
+  it('短文本（< SLICE_SIZE）→ 单切片', () => {
+    const text = 'hello world';
+    const slices = buildSlices(text);
+    expect(slices).toHaveLength(1);
+    expect(slices[0]).toBe(text);
+  });
+
+  it('恰好等于 SLICE_SIZE → 单切片', () => {
+    const text = 'a'.repeat(SLICE_SIZE);
+    const slices = buildSlices(text);
+    expect(slices).toHaveLength(1);
+    expect(slices[0]).toHaveLength(SLICE_SIZE);
+  });
+
+  it('超过 SLICE_SIZE → 多切片，全部拼回等于原文', () => {
+    const text = 'b'.repeat(SLICE_SIZE * 2 + 100);
+    const slices = buildSlices(text);
+    expect(slices).toHaveLength(3);
+    expect(slices.join('')).toBe(text);
+  });
+
+  it('自定义 sliceSize', () => {
+    const slices = buildSlices('abcde', 2);
+    expect(slices).toEqual(['ab', 'cd', 'e']);
+  });
+});
 
 describe('buildBotMentionRegex', () => {
   it('剥 plain 和 nick 两种 mention 形式', () => {
@@ -135,5 +167,70 @@ describe('parseInbound', () => {
       displayName: 'theuser',
       isBot: false,
     });
+  });
+});
+
+/**
+ * send() の MessageRef 形态テスト。
+ *
+ * createDiscordPlatform が内部で作る Discord.js Client をモックするには vi.mock hoisting
+ * が必要なため、ここでは send() が内部で行うロジックを直接テストする白箱テストとする。
+ * - buildSlices（切片数の検証）
+ * - 切片 ID 収集 → MessageRef 構造（messageId = 最後の切片、messageIds = 全切片）
+ *
+ * end-to-end の send() 結合テストは integration/e2e テスト（Discord API モック込み）で
+ * 別途カバーする予定（issue #30 follow-up）。
+ */
+describe('send: MessageRef 形态（短文本 vs 長文本）', () => {
+  /** send() 内部ロジックを再現するヘルパー。チャンネルの send を差し替えてテスト。 */
+  async function simulateSend(text: string, idPrefix = 'msg') {
+    let seq = 0;
+    const fakeSend = vi.fn(async (_content: string) => ({ id: `${idPrefix}-${++seq}` }));
+    const slices = buildSlices(text);
+    const sentIds: string[] = [];
+    for (const slice of slices) {
+      const msg = await fakeSend(slice);
+      sentIds.push(msg.id);
+    }
+    return { sentIds, fakeSend };
+  }
+
+  it('短文本（< SLICE_SIZE）→ messageIds が1要素、messageId と一致', async () => {
+    const { sentIds } = await simulateSend('hello', 'short');
+    const lastId = sentIds[sentIds.length - 1];
+
+    expect(sentIds).toHaveLength(1);
+    expect(lastId).toBe(sentIds[0]);
+    // MessageRef 形态確認
+    const ref = { messageId: lastId, messageIds: sentIds };
+    expect(ref.messageIds).toHaveLength(1);
+    expect(ref.messageId).toBe(ref.messageIds[0]);
+  });
+
+  it('長文本（2×SLICE_SIZE + 50）→ messageIds が3要素、messageId は最後のID', async () => {
+    const longText = 'x'.repeat(SLICE_SIZE * 2 + 50);
+    const { sentIds, fakeSend } = await simulateSend(longText, 'long');
+    const lastId = sentIds[sentIds.length - 1];
+
+    expect(sentIds).toHaveLength(3);
+    expect(sentIds).toEqual(['long-1', 'long-2', 'long-3']);
+    expect(lastId).toBe('long-3');
+    expect(fakeSend).toHaveBeenCalledTimes(3);
+
+    // MessageRef 形态確認
+    const ref = { messageId: lastId, messageIds: sentIds };
+    expect(ref.messageIds).toHaveLength(3);
+    expect(ref.messageId).toBe(ref.messageIds[ref.messageIds.length - 1]);
+  });
+
+  it('SLICE_SIZE + 1 の文本 → messageIds が2要素', async () => {
+    const text = 'y'.repeat(SLICE_SIZE + 1);
+    const { sentIds } = await simulateSend(text, 'm');
+
+    expect(sentIds).toHaveLength(2);
+    expect(sentIds).toEqual(['m-1', 'm-2']);
+    const ref = { messageId: sentIds[sentIds.length - 1], messageIds: sentIds };
+    expect(ref.messageId).toBe('m-2');
+    expect(ref.messageIds[0]).toBe('m-1');
   });
 });

@@ -27,9 +27,13 @@ describe('parseDiscordConfig', () => {
 
   // ---- allowedUserIds（必填，fail-closed）----
 
-  it('缺 allowedUserIds → DiscordConfigError，hint 提示用法', () => {
-    expect(() => parseDiscordConfig({ botUserId: '12345' }, ctx)).toThrow(/allowedUserIds/);
-    expect(() => parseDiscordConfig({ botUserId: '12345' }, ctx)).toThrow(/拒绝所有|reply-mode|聊天/);
+  it('缺 allowedUserIds → DiscordConfigError，hint 提示字段名 + 修复样例', () => {
+    // 第一条断言：错误消息明确说出缺哪个字段
+    expect(() => parseDiscordConfig({ botUserId: '12345' }, ctx)).toThrow(
+      /缺字段 discord\.allowedUserIds/,
+    );
+    // 第二条断言：错误消息含 fix hint（json 片段示例），让用户能直接照着改
+    expect(() => parseDiscordConfig({ botUserId: '12345' }, ctx)).toThrow(/"allowedUserIds":/);
   });
 
   it('allowedUserIds = [] → DiscordConfigError（空数组拒绝所有，等价于 bot 永远不响应）', () => {

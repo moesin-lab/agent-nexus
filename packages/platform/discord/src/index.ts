@@ -92,29 +92,43 @@ export function buildBotMentionRegex(botUserId: string): RegExp {
 }
 
 /**
- * 已 export 用于测试。msg → NormalizedEvent | null：null 表示不该派给 daemon。
+ * `parseInbound` 的返回形态——tagged union，让 caller 拿到"为什么被丢"。
+ * `drop.reason` 只用于决定上层日志策略，不参与业务逻辑。
+ */
+export type ParsedInbound =
+  | { kind: 'event'; event: NormalizedEvent }
+  | { kind: 'drop'; reason: 'noise' | 'unauthorized' | 'no-mention' };
+
+/**
+ * 已 export 用于测试。msg → tagged 结果（见 `ParsedInbound`）。
  *
  * 过滤顺序见 spec/platform-adapter.md §"Discord Trigger 策略"：
- *   1. Discord system message（pin / join / thread-create 等）→ null
- *   2. 任意 bot 发的（含本机器人）→ null
- *   3. 与 botUserId 同 id 的 author → null（防 bot 标志位被绕；'all' 档下还兼防自回环）
- *   4. msg.author.id ∉ allowedUserIds → null（fail-closed 用户白名单；空列表 = 拒绝所有）
- *   5. mention 模式且没显式 @ 本机器人 → null
- *   6. 否则剥本机器人 mention，构造事件
+ *   1. Discord system message（pin / join / thread-create 等）→ drop:noise
+ *   2. 任意 bot 发的（含本机器人）→ drop:noise
+ *   3. 与 botUserId 同 id 的 author → drop:noise（防 bot 标志位被绕；'all' 档下还兼防自回环）
+ *   4. msg.author.id ∉ allowedUserIds → drop:unauthorized（fail-closed 用户白名单；空列表 = 拒绝所有）
+ *   5. mention 模式且没显式 @ 本机器人 → drop:no-mention
+ *   6. 否则剥本机器人 mention，构造事件 → kind:event
  *
  * `allowedUserIds` 同时管 inbound chat 与 slash command（见 spec §"用户白名单"）。
  * 这里仅做 chat 路径的 guard；slash command 路径在 reply-mode.ts 内做相同检查。
+ *
+ * 把 reason 抬到返回值里（而不是让 caller 重做一遍 guard 判断）是为了让
+ * "guard 顺序变更" 与 "上层日志策略" 解耦——以后增/调 guard 不会让
+ * `discord_inbound_unauthorized` 日志静默漂移。
  */
 export function parseInbound(
   msg: Message,
   botUserId: string,
   allowedUserIds: readonly string[],
   replyMode: ReplyMode = 'mention',
-): NormalizedEvent | null {
-  if (msg.system === true) return null;
-  if (msg.author.bot === true) return null;
-  if (msg.author.id === botUserId) return null;
-  if (!allowedUserIds.includes(msg.author.id)) return null;
+): ParsedInbound {
+  if (msg.system === true) return { kind: 'drop', reason: 'noise' };
+  if (msg.author.bot === true) return { kind: 'drop', reason: 'noise' };
+  if (msg.author.id === botUserId) return { kind: 'drop', reason: 'noise' };
+  if (!allowedUserIds.includes(msg.author.id)) {
+    return { kind: 'drop', reason: 'unauthorized' };
+  }
 
   if (replyMode === 'mention') {
     const mentionPlain = `<@${botUserId}>`;
@@ -123,7 +137,7 @@ export function parseInbound(
       !msg.content.includes(mentionPlain) &&
       !msg.content.includes(mentionNick)
     ) {
-      return null;
+      return { kind: 'drop', reason: 'no-mention' };
     }
   }
 
@@ -134,7 +148,7 @@ export function parseInbound(
     channelId: msg.channelId,
     initiatorUserId: msg.author.id,
   };
-  return {
+  const event: NormalizedEvent = {
     eventId: msg.id,
     platform: 'discord',
     sessionKey,
@@ -152,6 +166,7 @@ export function parseInbound(
     rawPayload: msg,
     rawContentType: 'discord:message',
   };
+  return { kind: 'event', event };
 }
 
 export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAdapter {
@@ -243,16 +258,11 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
       });
 
       client.on('messageCreate', async (msg: Message) => {
-        const event = parseInbound(msg, botUserId, allowedUserIds, replyMode);
-        if (!event) {
+        const parsed = parseInbound(msg, botUserId, allowedUserIds, replyMode);
+        if (parsed.kind === 'drop') {
           // 仅在被 allowlist guard 拦下时打 info 日志（其它过滤路径噪声太大）。
           // 仅记 user id；不写 username / message text（PII / 隐私卫生）。
-          if (
-            msg.system !== true &&
-            msg.author.bot !== true &&
-            msg.author.id !== botUserId &&
-            !allowedUserIds.includes(msg.author.id)
-          ) {
+          if (parsed.reason === 'unauthorized') {
             logger.info(
               { userId: msg.author.id, channelId: msg.channelId },
               'discord_inbound_unauthorized',
@@ -261,6 +271,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
           return;
         }
 
+        const event = parsed.event;
         try {
           await handler(event);
         } catch (err) {

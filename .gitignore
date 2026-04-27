@@ -58,6 +58,7 @@ Thumbs.db
 HANDOFF.md
 HANDOFF-*.md
 *.scratch.*
+reviews/
 
 # 本地 eval / 运行时产物
 eval-runs/

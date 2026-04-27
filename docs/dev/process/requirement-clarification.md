@@ -15,7 +15,7 @@ related:
 
 定义：从用户提出需求 → 起 ADR / spec / 写代码之前的反问环节。**目标是 surface 用户原始框架之外的邻接维度**——不是确认需求是什么，是确认**不在用户主动表述里、但实施了会立刻暴露**的设计盲区。
 
-本节是 [`workflow.md`](workflow.md) 主路径里 step 1（开 issue）和 step 2（切分支）之间隐含但必须完成的步骤。在 step 1 issue 描述阶段就要把澄清结果写进 issue body 的 `## Scope` / `## Out of scope`。
+本节是 [`workflow.md`](workflow.md) 主路径里 step 1（开 issue）和 step 2（切分支）之间隐含但必须完成的步骤。在 step 1 issue 描述阶段就要把澄清结果写进 issue body 的 `## Scope` / `## Out of scope` / `## Acceptance`（前两段必填，`## Acceptance` 当存在可验证的"做完即合格"判据时填，否则可省）。
 
 ## 触发条件（必走澄清）
 
@@ -23,7 +23,7 @@ related:
 
 1. **多用户 / 公开面**：feature 暴露给非作者本人的用户（IM bot 频道、HTTP endpoint、CLI 公网部署等）
 2. **授权 / 访问控制**：含"谁能 X"、"权限"、"允许 / 拒绝"、"管理员"、"白名单"、"黑名单"等措辞
-3. **跨模块 / 跨边界**：feature 涉及两个以上 package 协作、或新增对外 API
+3. **跨模块 / 跨边界**：feature **新增**跨 package 接口、改动**已有**跨 package 契约、或新增对外 API（"两个 package 协作"在本 monorepo 几乎覆盖所有改动，不作触发条件——只有"接口 / 契约新增或改动"才必走澄清）
 4. **数据持久化**：会写文件 / DB / 远端 KV 等持久状态
 5. **状态切换 / 模式开关**：含 mode / state / on/off 等多档行为切换
 6. **重构 / 改名**：动既有 spec 字段名、API 签名、配置 schema

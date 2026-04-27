@@ -6,6 +6,7 @@ summary: 从想法到合并的主路径；分支先行、何时需要 ADR/spec/T
 tags: [workflow, process]
 related:
   - root/AGENTS
+  - dev/process/requirement-clarification
   - dev/process/tdd
   - dev/process/code-review
   - dev/adr/README
@@ -22,6 +23,9 @@ related:
 想法
  │
  ├─> 1. 开 Issue 说明问题与目标
+ │
+ ├─> 1.5 需求澄清（触发条件见 requirement-clarification.md）
+ │      surface 邻接维度，澄清结果写进 Issue ## Scope / ## Out of scope / ## Acceptance
  │
  ├─> 2. 从 main checkout 新分支（命名见 commit-and-branch.md）
  │     后续所有 ADR/spec/test/impl 的改动都落在这条分支上

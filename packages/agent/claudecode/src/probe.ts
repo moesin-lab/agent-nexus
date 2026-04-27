@@ -95,6 +95,12 @@ export async function runCompatibilityProbe(
     // assistant 文本宽松校验：跨版本字段位置不固定，但必须最终拿到非空 string。
     // 注意：旧实现允许"任意非空 object 即过"，会让 stop_reason 对、文本字段缺失的响应假通过——
     // 探针对 parser/format mismatch 失去检测能力。新实现强制递归找 string，找不到就 fail。
+    //
+    // candidate 路径覆盖已知 CC CLI envelope 变体：
+    //   - parsed.result.text    : envelope-object 变体 + 显式 text 字段
+    //   - parsed.result         : "result 直接就是 assistant 文本 string" 的旧变体（envelope-object 形态下 isAssistantText 自然 false，不会命中）
+    //   - parsed.message.content: 顶层 message.content 形态（string 或 content blocks 数组）
+    //   - parsed.text           : 顶层 text 字段
     const candidates: unknown[] = [
       parsed?.result?.text,
       parsed?.result,

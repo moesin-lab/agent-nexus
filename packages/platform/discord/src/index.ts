@@ -196,6 +196,8 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
         throw new Error('platform-discord: send produced no message');
       }
 
+      // TODO 多切片只返最后一条 MessageRef——后续 edit/delete 长回复需要全部 slice 的 ref
+      // → docs/dev/spec/platform-adapter.md §edit
       return {
         platform: 'discord',
         channelId: sessionKey.channelId,

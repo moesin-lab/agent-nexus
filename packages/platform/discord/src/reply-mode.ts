@@ -79,6 +79,18 @@ export async function handleReplyModeInteraction(
 
   const from = ctx.getMode();
   const to: ReplyMode = requested;
+
+  // No-op：当前已是目标模式。不调 setMode（不写文件）、不打 _changed
+  // 日志——语义上没有切换发生。打一条独立的 _noop 事件方便运维分析。
+  if (from === to) {
+    ctx.logger.info({ mode: to, userId }, 'discord_reply_mode_noop');
+    await interaction.reply({
+      content: `already in \`${to}\``,
+      ephemeral: true,
+    });
+    return;
+  }
+
   await ctx.setMode(to);
   ctx.logger.info({ from, to, userId }, 'discord_reply_mode_changed');
 

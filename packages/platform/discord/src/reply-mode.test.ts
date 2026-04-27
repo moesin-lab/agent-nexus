@@ -163,6 +163,36 @@ describe('handleReplyModeInteraction：授权通过 + 切换', () => {
     expect(setMode).toHaveBeenCalledWith('mention');
   });
 
+  it("requested 与当前模式一致（no-op）→ 不调用 setMode、ack 含 'already'、打 _noop 而不是 _changed", async () => {
+    const logger = makeLogger();
+    const setMode = vi.fn(async () => undefined);
+    const ctx: ReplyModeContext = {
+      ownerUserIds: ['OWNER1'],
+      getMode: () => 'mention',
+      setMode,
+      logger,
+    };
+    const interaction = makeInteraction({ userId: 'OWNER1', modeOption: 'mention' });
+
+    await handleReplyModeInteraction(interaction, ctx);
+
+    // 不写文件
+    expect(setMode).not.toHaveBeenCalled();
+    // ack 内容含 already
+    expect(interaction.reply).toHaveBeenCalledOnce();
+    const arg = interaction.reply.mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg).toHaveProperty('ephemeral', true);
+    expect(String(arg['content']).toLowerCase()).toContain('already');
+    expect(String(arg['content'])).toContain('mention');
+    // 打 _noop 而不是 _changed
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'mention', userId: 'OWNER1' }),
+      'discord_reply_mode_noop',
+    );
+    const allEvents = logger.info.mock.calls.map((c) => c[1]);
+    expect(allEvents).not.toContain('discord_reply_mode_changed');
+  });
+
   it('打 info 日志 discord_reply_mode_changed，含 from/to', async () => {
     const logger = makeLogger();
     const ctx: ReplyModeContext = {

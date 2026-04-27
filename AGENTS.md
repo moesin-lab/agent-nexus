@@ -103,6 +103,7 @@ related:
 | 想做什么 | 先看哪里 |
 |---|---|
 | 开新模块 | `docs/dev/process/workflow.md` |
+| 接到需求后该问哪些反问问题（澄清环节） | `docs/dev/process/requirement-clarification.md` |
 | 写测试 | `docs/dev/process/tdd.md` + `docs/dev/testing/strategy.md` |
 | 发 PR | `docs/dev/process/code-review.md` + 本文件"三问" |
 | 写日志 | `docs/dev/standards/logging.md` + `docs/dev/spec/infra/observability.md` |

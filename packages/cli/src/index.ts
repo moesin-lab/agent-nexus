@@ -69,7 +69,7 @@ async function main(): Promise<void> {
     defaultSessionConfig: {
       workingDir: config.claudeCode.workingDir,
       toolWhitelist: config.claudeCode.allowedTools,
-      timeoutMs: 60_000,
+      timeoutMs: 300_000,
     },
   });
 

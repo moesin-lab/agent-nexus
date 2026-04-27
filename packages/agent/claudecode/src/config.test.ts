@@ -30,7 +30,16 @@ describe('parseClaudeCodeConfig', () => {
     expect(result.bin).toBe('/usr/local/bin/claude');
   });
 
-  it('显式 allowedTools 含 Bash → 保留（Bash 启用走 cli warn 路径）', () => {
+  it('bin 为空字符串 → ClaudeCodeConfigError', () => {
+    expect(() => parseClaudeCodeConfig({ workingDir: '/x', bin: '' })).toThrow(ClaudeCodeConfigError);
+    expect(() => parseClaudeCodeConfig({ workingDir: '/x', bin: '' })).toThrow(/bin/);
+  });
+
+  it('bin 为非字符串 → ClaudeCodeConfigError', () => {
+    expect(() => parseClaudeCodeConfig({ workingDir: '/x', bin: 42 })).toThrow(ClaudeCodeConfigError);
+  });
+
+  it('显式 allowedTools 含 Bash → 保留', () => {
     const result = parseClaudeCodeConfig({
       workingDir: '/x',
       allowedTools: ['Read', 'Bash'],
@@ -51,12 +60,19 @@ describe('parseClaudeCodeConfig', () => {
     expect(result.allowedTools).toEqual(['Read']);
   });
 
-  it('allowedTools 含非字符串元素 → 过滤掉非字符串', () => {
-    const result = parseClaudeCodeConfig({
-      workingDir: '/x',
-      allowedTools: ['Read', 42, 'Grep'],
-    });
-    expect(result.allowedTools).toEqual(['Read', 'Grep']);
+  it('allowedTools 含非字符串元素 → ClaudeCodeConfigError', () => {
+    expect(() =>
+      parseClaudeCodeConfig({ workingDir: '/x', allowedTools: ['Read', 42, 'Grep'] }),
+    ).toThrow(ClaudeCodeConfigError);
+    expect(() =>
+      parseClaudeCodeConfig({ workingDir: '/x', allowedTools: ['Read', 42, 'Grep'] }),
+    ).toThrow(/allowedTools/);
+  });
+
+  it('allowedTools 为非数组 → ClaudeCodeConfigError', () => {
+    expect(() =>
+      parseClaudeCodeConfig({ workingDir: '/x', allowedTools: 'Read' }),
+    ).toThrow(ClaudeCodeConfigError);
   });
 
   it('raw 为 undefined → ClaudeCodeConfigError（缺 workingDir）', () => {

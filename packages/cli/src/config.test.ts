@@ -71,7 +71,7 @@ describe('config loader', () => {
     expect(cfg.log.level).toBe('info');
   });
 
-  it('loadConfig 用户显式列出 Bash → 保留（启用走 cli warn 路径）', async () => {
+  it('loadConfig 用户显式列出 Bash → 保留', async () => {
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
       JSON.stringify({

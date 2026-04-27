@@ -26,12 +26,27 @@ export function parseClaudeCodeConfig(
     throw new ClaudeCodeConfigError('缺字段 claudeCode.workingDir（非空字符串）');
   }
 
-  const bin = typeof cc['bin'] === 'string' ? (cc['bin'] as string) : (ctx.defaultBin ?? DEFAULT_BIN);
+  const binRaw = cc['bin'];
+  if (binRaw !== undefined && (typeof binRaw !== 'string' || binRaw.length === 0)) {
+    throw new ClaudeCodeConfigError('字段 claudeCode.bin 必须是非空字符串');
+  }
+  const bin = (typeof binRaw === 'string' ? binRaw : undefined) ?? ctx.defaultBin ?? DEFAULT_BIN;
 
   const allowedToolsRaw = cc['allowedTools'];
-  const allowedTools = Array.isArray(allowedToolsRaw)
-    ? allowedToolsRaw.filter((s): s is string => typeof s === 'string')
-    : (ctx.defaultAllowedTools ?? DEFAULT_ALLOWED_TOOLS);
+  let allowedTools: string[];
+  if (allowedToolsRaw !== undefined) {
+    if (!Array.isArray(allowedToolsRaw)) {
+      throw new ClaudeCodeConfigError('字段 claudeCode.allowedTools 必须是字符串数组');
+    }
+    for (const v of allowedToolsRaw) {
+      if (typeof v !== 'string') {
+        throw new ClaudeCodeConfigError('字段 claudeCode.allowedTools 必须是字符串数组');
+      }
+    }
+    allowedTools = [...allowedToolsRaw];
+  } else {
+    allowedTools = ctx.defaultAllowedTools ?? DEFAULT_ALLOWED_TOOLS;
+  }
 
   return { bin, workingDir, allowedTools };
 }

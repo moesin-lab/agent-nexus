@@ -42,7 +42,7 @@ export function parseDiscordConfig(
   if (statePathRaw !== undefined && (typeof statePathRaw !== 'string' || statePathRaw.length === 0)) {
     throw new DiscordConfigError('字段 discord.statePath 必须是非空字符串');
   }
-  const statePath = (statePathRaw as string | undefined) ?? ctx.defaultStatePath;
+  const statePath = typeof statePathRaw === 'string' ? statePathRaw : ctx.defaultStatePath;
 
   return { botUserId, ownerUserIds, statePath };
 }

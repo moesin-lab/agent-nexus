@@ -37,7 +37,7 @@ export { parseXxxConfig, type XxxConfig, XxxConfigError } from './config.js';
 - 调用各 owner 包的 parser，统一 catch owner 错误后包成 `ConfigError`（保持 CLI 是 `ConfigError` 的唯一 owner）
 - 不直接持有任何 owner 包的字段名
 
-**合规**检测：`packages/cli/src/config.ts` 全文不应出现 owner 包的具体字段名（如 `botUserId`、`workingDir`、`allowedTools` 等）。
+**人工 review 检查点**（reviewer 应验证）：`packages/cli/src/config.ts` 全文不应出现 owner 包的具体字段名（如 `botUserId`、`workingDir`、`allowedTools` 等）。
 
 ### 3. 默认值归属
 

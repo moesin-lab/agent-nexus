@@ -168,9 +168,28 @@ related:
 - [ ] CompatibilityProbe step 3（stream-json 验证）
 - [ ] 长文本切片保代码块边界 → `docs/dev/spec/message-protocol.md` §文本切片
 
-### MVP walking skeleton PR（feat/mvp-walking-skeleton，进行中）
+### MVP walking skeleton PR（feat/mvp-walking-skeleton-v2 → PR #24，open，review 已回，待合）
 
-最小可跑通路径：Discord @mention → daemon Engine → CC CLI one-shot（`--print --output-format stream-json --verbose`） → Discord 回复。`/new` 文本前缀重置内存 sessionStore。22 vitest 用例全过、整 monorepo typecheck 0 error。横切能力全部留 TODO 注释 + 链 spec。
+最小可跑通路径：Discord @mention → daemon Engine → CC CLI one-shot（`--print --output-format stream-json --verbose`） → Discord 回复。`/new` 文本前缀重置内存 sessionStore。整 monorepo typecheck 0 error。横切能力全部留 TODO 注释 + 链 spec。
+
+> 原 head `feat/mvp-walking-skeleton` 因开 PR 帐号被 suspend 走不通，重开到 `-v2` 分支 / PR #24，commits 同 SHA。
+
+review 修复（commit `f3b395e`）回应 codex P1 + claude bot 10 条 + codex 3 条 inline，已修 6 项 blocker / 高价值，39 vitest 用例全过：
+
+- engine per-SessionKey serial chain（race）
+- claudecode runtime 走 `SessionConfig.workingDir` / `toolWhitelist`（协议字段死掉）
+- `DEFAULT_ALLOWED_TOOLS` 删 Bash（spec 反模式）
+- probe `isAssistantText` 收紧（接受任意非空 object 漏洞）
+- discord mention regex 收窄到 `botUserId`
+- `platform-discord` 抽 `parseInbound` + 12 个测试
+
+### Review deferred（PR #24 留给后续 PR / issue）
+
+- [ ] **spec**：`docs/dev/spec/infra/cost-and-limits.md` 钉死 `completeness` 语义（"$ 视图可信度" vs "数据收满了没"）→ 之后回头改 `agent-claudecode/index.ts:298` 的 `total_cost_usd === 0 → partial`
+- [ ] **fix**：CC CLI 非零退出时 textBuf 已收满的 partial output 处理策略（`agent-claudecode/index.ts:241` catch 分支）
+- [ ] **nit**：`platform-discord` 启动后 assert `client.user?.id === botUserId`，漂移时 warn
+- [ ] **nit**：`platform-discord/send` 多切片返回最后一条 `MessageRef` → 加 TODO 锚点链 `spec/platform-adapter.md §edit`
+- [ ] **probe step 3**：`stream-json` 格式验证（spec 标 optional / cli/index.ts:33 已 TODO）
 
 ## 暂搁待议
 

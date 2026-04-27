@@ -35,7 +35,7 @@ const sessionConfig: SessionConfig = {
   sessionId: 'sess-1',
   workingDir: '/x',
   toolWhitelist: ['Bash', 'Read'],
-  timeoutMs: 60_000,
+  timeoutMs: 300_000,
 };
 
 /**
@@ -228,7 +228,7 @@ describe('createClaudeCodeRuntime.sendInput', () => {
       sessionId: 'sess-per',
       workingDir: '/per-sess',
       toolWhitelist: ['Read', 'Grep'],
-      timeoutMs: 60_000,
+      timeoutMs: 300_000,
     });
 
     await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: 't-x' });
@@ -279,6 +279,45 @@ describe('createClaudeCodeRuntime.sendInput', () => {
 
     const opts = mockedExeca.mock.calls[0]![2] as { timeout?: number };
     expect(opts.timeout).toBe(123_456);
+  });
+
+  it('SessionConfig.timeoutMs 缺失且 runtime 也无 perInputTimeoutMs 时，fallback 到 spec 默认 300_000', async () => {
+    const lines = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-fb', cwd: '/x' }),
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'ok' }] },
+      }),
+      JSON.stringify({
+        type: 'result',
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        total_cost_usd: 0.001,
+      }),
+    ];
+    mockedExeca.mockReturnValueOnce(
+      makeMockSubproc(lines) as unknown as ReturnType<typeof execa>,
+    );
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+      // 不传 perInputTimeoutMs，fallback 到 spec 默认 300_000
+    });
+    // SessionConfig.timeoutMs 在 spec 里标 required，但运行时 JS 可能传不进来；
+    // runtime 必须用 ?? 兜住，避免 undefined 进 execa timeout 触发立即超时。
+    const session = runtime.startSession(sessionKey, {
+      sessionId: 'sess-fb',
+      workingDir: '/x',
+      toolWhitelist: ['Bash'],
+    } as SessionConfig);
+
+    await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: 't-fb' });
+
+    const opts = mockedExeca.mock.calls[0]![2] as { timeout?: number };
+    expect(opts.timeout).toBe(300_000);
   });
 
   it('execa throw → emit error + turn_finished{error}', async () => {

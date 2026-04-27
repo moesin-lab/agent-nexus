@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile, chmod } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -71,6 +71,24 @@ describe('writeReplyModeState', () => {
     const raw = await readFile(path, 'utf8');
     expect(() => JSON.parse(raw)).not.toThrow();
     expect(JSON.parse(raw)).toEqual({ replyMode: 'all' });
+  });
+
+  it('文件权限是 0o600（与 token 文件对齐，不受 umask 影响）', async () => {
+    const path = join(workDir, 'state.json');
+    await writeReplyModeState(path, 'all');
+    const st = await stat(path);
+    // eslint-disable-next-line no-bitwise
+    expect(st.mode & 0o777).toBe(0o600);
+  });
+
+  it('覆盖既有文件时也强制收敛到 0o600', async () => {
+    const path = join(workDir, 'state.json');
+    // 先用宽松权限落一个文件
+    await writeFile(path, JSON.stringify({ replyMode: 'mention' }), { mode: 0o644 });
+    await writeReplyModeState(path, 'all');
+    const st = await stat(path);
+    // eslint-disable-next-line no-bitwise
+    expect(st.mode & 0o777).toBe(0o600);
   });
 });
 

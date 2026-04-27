@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { chmod, readFile, writeFile } from 'node:fs/promises';
 
 export type ReplyMode = 'mention' | 'all';
 
@@ -53,5 +53,9 @@ export async function readReplyModeState(path: string): Promise<ReplyModeState |
 
 export async function writeReplyModeState(path: string, replyMode: ReplyMode): Promise<void> {
   const payload: ReplyModeState = { replyMode };
-  await writeFile(path, JSON.stringify(payload, null, 2));
+  // mode 选项只在 create 时生效；对已存在的文件不会改权限。
+  // 显式 chmod 一次，保证新建 + 覆盖都收敛到 0o600（与 token 文件对齐，
+  // 不受 umask 影响）。
+  await writeFile(path, JSON.stringify(payload, null, 2), { mode: 0o600 });
+  await chmod(path, 0o600);
 }

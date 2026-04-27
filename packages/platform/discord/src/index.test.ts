@@ -12,6 +12,7 @@ function makeMsg(overrides: {
   authorUsername?: string;
   channelId?: string;
   id?: string;
+  system?: boolean;
 }): Message {
   const {
     content,
@@ -20,6 +21,7 @@ function makeMsg(overrides: {
     authorUsername = 'alice',
     channelId = 'C1',
     id = 'm-1',
+    system = false,
   } = overrides;
   // 只构造测试覆盖路径需要的字段；rawPayload 直接挂整个 mock。
   return {
@@ -27,6 +29,7 @@ function makeMsg(overrides: {
     content,
     channelId,
     createdAt: new Date(0),
+    system,
     author: {
       id: authorId,
       username: authorUsername,
@@ -91,6 +94,11 @@ describe('buildBotMentionRegex', () => {
 describe('parseInbound', () => {
   it('author 是 bot → null', () => {
     const msg = makeMsg({ content: `<@${BOT_ID}> hello`, authorBot: true });
+    expect(parseInbound(msg, BOT_ID)).toBeNull();
+  });
+
+  it('Discord system message（pin / join / thread-create 等）→ null（mention 模式）', () => {
+    const msg = makeMsg({ content: `<@${BOT_ID}> someone joined`, system: true });
     expect(parseInbound(msg, BOT_ID)).toBeNull();
   });
 
@@ -186,6 +194,11 @@ describe('parseInbound: replyMode="all"', () => {
 
   it('author 是机器人本身 → 仍然 null（自回环 guard）', () => {
     const msg = makeMsg({ content: 'hello', authorId: BOT_ID, authorBot: false });
+    expect(parseInbound(msg, BOT_ID, 'all')).toBeNull();
+  });
+
+  it('Discord system message → null（all 模式同样过滤，避免把"用户加入频道"投到 daemon）', () => {
+    const msg = makeMsg({ content: 'someone pinned a message', system: true });
     expect(parseInbound(msg, BOT_ID, 'all')).toBeNull();
   });
 

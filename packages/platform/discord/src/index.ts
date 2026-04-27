@@ -85,16 +85,19 @@ export function buildBotMentionRegex(botUserId: string): RegExp {
  * 已 export 用于测试。msg → NormalizedEvent | null：null 表示不该派给 daemon。
  *
  * 过滤顺序见 spec/platform-adapter.md §"Discord Trigger 策略"：
- *   1. 任意 bot 发的（含本机器人）→ null
- *   2. 与 botUserId 同 id 的 author → null（防 bot 标志位被绕；'all' 档下还兼防自回环）
- *   3. mention 模式且没显式 @ 本机器人 → null
- *   4. 否则剥本机器人 mention，构造事件
+ *   1. Discord system message（pin / join / thread-create 等）→ null
+ *      两档共用：'all' 档下尤其关键，否则会把"用户加入频道"当作用户输入投到 daemon
+ *   2. 任意 bot 发的（含本机器人）→ null
+ *   3. 与 botUserId 同 id 的 author → null（防 bot 标志位被绕；'all' 档下还兼防自回环）
+ *   4. mention 模式且没显式 @ 本机器人 → null
+ *   5. 否则剥本机器人 mention，构造事件
  */
 export function parseInbound(
   msg: Message,
   botUserId: string,
   replyMode: ReplyMode = 'mention',
 ): NormalizedEvent | null {
+  if (msg.system === true) return null;
   if (msg.author.bot === true) return null;
   if (msg.author.id === botUserId) return null;
 

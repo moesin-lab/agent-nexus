@@ -23,7 +23,20 @@ export interface DiscordPlatformOptions {
   logger: Logger;
 }
 
-const SLICE_SIZE = 1900;
+export const SLICE_SIZE = 1900;
+
+/**
+ * Exported for tests. Splits arbitrary text into chunks of `sliceSize`.
+ * Empty input returns `['']` so callers always have at least one sendable message.
+ */
+export function buildSlices(text: string, sliceSize: number = SLICE_SIZE): string[] {
+  if (text.length === 0) return [''];
+  const slices: string[] = [];
+  for (let i = 0; i < text.length; i += sliceSize) {
+    slices.push(text.slice(i, i + sliceSize));
+  }
+  return slices;
+}
 
 /**
  * 已 export 用于测试。给 botUserId 构造只剥**本机器人**自身 mention 的正则。
@@ -176,32 +189,27 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
 
       // 文本切片：朴素按 1900 切（保 2000 上限的余量），
       // TODO 保代码块边界 → docs/dev/spec/message-protocol.md §文本切片
-      const text = message.text;
-      const slices: string[] = [];
-      if (text.length === 0) {
-        slices.push('');
-      } else {
-        for (let i = 0; i < text.length; i += SLICE_SIZE) {
-          slices.push(text.slice(i, i + SLICE_SIZE));
-        }
-      }
+      const slices = buildSlices(message.text);
 
-      let lastMsg: Message | undefined;
+      const sentIds: string[] = [];
       for (const slice of slices) {
-        lastMsg = await channel.send(slice);
+        const msg = await channel.send(slice);
+        sentIds.push(msg.id);
       }
 
-      if (!lastMsg) {
+      if (sentIds.length === 0) {
         // 理论上不会到这里——slices 至少 1 个
         throw new Error('platform-discord: send produced no message');
       }
 
-      // TODO 多切片只返最后一条 MessageRef——后续 edit/delete 长回复需要全部 slice 的 ref
-      // → docs/dev/spec/platform-adapter.md §edit
+      // Collect every slice's ID into messageIds; messageId points at the last one (single-slice compat)
+      // → docs/dev/spec/platform-adapter.md §MessageRef
+      const lastId = sentIds[sentIds.length - 1];
       return {
         platform: 'discord',
         channelId: sessionKey.channelId,
-        messageId: lastMsg.id,
+        messageId: lastId,
+        messageIds: sentIds,
         sentAt: new Date(),
       };
     },

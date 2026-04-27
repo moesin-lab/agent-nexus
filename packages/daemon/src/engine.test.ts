@@ -74,6 +74,7 @@ function makePlatform(): PlatformAdapter & {
     platform: 'discord',
     channelId: 'C1',
     messageId: 'out-1',
+    messageIds: ['out-1'],
     sentAt: new Date(0),
   };
   return {

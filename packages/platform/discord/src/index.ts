@@ -192,19 +192,20 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
       const slices = buildSlices(message.text);
 
       const sentIds: string[] = [];
+      let lastId: string | undefined;
       for (const slice of slices) {
         const msg = await channel.send(slice);
         sentIds.push(msg.id);
+        lastId = msg.id;
       }
 
-      if (sentIds.length === 0) {
-        // 理论上不会到这里——slices 至少 1 个
+      if (lastId === undefined) {
+        // 理论上不会到这里——buildSlices 至少返 1 个切片
         throw new Error('platform-discord: send produced no message');
       }
 
       // Collect every slice's ID into messageIds; messageId points at the last one (single-slice compat)
       // → docs/dev/spec/platform-adapter.md §MessageRef
-      const lastId = sentIds[sentIds.length - 1];
       return {
         platform: 'discord',
         channelId: sessionKey.channelId,

@@ -58,6 +58,54 @@ describe('runCompatibilityProbe', () => {
     ).rejects.toBeInstanceOf(AgentSpawnFailedError);
   });
 
+  it('--print 返回事件数组形态（CC CLI 2.1.x）：从末尾 result 事件取 stop_reason 与文本', async () => {
+    // 实测 CC CLI 2.1.119 在 --output-format json 下输出整段流式事件数组（而非单个 envelope）。
+    // 末尾 `{type:"result", stop_reason:"end_turn", result:"pong"}` 才是权威终止信号。
+    mockedExeca
+      .mockResolvedValueOnce({
+        stdout: 'claude-code 2.1.119',
+      } as unknown as ReturnType<typeof execa>)
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          { type: 'system', subtype: 'init', session_id: 'abc' },
+          {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'pong' }] },
+          },
+          {
+            type: 'result',
+            subtype: 'success',
+            stop_reason: 'end_turn',
+            result: 'pong',
+          },
+        ]),
+      } as unknown as ReturnType<typeof execa>);
+
+    await expect(
+      runCompatibilityProbe({ claudeBin: 'claude', logger: fakeLogger }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('--print 返回数组但缺 result 事件 → 抛 AgentSpawnFailedError', async () => {
+    mockedExeca
+      .mockResolvedValueOnce({
+        stdout: 'claude-code 2.1.119',
+      } as unknown as ReturnType<typeof execa>)
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          { type: 'system', subtype: 'init', session_id: 'abc' },
+          {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'pong' }] },
+          },
+        ]),
+      } as unknown as ReturnType<typeof execa>);
+
+    await expect(
+      runCompatibilityProbe({ claudeBin: 'claude', logger: fakeLogger }),
+    ).rejects.toBeInstanceOf(AgentSpawnFailedError);
+  });
+
   it('--print 返回里 result 是非空 object 但找不到任何 string 文本 → 抛 AgentSpawnFailedError', async () => {
     // 旧实现的 textOk 第三分支接受任意非空 object，会让 probe 在「stop_reason 对、文本一片狼藉」时假通过。
     mockedExeca

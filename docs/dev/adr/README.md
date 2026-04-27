@@ -124,6 +124,8 @@ ADR 合格的判据：
 | [0007](0007-collaborative-skill-promotion.md) | 协作性 skill 入库与挂接 | Proposed |
 | [0008](0008-doc-layering-ssot.md) | 文档事实归属判定实现 SSOT | Proposed |
 | [0009](0009-tdd-mandatory.md) | 强制 TDD（先 spec → 先 failing test → 再 impl） | Proposed |
+| [0010](0010-pre-decision-agent-first.md) | 决策前结构化分析（pre-decision agent-first） | Proposed |
+| [0011](0011-turn-layering.md) | turn 层级——daemon 视角外显两层，agent 内部留给 backend | Proposed |
 
 ## 引用规则
 

@@ -16,7 +16,7 @@ import type {
   SessionKey,
 } from '@agent-nexus/protocol';
 import { Engine } from './engine.js';
-import { createLogger } from './logger.js';
+import { createLogger, type Logger } from './logger.js';
 import { SessionStore } from './session-store.js';
 
 // ----- mocks -----
@@ -423,6 +423,50 @@ describe('Engine', () => {
 
     expect(store.get(KEY_A)?.ccSessionID).toBe('cc-a');
     expect(store.get(KEY_B)?.ccSessionID).toBe('cc-b');
+  });
+
+  it('turn_finished 后写 outbound info 日志（含 length、无 text），debug 日志含 text', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = {
+      info: vi.fn(),
+      debug: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      trace: vi.fn(),
+      fatal: vi.fn(),
+      child: vi.fn(),
+    } as unknown as Logger;
+
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: mockLogger,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    agent.queueEvents([
+      ev('session_started', { ccSessionID: 'cc-1' }),
+      ev('text_final', { text: 'hello reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello'));
+
+    const infoCalls = (mockLogger.info as ReturnType<typeof vi.fn>).mock.calls;
+    const outboundInfo = infoCalls.find(([, msg]) => msg === 'outbound');
+    expect(outboundInfo).toBeDefined();
+    expect(outboundInfo![0]).toMatchObject({ length: 'hello reply'.length, traceId: 't-1' });
+    expect(outboundInfo![0]).not.toHaveProperty('text');
+
+    const debugCalls = (mockLogger.debug as ReturnType<typeof vi.fn>).mock.calls;
+    const outboundDebug = debugCalls.find(([, msg]) => msg === 'outbound');
+    expect(outboundDebug).toBeDefined();
+    expect(outboundDebug![0]).toMatchObject({ text: 'hello reply', traceId: 't-1' });
   });
 
   it('error 路径：agent emit error → platform.send 收到 [CC error: ...]', async () => {

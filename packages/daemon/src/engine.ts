@@ -95,6 +95,14 @@ export class Engine {
         {
           traceId: event.traceId,
           sessionKey: sessionKeyStr,
+          length: (event.text ?? '').length,
+        },
+        'inbound',
+      );
+      this.logger.debug(
+        {
+          traceId: event.traceId,
+          sessionKey: sessionKeyStr,
           text: event.text,
         },
         'inbound',
@@ -161,12 +169,36 @@ export class Engine {
               event,
               `[CC error: ${e.payload.errorKind}] ${e.payload.message}`,
             );
+            this.logger.info(
+              {
+                traceId: event.traceId,
+                sessionKey: sessionKeyStr,
+                errored: true,
+              },
+              'outbound',
+            );
             return;
           }
           if (e.type === 'turn_finished') {
             if (!errored) {
               const text = buf.length > 0 ? buf : '[empty response]';
               await this.safeSend(event, text);
+              this.logger.info(
+                {
+                  traceId: event.traceId,
+                  sessionKey: sessionKeyStr,
+                  length: text.length,
+                },
+                'outbound',
+              );
+              this.logger.debug(
+                {
+                  traceId: event.traceId,
+                  sessionKey: sessionKeyStr,
+                  text,
+                },
+                'outbound',
+              );
             }
             this.safeStopSession(session);
             return;

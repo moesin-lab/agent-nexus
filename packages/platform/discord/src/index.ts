@@ -2,10 +2,15 @@
 // - DM 消息（intents 没开 DirectMessages）
 // - 长文本切片保留代码块边界 → docs/dev/spec/message-protocol.md §文本切片
 // - edit / delete / react / typing → spec/platform-adapter.md 各对应段
-// - threads / interactions / slash commands → 同上
+// - threads → 同上
 
 import { randomUUID } from 'node:crypto';
-import { Client, GatewayIntentBits, type Message } from 'discord.js';
+import {
+  Client,
+  GatewayIntentBits,
+  type Interaction,
+  type Message,
+} from 'discord.js';
 import type {
   CapabilitySet,
   EventHandler,
@@ -16,14 +21,37 @@ import type {
   SessionKey,
 } from '@agent-nexus/protocol';
 import type { Logger } from '@agent-nexus/daemon';
+import {
+  readReplyModeState,
+  writeReplyModeState,
+  type ReplyMode,
+} from './state.js';
+import {
+  assertBotUserIdMatch,
+  handleReplyModeInteraction,
+  replyModeCommandDefinition,
+} from './reply-mode.js';
+import { registerSlashCommands } from './commands.js';
 
 export interface DiscordPlatformOptions {
   token: string;
   botUserId: string;
   logger: Logger;
+  /**
+   * 持久化 reply-mode 状态的文件路径。CLI 必须给（adapter 不自己选位置——
+   * 见 spec/platform-adapter.md §"运行时状态持久化"）。
+   */
+  statePath: string;
+  /**
+   * 允许执行 /reply-mode 切换的 user id 列表。空数组 = 没人能切，
+   * 等价于 feature-locked 在 state 文件初始值（默认 'mention'）。
+   */
+  ownerUserIds: readonly string[];
 }
 
 export const SLICE_SIZE = 1900;
+
+export type { ReplyMode } from './state.js';
 
 /**
  * Exported for tests. Splits arbitrary text into chunks of `sliceSize`.
@@ -56,26 +84,32 @@ export function buildBotMentionRegex(botUserId: string): RegExp {
 /**
  * 已 export 用于测试。msg → NormalizedEvent | null：null 表示不该派给 daemon。
  *
- * 过滤顺序：
- *   1. 任意 bot 发的（含本机器人）→ null
- *   2. 与 botUserId 同 id 的 author → null（防御 bot 标志位被绕）
- *   3. 没显式 @ 本机器人 → null
- *   4. 否则剥本机器人 mention，构造事件
+ * 过滤顺序见 spec/platform-adapter.md §"Discord Trigger 策略"：
+ *   1. Discord system message（pin / join / thread-create 等）→ null
+ *      两档共用：'all' 档下尤其关键，否则会把"用户加入频道"当作用户输入投到 daemon
+ *   2. 任意 bot 发的（含本机器人）→ null
+ *   3. 与 botUserId 同 id 的 author → null（防 bot 标志位被绕；'all' 档下还兼防自回环）
+ *   4. mention 模式且没显式 @ 本机器人 → null
+ *   5. 否则剥本机器人 mention，构造事件
  */
 export function parseInbound(
   msg: Message,
   botUserId: string,
+  replyMode: ReplyMode = 'mention',
 ): NormalizedEvent | null {
+  if (msg.system === true) return null;
   if (msg.author.bot === true) return null;
   if (msg.author.id === botUserId) return null;
 
-  const mentionPlain = `<@${botUserId}>`;
-  const mentionNick = `<@!${botUserId}>`;
-  if (
-    !msg.content.includes(mentionPlain) &&
-    !msg.content.includes(mentionNick)
-  ) {
-    return null;
+  if (replyMode === 'mention') {
+    const mentionPlain = `<@${botUserId}>`;
+    const mentionNick = `<@!${botUserId}>`;
+    if (
+      !msg.content.includes(mentionPlain) &&
+      !msg.content.includes(mentionNick)
+    ) {
+      return null;
+    }
   }
 
   const text = msg.content.replace(buildBotMentionRegex(botUserId), '').trim();
@@ -106,7 +140,7 @@ export function parseInbound(
 }
 
 export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAdapter {
-  const { token, botUserId, logger } = opts;
+  const { token, botUserId, logger, statePath, ownerUserIds } = opts;
 
   const client = new Client({
     intents: [
@@ -118,6 +152,8 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
 
   let started = false;
   let stopped = false;
+  // 启动时从 state 文件读，缺省 'mention'。运行时由 /reply-mode 切换更新。
+  let replyMode: ReplyMode = 'mention';
 
   return {
     name() {
@@ -144,12 +180,54 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
       if (started) return;
       started = true;
 
+      const persisted = await readReplyModeState(statePath);
+      if (persisted !== null) {
+        replyMode = persisted.replyMode;
+        logger.info({ replyMode, statePath }, 'discord_reply_mode_loaded');
+      } else {
+        logger.info(
+          { replyMode, statePath },
+          'discord_reply_mode_default',
+        );
+      }
+
       client.on('ready', () => {
-        logger.info({ user: client.user?.tag }, 'discord_ready');
+        assertBotUserIdMatch({
+          actualId: client.user?.id,
+          configId: botUserId,
+          tag: client.user?.tag,
+          logger,
+        });
+        void registerSlashCommands(
+          client.application?.commands,
+          [{ name: 'reply-mode', data: replyModeCommandDefinition() }],
+          logger,
+        );
+      });
+
+      client.on('interactionCreate', async (interaction: Interaction) => {
+        if (!interaction.isChatInputCommand()) return;
+        if (interaction.commandName !== 'reply-mode') return;
+        try {
+          await handleReplyModeInteraction(interaction, {
+            ownerUserIds,
+            getMode: () => replyMode,
+            setMode: async (next) => {
+              await writeReplyModeState(statePath, next);
+              replyMode = next;
+            },
+            logger,
+          });
+        } catch (err) {
+          logger.error(
+            { err, commandName: interaction.commandName },
+            'discord_interaction_handler_error',
+          );
+        }
       });
 
       client.on('messageCreate', async (msg: Message) => {
-        const event = parseInbound(msg, botUserId);
+        const event = parseInbound(msg, botUserId, replyMode);
         if (!event) return;
 
         try {

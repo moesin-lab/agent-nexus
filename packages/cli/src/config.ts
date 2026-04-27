@@ -5,6 +5,10 @@ import { join } from 'node:path';
 export interface AgentNexusConfig {
   discord: {
     botUserId: string;
+    /** 允许执行 /reply-mode slash command 的 user id 列表；空 = 没人能切。 */
+    ownerUserIds: string[];
+    /** reply-mode 持久化文件路径；默认 ~/.agent-nexus/state/discord.json。 */
+    statePath: string;
   };
   claudeCode: {
     bin: string;
@@ -45,6 +49,10 @@ export function configPath(): string {
 
 export function discordTokenPath(): string {
   return join(configRoot(), 'secrets', 'DISCORD_BOT_TOKEN');
+}
+
+export function defaultDiscordStatePath(): string {
+  return join(configRoot(), 'state', 'discord.json');
 }
 
 const CONFIG_HINT = (path: string) => `\
@@ -98,6 +106,26 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     throw new ConfigError(`${path} 缺字段 discord.botUserId（非空字符串）`);
   }
 
+  const ownerUserIdsRaw = discord?.['ownerUserIds'];
+  let ownerUserIds: string[] = [];
+  if (ownerUserIdsRaw !== undefined) {
+    if (!Array.isArray(ownerUserIdsRaw)) {
+      throw new ConfigError(`${path} 字段 discord.ownerUserIds 必须是字符串数组`);
+    }
+    for (const v of ownerUserIdsRaw) {
+      if (typeof v !== 'string' || v.length === 0) {
+        throw new ConfigError(`${path} 字段 discord.ownerUserIds 必须是非空字符串数组`);
+      }
+    }
+    ownerUserIds = [...ownerUserIdsRaw];
+  }
+
+  const statePathRaw = discord?.['statePath'];
+  if (statePathRaw !== undefined && (typeof statePathRaw !== 'string' || statePathRaw.length === 0)) {
+    throw new ConfigError(`${path} 字段 discord.statePath 必须是非空字符串`);
+  }
+  const statePath = (statePathRaw as string | undefined) ?? defaultDiscordStatePath();
+
   const cc = (obj['claudeCode'] as Record<string, unknown> | undefined) ?? {};
   const workingDir = cc['workingDir'];
   if (typeof workingDir !== 'string' || workingDir.length === 0) {
@@ -119,7 +147,7 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
       : DEFAULT_LOG_LEVEL;
 
   return {
-    discord: { botUserId },
+    discord: { botUserId, ownerUserIds, statePath },
     claudeCode: { bin, workingDir, allowedTools },
     log: { level },
   };

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { createClaudeCodeRuntime, runCompatibilityProbe } from '@agent-nexus/agent-claudecode';
 import { Engine, SessionStore, createLogger } from '@agent-nexus/daemon';
 import { createDiscordPlatform } from '@agent-nexus/platform-discord';
@@ -53,9 +55,15 @@ async function main(): Promise<void> {
     logger,
   });
 
+  // state 目录与 secrets 目录同级，权限 0700 与 secrets 一致
+  // → spec/platform-adapter.md §"运行时状态持久化"
+  await mkdir(dirname(config.discord.statePath), { recursive: true, mode: 0o700 });
+
   const platform = createDiscordPlatform({
     token,
     botUserId: config.discord.botUserId,
+    statePath: config.discord.statePath,
+    ownerUserIds: config.discord.ownerUserIds,
     logger,
   });
 

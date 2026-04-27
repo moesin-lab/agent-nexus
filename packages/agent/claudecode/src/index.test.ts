@@ -200,6 +200,48 @@ describe('createClaudeCodeRuntime.sendInput', () => {
     expect(textFinal.payload.text).toBe('hi');
   });
 
+  it('per-session workingDir + toolWhitelist 必须覆盖 runtime 默认值（写入 spawn argv）', async () => {
+    const lines = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-x', cwd: '/per-sess' }),
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'ok' }] },
+      }),
+      JSON.stringify({
+        type: 'result',
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        total_cost_usd: 0.001,
+      }),
+    ];
+    mockedExeca.mockReturnValueOnce(
+      makeMockSubproc(lines) as unknown as ReturnType<typeof execa>,
+    );
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'], // runtime 默认（不该被使用）
+      defaultWorkingDir: '/runtime-default', // runtime 默认（不该被使用）
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, {
+      sessionId: 'sess-per',
+      workingDir: '/per-sess',
+      toolWhitelist: ['Read', 'Grep'],
+      timeoutMs: 60_000,
+    });
+
+    await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: 't-x' });
+
+    const args = mockedExeca.mock.calls[0]![1] as string[];
+    const cwdIdx = args.indexOf('--cwd');
+    const toolsIdx = args.indexOf('--allowed-tools');
+    expect(cwdIdx).toBeGreaterThan(-1);
+    expect(args[cwdIdx + 1]).toBe('/per-sess');
+    expect(toolsIdx).toBeGreaterThan(-1);
+    expect(args[toolsIdx + 1]).toBe('Read,Grep');
+  });
+
   it('execa throw → emit error + turn_finished{error}', async () => {
     mockedExeca.mockImplementationOnce(() => {
       throw new Error('spawn failed');

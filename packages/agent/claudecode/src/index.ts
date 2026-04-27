@@ -28,10 +28,15 @@ export interface ClaudeCodeRuntimeOptions {
 }
 
 /**
- * 内部 session 句柄上挂的 EventEmitter。
+ * 内部 session 句柄上挂的 EventEmitter + 原始 SessionConfig。
  * 不在 protocol AgentSession 表面暴露——通过 WeakMap 隔离。
+ *
+ * configMap 是把 spec 合约 SessionConfig.{workingDir,toolWhitelist} 接到
+ * sendInput 的 argv 构造里——runtime 级 defaultWorkingDir/allowedTools 仅作为
+ * config 缺失时的兜底，不允许覆盖 per-session 值。
  */
 const emitterMap = new WeakMap<AgentSession, EventEmitter>();
+const configMap = new WeakMap<AgentSession, SessionConfig>();
 
 function getEmitter(session: AgentSession): EventEmitter {
   let em = emitterMap.get(session);
@@ -74,6 +79,8 @@ export function createClaudeCodeRuntime(
       };
       // 预创建 emitter，确保 onEvent 在 sendInput 之前就能挂上
       getEmitter(session);
+      // 存 config 供 sendInput 取 workingDir / toolWhitelist
+      configMap.set(session, config);
       return session;
     },
 
@@ -125,6 +132,10 @@ export function createClaudeCodeRuntime(
         emitter.emit('event', evt);
       };
 
+      // per-session config 优先；runtime 级 default 仅作 config 缺失兜底（spec 要求 --cwd / --allowed-tools 必须显式）
+      const sessionConfig = configMap.get(session);
+      const cwd = sessionConfig?.workingDir ?? defaultWorkingDir;
+      const tools = sessionConfig?.toolWhitelist ?? allowedTools;
       const args: string[] = [
         '--print',
         input.text ?? '',
@@ -132,9 +143,9 @@ export function createClaudeCodeRuntime(
         'stream-json',
         '--verbose',
         '--cwd',
-        defaultWorkingDir,
+        cwd,
         '--allowed-tools',
-        allowedTools.join(','),
+        tools.join(','),
       ];
       if (session.ccSessionID) {
         args.push('--resume', session.ccSessionID);

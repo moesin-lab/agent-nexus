@@ -5,6 +5,31 @@ import type { Logger } from '@agent-nexus/daemon';
  * spawn / probe 失败时抛出。daemon 可据此识别 CC CLI 兼容性问题。
  * 参考 docs/dev/spec/agent-backends/claude-code-cli.md §兼容性探针。
  */
+/**
+ * 判定一个候选值是否构成有效的 assistant 文本。仅接受：
+ * - 非空 string
+ * - content blocks 数组：含至少一个 `{ type: 'text' | 'text_delta', text: <非空 string> }`
+ *
+ * 不再接受"任意非空 object"——旧实现这一分支让任何 envelope-shaped object 假通过，
+ * stop_reason 对、文本字段缺失时探针失去检测能力。raw object 必须命中 candidates
+ * 列表的具体路径才进来（result.text / result / message.content / text）。
+ */
+function isAssistantText(value: unknown): boolean {
+  if (typeof value === 'string') return value.length > 0;
+  if (Array.isArray(value)) {
+    return value.some((item) => {
+      if (!item || typeof item !== 'object') return false;
+      const it = item as { type?: unknown; text?: unknown };
+      return (
+        (it.type === 'text' || it.type === 'text_delta') &&
+        typeof it.text === 'string' &&
+        it.text.length > 0
+      );
+    });
+  }
+  return false;
+}
+
 export class AgentSpawnFailedError extends Error {
   override readonly name = 'AgentSpawnFailedError';
   override readonly cause?: unknown;
@@ -67,17 +92,17 @@ export async function runCompatibilityProbe(
       );
     }
 
-    // assistant 文本宽松校验：尝试若干路径
-    const text: unknown =
-      parsed?.result?.text ??
-      parsed?.result ??
-      parsed?.message?.content ??
-      parsed?.text;
-    const textOk =
-      (typeof text === 'string' && text.length > 0) ||
-      (Array.isArray(text) && text.length > 0) ||
-      (typeof text === 'object' && text !== null);
-    if (!textOk) {
+    // assistant 文本宽松校验：跨版本字段位置不固定，但必须最终拿到非空 string。
+    // 注意：旧实现允许"任意非空 object 即过"，会让 stop_reason 对、文本字段缺失的响应假通过——
+    // 探针对 parser/format mismatch 失去检测能力。新实现强制递归找 string，找不到就 fail。
+    const candidates: unknown[] = [
+      parsed?.result?.text,
+      parsed?.result,
+      parsed?.message?.content,
+      parsed?.text,
+    ];
+    const hasText = candidates.some((c) => isAssistantText(c));
+    if (!hasText) {
       throw new Error('assistant text empty in probe response');
     }
   } catch (err) {

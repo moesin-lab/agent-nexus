@@ -57,4 +57,22 @@ describe('runCompatibilityProbe', () => {
       runCompatibilityProbe({ claudeBin: 'claude', logger: fakeLogger }),
     ).rejects.toBeInstanceOf(AgentSpawnFailedError);
   });
+
+  it('--print 返回里 result 是非空 object 但找不到任何 string 文本 → 抛 AgentSpawnFailedError', async () => {
+    // 旧实现的 textOk 第三分支接受任意非空 object，会让 probe 在「stop_reason 对、文本一片狼藉」时假通过。
+    mockedExeca
+      .mockResolvedValueOnce({
+        stdout: 'claude-code 2.5.0',
+      } as unknown as ReturnType<typeof execa>)
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          // result 是 object 但内部既没 .text 也没 string content
+          result: { stop_reason: 'end_turn', meta: { foo: 'bar' } },
+        }),
+      } as unknown as ReturnType<typeof execa>);
+
+    await expect(
+      runCompatibilityProbe({ claudeBin: 'claude', logger: fakeLogger }),
+    ).rejects.toBeInstanceOf(AgentSpawnFailedError);
+  });
 });

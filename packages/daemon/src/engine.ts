@@ -42,6 +42,13 @@ export class Engine {
     SessionConfig,
     'resumeFromCcSessionID' | 'sessionId'
   >;
+  /**
+   * Per-SessionKey 串行队列：同 key 的 dispatch 必须按到达序排队执行，
+   * 否则两条并发 inbound 会同时读到陈旧 prevCc 各自启新 session、
+   * 互相覆盖 sessionStore 里的 ccSessionID（ordering corruption）。
+   * 不同 key 之间互不阻塞。
+   */
+  private readonly inflight = new Map<string, Promise<void>>();
 
   constructor(deps: EngineDeps) {
     this.platform = deps.platform;
@@ -62,7 +69,26 @@ export class Engine {
     this.sessionStore.clearAll();
   }
 
-  private async dispatch(event: NormalizedEvent): Promise<void> {
+  private dispatch(event: NormalizedEvent): Promise<void> {
+    const keyStr = serializeSessionKey(event.sessionKey);
+    const prev = this.inflight.get(keyStr) ?? Promise.resolve();
+    // 链式 await：上一条 settle 后再跑当前这条。前一条若 reject 不影响后续——
+    // dispatchImpl 内部已 try/catch + 日志化错误，外层只用 catch swallow 防止
+    // 链上某条 throw 把整条链 poison 掉。
+    const next = prev
+      .catch(() => {})
+      .then(() => this.dispatchImpl(event));
+    this.inflight.set(keyStr, next);
+    // 链尾 cleanup：当前这条就是最末时清掉 map 项，避免长期累积空 promise。
+    void next.finally(() => {
+      if (this.inflight.get(keyStr) === next) {
+        this.inflight.delete(keyStr);
+      }
+    });
+    return next;
+  }
+
+  private async dispatchImpl(event: NormalizedEvent): Promise<void> {
     try {
       const sessionKeyStr = serializeSessionKey(event.sessionKey);
       this.logger.info(

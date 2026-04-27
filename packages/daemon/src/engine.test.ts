@@ -89,12 +89,15 @@ function makePlatform(): PlatformAdapter & {
 }
 
 /**
- * Mock agent：sendInput 同步触发预先排好的事件序列给最近一次注册的 handler。
- * 测试 setup 里通过 `queueEvents` 把事件队列塞进来。
+ * Mock agent：sendInput 触发"下一组"预排好的事件序列给当前 session 的 handler。
+ *
+ * - `queueEvents(events)` 入队一组；多次入队按 FIFO 取——支持多 dispatch 并发场景
+ * - `queueEventsAfter(events, ms)` 入队一组并在事件分发前等 `ms` 毫秒（用于显式制造异步窗口）
  */
 function makeAgent() {
   const handlers = new Map<AgentSession, AgentEventHandler>();
-  let nextEvents: AgentEvent[] = [];
+  type QueueEntry = { events: AgentEvent[]; delayMs: number };
+  const queue: QueueEntry[] = [];
   let counter = 0;
 
   const startSession = vi.fn(
@@ -125,11 +128,14 @@ function makeAgent() {
   const sendInput = vi.fn(async (s: AgentSession, _input: AgentInput) => {
     const h = handlers.get(s);
     if (!h) return;
-    // 同步触发已排队的事件序列；保留 await 以让 handler 内的 platform.send 推进
-    for (const e of nextEvents) {
+    const entry = queue.shift();
+    if (!entry) return;
+    if (entry.delayMs > 0) {
+      await new Promise((r) => setTimeout(r, entry.delayMs));
+    }
+    for (const e of entry.events) {
       await h(e);
     }
-    nextEvents = [];
   });
 
   const interrupt = vi.fn(() => {});
@@ -152,7 +158,10 @@ function makeAgent() {
     onEvent,
     sendInput,
     queueEvents(events: AgentEvent[]): void {
-      nextEvents = events;
+      queue.push({ events, delayMs: 0 });
+    },
+    queueEventsAfter(events: AgentEvent[], delayMs: number): void {
+      queue.push({ events, delayMs });
     },
   };
 }
@@ -321,6 +330,99 @@ describe('Engine', () => {
     expect(platform.send).toHaveBeenCalledTimes(1);
     const out = platform.send.mock.calls[0]![1] as OutboundMessage;
     expect(out.text).toBe('[new session ready]');
+  });
+
+  it('同 SessionKey 并发：第二条 dispatch 必须串行在第一条之后，看到首轮 ccSessionID 作 resume', async () => {
+    // race regression：两条来自同一频道+同一用户的 @mention 几乎同时到达。
+    // 期望：第二条 startSession 的 config.resumeFromCcSessionID === 首轮的 ccSessionID。
+    // 旧实现里两次 dispatch 都同步读 sessionStore（仍为 undefined），都启新 session 并互相覆盖。
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    // 第一条 dispatch 故意慢——session_started 在 8ms 后才进 store
+    agent.queueEventsAfter(
+      [
+        ev('session_started', { ccSessionID: 'cc-first' }),
+        ev('text_final', { text: 'first reply' }),
+        ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+      ],
+      8,
+    );
+    // 第二条 dispatch 紧随其后
+    agent.queueEvents([
+      ev('session_started', { ccSessionID: 'cc-second' }),
+      ev('text_final', { text: 'second reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 2 }),
+    ]);
+
+    const p1 = dispatchHandler(makeEvent('first'));
+    const p2 = dispatchHandler(makeEvent('second'));
+    await Promise.all([p1, p2]);
+
+    expect(agent.startSession).toHaveBeenCalledTimes(2);
+    const cfg2 = agent.startSession.mock.calls[1]![1] as SessionConfig;
+    expect(cfg2.resumeFromCcSessionID).toBe('cc-first');
+
+    // store 终态是第二轮写入的 cc-second（顺序写）
+    expect(store.get(SESSION_KEY)?.ccSessionID).toBe('cc-second');
+  });
+
+  it('不同 SessionKey 并发不串行：互不阻塞', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    const KEY_A: SessionKey = { platform: 'discord', channelId: 'C1', initiatorUserId: 'A' };
+    const KEY_B: SessionKey = { platform: 'discord', channelId: 'C1', initiatorUserId: 'B' };
+
+    // A 慢；B 应该不被 A 拖累，可以早于 A 完成
+    agent.queueEventsAfter(
+      [
+        ev('session_started', { ccSessionID: 'cc-a' }),
+        ev('text_final', { text: 'a' }),
+        ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+      ],
+      30,
+    );
+    agent.queueEvents([
+      ev('session_started', { ccSessionID: 'cc-b' }),
+      ev('text_final', { text: 'b' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    const tStart = Date.now();
+    const pA = dispatchHandler(makeEvent('hi A', { sessionKey: KEY_A }));
+    const pB = dispatchHandler(makeEvent('hi B', { sessionKey: KEY_B }));
+    await pB;
+    const tBDone = Date.now() - tStart;
+    await pA;
+
+    // B 不应等满 A 的 30ms 延迟；给 25ms 余量足够区分串行/并行
+    expect(tBDone).toBeLessThan(25);
+
+    expect(store.get(KEY_A)?.ccSessionID).toBe('cc-a');
+    expect(store.get(KEY_B)?.ccSessionID).toBe('cc-b');
   });
 
   it('error 路径：agent emit error → platform.send 收到 [CC error: ...]', async () => {

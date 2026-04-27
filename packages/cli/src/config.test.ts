@@ -50,7 +50,8 @@ describe('config loader', () => {
     await expect(loadConfig()).rejects.toThrow(/workingDir/);
   });
 
-  it('loadConfig 默认值兜底（bin / allowedTools / log.level）', async () => {
+  it('loadConfig 默认值兜底（bin / allowedTools / log.level）：Bash 默认禁用', async () => {
+    // spec/security/tool-boundary.md：Bash 必须默认禁用，启用须显式列入 allowedTools。
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
       JSON.stringify({
@@ -60,8 +61,24 @@ describe('config loader', () => {
     );
     const cfg = await loadConfig();
     expect(cfg.claudeCode.bin).toBe('claude');
-    expect(cfg.claudeCode.allowedTools).toContain('Bash');
+    expect(cfg.claudeCode.allowedTools).not.toContain('Bash');
+    // spec 默认集 Read/Grep/Glob/Edit/Write
+    expect(cfg.claudeCode.allowedTools).toEqual(
+      expect.arrayContaining(['Read', 'Grep', 'Glob', 'Edit', 'Write']),
+    );
     expect(cfg.log.level).toBe('info');
+  });
+
+  it('loadConfig 用户显式列出 Bash → 保留（启用走 cli warn 路径）', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify({
+        discord: { botUserId: '12345' },
+        claudeCode: { workingDir: '/x', allowedTools: ['Read', 'Bash'] },
+      }),
+    );
+    const cfg = await loadConfig();
+    expect(cfg.claudeCode.allowedTools).toEqual(['Read', 'Bash']);
   });
 
   it('loadDiscordToken 缺 token 文件 → SecretsPermissionError', async () => {

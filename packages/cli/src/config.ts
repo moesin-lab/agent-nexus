@@ -30,7 +30,8 @@ export class SecretsPermissionError extends Error {
   }
 }
 
-const DEFAULT_ALLOWED_TOOLS = ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash'];
+// spec/security/tool-boundary.md：默认集 Read/Grep/Glob/Edit/Write；Bash 必须显式启用
+const DEFAULT_ALLOWED_TOOLS = ['Read', 'Grep', 'Glob', 'Edit', 'Write'];
 const DEFAULT_BIN = 'claude';
 const DEFAULT_LOG_LEVEL = 'info' as const;
 

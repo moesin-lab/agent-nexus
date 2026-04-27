@@ -12,6 +12,7 @@ __pycache__/
 venv/
 .pnp.*
 .yarn/
+*.tsbuildinfo
 
 # Test / coverage
 coverage/

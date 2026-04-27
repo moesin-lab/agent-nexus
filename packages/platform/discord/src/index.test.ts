@@ -170,6 +170,58 @@ describe('parseInbound', () => {
   });
 });
 
+describe('parseInbound: replyMode="all"', () => {
+  it('没 @bot 也产事件，text 等于消息原文（无 mention 可剥）', () => {
+    const msg = makeMsg({ content: 'hello world' });
+    const ev = parseInbound(msg, BOT_ID, 'all');
+    expect(ev).not.toBeNull();
+    expect(ev!.text).toBe('hello world');
+    expect(ev!.type).toBe('message');
+  });
+
+  it('author 是 bot → 仍然 null（前置 guard 不变）', () => {
+    const msg = makeMsg({ content: 'hello', authorBot: true });
+    expect(parseInbound(msg, BOT_ID, 'all')).toBeNull();
+  });
+
+  it('author 是机器人本身 → 仍然 null（自回环 guard）', () => {
+    const msg = makeMsg({ content: 'hello', authorId: BOT_ID, authorBot: false });
+    expect(parseInbound(msg, BOT_ID, 'all')).toBeNull();
+  });
+
+  it('用户 @bot 时 mention 仍然被剥（保持文本干净）', () => {
+    const msg = makeMsg({ content: `<@${BOT_ID}> ping` });
+    const ev = parseInbound(msg, BOT_ID, 'all');
+    expect(ev).not.toBeNull();
+    expect(ev!.text).toBe('ping');
+  });
+
+  it('保留对其他用户的 @mention', () => {
+    const msg = makeMsg({ content: `summarise what <@${OTHER_ID}> said` });
+    const ev = parseInbound(msg, BOT_ID, 'all');
+    expect(ev).not.toBeNull();
+    expect(ev!.text).toBe(`summarise what <@${OTHER_ID}> said`);
+  });
+
+  it('sessionKey 仍按 (channelId, author.id) 构造', () => {
+    const msg = makeMsg({ content: 'hi', channelId: 'C99', authorId: 'U_X' });
+    const ev = parseInbound(msg, BOT_ID, 'all');
+    expect(ev!.sessionKey).toEqual({
+      platform: 'discord',
+      channelId: 'C99',
+      initiatorUserId: 'U_X',
+    });
+  });
+});
+
+describe('parseInbound: 默认参数省略时退化到 mention 模式', () => {
+  it('调用 parseInbound(msg, botId) 等价于 replyMode="mention"', () => {
+    const msg = makeMsg({ content: 'hello world without mention' });
+    expect(parseInbound(msg, BOT_ID)).toBeNull();
+    expect(parseInbound(msg, BOT_ID, 'mention')).toBeNull();
+  });
+});
+
 /**
  * send() MessageRef shape tests.
  *

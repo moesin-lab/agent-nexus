@@ -31,6 +31,7 @@ import {
   handleReplyModeInteraction,
   replyModeCommandDefinition,
 } from './reply-mode.js';
+import { registerSlashCommands } from './commands.js';
 
 export interface DiscordPlatformOptions {
   token: string;
@@ -194,15 +195,11 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
           tag: client.user?.tag,
           logger,
         });
-        // 注册 slash command（全局）。用 create（按 name upsert，不动其它命令）
-        // 而不是 set（会用整个数组覆盖全部全局命令）——避免误删其它（手动注册
-        // 或未来新增的）slash command。失败仅记日志不阻断启动：平台核心是消息
-        // 收发，控制面板缺失只影响切换能力。
-        void client.application
-          ?.commands.create(replyModeCommandDefinition())
-          .catch((err: unknown) => {
-            logger.error({ err }, 'discord_slash_command_register_failed');
-          });
+        void registerSlashCommands(
+          client.application?.commands,
+          [{ name: 'reply-mode', data: replyModeCommandDefinition() }],
+          logger,
+        );
       });
 
       client.on('interactionCreate', async (interaction: Interaction) => {

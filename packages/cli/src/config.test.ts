@@ -16,6 +16,12 @@ import {
   loadDiscordToken,
 } from './config.js';
 
+// 最小合法 discord 段——allowedUserIds 必填，下游测试统一用同一个 fixture。
+const VALID_DISCORD = {
+  botUserId: '12345',
+  allowedUserIds: ['U1'],
+};
+
 describe('config loader', () => {
   let tmp: string;
 
@@ -46,7 +52,7 @@ describe('config loader', () => {
   it('loadConfig 缺 claudeCode.workingDir → ConfigError（含字段名）', async () => {
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({ discord: { botUserId: '12345' } }),
+      JSON.stringify({ discord: VALID_DISCORD }),
     );
     await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
     await expect(loadConfig()).rejects.toThrow(/workingDir/);
@@ -57,7 +63,7 @@ describe('config loader', () => {
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
       JSON.stringify({
-        discord: { botUserId: '12345' },
+        discord: VALID_DISCORD,
         claudeCode: { workingDir: '/x' },
       }),
     );
@@ -75,7 +81,7 @@ describe('config loader', () => {
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
       JSON.stringify({
-        discord: { botUserId: '12345' },
+        discord: VALID_DISCORD,
         claudeCode: { workingDir: '/x', allowedTools: ['Read', 'Bash'] },
       }),
     );
@@ -83,7 +89,9 @@ describe('config loader', () => {
     expect(cfg.claudeCode.allowedTools).toEqual(['Read', 'Bash']);
   });
 
-  it('loadConfig discord.ownerUserIds / statePath 缺省 → 路由正确传递默认值', async () => {
+  it('loadConfig 缺 discord.allowedUserIds → ConfigError（fail-closed）', async () => {
+    // PR #50 把 discord 解析下沉到 platform-discord，但 allowedUserIds 必填判定
+    // 仍属 cli loader 路由层的可观察契约（错误经包装回 ConfigError 抛出）。
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
       JSON.stringify({
@@ -91,8 +99,19 @@ describe('config loader', () => {
         claudeCode: { workingDir: '/x' },
       }),
     );
+    await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
+    await expect(loadConfig()).rejects.toThrow(/allowedUserIds/);
+  });
+
+  it('loadConfig discord.statePath 缺省 → 路由传递默认 ~/.agent-nexus/state/discord.json', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify({
+        discord: VALID_DISCORD,
+        claudeCode: { workingDir: '/x' },
+      }),
+    );
     const cfg = await loadConfig();
-    expect(cfg.discord.ownerUserIds).toEqual([]);
     expect(cfg.discord.statePath).toBe(
       join(tmp, '.agent-nexus', 'state', 'discord.json'),
     );

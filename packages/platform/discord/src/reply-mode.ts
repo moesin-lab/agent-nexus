@@ -3,7 +3,7 @@ import { ApplicationCommandOptionType } from 'discord.js';
 import type { ReplyMode } from './state.js';
 
 export interface ReplyModeContext {
-  ownerUserIds: readonly string[];
+  allowedUserIds: readonly string[];
   getMode(): ReplyMode;
   setMode(mode: ReplyMode): void | Promise<void>;
   logger: Logger;
@@ -46,7 +46,13 @@ export function replyModeCommandDefinition() {
  * 处理 /reply-mode interaction。
  *
  * 授权策略见 spec/platform-adapter.md §"Discord Trigger 策略 / 授权"：
- * unauthorized → 不 ack（调用方看 "interaction failed"）+ info 日志（仅 user id）。
+ * unauthorized → ephemeral ack 含调用方自己的 user id（让误配的合法 owner
+ * 一眼能修），同时打 info 日志（仅 user id，不带 username）。
+ *
+ * 之前的设计是"不 ack"——调用方看到 Discord "interaction failed" 红字。
+ * 实战发现合法 owner 漏配 allowedUserIds 时被自己的 bot 静默拒，看起来像
+ * bot 坏了，UX 极差；攻击面"踩死"的收益≈0，因为 Discord 协议本身就
+ * 暴露了 user id，告诉调用方"被拒"不给攻击者新信息。
  */
 export async function handleReplyModeInteraction(
   interaction: ReplyModeInteractionLike,
@@ -54,8 +60,12 @@ export async function handleReplyModeInteraction(
 ): Promise<void> {
   const userId = interaction.user.id;
 
-  if (!ctx.ownerUserIds.includes(userId)) {
+  if (!ctx.allowedUserIds.includes(userId)) {
     ctx.logger.info({ userId }, 'discord_reply_mode_unauthorized');
+    await interaction.reply({
+      content: `Permission denied. Your User ID is \`${userId}\`; ask the bot operator to add it.`,
+      ephemeral: true,
+    });
     return;
   }
 

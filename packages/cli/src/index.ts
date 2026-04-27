@@ -63,7 +63,8 @@ async function main(): Promise<void> {
     token,
     botUserId: config.discord.botUserId,
     statePath: config.discord.statePath,
-    ownerUserIds: config.discord.ownerUserIds,
+    allowedUserIds: config.discord.allowedUserIds,
+    testGuildId: config.discord.testGuildId,
     logger,
   });
 

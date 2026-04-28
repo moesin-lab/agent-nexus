@@ -191,7 +191,7 @@ superseded_by: null
 - **PR-C（daemon engine）**：`packages/daemon/src/engine.ts` 改流式消费——`text_delta` 累积 / 转发；`tool_call_started/finished` 路由到 platform；`turn_finished` 收尾不变
 - **PR-D（Discord adapter 平台能力门槛）**：`packages/platform/discord/src/index.ts` 翻 `supportsEdit: true` + `supportsTypingIndicator: true`，实现 `edit()` / `setTyping()` / `clearTyping()`；具体 UI 策略按对应 UX issue 演进
 - **spec 修订**：
-  - `docs/dev/spec/agent-runtime.md` 在 union 表前补"声明位 vs 实际产出"说明
+  - `docs/dev/spec/agent-runtime.md` 在 union 表前补"声明位 vs 实际产出"说明；§TurnEndReason 与 §turn_finished payload 按 PR-A 选定的"三层超时区分语义"实现机制对应修订（如选 payload 加 `timeoutLayer` 字段则扩 payload；如选新增 reason 枚举则扩 union；如选 daemon 内部状态则 spec 不动）
   - `docs/dev/spec/agent-backends/claude-code-cli.md` §中断 段补 capability flag；§超时 段把"超时 → SIGINT → 5s → SIGKILL"改写为本 ADR 决策点 4 的三层 watchdog 语义（含强约束兜底链）
   - `docs/dev/spec/message-protocol.md` §流式语义 标记"模式 B 已由 ADR-0012 决策点 3 评审通过"；UI 细节（工具调用呈现 / typing / 错误 / 切片锚定）按后续 UX issue 收敛
   - `docs/dev/spec/platform-adapter.md` 加 `setTyping` / `clearTyping` 接口与 `supportsTypingIndicator` capability

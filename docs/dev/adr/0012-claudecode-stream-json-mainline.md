@@ -139,15 +139,69 @@ superseded_by: null
 - **优点**：单一关注点
 - **缺点**：制造"协议层先升级、运行时滞后"的中间态；两个 ADR 高度重合，评审成本翻倍
 
+### 决策点 5：流式期间 Discord typing indicator
+
+#### Option 5A：仅在"首条可见输出之前"触发 typing；首条 send/edit 落地后停止
+
+- **是什么**：daemon 在 `sendInput` 后向 Discord adapter 发 typing 信号；adapter 翻 `supportsTypingIndicator: true` 并按 ~8s 心跳触发 Discord `POST /channels/{id}/typing`（typing 衰减约 10s，留余量）；**首个**业务事件（`text_delta` 或 `tool_call_started`）被 send/edit 落到 channel 后立即停止 typing；切片路径启动后也不再触发 typing（已有可见输出）；任何后续 turn 重启时再次进入"首条前 typing"窗口
+- **优点**：贴 Discord 官方文档语义（"短暂反馈"而非"持续状态"）；首条消息后用户已看到 agent 在做事，typing 失去意义反而干扰；不依赖"edit 自动结束 typing"这个无官方保证的假设
+- **缺点**：长 TTFB（agent 思考 30s+ 才 emit 首事件）期间用户只看到 typing 没有别的反馈；高密度短工具循环（每 2s 一个 tool_call_finished）下 typing 不再触发，UX 略显单调
+
+#### Option 5B：agent 进 Busy 状态即持续 typing 直到 turn_finished
+
+- **是什么**：心跳 typing 全程持续到 `turn_finished`；流式 edit 与 typing 并存
+- **优点**：实现简单
+- **缺点**：与 Discord 官方对 typing 接口的定位（短暂提示，"generally bots should not use this route"）冲突；首条消息后 typing 与流式 edit 形成两个并列的"在做事"信号，UX 易打架；不同 Discord 客户端对 typing 衰减 / 消息更新的处理不一致
+
+#### Option 5C：仅工具调用期间 typing
+
+- **是什么**：`tool_call_started` → `tool_call_finished` 期间触发 typing；text_delta 流期间不触发
+- **优点**：把 typing 限定在"用户感知 agent 在做事"的离散区间
+- **缺点**：流式文本期间也是"在做事"——按工具调用切分 typing 反而让 UX 跳变；与本 ADR 决策点 3 inline 嵌入的连续呈现不一致
+
+### 决策点 6：流式下的 timeout 分层
+
+`--print` 单次调用模式下 `perInputTimeoutMs`（默认 300s）直接绑 execa `timeout`——子进程跑超就杀。流式持续子进程下三类失败模式应该分开测、且子进程是 session 级资源不能因单 turn 超时就杀（否则丢失多 turn 续话能力）。
+
+#### Option 6A：三层 watchdog——firstEvent / streamIdle / perTurnWallclock，只定义 runtime/backend 层
+
+- **是什么**：
+  - `limits.firstEventTimeoutMs`：sendInput 到**首个业务事件**（`text_delta` / `tool_call_started`，**不**含 `system/init` —— 后者归 spawn probe 与 runtime spawn timeout 管）的 TTFB 上限
+  - `limits.streamIdleTimeoutMs`：首事件后**连续无新事件**（任何 AgentEvent 都算心跳）的 idle 上限
+  - `limits.perTurnWallclockMs`：sendInput 到 `turn_finished` 的整体 wallclock 兜底（沿用 `perInputTimeoutMs` 旧位）
+  - **三层各自有独立的恢复策略**，不只是观测维度：
+    - firstEvent 超时 → interrupt + 标记疑似"队列拥堵 / 网络问题"，session 不立刻 Errored，允许下一 turn 继续（用户可以重试）
+    - streamIdle 超时 → interrupt + session 进 Errored（流中卡死视为不可恢复）
+    - perTurnWallclock 超时 → interrupt + session 进 Errored（runaway 视为不可恢复）
+  - **超时处理链（强约束）**：触发 interrupt（按决策点 2 的 capability flag 选 SIGINT 或 stdin control）→ 等子进程在 5 秒内产出 `turn_finished{wallclock_timeout}`；**5s 内未产出** → 升级到 SIGKILL 子进程 + session 进 Errored + 投递 `error` + `session_stopped{error}`。子进程仅在 SIGKILL 路径或 session 级 idle 命中（`session.idleTimeoutMs`）时被杀；单 turn 超时本身**不杀**子进程。
+  - **本决策点只定义 runtime/backend watchdog 层**，不定义 daemon 视角的"等多久该告知用户超时"——后者归 daemon 层 spec / 后续独立 ADR（与 ADR-0011 分层一致）
+  - 默认阈值留给 spec/cost-and-limits.md 修订（PR-B/PR-C 落实），本 ADR 不锁数值；只锁"三层架构 + 三类不同恢复策略 + interrupt-then-kill 兜底"
+- **优点**：三类失败模式有不同恢复动作（不是只换报表），互相不替代；与 ADR-0011 分层一致（runtime 层独立于 daemon UX 层）；子进程保活让多 turn 续话不在单 turn 超时时被打断
+- **缺点**：三个旋钮的运维负担；阈值之间的耦合关系（streamIdle < perTurnWallclock 等）需要 spec 写清
+
+#### Option 6B：保持单一 wallclock，失败模式由观测层区分
+
+- **是什么**：仍用 `perInputTimeoutMs` 单一阈值，定义改为"sendInput 到 turn_finished"；不分层；TTFB / idle / runaway 在 log + metrics 区分
+- **优点**：单一旋钮，运维简单；与现 spec 表面兼容
+- **缺点**：三类失败模式只能用同一阈值（必然偏向某类），且只能用同一恢复动作；流式持续子进程下"无新事件"和"还在跑"在单一 wallclock 下不可区分
+
+#### Option 6C：idle-only
+
+- **是什么**：取消 turn 级 wallclock，只看 idle；runaway 由 `maxToolCallsPerTurn` + 用户 interrupt 兜底
+- **优点**：贴流式语义最直接
+- **缺点**：runaway 失去硬约束（`maxToolCallsPerTurn` 命中也只是 turn_finished 不是超时）；"长思考" idle 会被误判
+
 ## Decision
 
-四个决策点综合选：
+六个决策点综合选：
 
 - **决策点 1**：选 **Option 1A**（protocol 一次性对齐 spec；runtime 本期 PR 只 emit `text_delta` / `tool_call_started` / `tool_call_finished`）
 - **决策点 1 子问题**：选 **Option 1-tr-A**（CC `user.tool_result` 合入 `tool_call_finished.payload.resultSummary`），但**附前提**——本 ADR 实施 PR 必须先落 fixture 验证 CC 对每个 `tool_use_id` 恰好回一条终态 tool_result；若 fixture 暴露多变体场景（多块 / 结构化 / 空 + error），escalate 到 Option 1-tr-B（新增独立 `tool_result` 事件），escalate 路径走 spec 修订 + 本 ADR Amendment，不再发新 ADR
 - **决策点 2**：选 **Option 2A**（暂保持 SIGINT 主路径；runtime 实现 stdin control 路径但默认关闭，由 `AgentCapabilitySet.supportsStdinInterrupt` flag 控制；待补齐 stdin 延迟 / SIGINT reachability 两类证据后再决定是否反转 spec，反转走独立 ADR）
 - **决策点 3**：选 **Option 3A**（默认 inline 嵌入；流式 edit 在 capability + 长度预算允许时开启；超长退化到 message-protocol §文本切片定义的切片机制；高工具密度场景的折叠 thread 留作后续可选优化，不在本 ADR 范围内）
 - **决策点 4**：选 **Option 4A**（本 ADR 吸收 #45 root cause；#45 关闭条件绑实施 PR 而非 ADR 发布）
+- **决策点 5**：选 **Option 5A**（typing 仅在"首条可见输出之前"触发；首个 `text_delta` / `tool_call_started` 被 send 或 edit 落到 channel 后立即停止 typing；切片路径启动后不再触发；Discord adapter 翻 `supportsTypingIndicator: true` 并实现 `setTyping(channelId)`；心跳节奏由 PR-D 内部决定，约束区间为 `[7s, 9s]`，不写入本 ADR 数值）
+- **决策点 6**：选 **Option 6A**（三层 watchdog——`firstEventTimeoutMs` / `streamIdleTimeoutMs` / `perTurnWallclockMs`，三类有不同恢复策略：firstEvent 超时仅 interrupt 不 Errored；streamIdle / perTurnWallclock 超时 interrupt + session Errored）。**强约束**：超时触发 interrupt → 5s 内未产出 `turn_finished` → SIGKILL 子进程 + session Errored + 投递 `error` + `session_stopped{error}`。单 turn 超时本身**不**杀子进程。本决策点**只定义 runtime/backend watchdog**，daemon 视角的 UX 通知 SLA 不在本 ADR 范围。三层默认阈值留 spec/cost-and-limits.md 修订（PR-B/PR-C 落实），本 ADR 不锁数值。
 
 ## Consequences
 
@@ -157,6 +211,8 @@ superseded_by: null
 - runtime 切持续子进程后，IM 看到工具调用过程（解决 #45）；token 级 emit 让 partial output 自然不丢（自然消解 #28）
 - interrupt 路径设施位齐备（双轨），未来切主备只需翻 capability flag，不需要新 ADR
 - Discord 流式 edit + inline 渲染对接 message-protocol §模式 B，本 ADR 同时担任"独立 ADR 评审"角色，message-protocol 不需要额外 ADR
+- typing 限定在"首条前"窗口，符合 Discord 官方对该接口的定位，不依赖"edit 自动结束 typing"无官方保证的假设；首条消息后 typing 与流式 edit 不再并行造成视觉打架
+- 三层 watchdog + 三类不同恢复策略让"队列拥堵 / 流中卡死 / runaway"区分到 timeout 层而非只在观测层；session 级子进程仅在 SIGKILL 路径或 session idle 时被杀，多 turn 续话能力在单 turn 超时时不被打断
 
 ### 负向
 
@@ -164,6 +220,8 @@ superseded_by: null
 - interrupt 决策留尾巴——本 ADR 不锁死最终主路径，需要后续证据收集与可能的反转 ADR
 - Discord adapter 需要先扩 `supportsEdit` capability 并实现 `edit()`，PR-D 体量增大
 - `tool_call_finished.resultSummary` 收口依赖 fixture 验证；CC 升级若引入 tool_result 多变体，需要 Amendment + spec 修订
+- 长 TTFB（首个 LLM 事件 30s+）期间用户只看到 typing 没有别的反馈——本 ADR 不在 daemon 层补"等多久该提示用户"的 SLA，需要后续 daemon 层 spec / ADR 跟进
+- 三层 timeout 增加运维负担（三个旋钮 + 阈值耦合关系约束），spec/cost-and-limits.md 修订需要写清三层默认值与互相关系（如 `streamIdleTimeoutMs < perTurnWallclockMs`）
 
 ### 需要后续跟进的事
 
@@ -172,8 +230,14 @@ superseded_by: null
 - **PR-A（协议层）**：`packages/protocol/src/agent.ts` 把 union 补齐到 spec 全集；扩 `AgentCapabilitySet` 加 `supportsStdinInterrupt` flag；删 `:34-39` 注释；新增/修改测试覆盖新事件类型的判别
 - **PR-B（claudecode runtime）**：`packages/agent/claudecode/src/index.ts` 切持续子进程，stdin 持续 write `{type:user,...}`，stdout `for-await` 解析 stream-json 并 emit 三类事件（`text_delta` / `tool_call_started` / `tool_call_finished`）；`interrupt()` 实现 SIGINT 路径（默认）+ stdin control 路径（capability flag 控制）；`stopSession()` 关 stdin EOF + 等清理；落 fixture 验证 CC tool_result 单条假设
 - **PR-C（daemon engine）**：`packages/daemon/src/engine.ts` 改流式消费——`text_delta` 累积 / 转发；`tool_call_started/finished` 路由到 platform；`turn_finished` 收尾不变
-- **PR-D（Discord adapter）**：`packages/platform/discord/src/index.ts` 翻 `supportsEdit: true`，实现 `edit()`；落实 inline 工具调用片段格式 + 折叠 + 截断；超长走 message-protocol §文本切片
-- **spec 修订**：`docs/dev/spec/agent-runtime.md` 在 union 表前补"声明位 vs 实际产出"说明；`docs/dev/spec/agent-backends/claude-code-cli.md` §中断 段补 capability flag；`docs/dev/spec/message-protocol.md` §流式语义 标记"模式 B 已由 ADR-0012 评审通过"
+- **PR-D（Discord adapter）**：`packages/platform/discord/src/index.ts` 翻 `supportsEdit: true` 与 `supportsTypingIndicator: true`，实现 `edit()` 与 `setTyping()`；落实 inline 工具调用片段格式 + 折叠 + 截断；超长走 message-protocol §文本切片；首条可见输出后停 typing；切片路径不触发 typing
+- **PR-C 同时**：daemon engine 在 `sendInput` 后向 platform 发 typing 触发信号；首个 `text_delta` / `tool_call_started` 落到 channel 后向 platform 发停止信号；platform-adapter spec 加 `setTyping(channelId)` / `clearTyping(channelId)` 接口
+- **spec 修订**：
+  - `docs/dev/spec/agent-runtime.md` 在 union 表前补"声明位 vs 实际产出"说明
+  - `docs/dev/spec/agent-backends/claude-code-cli.md` §中断 段补 capability flag；§超时 段把"超时 → SIGINT → 5s → SIGKILL"改写为本 ADR 决策点 6 的三层 watchdog 语义（含强约束兜底链）
+  - `docs/dev/spec/message-protocol.md` §流式语义 标记"模式 B 已由 ADR-0012 评审通过"
+  - `docs/dev/spec/platform-adapter.md` 加 `setTyping` / `clearTyping` 接口与 `supportsTypingIndicator` capability
+  - `docs/dev/spec/infra/cost-and-limits.md` §Wall-clock 硬限 把 `perInputTimeoutMs` 拆成 `firstEventTimeoutMs` / `streamIdleTimeoutMs` / `perTurnWallclockMs` 三层，写清默认值与互相关系约束
 - **issue 处置**：#45 在 PR-A + PR-B 合入后由 reviewer 关闭，body 写 "fixed by ADR-0012 + PR-#NN"；#56 epic 在 PR-A/B/C/D 全部合入后关闭；#28 / #54（部分）/ #30 / #55-B 在对应 PR 合入后由 reviewer 评估关闭
 - **证据收集（决策点 2 反转的前提）**：runtime PR-B 落地后，跑 `chaos-style` 长任务（10s+ 工具循环）记录两类数据 (i) stdin `control/interrupt` 从写入到 CC 产出 `turn_finished{user_interrupt}` 的延迟分布 (ii) SIGINT 在工具子进程链路下能否打到正确边界。数据落地后再决定是否发新 ADR 反转 spec
 
@@ -186,6 +250,10 @@ superseded_by: null
 - **不决定**高工具密度场景下"inline → thread"自动降级的阈值——决策点 3 留作后续可选优化
 - **不决定**capability flag `supportsStdinInterrupt` 翻起的具体时机——证据补齐后由后续 ADR 决定
 - **不决定**双轨期间的 legacy `--print` 路径保留期限——由 PR-B 内部决定，可以保留为 `claude-code-legacy-print` env flag 但不写入 spec
+- **不决定** typing 心跳节奏的精确数值——区间 `[7s, 9s]` 写 ADR，具体数值由 PR-D 内部决定
+- **不决定**三层 watchdog 的默认阈值——留 spec/cost-and-limits.md 修订
+- **不决定** daemon 视角的"等多久该告知用户超时"UX SLA——本 ADR 只定义 runtime/backend watchdog；daemon 层 SLA 归 daemon 层 spec / 后续独立 ADR
+- **不决定**长 TTFB 期间的 daemon 心跳通知策略（如"agent 还在思考"提示消息）——同上，归 daemon 层
 
 ## Amendments
 
@@ -211,6 +279,23 @@ superseded_by: null
 
 - **异议 5（决策点 4）**：草案最初写 "#45 close as duplicate"——会让实现落地前丢掉验收锚点。
   **回应**：采纳。Decision 改为"#45 保持 open 直到实施 PR 落地，再以 'fixed by ADR + PR' 关闭"。
+
+第二轮 argue（决策点 5/6 补充）：
+
+- **异议 6（决策点 5）**：草案最初写"agent Busy 即持续 typing 直到 turn_finished"——与 Discord 官方对该接口的定位（"短暂提示，generally bots should not use this route"）冲突；且依赖"edit 自动结束 typing"这个无官方保证的假设；首条消息后 typing 与流式 edit 形成两个并列"在做事"信号易打架。
+  **回应**：采纳。Decision 改为 5A——typing 仅在"首条可见输出之前"触发，首个 `text_delta` / `tool_call_started` 落到 channel 后立即停止；切片路径不触发；外部参考 [Discord Channels API §Trigger Typing Indicator](https://docs.discord.com/developers/resources/channel)。
+
+- **异议 7（决策点 6 阈值）**：草案最初给 30s/60s/300s 默认值偏激进——`streamIdleTimeoutMs=60s` 在工具静默运行 / 长思考 / 长 LLM 回复中可能误杀健康 turn；且"事件"定义不清（spawn/pipe `system/init` 算不算首事件？）。
+  **回应**：采纳。Decision 不锁数值，只锁三层架构 + 三类不同恢复策略 + 兜底链；阈值留 spec 修订（PR-B/PR-C 落实，spec 写清"`firstEventTimeoutMs` 计 sendInput 到首个**业务事件**——`text_delta` / `tool_call_started`，**不**含 `system/init`，后者归 spawn probe"）。
+
+- **异议 8（决策点 6A vs 6B）**：若三层超时最后动作都一样（interrupt → 5s → kill），6B 单一 wallclock + 观测层区分会更简；6A 必须证明"三层有不同动作"否则是过设计。
+  **回应**：采纳并强化论证。Decision 明确三层有**不同恢复策略**：firstEvent 超时 → 仅 interrupt 不 Errored（视为"队列拥堵 / 网络问题，允许下一 turn 重试"）；streamIdle / perTurnWallclock 超时 → interrupt + session Errored（视为不可恢复）。这是"动作差异"而非只换观测维度，6B 被排除。
+
+- **异议 9（决策点 6 兜底链）**：interrupt → 5s → kill + session Errored 必须升格为强约束，否则会出现"daemon 认为 turn 已超时但 backend 仍卡活着"的不可恢复中间态。
+  **回应**：采纳。Decision 把兜底链写成强约束（粗体"强约束"），单 turn 超时本身不杀子进程，但 interrupt 失败 5s 内必升级到 SIGKILL + session Errored。
+
+- **异议 10（决策点 6 与 ADR-0011 分层）**：本 ADR 三层 watchdog 不该顺手定义 daemon UX SLA，否则又把 ADR-0011 已分的两层打穿。
+  **回应**：采纳。Decision 明确"本决策点只定义 runtime/backend watchdog"；Out of scope 加"daemon UX 通知 SLA / 长 TTFB 心跳通知策略"两条留给后续 daemon 层 spec / 独立 ADR。
 
 ## 参考
 

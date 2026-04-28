@@ -131,7 +131,8 @@ superseded_by: null
     - firstEvent 超时 → interrupt + 标记疑似"队列拥堵 / 网络问题"，session 不立刻 Errored，允许下一 turn 继续
     - streamIdle 超时 → interrupt + session Errored
     - perTurnWallclock 超时 → interrupt + session Errored
-  - **超时处理链（强约束）**：触发 interrupt（按决策点 2 capability flag 选 SIGINT 或 stdin control）→ 等子进程在 5 秒内产出 `turn_finished{wallclock_timeout}`；**5s 内未产出** → 升级到 SIGKILL 子进程 + session 进 Errored + 投递 `error` + `session_stopped{error}`。子进程仅在 SIGKILL 路径或 `session.idleTimeoutMs` 命中时被杀；单 turn 超时本身**不**杀子进程
+  - **超时处理链（强约束）**：触发 interrupt（按决策点 2 capability flag 选 SIGINT 或 stdin control）→ 等 runtime 层在 5 秒内产出 `turn_finished{wallclock_timeout}`（**`wallclock_timeout` reason 由 runtime 层构造投递，CC 子进程不直接产出此 reason**——见 spec/agent-runtime.md §TurnEndReason "daemon 注入"列）；**5s 内未产出** → 升级到 SIGKILL 子进程 + session 进 Errored + 投递 `error` + `session_stopped{error}`。子进程仅在 SIGKILL 路径或 `session.idleTimeoutMs` 命中时被杀；单 turn 超时本身**不**杀子进程
+  - **三层超时区分语义**：runtime 层必须能让 daemon 区分"firstEvent 超时（可重试）vs streamIdle 超时（不可恢复）vs perTurnWallclock 超时（不可恢复）vs user_interrupt（用户主动中断）"四类。具体实现机制（在 `turn_finished` payload 加 `timeoutLayer` 字段 / 新增 TurnEndReason 枚举值 / daemon 维护内部状态）由 PR-A（协议层）+ PR-B（runtime）决定，本 ADR 锁定语义需求不锁实现
   - **本决策点只定义 runtime/backend watchdog 层**，不定义 daemon 视角的"等多久该告知用户超时"——后者归 daemon 层 spec / 后续独立 ADR
   - 默认阈值留 spec/cost-and-limits.md 修订（PR-B/PR-C 落实）；本 ADR 不锁数值
 - **优点**：三类失败模式有不同恢复动作（不只是观测维度）；与 ADR-0011 分层一致；session 级子进程在单 turn 超时时不被杀，多 turn 续话能力受保护
@@ -186,7 +187,7 @@ superseded_by: null
 后续 PR / spec / issue 落实清单：
 
 - **PR-A（协议层）**：`packages/protocol/src/agent.ts` 把 union 补齐到 spec 全集；扩 `AgentCapabilitySet` 加 `supportsStdinInterrupt` flag；删 `:34-39` 注释；新增/修改测试覆盖新事件类型的判别
-- **PR-B（claudecode runtime）**：`packages/agent/claudecode/src/index.ts` 切持续子进程，stdin 持续 write `{type:user,...}`，stdout `for-await` 解析 stream-json 并 emit 三类事件（`text_delta` / `tool_call_started` / `tool_call_finished`）；`interrupt()` 实现 SIGINT 路径（默认）+ stdin control 路径（capability flag 控制）；`stopSession()` 关 stdin EOF + 等清理；落 fixture 验证 CC tool_result 单条假设
+- **PR-B（claudecode runtime）**：`packages/agent/claudecode/src/index.ts` 切持续子进程，stdin 持续 write `{type:user,...}`，stdout `for-await` 解析 stream-json 并 emit 三类事件（`text_delta` / `tool_call_started` / `tool_call_finished`）；`interrupt()` 实现 SIGINT 路径（默认）+ stdin control 路径（capability flag 控制）；`stopSession()` 关 stdin EOF + 等清理；落 fixture 验证 CC tool_result 单条假设；**是否启用 `--include-partial-messages`**（影响 `text_delta` 粒度——token 级 vs 整段，进而影响 PR-C 缓冲逻辑与 PR-D edit 频率）由 PR-B 内部决定
 - **PR-C（daemon engine）**：`packages/daemon/src/engine.ts` 改流式消费——`text_delta` 累积 / 转发；`tool_call_started/finished` 路由到 platform；`turn_finished` 收尾不变
 - **PR-D（Discord adapter 平台能力门槛）**：`packages/platform/discord/src/index.ts` 翻 `supportsEdit: true` + `supportsTypingIndicator: true`，实现 `edit()` / `setTyping()` / `clearTyping()`；具体 UI 策略按对应 UX issue 演进
 - **spec 修订**：

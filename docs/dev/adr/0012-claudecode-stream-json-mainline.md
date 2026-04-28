@@ -149,9 +149,9 @@ superseded_by: null
 
 #### Option 5B：agent 进 Busy 状态即持续 typing 直到 turn_finished
 
-- **是什么**：心跳 typing 全程持续到 `turn_finished`；流式 edit 与 typing 并存
-- **优点**：实现简单
-- **缺点**：与 Discord 官方对 typing 接口的定位（短暂提示，"generally bots should not use this route"）冲突；首条消息后 typing 与流式 edit 形成两个并列的"在做事"信号，UX 易打架；不同 Discord 客户端对 typing 衰减 / 消息更新的处理不一致
+- **是什么**：daemon 在 `sendInput` 后向 Discord adapter 发 typing 信号；adapter 按 ~8s 心跳持续触发 Discord `POST /channels/{id}/typing` 直到 `turn_finished`；流式 edit 与 typing 并存；切片路径下 typing 仍持续
+- **优点**：贴用户实际感受——长 turn（多工具循环 / 长思考）期间持续 typing 比"首条后停"更能传达"agent 还在做事"，避免用户误判 agent 卡死；工具调用之间的"思考阶段"有 typing 兜底；agent-nexus 是交互式 IM agent，"持续 typing" 与"反复短暂提示"在用户感受上等价
+- **缺点**：Discord 官方文档对 typing 接口写"generally bots should not use this route"——但这是给非交互场景的告诫，不适用本场景；首条消息后 typing 与流式 edit 形成两个并列"在做事"信号，但用户实测不构成 UX 灾难（typing 是辅助提示，主信息在消息内容）；不同 Discord 客户端对 typing 衰减处理不一致——用 8s 心跳兜底
 
 #### Option 5C：仅工具调用期间 typing
 
@@ -191,17 +191,113 @@ superseded_by: null
 - **优点**：贴流式语义最直接
 - **缺点**：runaway 失去硬约束（`maxToolCallsPerTurn` 命中也只是 turn_finished 不是超时）；"长思考" idle 会被误判
 
+### 决策点 7：流式期间出错的 IM 呈现策略
+
+#### Option 7A：工具单次失败 inline ❌；turn 整体失败 reply 独立 error message
+
+- **是什么**：单个工具调用失败（`tool_call_finished{status:"error"}`）→ Discord 在对应 inline 工具片段位置 edit 加 `❌` + 错误摘要（截断）；turn 整体失败（subprocess 崩溃 / wallclock 超时 / streamIdle 超时 / `turn_finished{reason:"error"}`）→ daemon 让 platform reply 用户原 inbound 发独立 error message，**不**覆盖已有流式内容
+- **优点**：失败定位清晰——单工具失败有 inline 锚点；turn 失败的错误说明独立可追溯不被切片混淆；用户回看历史能区分两类失败
+- **缺点**：channel 多一条 reply
+
+#### Option 7B：工具失败 inline ❌；turn 失败 edit 主消息追加错误
+
+- **是什么**：turn 整体失败时直接在最后一条流式主消息末尾 edit 追加 `\n⚠️ <error>`
+- **优点**：channel 不多消息
+- **缺点**：覆盖部分主内容；主消息已被切片时 edit 哪一片有歧义；大错误堆栈撑爆 2000 chars
+
+#### Option 7C：工具 / turn 失败都 send 新消息
+
+- **是什么**：不 edit 任何已有流式片段
+- **优点**：最简
+- **缺点**：channel 噪音大；inline 流的视觉连贯被打破
+
+### 决策点 8：mid-stream 失败的视觉收尾
+
+#### Option 8A：edit 最后流式片段末尾追加 `[interrupted]` 标记
+
+- **是什么**：当流到一半子进程崩 / wallclock 超时 / 用户主动 interrupt 时，daemon 让 platform 在最后一条 inline 片段末尾 edit 追加 `\n⚠️ [interrupted: <reason>]`（reason 截断到 ~100 chars）
+- **优点**：用户在原位看到流被打断的标记，符合"持续 edit"主线；不需要滚屏找说明
+- **缺点**：reason 文本受单条 message 2000 chars 上限约束，长 reason 必须截断
+
+#### Option 8B：send 独立 reply 说明被打断
+
+- **是什么**：另发一条 reply "⚠️ 上方流被打断: <reason>"
+- **优点**：reason 不挤主消息；翻聊天历史能看到独立标记
+- **缺点**：channel 多一条；用户视觉锚点要跳
+
+#### Option 8C：edit + send 同时做
+
+- **是什么**：edit 主流加 `[interrupted]` 标记 + send 独立 reply 完整说明
+- **优点**：兼顾原位标记 + 独立可追溯
+- **缺点**：消息开销翻倍；语义冗余
+
+注：决策点 8 与决策点 7 的 turn 整体失败语义相邻——区别在 8 强调"流到一半被打断"的视觉收尾标记，7 强调"独立 error message 的载体"。两者并存：8 的 `[interrupted]` 标记在最后流式片段位置，7 的 error reply 独立承载错误说明。
+
+### 决策点 9：interrupt UX 入口
+
+`--print` 模式下用户无法主动打断（issue #54）。流式落地后 interrupt 真正变得可达，必须定 UX 入口。
+
+#### Option 9A：`/stop` slash command
+
+- **是什么**：注册 Discord application command `/stop`，用户在输入框输入 `/` 时自动补全；agent-nexus daemon 收到 slash interaction → 触发对应 session 的 `interrupt()`；命令注册按现有 testGuildId 瞬时注册路径（见决策点 4 PR #51）
+- **优点**：Discord 原生 UX 入口；不污染 channel 文本流；issue #54 推进方向已经是这个
+- **缺点**：要走 Discord application command 注册流程；权限模型要对齐 allowedUserIds（防止任意人 interrupt 别人 session）
+
+#### Option 9B：纯文本 `/stop` 或 `stop`
+
+- **是什么**：daemon 入站解析层识别字符串作为 interrupt 信号
+- **优点**：实现最简
+- **缺点**：无补全提示用户得记；与正常聊天文本边界模糊（"我想 stop 一下这个想法" 会误触）
+
+#### Option 9C：emoji react ⛔ 在 agent 流的 message 上
+
+- **是什么**：用户对 agent 流的某条 message react 特定 emoji 触发 interrupt
+- **优点**：UX 直观、不发新消息
+- **缺点**：Discord adapter 当前不监听 reaction event；多用户 channel 下任意人都能 react 触发；无显式权限检查
+
+#### Option 9D：A + C 双路并存
+
+- **是什么**：slash command + emoji react 都接受
+- **优点**：覆盖命令习惯用户和鼠标用户
+- **缺点**：实现面翻倍；语义入口分裂
+
+### 决策点 10：切片之间的时序锚定
+
+决策点 3 锁了"超 2000 chars 走 message-protocol §文本切片"；多用户 channel 下切片 N 和 N+1 之间可能被插话打散，需要让用户视觉上能识别切片连续性。
+
+#### Option 10A：切片 N+1 用 Discord reply 锚定切片 N（链式）
+
+- **是什么**：切片 2 reply 切片 1，切片 3 reply 切片 2，依此类推；Discord UI 显示 "↪ replying to ..." 链条
+- **优点**：用户在被插话打散的 channel 时间线里点一下就能跳到上一片；语义最贴"连续输出"
+- **缺点**：Discord reply 链路在客户端 UI 上跳转体验受客户端实现影响；长链（5+ 片）反复 ↪ 视觉上略冗余
+
+#### Option 10B：所有切片都 reply 用户原 inbound（扇出）
+
+- **是什么**：切片 1/2/3/.../N 都 reply 用户的原始 inbound 消息
+- **优点**：每片直接锚回用户问题；Discord UI 显示同一来源
+- **缺点**：切片之间无直接前后续关系；用户得自己识别"5 条 reply 同一问题哪条接哪条"
+
+#### Option 10C：不锚定，依赖 Discord 默认时间线
+
+- **是什么**：切片只 send 不 reply
+- **优点**：实现最简
+- **缺点**：被插话打散后用户得滚屏对照"哪几条是 agent 的"；UX 退化明显
+
 ## Decision
 
-六个决策点综合选：
+十个决策点综合选：
 
 - **决策点 1**：选 **Option 1A**（protocol 一次性对齐 spec；runtime 本期 PR 只 emit `text_delta` / `tool_call_started` / `tool_call_finished`）
 - **决策点 1 子问题**：选 **Option 1-tr-A**（CC `user.tool_result` 合入 `tool_call_finished.payload.resultSummary`），但**附前提**——本 ADR 实施 PR 必须先落 fixture 验证 CC 对每个 `tool_use_id` 恰好回一条终态 tool_result；若 fixture 暴露多变体场景（多块 / 结构化 / 空 + error），escalate 到 Option 1-tr-B（新增独立 `tool_result` 事件），escalate 路径走 spec 修订 + 本 ADR Amendment，不再发新 ADR
 - **决策点 2**：选 **Option 2A**（暂保持 SIGINT 主路径；runtime 实现 stdin control 路径但默认关闭，由 `AgentCapabilitySet.supportsStdinInterrupt` flag 控制；待补齐 stdin 延迟 / SIGINT reachability 两类证据后再决定是否反转 spec，反转走独立 ADR）
 - **决策点 3**：选 **Option 3A**（默认 inline 嵌入；流式 edit 在 capability + 长度预算允许时开启；超长退化到 message-protocol §文本切片定义的切片机制；高工具密度场景的折叠 thread 留作后续可选优化，不在本 ADR 范围内）
 - **决策点 4**：选 **Option 4A**（本 ADR 吸收 #45 root cause；#45 关闭条件绑实施 PR 而非 ADR 发布）
-- **决策点 5**：选 **Option 5A**（typing 仅在"首条可见输出之前"触发；首个 `text_delta` / `tool_call_started` 被 send 或 edit 落到 channel 后立即停止 typing；切片路径启动后不再触发；Discord adapter 翻 `supportsTypingIndicator: true` 并实现 `setTyping(channelId)`；心跳节奏由 PR-D 内部决定，约束区间为 `[7s, 9s]`，不写入本 ADR 数值）
+- **决策点 5**：选 **Option 5B**（agent 进 Busy 状态即持续 typing 直到 `turn_finished`；流式 edit 与 typing 并存；切片路径下 typing 仍持续；Discord adapter 翻 `supportsTypingIndicator: true` 并实现 `setTyping(channelId)` / `clearTyping(channelId)`；心跳节奏由 PR-D 内部决定，约束区间为 `[7s, 9s]`，不写入本 ADR 数值）。**用户产品判断覆盖 codex argue 的"5A 首条前停"建议**——argue 的"Discord 官方说 generally bots should not use this route"是给非交互场景的告诫，不适用 agent-nexus 这个交互式 IM agent；用户实测视角下"持续 typing"比"首条后停"更能传达"agent 还在做事"，工具调用之间的思考阶段有 typing 兜底避免误判卡死
 - **决策点 6**：选 **Option 6A**（三层 watchdog——`firstEventTimeoutMs` / `streamIdleTimeoutMs` / `perTurnWallclockMs`，三类有不同恢复策略：firstEvent 超时仅 interrupt 不 Errored；streamIdle / perTurnWallclock 超时 interrupt + session Errored）。**强约束**：超时触发 interrupt → 5s 内未产出 `turn_finished` → SIGKILL 子进程 + session Errored + 投递 `error` + `session_stopped{error}`。单 turn 超时本身**不**杀子进程。本决策点**只定义 runtime/backend watchdog**，daemon 视角的 UX 通知 SLA 不在本 ADR 范围。三层默认阈值留 spec/cost-and-limits.md 修订（PR-B/PR-C 落实），本 ADR 不锁数值。
+- **决策点 7**：选 **Option 7A**（工具单次失败 inline `❌` + 错误摘要截断；turn 整体失败 reply 用户原 inbound 发独立 error message，不覆盖已有流式内容）
+- **决策点 8**：选 **Option 8A**（mid-stream 失败 → edit 最后流式片段末尾追加 `\n⚠️ [interrupted: <reason>]`，reason 截断到 ~100 chars）。与决策点 7 关系：8A 的 `[interrupted]` 标记在最后流式片段，7A 的 error reply 独立承载错误说明，两者并存。
+- **决策点 9**：选 **Option 9A**（`/stop` slash command 作为 interrupt UX 入口；按现有 testGuildId 瞬时注册路径注册 application command；权限对齐 allowedUserIds 防越权 interrupt）
+- **决策点 10**：选 **Option 10A**（切片 N+1 用 Discord reply 锚定切片 N，链式连接；切片 1 用 reply 锚定用户原 inbound）
 
 ## Consequences
 
@@ -211,8 +307,11 @@ superseded_by: null
 - runtime 切持续子进程后，IM 看到工具调用过程（解决 #45）；token 级 emit 让 partial output 自然不丢（自然消解 #28）
 - interrupt 路径设施位齐备（双轨），未来切主备只需翻 capability flag，不需要新 ADR
 - Discord 流式 edit + inline 渲染对接 message-protocol §模式 B，本 ADR 同时担任"独立 ADR 评审"角色，message-protocol 不需要额外 ADR
-- typing 限定在"首条前"窗口，符合 Discord 官方对该接口的定位，不依赖"edit 自动结束 typing"无官方保证的假设；首条消息后 typing 与流式 edit 不再并行造成视觉打架
+- 持续 typing 让用户在长 turn（多工具循环 / 长思考 / 工具静默运行）期间持续感知 agent 在做事，工具调用之间的思考阶段不会让用户误判卡死
 - 三层 watchdog + 三类不同恢复策略让"队列拥堵 / 流中卡死 / runaway"区分到 timeout 层而非只在观测层；session 级子进程仅在 SIGKILL 路径或 session idle 时被杀，多 turn 续话能力在单 turn 超时时不被打断
+- 工具单次失败 inline `❌` + turn 整体失败独立 reply 让用户在 IM 视角能区分两类失败，不被混淆；mid-stream 失败的 `[interrupted]` 标记让用户在原位识别流被打断
+- `/stop` slash command 让用户在 Discord 原生 UX 下可达 interrupt（解决 #54 用户视角空白），且权限通过 allowedUserIds 收敛
+- 切片之间 reply 锚定让多用户 channel 下被插话打散后切片连续性在 UI 上仍可识别
 
 ### 负向
 
@@ -222,6 +321,8 @@ superseded_by: null
 - `tool_call_finished.resultSummary` 收口依赖 fixture 验证；CC 升级若引入 tool_result 多变体，需要 Amendment + spec 修订
 - 长 TTFB（首个 LLM 事件 30s+）期间用户只看到 typing 没有别的反馈——本 ADR 不在 daemon 层补"等多久该提示用户"的 SLA，需要后续 daemon 层 spec / ADR 跟进
 - 三层 timeout 增加运维负担（三个旋钮 + 阈值耦合关系约束），spec/cost-and-limits.md 修订需要写清三层默认值与互相关系（如 `streamIdleTimeoutMs < perTurnWallclockMs`）
+- 持续 typing + 流式 edit + 切片 send 是 Discord rate limit 的**新累计维度**，单 turn 长任务可能撑爆 channel rate——不在本 ADR 收敛，独立 issue 跟踪 cost-and-limits.md 修订
+- `/stop` slash command 注册需要 Discord application commands 流程，PR-D 体量再增；emoji react 入口本 ADR 未采纳，未来可作为补充入口（独立 issue / 后续 ADR）
 
 ### 需要后续跟进的事
 
@@ -230,8 +331,8 @@ superseded_by: null
 - **PR-A（协议层）**：`packages/protocol/src/agent.ts` 把 union 补齐到 spec 全集；扩 `AgentCapabilitySet` 加 `supportsStdinInterrupt` flag；删 `:34-39` 注释；新增/修改测试覆盖新事件类型的判别
 - **PR-B（claudecode runtime）**：`packages/agent/claudecode/src/index.ts` 切持续子进程，stdin 持续 write `{type:user,...}`，stdout `for-await` 解析 stream-json 并 emit 三类事件（`text_delta` / `tool_call_started` / `tool_call_finished`）；`interrupt()` 实现 SIGINT 路径（默认）+ stdin control 路径（capability flag 控制）；`stopSession()` 关 stdin EOF + 等清理；落 fixture 验证 CC tool_result 单条假设
 - **PR-C（daemon engine）**：`packages/daemon/src/engine.ts` 改流式消费——`text_delta` 累积 / 转发；`tool_call_started/finished` 路由到 platform；`turn_finished` 收尾不变
-- **PR-D（Discord adapter）**：`packages/platform/discord/src/index.ts` 翻 `supportsEdit: true` 与 `supportsTypingIndicator: true`，实现 `edit()` 与 `setTyping()`；落实 inline 工具调用片段格式 + 折叠 + 截断；超长走 message-protocol §文本切片；首条可见输出后停 typing；切片路径不触发 typing
-- **PR-C 同时**：daemon engine 在 `sendInput` 后向 platform 发 typing 触发信号；首个 `text_delta` / `tool_call_started` 落到 channel 后向 platform 发停止信号；platform-adapter spec 加 `setTyping(channelId)` / `clearTyping(channelId)` 接口
+- **PR-D（Discord adapter）**：`packages/platform/discord/src/index.ts` 翻 `supportsEdit: true` 与 `supportsTypingIndicator: true`，实现 `edit()` 与 `setTyping()` / `clearTyping()`；落实 inline 工具调用片段格式 + 折叠 + 截断；超长走 message-protocol §文本切片，**切片 N+1 用 reply 锚定切片 N**（决策点 10）；turn 期间持续 typing 心跳直到 turn_finished（决策点 5）；工具失败 inline `❌` + 错误摘要（决策点 7）；mid-stream 失败 edit 末尾追加 `[interrupted]`（决策点 8）；turn 整体失败 reply 用户原 inbound 发独立 error message（决策点 7）；注册 `/stop` slash command 走现有 testGuildId 瞬时注册路径（决策点 9）
+- **PR-C 同时**：daemon engine 在 `sendInput` 后向 platform 发 typing 触发信号 + 工具事件路由 + 错误事件路由；`turn_finished` 时向 platform 发 typing 停止信号 + 必要的收尾消息（独立 error reply / `[interrupted]` 标记）；platform-adapter spec 加 `setTyping(channelId)` / `clearTyping(channelId)` 接口
 - **spec 修订**：
   - `docs/dev/spec/agent-runtime.md` 在 union 表前补"声明位 vs 实际产出"说明
   - `docs/dev/spec/agent-backends/claude-code-cli.md` §中断 段补 capability flag；§超时 段把"超时 → SIGINT → 5s → SIGKILL"改写为本 ADR 决策点 6 的三层 watchdog 语义（含强约束兜底链）
@@ -254,6 +355,13 @@ superseded_by: null
 - **不决定**三层 watchdog 的默认阈值——留 spec/cost-and-limits.md 修订
 - **不决定** daemon 视角的"等多久该告知用户超时"UX SLA——本 ADR 只定义 runtime/backend watchdog；daemon 层 SLA 归 daemon 层 spec / 后续独立 ADR
 - **不决定**长 TTFB 期间的 daemon 心跳通知策略（如"agent 还在思考"提示消息）——同上，归 daemon 层
+- **不决定** Discord rate limit 累计预算——typing / edit / 切片 send 三个累加维度的硬限阈值与降级策略由独立 issue 跟踪 cost-and-limits.md 修订
+- **不决定**工具结果脱敏边界——独立 issue 跟踪 security spec
+- **不决定**多用户 channel 并发 UX（reply 锚定 vs thread 隔离）——独立 issue 跟踪
+- **不决定** turn 收尾摘要消息（"📝 Turn complete (N tools, M chars)"）——独立 issue 跟踪
+- **不决定** firstEvent 超时仅 interrupt 后的"重试可见性"（daemon 是否主动发"⏳ 队列拥堵，请稍后重发"）——独立 issue 跟踪
+- **不决定** emoji react interrupt 入口——9A 已选 `/stop`；emoji react 作为补充入口由独立 issue / 后续 ADR 跟踪
+- **不决定**错误摘要 / `[interrupted]` reason 的具体截断阈值——PR-D 内部决定
 
 ## Amendments
 
@@ -296,6 +404,14 @@ superseded_by: null
 
 - **异议 10（决策点 6 与 ADR-0011 分层）**：本 ADR 三层 watchdog 不该顺手定义 daemon UX SLA，否则又把 ADR-0011 已分的两层打穿。
   **回应**：采纳。Decision 明确"本决策点只定义 runtime/backend watchdog"；Out of scope 加"daemon UX 通知 SLA / 长 TTFB 心跳通知策略"两条留给后续 daemon 层 spec / 独立 ADR。
+
+第三轮（用户产品视角覆盖 + 新增决策点 7-10）：
+
+- **用户覆盖（决策点 5）**：codex argue 推荐 5A "首条前停 typing"，本 ADR 第二轮 Decision 采纳。用户从产品 UX 实际感受出发判断 typing 应该是持久状态——长 turn（多工具循环 / 长思考 / 工具静默运行）期间持续 typing 比"首条后停"更能传达"agent 还在做事"，工具调用之间的思考阶段没 typing 容易让用户误判 agent 卡死；agent-nexus 是交互式 IM agent，Discord 官方"generally bots should not use this route"是给非交互场景的告诫，不适用本场景。
+  **回应**：采纳用户覆盖。Decision 改为 5B 持续 typing 直到 turn_finished。argue 反方意见保留在异议 6 记录，作为"我们知道这个边界但产品判断覆盖了它"的留痕。
+
+- **产品视角补全（决策点 7-10）**：流式协议落地后存在 4 个用户视角空白——错误的可见性 / mid-stream 失败收尾 / interrupt 用户入口 / 多用户 channel 切片时序。用户在第三轮明确这 4 项必须进本 ADR（其余 5 项产品维度待办——脱敏 / 多用户 channel / turn 收尾摘要 / 重试可见性 / Discord rate 累计预算——单开 issue 跟踪）。
+  **回应**：决策点 7（错误呈现选 7A 工具 inline ❌ + turn 失败独立 reply）/ 8（mid-stream 收尾选 8A edit 末尾 [interrupted]）/ 9（interrupt UX 选 9A `/stop` slash command）/ 10（切片时序选 10A reply 链式锚定）落 Decision；其余 5 项进 Out of scope 并由后续 issue 跟踪。
 
 ## 参考
 

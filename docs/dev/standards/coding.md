@@ -80,6 +80,17 @@ related:
 
 过早抽象比过晚抽象代价高得多。
 
+## 模块深度评估
+
+判断一个抽象（模块、接口、包装层、文件拆分）是否值得存在，看两个收益：
+
+- **Leverage（杠杆）面向 caller**：小接口背后压住大量行为，调用方写更少代码。
+- **Locality（局部性）面向 maintainer**：与这个概念相关的所有变更、bug、必备知识汇在一处——出问题在一处看，改需求在一处改。
+
+深模块两份都赚；浅模块（pass-through、纯 wrapper）两份都没；最阴险的是"为测试性抽出的纯函数"——单测漂亮，bug 却躲在 caller 怎么把参数喂进来，locality 反而下降，debug 时跨文件追。
+
+具体判据（包括 deletion test 与 spec-first seam 例外）见 [`AGENTS.md` §"加抽象前的 Deletion test"](../../../AGENTS.md#加抽象前的-deletion-test)。
+
 ## 可见性
 
 - 默认最小可见性（private > package > public）

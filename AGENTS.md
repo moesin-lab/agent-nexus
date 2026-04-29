@@ -59,6 +59,16 @@ related:
 
 三问缺一，reviewer 有义务要求补齐或直接拒绝。
 
+## 加抽象前的 Deletion test
+
+新增任何包装层、小函数抽出、文件拆分、facade 前，问自己：**假想删掉它，复杂度消散还是扇出到 N 个 caller？** 消散 = pass-through，别加；扇出 = 真在收复杂度，加。
+
+特别警惕"为测试性抽出的纯函数"：单测漂亮，bug 却躲在 caller 怎么把参数喂进来，抽完反而要跨文件追 bug。这种情况下测真实接线（integration test through the seam），而不是抽纯函数。
+
+例外：契约先行的 spec 接口（`PlatformAdapter` / `AgentRuntime` 等）由 ADR 决定形状，不走此判据。
+
+reviewer 可据此直接拒稿——"过不了 deletion test"是合法的 review 理由。
+
 ## 本项目特有的反模式
 
 以下行为在本项目**明确禁止**：
@@ -109,6 +119,7 @@ related:
 | 写日志 | `docs/dev/standards/logging.md` + `docs/dev/spec/infra/observability.md` |
 | 处理错误 | `docs/dev/standards/errors.md` |
 | 做架构决策 | `docs/dev/adr/README.md` + `docs/dev/adr/template.md` |
+| 判断是否应该加抽象（包装层、小函数、facade、文件拆分） | 本文件 §"加抽象前的 Deletion test" + `docs/dev/standards/coding.md` §"模块深度评估" |
 | 判断某段内容该写在哪个事实 owner | `docs/dev/standards/doc-ownership.md` |
 | 做需要人类拍板的结构化分析（评估 / 对比 / 拆解） | `docs/dev/process/pre-decision-analysis/README.md` |
 | 增 / 删协作性 skill | `docs/dev/process/skill-setup.md` + `docs/dev/adr/0007-collaborative-skill-promotion.md` + `skills.manifest` |

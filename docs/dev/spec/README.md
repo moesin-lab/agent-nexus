@@ -98,7 +98,20 @@ spec 合格的判据：
 - 至少包含字段表或伪代码接口（不是纯散文描述）
 - 字段名 / 类型 / 语义清晰，无"将来再补"占位
 - 边界清晰：每个 spec 文件定义一个明确的接口或协议，不交叉
+- 每个方法显式标注调用顺序约束 / 并发安全语义 / 错误分类 / 幂等性——光有签名或字段表不算契约完整，caller 必须知道的不变量都属于接口
 - reviewer 通读确认，无含糊或冗余表述
+
+## Seam 演进规则
+
+每个 spec'd 接口对应一个 seam（如 `PlatformAdapter` / `AgentRuntime`）。**单实例时接口形状是假说**——第一个实现跑通不代表接口设计正确，要等第二个 adapter 反向施压才知道哪些字段多了、哪些不变量错了。
+
+规则：
+
+- 接口形状在第二个 adapter 落地前**冻结**——不允许"为了未来 N 个后端"提前往接口加 flag / 字段 / 钩子。
+- 真要为某条具体决策留设施位（如 `AgentCapabilitySet.supportsStdinInterrupt` 之于 ADR-0012 决策点 2），必须走 ADR Amendment 显式说明触发条件与回退路径，不在 spec 默默加。
+- 第二个 adapter 接入时由它反向施压；接口与新 adapter 真实需求不符的，改接口形状，不用 capability flag 绕。
+
+reviewer 在 spec PR 看到"为未来 N 个 X 准备"的字段、且无对应 ADR，应直接拒稿。
 
 ## 与 ADR 的关系
 

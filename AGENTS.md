@@ -59,6 +59,16 @@ related:
 
 三问缺一，reviewer 有义务要求补齐或直接拒绝。
 
+## 加抽象前的 Deletion test
+
+新增任何包装层、小函数抽出、文件拆分、facade 前，问自己：**假想删掉它，复杂度消散还是扇出到 N 个 caller？** 消散 = pass-through，别加；扇出 = 真在收复杂度，加。
+
+特别警惕"为测试性抽出的纯函数"：单测漂亮，bug 却躲在 caller 怎么把参数喂进来，抽完反而要跨文件追 bug。这种情况下测真实接线（integration test through the seam），而不是抽纯函数。
+
+例外：契约先行的 spec 接口（`PlatformAdapter` / `AgentRuntime` 等）由 ADR 决定形状，不走此判据。
+
+reviewer 可据此直接拒稿——"过不了 deletion test"是合法的 review 理由。
+
 ## 本项目特有的反模式
 
 以下行为在本项目**明确禁止**：

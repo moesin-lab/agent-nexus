@@ -119,6 +119,7 @@ reviewer 可据此直接拒稿——"过不了 deletion test"是合法的 review
 | 写日志 | `docs/dev/standards/logging.md` + `docs/dev/spec/infra/observability.md` |
 | 处理错误 | `docs/dev/standards/errors.md` |
 | 做架构决策 | `docs/dev/adr/README.md` + `docs/dev/adr/template.md` |
+| 判断是否应该加抽象（包装层、小函数、facade、文件拆分） | 本文件 §"加抽象前的 Deletion test" + `docs/dev/standards/coding.md` §"模块深度评估" |
 | 判断某段内容该写在哪个事实 owner | `docs/dev/standards/doc-ownership.md` |
 | 做需要人类拍板的结构化分析（评估 / 对比 / 拆解） | `docs/dev/process/pre-decision-analysis/README.md` |
 | 增 / 删协作性 skill | `docs/dev/process/skill-setup.md` + `docs/dev/adr/0007-collaborative-skill-promotion.md` + `skills.manifest` |

@@ -33,28 +33,28 @@ related:
 
 | 想做什么 | 先看哪里 |
 |---|---|
-| 开新模块 | `docs/dev/process/workflow.md` |
-| 接到需求后该问哪些反问问题（澄清环节） | `docs/dev/process/requirement-clarification.md` |
-| 写测试 | `docs/dev/process/tdd.md` + `docs/dev/testing/strategy.md` |
-| 发 PR / 必答三问 | `docs/dev/process/code-review.md`（含 §PR 必答三问） |
-| 写代码（命名 / 函数长度 / 注释 / 模块深度 / Deletion test） | `docs/dev/standards/coding.md` |
+| 开新 package（agent / platform / daemon 子模块） | `docs/dev/process/workflow.md` |
+| 接需求时该问哪些反问 | `docs/dev/process/requirement-clarification.md` |
+| 新增 / 修改测试 | `docs/dev/process/tdd.md` + `docs/dev/testing/strategy.md` |
+| 开 PR | `docs/dev/process/code-review.md` |
+| 写代码 | `docs/dev/standards/coding.md` |
 | 写日志 | `docs/dev/standards/logging.md` + `docs/dev/spec/infra/observability.md` |
 | 处理错误 | `docs/dev/standards/errors.md` |
-| 写文档（结构 / 风格 / 中英排 / harness-neutral 约定） | `docs/dev/standards/docs-style.md` |
-| 读文档时的防污染（路径分层 / 拦截 / hook） | `docs/dev/process/docs-read.md` |
-| 做架构决策 | `docs/dev/adr/README.md` + `docs/dev/adr/template.md` |
-| 判断是否应该加抽象（包装层、小函数、facade、文件拆分） | `docs/dev/standards/coding.md` §加抽象前的 Deletion test + §模块深度评估 |
-| 判断某段内容该写在哪个事实 owner | `docs/dev/standards/doc-ownership.md` |
-| 做需要人类拍板的结构化分析（评估 / 对比 / 拆解） | `docs/dev/process/pre-decision-analysis/README.md` |
-| 增 / 删协作性 skill | `docs/dev/process/skill-setup.md` + `docs/dev/adr/0007-collaborative-skill-promotion.md` + `skills.manifest` |
-| 沉淀经验 / 被纠正后该不该记 | `docs/dev/process/self-refinement/README.md` |
+| 写文档 | `docs/dev/standards/docs-style.md` |
+| Read 被 hook 拦的文档 / 文档作废流程 | `docs/dev/process/docs-read.md` |
+| 起新 ADR | `docs/dev/adr/README.md` + `docs/dev/adr/template.md` |
+| 判断要不要加包装 / 拆函数 / 拆文件 | `docs/dev/standards/coding.md` §加抽象前的 Deletion test |
+| 决定一段内容该住到哪份 owner 文档 | `docs/dev/standards/doc-ownership.md` |
+| 做需要人类拍板的结构化分析 | `docs/dev/process/pre-decision-analysis/README.md` |
+| 增 / 删协作性 skill | `docs/dev/process/skill-setup.md` + `skills.manifest` |
+| 被纠正后该不该沉淀 | `docs/dev/process/self-refinement/README.md` |
 | 接入新 IM 平台 | `docs/dev/spec/platform-adapter.md` |
 | 集成新 agent 后端 | `docs/dev/spec/agent-runtime.md` + `docs/dev/spec/agent-backends/claude-code-cli.md` |
-| 改权限/身份 | `docs/dev/spec/security/auth.md` |
+| 改权限 / 身份 | `docs/dev/spec/security/auth.md` |
 | 改工具边界 | `docs/dev/spec/security/tool-boundary.md` |
 | 改密钥处理 | `docs/dev/spec/security/secrets.md` |
 | 改脱敏规则 | `docs/dev/spec/security/redaction.md` |
-| 改幂等/去重 | `docs/dev/spec/infra/idempotency.md` |
+| 改幂等 / 去重 | `docs/dev/spec/infra/idempotency.md` |
 | 改 limits / 预算 | `docs/dev/spec/infra/cost-and-limits.md` |
 | 改存储 schema | `docs/dev/spec/infra/persistence.md` |
-| 威胁模型与跨分区安全索引 | `docs/dev/spec/security/README.md` |
+| 看威胁模型 / 跨分区安全索引 | `docs/dev/spec/security/README.md` |

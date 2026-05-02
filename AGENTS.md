@@ -29,6 +29,14 @@ related:
 9. **作废文档物化到归档目录**：路径本身就是"别当事实"的信号；防污染规则与 hook 集成 → [`docs-read.md`](docs/dev/process/docs-read.md)
 10. **SSOT**：每条事实只在唯一 owner 定义，其他只 link 不复述 → [`doc-ownership.md`](docs/dev/standards/doc-ownership.md)
 
+## 文档读取约定（渐进式披露）
+
+为避免无关全文进 context：
+
+- 不确定一份文档是否相关时，先 `scripts/docs-read --head <path>` 看 frontmatter（`summary` / `related`）判断；命中再决定全读
+- active 路径的 `docs/**` 可直接 `Read`；归档（`docs/dev/adr/deprecated/**` / `docs/_deprecated/**`）与外部导向（仓库根 `README.md` / `CONTRIBUTING.md`）的 `Read` 由 hook 拦截，需走 `scripts/docs-read --force`
+- 完整路径分层、三种模式、`pretool-read-guard` hook 集成、违反后果见 [`docs/dev/process/docs-read.md`](docs/dev/process/docs-read.md)
+
 ## 文件定位速查
 
 | 想做什么 | 先看哪里 |

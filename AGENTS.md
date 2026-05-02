@@ -41,11 +41,16 @@ related:
 
 | 想做什么 | 先看哪里 |
 |---|---|
+| 看仓库架构总览 / 模块拓扑 | `docs/dev/architecture/overview.md` |
 | 开新 package（agent / platform / daemon 子模块） | `docs/dev/process/workflow.md` |
+| 改 package import / 依赖方向 | `docs/dev/architecture/dependencies.md` |
 | 起 ADR / spec 前 surface 邻接维度 | `docs/dev/process/requirement-clarification.md` |
 | 新增 / 修改测试 | `docs/dev/process/tdd.md` + `docs/dev/testing/strategy.md` |
 | 判一个测试写法是否合格 | `docs/dev/standards/testing.md` |
+| 改 / 跑 eval（对话质量回归） | `docs/dev/testing/eval.md` |
+| 写 / 维护 fixture | `docs/dev/testing/fixtures.md` |
 | 开 PR / codex review 触发 | `docs/dev/process/code-review.md` |
+| commit 流程编排（合并策略 / stacked PR） | `docs/dev/process/commit-and-branch.md` |
 | 写 commit message / 给分支命名 | `docs/dev/standards/commit-style.md` |
 | 判命名 / 函数 / 模块边界 / 注释 / 依赖引入是否合格 | `docs/dev/standards/coding.md` |
 | 引入 / 升级依赖 | `docs/dev/standards/dependencies.md` |
@@ -59,6 +64,7 @@ related:
 | 判断要不要加包装 / 拆函数 / 拆文件 | `docs/dev/standards/coding.md` §加抽象前的 Deletion test |
 | 决定一段内容该住到哪份 owner 文档 | `docs/dev/standards/doc-ownership.md` |
 | 做需要人类拍板的结构化分析 | `docs/dev/process/pre-decision-analysis/README.md` + `docs/dev/standards/pre-decision-analysis/README.md` |
+| 派 subagent / 收敛子代理产出 | `docs/dev/process/subagent-usage.md` |
 | 评估子任务是否适合派发 / 写 prompt | `docs/dev/standards/subagent-usage.md` |
 | 增 / 删协作性 skill | `docs/dev/process/skill-setup.md` + `skills.manifest` |
 | 被纠正后该不该沉淀 | `docs/dev/process/self-refinement/README.md` |
@@ -72,5 +78,6 @@ related:
 | 改脱敏规则 | `docs/dev/spec/security/redaction.md` |
 | 改幂等 / 去重 | `docs/dev/spec/infra/idempotency.md` |
 | 改 limits / 预算 | `docs/dev/spec/infra/cost-and-limits.md` |
+| 改 SessionKey / 会话状态机 / 顺序与恢复 | `docs/dev/architecture/session-model.md` |
 | 改存储 schema | `docs/dev/spec/infra/persistence.md` |
 | 查威胁模型 / 跨分区安全索引 | `docs/dev/spec/security/README.md` |

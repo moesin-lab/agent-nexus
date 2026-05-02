@@ -42,27 +42,35 @@ related:
 | 想做什么 | 先看哪里 |
 |---|---|
 | 开新 package（agent / platform / daemon 子模块） | `docs/dev/process/workflow.md` |
-| 接需求时该问哪些反问 | `docs/dev/process/requirement-clarification.md` |
+| 起 ADR / spec 前 surface 邻接维度 | `docs/dev/process/requirement-clarification.md` |
 | 新增 / 修改测试 | `docs/dev/process/tdd.md` + `docs/dev/testing/strategy.md` |
-| 开 PR | `docs/dev/process/code-review.md` |
-| 写代码 | `docs/dev/standards/coding.md` |
-| 写日志 | `docs/dev/standards/logging.md` + `docs/dev/spec/infra/observability.md` |
-| 处理错误 | `docs/dev/standards/errors.md` |
-| 写文档 | `docs/dev/standards/docs-style.md` |
+| 判一个测试写法是否合格 | `docs/dev/standards/testing.md` |
+| 开 PR / codex review 触发 | `docs/dev/process/code-review.md` |
+| 写 commit message / 给分支命名 | `docs/dev/standards/commit-style.md` |
+| 判命名 / 函数 / 模块边界 / 注释 / 依赖引入是否合格 | `docs/dev/standards/coding.md` |
+| 引入 / 升级依赖 | `docs/dev/standards/dependencies.md` |
+| 写日志（写法约束） | `docs/dev/standards/logging.md` |
+| 改日志 / trace 字段契约 | `docs/dev/spec/infra/observability.md` |
+| 处理错误（写法约束） | `docs/dev/standards/errors.md` |
+| 改错误对象字段契约 | `docs/dev/spec/infra/errors.md` |
+| 写文档（语言 / 格式 / frontmatter / 篇幅 / 中英排） | `docs/dev/standards/docs-style.md` |
 | Read 被 hook 拦的文档 / 文档作废流程 | `docs/dev/process/docs-read.md` |
 | 起新 ADR | `docs/dev/adr/README.md` + `docs/dev/adr/template.md` |
 | 判断要不要加包装 / 拆函数 / 拆文件 | `docs/dev/standards/coding.md` §加抽象前的 Deletion test |
 | 决定一段内容该住到哪份 owner 文档 | `docs/dev/standards/doc-ownership.md` |
-| 做需要人类拍板的结构化分析 | `docs/dev/process/pre-decision-analysis/README.md` |
+| 做需要人类拍板的结构化分析 | `docs/dev/process/pre-decision-analysis/README.md` + `docs/dev/standards/pre-decision-analysis/README.md` |
+| 评估子任务是否适合派发 / 写 prompt | `docs/dev/standards/subagent-usage.md` |
 | 增 / 删协作性 skill | `docs/dev/process/skill-setup.md` + `skills.manifest` |
 | 被纠正后该不该沉淀 | `docs/dev/process/self-refinement/README.md` |
 | 接入新 IM 平台 | `docs/dev/spec/platform-adapter.md` |
-| 集成新 agent 后端 | `docs/dev/spec/agent-runtime.md` + `docs/dev/spec/agent-backends/claude-code-cli.md` |
-| 改权限 / 身份 | `docs/dev/spec/security/auth.md` |
+| 集成新 agent 后端 | `docs/dev/spec/agent-runtime.md`（接口契约；参考现有实现见 `docs/dev/spec/agent-backends/claude-code-cli.md`） |
+| 改归一化消息格式 / 事件字段 | `docs/dev/spec/message-protocol.md` |
+| 查 dispatch pipeline 全链路 | `docs/dev/spec/message-flow.md` |
+| 改身份 allowlist / 会话绑定规则 | `docs/dev/spec/security/auth.md` |
 | 改工具边界 | `docs/dev/spec/security/tool-boundary.md` |
-| 改密钥处理 | `docs/dev/spec/security/secrets.md` |
+| 改密钥存储 / 加载策略 | `docs/dev/spec/security/secrets.md` |
 | 改脱敏规则 | `docs/dev/spec/security/redaction.md` |
 | 改幂等 / 去重 | `docs/dev/spec/infra/idempotency.md` |
 | 改 limits / 预算 | `docs/dev/spec/infra/cost-and-limits.md` |
 | 改存储 schema | `docs/dev/spec/infra/persistence.md` |
-| 看威胁模型 / 跨分区安全索引 | `docs/dev/spec/security/README.md` |
+| 查威胁模型 / 跨分区安全索引 | `docs/dev/spec/security/README.md` |

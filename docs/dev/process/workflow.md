@@ -124,5 +124,5 @@ related:
 - 先写实现再补 spec（违反"契约先行"）
 - ADR 写完就开始写代码，跳过评审
 - 在主 PR 里一起改 3 件无关的事
-- PR 里不回答"三问"（见 `AGENTS.md`）
+- PR 里不回答"三问"（见 [`code-review.md` §PR 必答三问](code-review.md#pr-必答三问)）
 - 把 codex review 当 rubber stamp，不逐条回应

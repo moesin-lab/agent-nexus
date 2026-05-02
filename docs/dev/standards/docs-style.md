@@ -34,6 +34,28 @@ related:
 - 双语翻译推迟到 MVP 有产物时由 LLM 批量处理。
 - 技术术语保留英文原文（API、token、session、TDD、ADR、spec），不强行翻译。
 
+## Harness-neutral 读者预设
+
+仓库的协作文档（`AGENTS.md` / `docs/dev/**` / `skills/<name>/SKILL.md`）默认面向**任意 harness 的读者**，不预设某个具体 harness 是参考实现。即使用 `<harness>: <X>` 这样的限定语把 harness 名写进正文，也会让读者把"参考实现"读成"标准做法"，造成隐性偏差。
+
+判定矩阵：
+
+| 类别 | 处理 |
+|---|---|
+| 通用协作概念（跨 harness 共通词，如 `subagent` / `session` / `本地记忆` / `harness 全局规则文件`） | 直接用 |
+| harness 特有具体物（执行器名、API、路径、脚本、harness 专属术语） | 下沉到 per-harness 子节——正文只用泛化措辞，具体细节放文档末 §"Harness 实现注记"或 §"Per-harness 实现"等显式 per-harness 区域 |
+| 项目事实陈述（ADR / spec 决策本身就锁定具体 harness） | 直陈即可——这是项目事实，不是把读者默认成某个 harness |
+
+**per-harness 区域不受本约定**（可直接用具体 harness 工具名、路径、脚本）：
+
+- 各 harness 私有配置目录（`.claude/` / `.codex/` / `.cursor/` 等）
+- `skills/<name>/harnesses/<harness>/SKILL.md`（per-harness 执行器）
+- harness-neutral 文档内的显式 per-harness 子节（如 §"Harness 实现注记 / Claude Code"）
+
+本约定**仅约束协作文档**（前述三类：`AGENTS.md` / `docs/dev/**` / `skills/<name>/SKILL.md`）；运行时草稿（`.tasks/` / `handoff/`）不属于协作文档，不在管辖范围。
+
+**Reviewer 拒绝条件**：看到 harness-neutral 文档正文把读者默认成某个 harness（在通用概念位置写具体 harness 名而非泛化措辞），应要求修正——其他 harness 的读者会误判自己该用什么工具，"参考实现"被误读成"标准做法"。
+
 ## 目录与命名
 
 - 目录名全小写加短横线：`cost-and-limits.md`

@@ -1,8 +1,8 @@
 ---
-title: 读文档的防污染机制（详细版）
+title: 读文档的防污染机制
 type: process
 status: active
-summary: 防止 agent 把非权威源（归档文档 / 外部导向文档）当事实用的完整机制——路径分层、作废工作流、scripts/docs-read 三种模式、pretool-read-guard hook 集成
+summary: 防止 agent 把非权威源（归档文档 / 外部导向文档）当事实用的完整机制——路径分层、作废工作流、scripts/docs-read 三种模式、pretool-read-guard hook 集成、违反后果
 tags: [docs, hook, pollution, archive]
 related:
   - root/AGENTS
@@ -12,7 +12,18 @@ related:
 
 # 读文档的防污染机制
 
-> 本文件是 [`AGENTS.md` §"读文档的防污染规则"](../../../AGENTS.md) 的展开。AGENTS.md 留路径分层和违反后果两条核心约束；本文件承接作废工作流、`scripts/docs-read` 三模式、`pretool-read-guard` hook 集成、不配 hook 的后果。
+本文件是"读文档防污染"规则与机制的完整 owner——含路径分层、违反后果、作废工作流、`scripts/docs-read` 三模式、`pretool-read-guard` hook 集成、不配 hook 的后果。`AGENTS.md` 不再持有 headline，需要时从入口索引链接到本文件。
+
+## 路径分层与放行/拦截规则
+
+| 路径 | Read 行为 |
+|---|---|
+| `AGENTS.md` / `CHANGELOG.md` / active 的 `docs/**` | 放行 |
+| `docs/**` 下 `status: placeholder` 骨架 | 放行（不归档；占位用） |
+| `docs/dev/adr/deprecated/**` / `docs/_deprecated/**` | 拦截 → `scripts/docs-read --force` |
+| 仓库根 `README.md` / `CONTRIBUTING.md` | 拦截 → `scripts/docs-read --force` |
+
+**违反后果**：reviewer 在 PR 里看到基于归档文档做的决策（作者未显式声明研究历史），应要求重做——过时内容进决策链后整条链条都要重新验证。
 
 ## 防污染的真正靶子
 
@@ -74,8 +85,4 @@ related:
 
 ### 不配 hook 的后果
 
-AGENTS.md 的路径约定仍然生效；少了 harness 兜底，依赖 agent 纪律与 reviewer 把关。`pretool-read-guard` 是协作约束，不是强一致安全边界——它只拦支持 PreToolUse hook 的 harness 的 `Read` 工具，拦不住 shell（`cat`、`curl`、`grep` 全文）。所以这套机制的最终防线仍然是：路径本身就是"已作废"的信号 + reviewer 在 PR 里发现基于归档内容做决策时要求重做。
-
-## 违反的后果
-
-reviewer 在 PR 里看到基于归档文档做的决策（而作者没显式声明是在研究历史），应要求重做——过时内容进决策链后整条链条都要重新验证。
+本文件 §路径分层与放行/拦截规则 仍然生效；少了 harness 兜底，依赖 agent 纪律与 reviewer 把关。`pretool-read-guard` 是协作约束，不是强一致安全边界——它只拦支持 PreToolUse hook 的 harness 的 `Read` 工具，拦不住 shell（`cat`、`curl`、`grep` 全文）。所以这套机制的最终防线仍然是：路径本身就是"已作废"的信号 + reviewer 在 PR 里发现基于归档内容做决策时要求重做。

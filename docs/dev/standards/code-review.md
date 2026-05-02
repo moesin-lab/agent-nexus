@@ -19,7 +19,7 @@ related:
 作者开 PR 前必须勾完一遍。每条都是产物形态判据，按对应 owner 检查：
 
 - [ ] 改动范围单一，无"顺手改了别的"（[`../process/workflow.md` §范围收敛](../process/workflow.md#范围收敛)）
-- [ ] PR 描述回答 [`AGENTS.md` 三问](../../../AGENTS.md#每个-pr-必答三问)（ADR / spec / 测试）
+- [ ] PR 描述回答 [必答三问](../process/code-review.md#pr-必答三问)（ADR / spec / 测试）
 - [ ] spec 同 PR 更新（按 [`../spec/README.md`](../spec/README.md) 判定何时需要）
 - [ ] 新增 public 接口在 spec 中定义
 - [ ] 代码符合 [`coding.md`](coding.md)

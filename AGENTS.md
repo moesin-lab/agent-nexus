@@ -2,7 +2,7 @@
 title: AGENTS.md（agent-nexus 项目规则入口）
 type: root
 status: active
-summary: 项目协作规则入口索引；规则本体在 docs/dev/ 按 doc-ownership 矩阵分布，本文件只承载八条核心原则的陈述与文件定位速查
+summary: 项目协作规则入口索引；规则本体在 docs/dev/ 按 doc-ownership 矩阵分布，本文件只承载七条核心原则的陈述与文件定位速查
 tags: [workflow, navigation, ssot]
 related:
   - root/CONTRIBUTING
@@ -12,20 +12,19 @@ related:
 
 # AGENTS.md
 
-> 本文件是协作规则的**入口索引**，叠加在各 harness 自身的全局规则之上。规则本体在 [`docs/dev/`](docs/dev/) 下按 [doc-ownership 矩阵](docs/dev/standards/doc-ownership.md) 分布；本文件只承载八条核心原则的陈述与文件定位速查。
+> 本文件是协作规则的**入口索引**，叠加在各 harness 自身的全局规则之上。规则本体在 [`docs/dev/`](docs/dev/) 下按 [doc-ownership 矩阵](docs/dev/standards/doc-ownership.md) 分布；本文件只承载七条核心原则的陈述与文件定位速查。
 
 ## 核心原则（不可违反）
 
 每条原则的本体（理由、做 / 不做对照、reviewer 拒稿条件）由 owner 文档承载，本文件只列陈述 + 单链接。
 
 1. **分支先行**：所有改动从 `main` checkout 新分支再动手 → [`workflow.md` §分支先行](docs/dev/process/workflow.md#分支先行不可跳过)
-2. **文档先行**：动手前先按判定清单决定该写 spec / ADR / 普通 doc / 不写 → [`when-to-add-doc.md`](docs/dev/standards/when-to-add-doc.md)
+2. **文档先行**：改代码前先过一遍 `when-to-add-doc` 判定要不要先写 spec / ADR / 普通 doc → [`when-to-add-doc.md`](docs/dev/standards/when-to-add-doc.md)
 3. **TDD 强制**：先 spec → 先 failing test → 再 impl → [`tdd.md`](docs/dev/process/tdd.md)
-4. **Code review 不走过场**：每 PR 单一关注；codex review 必跑，大变更走 ultrareview；PR 必答三问 → [`code-review.md`](docs/dev/process/code-review.md)
+4. **Review 不走过场**：每 PR 过 codex；大变更加 ultrareview；必答三问 → [`code-review.md`](docs/dev/process/code-review.md)
 5. **Subagent 优先**：探索 / 研究类派子代理，主 session 只做收敛 → [`subagent-usage.md`](docs/dev/process/subagent-usage.md)
 6. **Conventional Commits**：commit message 用 `type(scope): 动词起头描述变更` → [`commit-style.md`](docs/dev/standards/commit-style.md)
-7. **作废文档物化到归档目录**：作废 doc 移到 `docs/**/deprecated/` 而非删除；Read 这些路径会被 hook 拦，按 stderr 提示走 `scripts/docs-read --force` → [`docs-read.md`](docs/dev/process/docs-read.md)
-8. **SSOT**：每条事实只在唯一 owner 定义，其他只 link 不复述 → [`doc-ownership.md`](docs/dev/standards/doc-ownership.md)
+7. **SSOT**：每条事实只在唯一 owner 定义，其他只 link 不复述 → [`doc-ownership.md`](docs/dev/standards/doc-ownership.md)
 
 ## 文档读取约定（渐进式披露）
 

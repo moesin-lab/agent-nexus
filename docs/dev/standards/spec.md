@@ -8,6 +8,7 @@ related:
   - dev/spec/README
   - dev/standards/doc-ownership
   - dev/standards/docs-style
+  - dev/standards/when-to-add-doc
 ---
 
 # spec 产物写法标准

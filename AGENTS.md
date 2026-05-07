@@ -19,14 +19,14 @@ related:
 每条原则的本体（理由、做 / 不做对照、reviewer 拒稿条件）由 owner 文档承载，本文件只列陈述 + 单链接。
 
 1. **分支先行**：所有改动从 `main` checkout 新分支再动手 → [`workflow.md` §分支先行](docs/dev/process/workflow.md#分支先行不可跳过)
-2. **文档先行**：新模块 / 架构改动须先有 spec / ADR → [`spec/README.md` §什么情况写 spec](docs/dev/spec/README.md#什么情况写-spec) + [`adr/README.md` §什么情况写 ADR](docs/dev/adr/README.md#什么情况写-adr)
+2. **文档先行**：动手前先按判定清单决定该写 spec / ADR / 普通 doc / 不写 → [`when-to-add-doc.md`](docs/dev/standards/when-to-add-doc.md)
 3. **TDD 强制**：先 spec → 先 failing test → 再 impl → [`tdd.md`](docs/dev/process/tdd.md)
-4. **契约先行**：跨模块交互走 spec 接口，新增能力先改 spec → [`spec/README.md` §核心原则](docs/dev/spec/README.md#核心原则)
-5. **Code review 不走过场**：每 PR 过 codex review，大变更走 ultrareview；PR 必答三问 → [`code-review.md`](docs/dev/process/code-review.md) + [`code-review.md` §PR 必答三问](docs/dev/process/code-review.md#pr-必答三问)
+4. **契约先行**：跨模块交互走 spec 接口，新增能力先改 spec → [`standards/spec.md` §核心原则](docs/dev/standards/spec.md#核心原则)
+5. **Code review 不走过场**：每 PR 过 codex review，大变更走 ultrareview；PR 必答三问 → [`code-review.md`](docs/dev/process/code-review.md)
 6. **Subagent 优先**：探索 / 研究类派子代理，主 session 只做收敛 → [`subagent-usage.md`](docs/dev/process/subagent-usage.md)
 7. **范围收敛**：每 PR 只做一件事 → [`code-review.md` §自查清单](docs/dev/standards/code-review.md#自查清单合格条件)
-8. **Conventional Commits** → [`commit-style.md`](docs/dev/standards/commit-style.md)
-9. **作废文档物化到归档目录**：路径本身就是"别当事实"的信号；防污染规则与 hook 集成 → [`docs-read.md`](docs/dev/process/docs-read.md)
+8. **Conventional Commits**：commit message 用 `type(scope): 动词起头描述变更` → [`commit-style.md`](docs/dev/standards/commit-style.md)
+9. **作废文档物化到归档目录**：作废 doc 移到 `docs/**/deprecated/` 而非删除；Read 这些路径会被 hook 拦，按 stderr 提示走 `scripts/docs-read --force` → [`docs-read.md`](docs/dev/process/docs-read.md)
 10. **SSOT**：每条事实只在唯一 owner 定义，其他只 link 不复述 → [`doc-ownership.md`](docs/dev/standards/doc-ownership.md)
 
 ## 文档读取约定（渐进式披露）
@@ -60,9 +60,12 @@ related:
 | 改错误对象字段契约 | `docs/dev/spec/infra/errors.md` |
 | 写文档（语言 / 格式 / frontmatter / 篇幅 / 中英排） | `docs/dev/standards/docs-style.md` |
 | Read 被 hook 拦的文档 / 文档作废流程 | `docs/dev/process/docs-read.md` |
-| 起新 ADR | `docs/dev/adr/README.md` + `docs/dev/adr/template.md` |
+| 判 spec 写法是否合格 / 看 Seam 演进规则 | `docs/dev/standards/spec.md` |
+| 起新 ADR / 判 ADR 写法是否合格 | `docs/dev/adr/README.md` + `docs/dev/adr/template.md` + `docs/dev/standards/adr.md` |
 | 判断要不要加包装 / 拆函数 / 拆文件 | `docs/dev/standards/coding.md` §加抽象前的 Deletion test |
 | 决定一段内容该住到哪份 owner 文档 | `docs/dev/standards/doc-ownership.md` |
+| 判该写 spec / ADR / 普通 doc / 不写 / 何时可跳过 | `docs/dev/standards/when-to-add-doc.md` |
+| 加文档整体流程（判定 → 写 → review → 合入） | `docs/dev/process/add-doc.md` |
 | 做需要人类拍板的结构化分析 | `docs/dev/process/pre-decision-analysis/README.md` + `docs/dev/standards/pre-decision-analysis/README.md` |
 | 派 subagent / 收敛子代理产出 | `docs/dev/process/subagent-usage.md` |
 | 评估子任务是否适合派发 / 写 prompt | `docs/dev/standards/subagent-usage.md` |

@@ -72,8 +72,8 @@ related:
 
 | 步骤 | 该不该写 | 何时可跳过 |
 |---|---|---|
-| ADR | [`../adr/README.md` §什么情况写 ADR](../adr/README.md#什么情况写-adr) | [`../adr/README.md` §何时可跳过 ADR](../adr/README.md#何时可跳过-adr) |
-| spec | [`../spec/README.md` §什么情况写 spec](../spec/README.md#什么情况写-spec) | [`../spec/README.md` §何时可跳过 spec](../spec/README.md#何时可跳过-spec) |
+| ADR | [`../standards/when-to-add-doc.md` §需要新增 ADR](../standards/when-to-add-doc.md#需要新增-adr) | [`../standards/when-to-add-doc.md` §何时可跳过](../standards/when-to-add-doc.md#何时可跳过) |
+| spec | [`../standards/when-to-add-doc.md` §需要新增 / 修改 spec](../standards/when-to-add-doc.md#需要新增--修改-spec) | [`../standards/when-to-add-doc.md` §何时可跳过](../standards/when-to-add-doc.md#何时可跳过) |
 | 测试 | [`tdd.md`](tdd.md) + [`../testing/strategy.md`](../testing/strategy.md) | [`../standards/testing.md` §何时可跳过新增/修改测试](../standards/testing.md#何时可跳过新增修改测试) |
 
 无论某步骤判定为不需要 ADR / spec / test，**分支、PR、review、squash merge 都不可跳过**——见上文"分支先行"。
@@ -84,8 +84,8 @@ related:
 
 | 步骤 | DoD 在哪 |
 |---|---|
-| ADR | [`../adr/README.md` §产物合格条件（DoD）](../adr/README.md#产物合格条件dod) |
-| spec | [`../spec/README.md` §产物合格条件（DoD）](../spec/README.md#产物合格条件dod) |
+| ADR | [`../standards/adr.md` §产物合格条件（DoD）](../standards/adr.md#产物合格条件dod) |
+| spec | [`../standards/spec.md` §产物合格条件（DoD）](../standards/spec.md#产物合格条件dod) |
 | failing test / 实现 / refactor | [`../standards/testing.md` §TDD 各阶段产物合格条件](../standards/testing.md#tdd-各阶段产物合格条件) |
 | 自查 | [`../standards/code-review.md` §自查清单合格条件](../standards/code-review.md#自查清单合格条件) |
 | Codex review | [`../standards/code-review.md` §Codex review 反馈响应合格条件](../standards/code-review.md#codex-review-反馈响应合格条件) |

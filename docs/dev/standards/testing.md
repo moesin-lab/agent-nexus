@@ -26,7 +26,7 @@ related:
 - 本地开发脚本的小调整（不影响 CI 与产品代码）
 - 纯重命名 / 纯格式化（被测行为未变，依赖既有测试套保护）
 
-跳过新增/修改测试不等于跳过流程；分支、PR、review、合并门禁仍按 [`../process/workflow.md`](../process/workflow.md) 执行。是否同 PR 改 ADR / spec，分别按 [`../adr/README.md`](../adr/README.md) 与 [`../spec/README.md`](../spec/README.md) 判定。
+跳过新增/修改测试不等于跳过流程；分支、PR、review、合并门禁仍按 [`../process/workflow.md`](../process/workflow.md) 执行。是否同 PR 改 ADR / spec，按 [`when-to-add-doc.md`](when-to-add-doc.md) 判定。
 
 ## TDD 各阶段产物合格条件
 

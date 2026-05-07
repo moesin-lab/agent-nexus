@@ -12,7 +12,7 @@ related:
 
 # 读文档的防污染机制
 
-本文件是"读文档防污染"规则与机制的完整 owner——含路径分层、违反后果、作废工作流、`scripts/docs-read` 三模式、`pretool-read-guard` hook 集成、不配 hook 的后果。`AGENTS.md` 不再持有 headline，需要时从入口索引链接到本文件。
+防止 agent 把非权威源（归档 / 外部导向文档）当事实使用——靠路径分层 + `scripts/docs-read` 三模式 + 可选的 `pretool-read-guard` hook 三层兜住。
 
 ## 路径分层与放行/拦截规则
 

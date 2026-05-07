@@ -2,10 +2,12 @@
 title: ADR 索引
 type: index
 status: active
-summary: ADR 编号规则、状态机、评审流程与当前索引
+summary: ADR 状态机与当前索引；产物写法标准在 standards/adr.md，触发条件在 standards/when-to-add-doc.md
 tags: [adr, decision, navigation]
 related:
   - dev/adr/template
+  - dev/standards/adr
+  - dev/standards/doc-ownership
   - dev/process/workflow
 ---
 
@@ -13,16 +15,11 @@ related:
 
 本目录存放所有架构级决策的记录。每个决策一个文件，编号连续。
 
+ADR 触发条件（什么改动需要 ADR / 何时可跳过）见 [`../standards/when-to-add-doc.md`](../standards/when-to-add-doc.md)；ADR 产物写法标准（编号规则 / DoD / 书写要点 / 引用规则 / Superseded 形态变更 / 评审约束 / 反模式）见 [`../standards/adr.md`](../standards/adr.md)；评审走标准 code review，见 [`../process/code-review.md`](../process/code-review.md)。
+
 ## 为什么要 ADR
 
 架构决策若散落在 Issue 与 commit message 里，新人（或半年后的自己）读不懂"为什么是这样"。ADR 解决这个问题——**每个决策有固定位置、固定结构、固定状态机**。
-
-## 编号规则
-
-- 四位数字，从 `0001` 开始
-- 编号连续，不跳号，不复用
-- 被废弃的 ADR **保留编号与文件**，只追加状态变更，不删除内容
-- 文件名：`<编号>-<kebab-case-标题>.md`（例 `0001-im-platform-discord.md`）
 
 ## 状态机
 
@@ -40,7 +37,7 @@ Proposed ──(显式签字盖章)──> Accepted
 
 - **Proposed = 入库可执行**——ADR PR 经 review 合入 main 后即视为项目已采纳的事实依据，下游 spec / standards / process 可以引用并按此 ADR 落地。本项目实际约定如此（ADR-0007 / 0008 / 0009 均以 Proposed 状态合入并被引用）。
 - **Accepted = 显式签字盖章**——标志该决策经过更正式的人工复盘 / 跨项目周期审视。仅在需要为某条 ADR 提供"额外稳定性背书"时手工推进；不是合入 main 的默认产物。
-- **Superseded / Deprecated**——见 §"Superseded 工作流"。
+- **Superseded / Deprecated**——状态语义见此处；对应的形态变更（路径迁移 / frontmatter 字段 / 索引同步）见 [`../standards/adr.md` §Superseded 形态变更](../standards/adr.md#superseded-形态变更)。
 
 如果未来要把 Proposed → Accepted 升级为合入流程的强制环节，需要单独发 ADR 修订本节。
 
@@ -56,60 +53,6 @@ Proposed ──(显式签字盖章)──> Accepted
 - §Amendments：Accepted 之后对决策**内容 / 范围 / 命名**的非反转修订
 
 两节都**只记意图，不记内容**——具体改了什么字段 / 路径 / 数量 / 命名活在 body 当前状态与 git diff 里，不在变更日志里复述。详见 [`template.md`](template.md)。
-
-## 什么情况写 ADR
-
-满足任一条件就需要 ADR：
-
-- 引入 / 替换一个外部依赖的大类（IM 平台、agent 后端、数据库、框架）
-- 改变模块依赖方向（见 [`../architecture/dependencies.md`](../architecture/dependencies.md)）
-- 改变对外契约（`spec/` 下任意文件的接口签名或字段）
-- 改变部署形态（单机 → 多机、桌面 → 服务端）
-- 改变安全模型（权限边界、密钥存储、脱敏规则）
-- 选定实现语言、运行时、核心库
-
-## 何时可跳过 ADR
-
-以下改动允许在主路径"判断是否需要 ADR"那一步直接跳过：
-
-- 文档错别字、链接修复、术语统一
-- 依赖的补丁版本升级（无 breaking change）
-- 代码注释修改
-- 本地开发脚本的小调整（不影响 CI）
-- spec / standards / process 内部措辞调整（决策语义未变）
-
-跳过 ADR ≠ 跳过流程——**分支、PR、review、squash merge 不可跳过**，见 [`../process/workflow.md` §分支先行](../process/workflow.md#分支先行不可跳过)。同 PR 是否还要写 spec / 测试，分别按 [`../spec/README.md` §何时可跳过 spec](../spec/README.md#何时可跳过-spec) 与 [`../standards/testing.md` §何时可跳过新增/修改测试](../standards/testing.md#何时可跳过新增修改测试) 判定。
-
-## 产物合格条件（DoD）
-
-ADR 合格的判据：
-
-- frontmatter 字段齐（`adr_status` / `adr_number` / `decision_date` / `supersedes` / `superseded_by`），按 [`template.md`](template.md)
-- body 含 Context / Options / Decision / Consequences / Out of scope 五段，按 [`template.md`](template.md) 结构
-- Options 段列出至少 2 个认真比较过的候选
-- Decision 段一句话说选哪个；不模糊措辞
-- 状态至少推到 `Proposed`（合入 main 后即视为入库可执行）；合入前已通过 codex review 并逐条回应
-
-## 评审流程
-
-1. 作者基于 [`template.md`](template.md) 写 ADR，状态设为 `Proposed`
-2. PR 发起 review，至少跑一次 codex review
-3. Review 反馈逐条响应
-4. 讨论收敛后合并 PR——状态保持 `Proposed`（按 §"状态机"，Proposed = 入库可执行）
-5. 如需"显式签字盖章"，单独发后续 PR 把状态推到 `Accepted`（不强制）
-
-**禁止**：未经 review 直接合并任何 ADR PR；或在未经 review 的情况下把 `Proposed` 改 `Accepted`。
-
-## 书写要点
-
-- 用中文，标题与 filename 尽量信息密度高
-- Context 段回答：我们为什么现在要决定这件事？
-- Options 段列出至少 2 个认真比较过的候选
-- Decision 段一句话说选哪个
-- Consequences 段同时列**正向**与**负向**后果
-- Out of scope 段说明**这个 ADR 不决定什么**，避免 scope 蔓延
-
-详见 [`template.md`](template.md)。
 
 ## 当前索引
 
@@ -128,36 +71,8 @@ ADR 合格的判据：
 | [0011](0011-turn-layering.md) | turn 层级——daemon 视角外显两层，agent 内部留给 backend | Proposed |
 | [0012](0012-claudecode-stream-json-mainline.md) | claudecode 切到 stream-json 主路径——协议合约 / interrupt / timeout | Proposed |
 
-## 引用规则
-
-- 其他文档引用 ADR 用编号：`ADR 0001` 或直接链接
-- ADR 之间互相引用也用编号
-- 代码注释里引用用 `# see ADR-0001`
-
-## Superseded 工作流
-
-一条 ADR 被取代时，必须**同一个 commit 内**完成：
-
-1. `git mv docs/dev/adr/NNNN-*.md docs/dev/adr/deprecated/NNNN-*.md`
-2. 被取代 ADR 的 frontmatter：`adr_status: Superseded`、`superseded_by: "MMMM"`；`status` 字段保持 `active`（归档路径下 `status` 冗余无害，详见 `docs/dev/standards/metadata.md`）
-3. 取代 ADR 的 frontmatter：`supersedes: "NNNN"`，`related:` 字段路径指向 `dev/adr/deprecated/NNNN-...`
-4. 本 README 索引表里被取代 ADR 的路径改为 `deprecated/NNNN-...`
-5. 正文里对被取代 ADR 的相对链接按新深度调整（例：`deprecated/0005-*.md` 或从 deprecated 内部出去用 `../`）
-
-这样 `docs/dev/adr/` 根目录下只会有**当前有效**的 ADR；pretool-read-guard 会拦截对 `deprecated/**` 的直接 `Read`，保护后续决策不被已作废的论述污染。
-
-> **可选的 UX 增强**：被取代 ADR 正文顶部可加 banner（例：`> **已被 [ADR-MMMM](../MMMM-...md) 取代，仅供审计追溯**`）帮助人类读者快速识别。不强制，不作工作流步骤——路径已承担防污染主责。
-
 ## 职责边界
 
 ADR 这一层只回答 **"为什么选 X 不选 Y"**。ADR 的禁入清单与跨目录冲突裁决统一住 [`../standards/doc-ownership.md`](../standards/doc-ownership.md)（ADR 行 + Reviewer 判据），本 README 不复述；ADR 文档内部结构见 [`../standards/docs-style.md#结构约定`](../standards/docs-style.md#结构约定)。
 
 ADR 引用 spec / architecture / process / testing / standards 内容时**只 link，不复述**——读者跳到目标文件读细节。
-
-## 不做的事
-
-- 不把 ADR 当长篇论文写；60–200 行为宜
-- 不在 ADR 里写实现细节（实现细节放 spec）
-- 不在 ADR 里写规则清单本体（规则本体放 process / spec / standards，ADR 只承载"为什么这样定规则"）
-- 不把还没做的决策写成 ADR（没决策就没 ADR）
-- 不删除任何已合入的 ADR 文件（被取代的 ADR 移到 `deprecated/` 保留）

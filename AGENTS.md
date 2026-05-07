@@ -1,142 +1,83 @@
 ---
-title: AGENTS.md（agent-nexus 项目规则）
+title: AGENTS.md（agent-nexus 项目规则入口）
 type: root
 status: active
-summary: 项目特有协作规则入口，叠加在全局 md 之上，定义十条不可违反的核心原则与 PR 三问
-tags: [workflow, tdd, code-review, subagent, commit, ssot]
+summary: 项目协作规则入口索引；规则本体在 docs/dev/ 按 doc-ownership 矩阵分布，本文件只承载七条核心原则的陈述与文件定位速查
+tags: [workflow, navigation, ssot]
 related:
   - root/CONTRIBUTING
-  - dev/process/workflow
-  - dev/process/tdd
-  - dev/process/code-review
-  - dev/process/subagent-usage
   - dev/standards/doc-ownership
-  - dev/adr/0008-doc-layering-ssot
+  - dev/process/workflow
 ---
 
 # AGENTS.md
 
-> 本文件是协作规则的**入口索引**，叠加在各 harness 自身的全局规则之上。具体规则展开在 `docs/dev/process/` 下对应文件。规则冲突时，本文件和 `docs/dev/` 下的项目文档优先。
+> 本文件是协作规则的**入口索引**，叠加在各 harness 自身的全局规则之上。规则本体在 [`docs/dev/`](docs/dev/) 下按 [doc-ownership 矩阵](docs/dev/standards/doc-ownership.md) 分布；本文件只承载七条核心原则的陈述与文件定位速查。
 
 ## 核心原则（不可违反）
 
-1. **分支先行**：所有改动（含文档、错别字、依赖补丁）必须先从 `main` checkout 新分支再动手；禁止在 `main` 上直接编辑或 commit 未合入的改动。理由与细节见 [`docs/dev/process/workflow.md` §分支先行（不可跳过）](docs/dev/process/workflow.md#分支先行不可跳过)；commit / 合并行为编排见 [`docs/dev/process/commit-and-branch.md`](docs/dev/process/commit-and-branch.md)。
-2. **文档先行**：新模块没进 `docs/dev/spec/` 不接受 PR；架构级改动没进 `docs/dev/adr/` 不接受 PR。
-3. **TDD 强制**：先 spec → 先 failing test → 再 impl。细节见 [`docs/dev/process/tdd.md`](docs/dev/process/tdd.md)。
-4. **契约先行**：跨模块交互必须走 `docs/dev/spec/` 定义的接口。新增能力先改 spec，再改代码。
-5. **Code review 不走过场**：每个 PR 必须过 codex review（大变更走 ultrareview）。流程见 [`docs/dev/process/code-review.md`](docs/dev/process/code-review.md)。
-6. **Subagent 优先**：探索类、长研究类任务优先派发子代理，主 session 只做收敛与决策。细节见 [`docs/dev/process/subagent-usage.md`](docs/dev/process/subagent-usage.md)。
-7. **范围收敛**：每个 PR 只做一件事，禁止"顺手重构"无关代码。
-8. **Conventional Commits**：所有提交遵循 [`docs/dev/process/commit-and-branch.md`](docs/dev/process/commit-and-branch.md)。
-9. **作废文档物化到归档目录**：Superseded ADR 和明确 Deprecated 的文档必须住在 `docs/dev/adr/deprecated/` 或 `docs/_deprecated/`——路径本身就是"别当事实"的信号。active 路径下的文档（含 placeholder）可直接 `Read`；归档路径的文档由 hook 拦截，必须走 `scripts/docs-read --force`。详见下文"读文档的防污染规则"。
-10. **SSOT（单一信息源）**：每条事实只在唯一合适的 owner 定义一次，其他地方只 link 不复述。owner 矩阵、冲突裁决与 reviewer 判据见 [`docs/dev/standards/doc-ownership.md`](docs/dev/standards/doc-ownership.md)；为什么走"事实归属判定 + standards/process 边界互斥"而非 lint / hook / 一致性测试，见 [ADR-0008](docs/dev/adr/0008-doc-layering-ssot.md)。本条覆盖文档维度——代码层 SSOT 见 ADR-0008 Consequences §"代码与设计维度"。
+每条原则的本体（理由、做 / 不做对照、reviewer 拒稿条件）由 owner 文档承载，本文件只列陈述 + 单链接。
 
-## 读文档的防污染规则
+1. **分支先行**：所有改动从 `main` checkout 新分支再动手 → [`workflow.md` §分支先行](docs/dev/process/workflow.md#分支先行不可跳过)
+2. **文档先行**：改代码前先过一遍 `when-to-add-doc` 判定要不要先写 spec / ADR / 普通 doc → [`when-to-add-doc.md`](docs/dev/standards/when-to-add-doc.md)
+3. **TDD 强制**：先 spec → 先 failing test → 再 impl → [`tdd.md`](docs/dev/process/tdd.md)
+4. **Review 不走过场**：每 PR 过 codex；大变更加 ultrareview；必答三问 → [`code-review.md`](docs/dev/process/code-review.md)
+5. **Subagent 优先**：探索 / 研究类派子代理，主 session 只做收敛 → [`subagent-usage.md`](docs/dev/process/subagent-usage.md)
+6. **Conventional Commits**：commit message 用 `type(scope): 动词起头描述变更` → [`commit-style.md`](docs/dev/standards/commit-style.md)
+7. **SSOT**：每条事实只在唯一 owner 定义，其他只 link 不复述 → [`doc-ownership.md`](docs/dev/standards/doc-ownership.md)
 
-| 路径 | Read 行为 |
-|---|---|
-| `AGENTS.md` / `CHANGELOG.md` / active 的 `docs/**` | **放行** |
-| `docs/**` 下 `status: placeholder` 骨架 | **放行**（不归档；`placeholder` 承担信息架构占位作用，搬去归档会误读为主题废弃） |
-| `docs/dev/adr/deprecated/**` / `docs/_deprecated/**`（归档） | **拦截** → `scripts/docs-read --force` |
-| 仓库根 `README.md` / `CONTRIBUTING.md`（外部导向） | **拦截** → `scripts/docs-read --force` |
+## 文档读取约定（渐进式披露）
 
-`scripts/docs-read --force` 是被 hook 拦后的**唯一合法入口**——为"研究历史 / 核对外部文案"等正当用途留的兜底，不是常规读法。
+为避免无关全文进 context：
 
-**违反后果**：reviewer 在 PR 里看到基于归档文档做的决策（作者未显式声明研究历史），应要求重做——过时内容进决策链后整条链条都要重新验证。
-
-更多入口：
-
-- 把文档作废 / 改 status → 见 [`docs/dev/process/docs-read.md` §"作废工作流"](docs/dev/process/docs-read.md#作废工作流)
-- `docs-read` 三模式 / `pretool-read-guard` hook 集成 → 见 [`docs/dev/process/docs-read.md`](docs/dev/process/docs-read.md)
-
-## 每个 PR 必答三问
-
-作者在 PR 描述里自答，reviewer 照此验收：
-
-1. **对应哪条 ADR？**（无需 ADR 时说明理由）
-2. **对应哪个 spec？**（纯实现细节可注明 N/A）
-3. **对应哪些测试？**（列出新增/修改的测试文件与断言）
-
-三问缺一，reviewer 有义务要求补齐或直接拒绝。
-
-## 加抽象前的 Deletion test
-
-新增任何包装层、小函数抽出、文件拆分、facade 前，问自己：**假想删掉它，复杂度消散还是扇出到 N 个 caller？** 消散 = pass-through，别加；扇出 = 真在收复杂度，加。
-
-特别警惕"为测试性抽出的纯函数"：单测漂亮，bug 却躲在 caller 怎么把参数喂进来，抽完反而要跨文件追 bug。这种情况下测真实接线（integration test through the seam），而不是抽纯函数。
-
-例外：契约先行的 spec 接口（`PlatformAdapter` / `AgentRuntime` 等）由 ADR 决定形状，不走此判据。
-
-reviewer 可据此直接拒稿——"过不了 deletion test"是合法的 review 理由。
-
-## 本项目特有的反模式
-
-以下行为在本项目**明确禁止**：
-
-- 没有 ADR 就做架构级改动（例如新增一个 IM 平台、换 agent 后端、改 session 模型）
-- 没有 spec 就开始写模块代码
-- 把观测性、幂等、限流"留到以后做"——这些由 daemon 强制提供，第一版就必须有
-- 适配器（platform、agent）自己实现日志格式、错误处理、重试策略——必须复用 daemon 提供的基础设施
-- 在 IM 里回显绝对路径、env、token、内部错误栈——必须经过 daemon 的脱敏层
-- PR 里混多件事（"顺便改了下 X"）——单一关注点原则
-- 为了赶时间跳过 codex review——大变更必须 review
-- 派发 subagent 后主 session 又把同样的探索做一遍——相信子代理的产出，主 session 只做收敛
-
-## 协作性 skill 挂接
-
-协作性 skill（见 [ADR-0007](docs/dev/adr/0007-collaborative-skill-promotion.md)）入库在仓库根 `skills/`，由 [`skills.manifest`](skills.manifest) 声明；各 harness 的 skill 目录 gitignored，**首次 clone 或 skill 结构变更后必须挂接**，否则静默不触发。挂接方式与新增清单见 [`docs/dev/process/skill-setup.md`](docs/dev/process/skill-setup.md)。
-
-## harness-neutral 文档约定
-
-仓库的协作文档（`AGENTS.md` / `docs/dev/**` / `skills/<name>/SKILL.md`）默认面向**任意 harness 的读者**，不预设某个具体 harness 是参考实现。即使用 `<harness>: <X>` 这样的限定语把 harness 名写进正文，也会让读者把"参考实现"读成"标准做法"，造成隐性偏差。
-
-判定矩阵：
-
-| 类别 | 处理 |
-|---|---|
-| 通用协作概念（跨 harness 共通词，如 `subagent` / `session` / `本地记忆` / `harness 全局规则文件`） | **直接用** |
-| harness 特有具体物（执行器名、API、路径、脚本、harness 专属术语） | **下沉到 per-harness 子节**——正文只用泛化措辞，具体细节放文档末 §"Harness 实现注记"或 §"Per-harness 实现"等显式 per-harness 区域 |
-| 项目事实陈述（ADR / spec 决策本身就锁定具体 harness） | 直陈即可——这是项目事实，不是把读者默认成某个 harness |
-
-**per-harness 区域不受本约定**（可直接用具体 harness 工具名、路径、脚本）：
-
-- 各 harness 私有配置目录（`.claude/` / `.codex/` / `.cursor/` 等）
-- `skills/<name>/harnesses/<harness>/SKILL.md`（per-harness 执行器）
-- harness-neutral 文档内的显式 per-harness 子节（如 §"Harness 实现注记 / Claude Code"）
-
-本约定**仅约束协作文档**（前述三类：`AGENTS.md` / `docs/dev/**` / `skills/<name>/SKILL.md`）；运行时草稿（`.tasks/` / `handoff/`）不属于协作文档，自然不在管辖范围。
-
-**违反后果**：reviewer 看到 harness-neutral 文档正文把读者默认成某个 harness，应要求修正——其他 harness 的读者会误判自己该用什么工具，"参考实现"被误读成"标准做法"。
+- 不确定一份文档是否相关时，先 `scripts/docs-read --head <path>` 看 frontmatter（`summary` / `related`）判断；命中再决定全读
+- 默认 `Read` `docs/**` active 内容；归档与外部导向类文档的 `Read` 由 hook 拦截，按 stderr 指引走 `scripts/docs-read --force`
+- 具体路径分层、三种模式、`pretool-read-guard` hook 集成、违反后果见 [`docs/dev/process/docs-read.md`](docs/dev/process/docs-read.md)
 
 ## 文件定位速查
 
 | 想做什么 | 先看哪里 |
 |---|---|
-| 开新模块 | `docs/dev/process/workflow.md` |
-| 接到需求后该问哪些反问问题（澄清环节） | `docs/dev/process/requirement-clarification.md` |
-| 写测试 | `docs/dev/process/tdd.md` + `docs/dev/testing/strategy.md` |
-| 发 PR | `docs/dev/process/code-review.md` + 本文件"三问" |
-| 写日志 | `docs/dev/standards/logging.md` + `docs/dev/spec/infra/observability.md` |
-| 处理错误 | `docs/dev/standards/errors.md` |
-| 做架构决策 | `docs/dev/adr/README.md` + `docs/dev/adr/template.md` |
-| 判断是否应该加抽象（包装层、小函数、facade、文件拆分） | 本文件 §"加抽象前的 Deletion test" + `docs/dev/standards/coding.md` §"模块深度评估" |
-| 判断某段内容该写在哪个事实 owner | `docs/dev/standards/doc-ownership.md` |
-| 做需要人类拍板的结构化分析（评估 / 对比 / 拆解） | `docs/dev/process/pre-decision-analysis/README.md` |
-| 增 / 删协作性 skill | `docs/dev/process/skill-setup.md` + `docs/dev/adr/0007-collaborative-skill-promotion.md` + `skills.manifest` |
-| 沉淀经验 / 被纠正后该不该记 | `docs/dev/process/self-refinement/README.md` |
+| 看仓库架构总览 / 模块拓扑 | `docs/dev/architecture/overview.md` |
+| 开新 package（agent / platform / daemon 子模块） | `docs/dev/process/workflow.md` |
+| 改 package import / 依赖方向 | `docs/dev/architecture/dependencies.md` |
+| 起 ADR / spec 前 surface 邻接维度 | `docs/dev/process/requirement-clarification.md` |
+| 新增 / 修改测试 | `docs/dev/process/tdd.md` + `docs/dev/testing/strategy.md` |
+| 判一个测试写法是否合格 | `docs/dev/standards/testing.md` |
+| 改 / 跑 eval（对话质量回归） | `docs/dev/testing/eval.md` |
+| 写 / 维护 fixture | `docs/dev/testing/fixtures.md` |
+| 开 PR / codex review 触发 | `docs/dev/process/code-review.md` |
+| commit 流程编排（合并策略 / stacked PR） | `docs/dev/process/commit-and-branch.md` |
+| 写 commit message / 给分支命名 | `docs/dev/standards/commit-style.md` |
+| 判命名 / 函数 / 模块边界 / 注释 / 依赖引入是否合格 | `docs/dev/standards/coding.md` |
+| 引入 / 升级依赖 | `docs/dev/standards/dependencies.md` |
+| 写日志（写法约束） | `docs/dev/standards/logging.md` |
+| 改日志 / trace 字段契约 | `docs/dev/spec/infra/observability.md` |
+| 处理错误（写法约束） | `docs/dev/standards/errors.md` |
+| 改错误对象字段契约 | `docs/dev/spec/infra/errors.md` |
+| 写文档（语言 / 格式 / frontmatter / 篇幅 / 中英排） | `docs/dev/standards/docs-style.md` |
+| Read 被 hook 拦的文档 / 文档作废流程 | `docs/dev/process/docs-read.md` |
+| 判 spec 写法是否合格 / 看 Seam 演进规则 | `docs/dev/standards/spec.md` |
+| 起新 ADR / 判 ADR 写法是否合格 | `docs/dev/adr/README.md` + `docs/dev/adr/template.md` + `docs/dev/standards/adr.md` |
+| 判断要不要加包装 / 拆函数 / 拆文件 | `docs/dev/standards/coding.md` §加抽象前的 Deletion test |
+| 决定一段内容该住到哪份 owner 文档 | `docs/dev/standards/doc-ownership.md` |
+| 判该写 spec / ADR / 普通 doc / 不写 / 何时可跳过 | `docs/dev/standards/when-to-add-doc.md` |
+| 加文档整体流程（判定 → 写 → review → 合入） | `docs/dev/process/add-doc.md` |
+| 做需要人类拍板的结构化分析 | `docs/dev/process/pre-decision-analysis/README.md` + `docs/dev/standards/pre-decision-analysis/README.md` |
+| 派 subagent / 收敛子代理产出 | `docs/dev/process/subagent-usage.md` |
+| 评估子任务是否适合派发 / 写 prompt | `docs/dev/standards/subagent-usage.md` |
+| 增 / 删协作性 skill | `docs/dev/process/skill-setup.md` + `skills.manifest` |
+| 被纠正后该不该沉淀 | `docs/dev/process/self-refinement/README.md` |
 | 接入新 IM 平台 | `docs/dev/spec/platform-adapter.md` |
-| 集成新 agent 后端 | `docs/dev/spec/agent-runtime.md` + `docs/dev/spec/agent-backends/claude-code-cli.md` |
-| 改权限/身份 | `docs/dev/spec/security/auth.md` |
+| 集成新 agent 后端 | `docs/dev/spec/agent-runtime.md`（接口契约；参考现有实现见 `docs/dev/spec/agent-backends/claude-code-cli.md`） |
+| 改归一化消息格式 / 事件字段 | `docs/dev/spec/message-protocol.md` |
+| 查 dispatch pipeline 全链路 | `docs/dev/spec/message-flow.md` |
+| 改身份 allowlist / 会话绑定规则 | `docs/dev/spec/security/auth.md` |
 | 改工具边界 | `docs/dev/spec/security/tool-boundary.md` |
-| 改密钥处理 | `docs/dev/spec/security/secrets.md` |
+| 改密钥存储 / 加载策略 | `docs/dev/spec/security/secrets.md` |
 | 改脱敏规则 | `docs/dev/spec/security/redaction.md` |
-| 改幂等/去重 | `docs/dev/spec/infra/idempotency.md` |
+| 改幂等 / 去重 | `docs/dev/spec/infra/idempotency.md` |
 | 改 limits / 预算 | `docs/dev/spec/infra/cost-and-limits.md` |
+| 改 SessionKey / 会话状态机 / 顺序与恢复 | `docs/dev/architecture/session-model.md` |
 | 改存储 schema | `docs/dev/spec/infra/persistence.md` |
-| 威胁模型与跨分区安全索引 | `docs/dev/spec/security/README.md` |
-
-## 本文件不做的事
-
-- 不展开具体规则——展开在 `docs/dev/` 下
-- 不替代全局 `AGENTS.md` 文件——只在项目内追加与覆盖
-- 不对使用者做说明——使用者文档在 `docs/product/`
+| 查威胁模型 / 跨分区安全索引 | `docs/dev/spec/security/README.md` |

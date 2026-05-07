@@ -84,7 +84,7 @@ ln -sfn "../../skills/<name>" ".claude/skills/<name>"
 3. `skills/<name>/harnesses/<harness>/SKILL.md` — 至少一个 harness 的执行器（否则挂接脚本只能 fallback 挂通用入口，触发质量打折）
 4. 在 `skills.manifest` 加一行 `<name>`
 5. 在自己的 harness 上跑挂接脚本（具体命令见上文 per-harness 子节）验证挂接生效
-6. 开 PR 前回答 AGENTS.md "三问"（对应哪条 ADR / 哪个 spec / 哪些测试）
+6. 开 PR 前回答 [`code-review.md` §PR 必答三问](code-review.md#pr-必答三问)（对应哪条 ADR / 哪个 spec / 哪些测试）
 
 ## 范围
 

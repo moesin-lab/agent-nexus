@@ -35,7 +35,7 @@
 # 依赖：bash + awk（POSIX 功能集），无外部工具依赖
 #
 # See: docs/dev/standards/metadata.md
-#      AGENTS.md §"读文档的防污染规则"
+#      docs/dev/process/docs-read.md
 #      scripts/pretool-read-guard
 
 set -euo pipefail

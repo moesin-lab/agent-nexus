@@ -58,7 +58,7 @@ superseded_by: dev/architecture/overview
 
 ## 为什么不只改字面而归档
 
-按 [`AGENTS.md`](../../../AGENTS.md) 第 9 条 "作废文档物化到归档目录"，被废止的概念性内容物化到本路径，是为了：
+按 [`docs/dev/process/docs-read.md` §路径分层与放行/拦截规则](../../dev/process/docs-read.md#路径分层与放行拦截规则) 的归档约定，被废止的概念性内容物化到本路径，是为了：
 
 1. **路径本身就是"别当事实"的信号**——`_deprecated/` 让读者一眼知道这是历史快照
 2. **保留审计追溯链**——未来 reviewer 看到 PR / commit 引用旧措辞时，能查到具体废止理由与上下文

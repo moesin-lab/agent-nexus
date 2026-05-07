@@ -50,7 +50,7 @@ ADR 和 spec 有专属扩展字段。完整 schema 见 [`standards/metadata.md`]
 
 **读取方式**：active 路径下的文档（含 `placeholder` 骨架）可直接 `Read`；归档路径（`docs/dev/adr/deprecated/` / `docs/_deprecated/`）和外部导向文档（仓库根 `README.md` / `CONTRIBUTING.md`）的 `Read` 由 hook 拦截，需走 `scripts/docs-read --force`。
 
-完整规则见 [`../../AGENTS.md`](../../AGENTS.md) §"读文档的防污染规则"；机制细节（三模式、作废工作流、hook 集成）见 [`process/docs-read.md`](process/docs-read.md)。
+完整规则与机制细节（路径分层、违反后果、`docs-read` 三模式、作废工作流、hook 集成）见 [`process/docs-read.md`](process/docs-read.md)。
 
 **使用建议**（给 agent）：
 

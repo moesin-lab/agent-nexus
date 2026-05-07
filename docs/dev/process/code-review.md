@@ -18,6 +18,16 @@ related:
 
 自查清单 / 反馈响应 / 禁入条件 / 反模式见 [`../standards/code-review.md`](../standards/code-review.md)；review 反馈优先级判据见 [`../standards/review.md`](../standards/review.md)。本文件只编排"何时跑、谁触发、未回应如何阻断流程"。
 
+## PR 必答三问
+
+作者在 PR 描述里自答，reviewer 照此验收：
+
+1. **对应哪条 ADR？**（无需 ADR 时说明理由）
+2. **对应哪个 spec？**（纯实现细节可注明 N/A）
+3. **对应哪些测试？**（列出新增/修改的测试文件与断言）
+
+三问缺一，reviewer 有义务要求补齐或直接拒绝。
+
 ## 作者自查时机
 
 开 PR 前按 [`../standards/code-review.md` §自查清单合格条件](../standards/code-review.md#自查清单合格条件) 走一遍，每项打勾。任一项未达合格不开 PR。

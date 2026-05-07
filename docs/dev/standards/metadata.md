@@ -90,7 +90,7 @@ superseded_by: null                     # 取代本 ADR 的编号
 
 一个 Deprecated 的 ADR 通常 `status: active`（文档仍可读）+ `adr_status: Deprecated`。同理，一个 Superseded 的 ADR 仍保留 `status: active`——ADR 的"被取代"由 `adr_status: Superseded` + 所在归档目录（`docs/dev/adr/deprecated/`）共同表达，`status` 字段不引入 `superseded` 值。
 
-**归档路径下的 `status` 允许保持 active**：文档一旦位于 `docs/dev/adr/deprecated/` 或 `docs/_deprecated/` 下，路径本身就是"已作废"的信号（见 `AGENTS.md` §读文档的防污染规则）；frontmatter `status` 字段在归档路径下变为冗余，维持 active 不影响语义。这样 `status` 字段的允许值保持稳定（`active|draft|placeholder|deprecated`），不需要为 ADR 的 Superseded 语义再扩展。
+**归档路径下的 `status` 允许保持 active**：文档一旦位于 `docs/dev/adr/deprecated/` 或 `docs/_deprecated/` 下，路径本身就是"已作废"的信号（见 [`../process/docs-read.md` §路径分层与放行/拦截规则](../process/docs-read.md#路径分层与放行拦截规则)）；frontmatter `status` 字段在归档路径下变为冗余，维持 active 不影响语义。这样 `status` 字段的允许值保持稳定（`active|draft|placeholder|deprecated`），不需要为 ADR 的 Superseded 语义再扩展。
 
 ## spec 专属追加字段
 
@@ -242,7 +242,7 @@ related:
 
 2026-04 重构后，防污染主责已从"所有 docs 都必须走 docs-read"下放到**路径层**：作废文档物化到归档目录（`docs/dev/adr/deprecated/` / `docs/_deprecated/`），active 路径下的文档可直接 `Read`。
 
-完整规则见 [`../../../AGENTS.md`](../../../AGENTS.md) §"读文档的防污染规则"；`scripts/docs-read` 三模式（`--head` / `--force` / 默认兜底）与作废工作流、hook 集成等细节见 [`../process/docs-read.md`](../process/docs-read.md)。
+完整规则、`scripts/docs-read` 三模式（`--head` / `--force` / 默认兜底）、作废工作流、hook 集成等细节见 [`../process/docs-read.md`](../process/docs-read.md)。
 
 ## 校验（后续工具化）
 

@@ -44,39 +44,7 @@ related:
 
 ## 抽象中枢的词汇中立
 
-`protocol` 与 `daemon` 是抽象中枢（见 [`../architecture/dependencies.md` §允许方向](../architecture/dependencies.md#允许方向)）；这两个 package 内的**注释、标识符、错误消息、日志事件名、用户可见字符串**不得引用任何具体 agent 后端或 platform adapter 的身份词汇。
-
-不允许出现的词举例：
-
-- agent 后端身份：`CC` / `claudecode` / `Claude Code` / `GPT` / `OpenAI` / 任何后端品牌词
-- platform adapter 协议细节：`Discord` / `Slack` / `WS` / `gateway` / `snowflake` / `at-least-once`（属于具体协议语义）
-- 后端 / adapter 私有数据形态：`stream-json` / `--print` / `interaction` 等具体 backend / SDK 词
-
-允许的语境：
-
-- agent / platform 自己的 package（`agent/<name>` / `platform/<name>`）内部——本来就是该后端的实现 owner，自由使用
-- spec 中明确属于具体后端的章节：`spec/agent-backends/<name>.md` / `spec/agent-runtime.md` 里以"举例"形式标明的 backend 段
-- ADR / PR description / commit message / issue body —— 决策动机往往植根于具体后端，这些位置允许出现
-
-### 做 / 不做
-
-| 不做 | 做 |
-|---|---|
-| `// 防 WS resume 重投触发 CC 重复扣费`（daemon 注释） | `// 防 adapter 重投同一事件导致 agent 被重复触发` |
-| `[CC error: spawn_failed] ...`（daemon 用户可见字符串） | `[agent error: spawn_failed] ...` |
-| `ccSessionID` 字段名（`protocol` 类型） | `agentSessionId` / `backendSessionId` |
-| `dispatchDiscordEvent`（daemon 内部函数） | `dispatchInboundEvent` |
-| `// Discord gateway 的 at-least-once 语义...`（daemon 注释） | `// adapter 提供至少一次投递语义...` |
-
-新代码必须遵循；存量违反（含已有的 `ccSessionID` / `[CC error: ...]` 字面量）按"看到顺手改"处理，不强求单 PR 清空。
-
-### 为什么
-
-抽象中枢的 vocabulary 一旦混入具体后端身份，未来接入第二个 agent 后端 / platform adapter 时，要么:
-- 留着旧词导致新代码看着像 claudecode 专用（认知摩擦），或
-- 全仓改名（破坏性改动 + 大量 PR）
-
-提前在抽象层强制中立，新增后端时只需按 spec 写适配器，不动中枢。
+`protocol` / `daemon` 内的注释、标识符、错误消息、日志事件名不得引用具体 agent 后端（`claudecode` / `GPT` 等）或 platform 协议细节（`Discord` / `WS` / `gateway` 等）。动机词放 ADR / PR description / commit message / issue body；`agent/<name>` / `platform/<name>` 各自 package 内不受限。存量违反（如 `ccSessionID` / `[CC error: ...]`）按"看到顺手改"处理。
 
 ## 错误处理
 

@@ -19,7 +19,7 @@ describe('SessionStore', () => {
   it('set then get returns the same entry', () => {
     const store = new SessionStore();
     const key = makeKey();
-    const entry = { agentSessionId: 'cc-1', lastTurnAt: new Date(0) };
+    const entry = { agentSessionId: 'sid-1', lastTurnAt: new Date(0) };
     store.set(key, entry);
     expect(store.get(key)).toEqual(entry);
     expect(store.size).toBe(1);
@@ -32,16 +32,16 @@ describe('SessionStore', () => {
     const k3 = makeKey({ channelId: 'C2' });
     const k4 = makeKey({ initiatorUserId: 'U2' });
 
-    store.set(k1, { agentSessionId: 'cc-1', lastTurnAt: new Date(1) });
-    store.set(k2, { agentSessionId: 'cc-2', lastTurnAt: new Date(2) });
-    store.set(k3, { agentSessionId: 'cc-3', lastTurnAt: new Date(3) });
-    store.set(k4, { agentSessionId: 'cc-4', lastTurnAt: new Date(4) });
+    store.set(k1, { agentSessionId: 'sid-1', lastTurnAt: new Date(1) });
+    store.set(k2, { agentSessionId: 'sid-2', lastTurnAt: new Date(2) });
+    store.set(k3, { agentSessionId: 'sid-3', lastTurnAt: new Date(3) });
+    store.set(k4, { agentSessionId: 'sid-4', lastTurnAt: new Date(4) });
 
     expect(store.size).toBe(4);
-    expect(store.get(k1)?.agentSessionId).toBe('cc-1');
-    expect(store.get(k2)?.agentSessionId).toBe('cc-2');
-    expect(store.get(k3)?.agentSessionId).toBe('cc-3');
-    expect(store.get(k4)?.agentSessionId).toBe('cc-4');
+    expect(store.get(k1)?.agentSessionId).toBe('sid-1');
+    expect(store.get(k2)?.agentSessionId).toBe('sid-2');
+    expect(store.get(k3)?.agentSessionId).toBe('sid-3');
+    expect(store.get(k4)?.agentSessionId).toBe('sid-4');
 
     // 序列化形式确认互不相同
     const ids = new Set([k1, k2, k3, k4].map(serializeSessionKey));
@@ -51,7 +51,7 @@ describe('SessionStore', () => {
   it('delete returns true when present, false when missing', () => {
     const store = new SessionStore();
     const key = makeKey();
-    store.set(key, { agentSessionId: 'cc-x', lastTurnAt: new Date() });
+    store.set(key, { agentSessionId: 'sid-x', lastTurnAt: new Date() });
     expect(store.delete(key)).toBe(true);
     expect(store.delete(key)).toBe(false);
     expect(store.get(key)).toBeUndefined();
@@ -60,11 +60,11 @@ describe('SessionStore', () => {
   it('clearAll empties the store', () => {
     const store = new SessionStore();
     store.set(makeKey({ channelId: 'A' }), {
-      agentSessionId: 'cc-a',
+      agentSessionId: 'sid-a',
       lastTurnAt: new Date(),
     });
     store.set(makeKey({ channelId: 'B' }), {
-      agentSessionId: 'cc-b',
+      agentSessionId: 'sid-b',
       lastTurnAt: new Date(),
     });
     expect(store.size).toBe(2);

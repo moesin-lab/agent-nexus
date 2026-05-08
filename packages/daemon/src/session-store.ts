@@ -2,13 +2,13 @@ import type { SessionKey } from '@agent-nexus/protocol';
 import { serializeSessionKey } from '@agent-nexus/protocol';
 
 /**
- * 跨 turn 维护 SessionKey → ccSessionID 的最小内存映射。
+ * 跨 turn 维护 SessionKey → agentSessionId 的最小内存映射。
  *
  * MVP 仅在进程内存活；进程重启即清空。持久化、状态机、TTL、并发竞态
  * 处理留给后续 PR——TODO docs/dev/architecture/session-model.md。
  */
 export interface SessionEntry {
-  ccSessionID: string;
+  agentSessionId: string;
   lastTurnAt: Date;
 }
 

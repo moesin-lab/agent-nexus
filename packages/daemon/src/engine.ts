@@ -45,8 +45,8 @@ export class Engine {
   >;
   /**
    * Per-SessionKey 串行队列：同 key 的 dispatch 必须按到达序排队执行，
-   * 否则两条并发 inbound 会同时读到陈旧 prevCc 各自启新 session、
-   * 互相覆盖 sessionStore 里的 ccSessionID（ordering corruption）。
+   * 否则两条并发 inbound 会同时读到陈旧 prevAgentSessionId 各自启新 session、
+   * 互相覆盖 sessionStore 里的 agentSessionId（ordering corruption）。
    * 不同 key 之间互不阻塞。
    */
   private readonly inflight = new Map<string, Promise<void>>();
@@ -150,11 +150,13 @@ export class Engine {
         prompt = rawText;
       }
 
-      const prevCc = this.sessionStore.get(event.sessionKey)?.ccSessionID;
+      const prevAgentSessionId = this.sessionStore.get(
+        event.sessionKey,
+      )?.agentSessionId;
       const config: SessionConfig = {
         ...this.defaultSessionConfig,
         sessionId: randomUUID(),
-        resumeFromCcSessionID: prevCc,
+        resumeFromCcSessionID: prevAgentSessionId,
       };
 
       const session = this.agent.startSession(event.sessionKey, config);
@@ -165,10 +167,10 @@ export class Engine {
       const handler = async (e: AgentEvent): Promise<void> => {
         try {
           if (e.type === 'session_started') {
-            const ccSessionID = e.payload.ccSessionID;
-            if (ccSessionID) {
+            const agentSessionId = e.payload.ccSessionID;
+            if (agentSessionId) {
               this.sessionStore.set(event.sessionKey, {
-                ccSessionID,
+                agentSessionId,
                 lastTurnAt: new Date(),
               });
             }
@@ -193,7 +195,7 @@ export class Engine {
             );
             await this.safeSend(
               event,
-              `[CC error: ${e.payload.errorKind}] ${e.payload.message}`,
+              `[agent error: ${e.payload.errorKind}] ${e.payload.message}`,
             );
             this.logger.info(
               {

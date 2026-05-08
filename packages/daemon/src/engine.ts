@@ -52,9 +52,9 @@ export class Engine {
   private readonly inflight = new Map<string, Promise<void>>();
 
   /**
-   * eventId 内存去重：防 WS resume 重投同一事件触发 CC 重复扣费。
+   * eventId 内存去重：防 adapter 重投同一事件导致 agent 被重复触发（重复消耗 turn 预算）。
    * Map insertion order = LRU；满 cap 后删最旧。
-   * 持久化幂等见 docs/dev/spec/infra/idempotency.md（重启窗口 ≪ Discord resume 窗口，跨进程暂不做）。
+   * 持久化幂等见 docs/dev/spec/infra/idempotency.md（重启窗口足够小时 in-memory 即可，跨进程暂不做）。
    */
   private static readonly DEDUP_CAP = 1024;
   private readonly seenEventIds = new Map<string, true>();

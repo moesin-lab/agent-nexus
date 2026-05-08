@@ -44,7 +44,7 @@ related:
 
 ## 抽象中枢的词汇中立
 
-`protocol` / `daemon` 内的注释、标识符、错误消息、日志事件名不得引用具体 agent 后端（`claudecode` / `GPT` 等）或 platform 协议细节（`Discord` / `WS` / `gateway` 等）。动机词放 ADR / PR description / commit message / issue body；`agent/<name>` / `platform/<name>` 各自 package 内不受限。存量违反（如 `ccSessionID` / `[CC error: ...]`）按"看到顺手改"处理。
+`protocol` / `daemon` 内的注释、标识符、错误消息、日志事件名不得引用具体 agent 后端（`claudecode` / `GPT` 等）或 platform 协议细节（`Discord` / `WS` / `gateway` 等）。动机词放 ADR / PR description / commit message / issue body；`agent/<name>` / `platform/<name>` 各自 package 内不受限。
 
 ## 错误处理
 

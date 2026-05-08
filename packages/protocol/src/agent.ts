@@ -44,7 +44,7 @@ export type AgentEvent =
       timestamp: Date;
       sequence: number;
       payload: {
-        ccSessionID?: string;
+        agentSessionId?: string;
         workingDir?: string;
       };
     }
@@ -104,7 +104,7 @@ export interface SessionConfig {
   toolWhitelist: string[];
   timeoutMs: number;
   /** 若非空 → agent 启动时透传给后端做 multi-turn 续话（CC 的 --resume） */
-  resumeFromCcSessionID?: string;
+  resumeFromAgentSessionId?: string;
 }
 
 export type AgentSessionState =
@@ -123,5 +123,5 @@ export interface AgentSession {
   startedAt: Date;
   pid?: number;
   /** 后端会话 ID（如 CC CLI 的 session_id），用于 multi-turn 续话 */
-  ccSessionID?: string;
+  agentSessionId?: string;
 }

@@ -127,7 +127,7 @@ describe('createClaudeCodeRuntime.sendInput', () => {
 
     const started = events[0];
     if (started?.type !== 'session_started') throw new Error('expected session_started');
-    expect(started.payload.ccSessionID).toBe('sid-1');
+    expect(started.payload.agentSessionId).toBe('sid-1');
 
     const textFinal = events[1];
     if (textFinal?.type !== 'text_final') throw new Error('expected text_final');
@@ -144,8 +144,8 @@ describe('createClaudeCodeRuntime.sendInput', () => {
     if (turnFinished?.type !== 'turn_finished') throw new Error('expected turn_finished');
     expect(turnFinished.payload.reason).toBe('stop');
 
-    // ccSessionID 应该写回 session
-    expect(session.ccSessionID).toBe('sid-1');
+    // agentSessionId 应该写回 session
+    expect(session.agentSessionId).toBe('sid-1');
   });
 
   it('非 JSON 行被跳过', async () => {

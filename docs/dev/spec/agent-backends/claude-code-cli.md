@@ -80,7 +80,7 @@ claude --print "<single prompt>" --output-format json
 | `--allowed-tools` / `--allowedTools` | 工具白名单（逗号或空格分隔，支持 `Bash(git *)` 子模式） | **必传** | §权限边界、`security/tool-boundary.md` |
 | `--disallowed-tools` / `--disallowedTools` | 工具黑名单 | **不用**（当前只用白名单） | §交互式 session（保留为可选） |
 | `--model <id>` | 模型别名（`sonnet` / `opus`）或全名（`claude-sonnet-4-6`） | **用**（按 SessionConfig 注入） | §交互式 session |
-| `--resume [value]` / `-r` | 按 session id（UUID）续话；裸用打开 picker | **用**（持有 `ccSessionID` 时传） | §交互式 session、`agent-runtime.md` |
+| `--resume [value]` / `-r` | 按 session id（UUID）续话；裸用打开 picker | **用**（持有 `agentSessionId` 时传） | §交互式 session、`agent-runtime.md` |
 | `--permission-mode <…>` | 取值：`acceptEdits` / `auto` / `bypassPermissions` / `default` / `dontAsk` / `plan` | **用** `default` / `plan`；**禁用** `bypassPermissions` / `acceptEdits` | §权限边界、`security/tool-boundary.md` |
 | `--dangerously-skip-permissions` | 等价于 `--permission-mode bypassPermissions` | **禁用** | `security/README.md` |
 | `--allow-dangerously-skip-permissions` | 让用户可以**选择**开启 bypass，但不默认开启 | **禁用** | `security/README.md` |

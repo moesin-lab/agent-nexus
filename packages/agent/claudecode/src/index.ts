@@ -87,7 +87,7 @@ export function createClaudeCodeRuntime(
         backend: 'claudecode',
         state: 'Idle',
         startedAt: new Date(),
-        ccSessionID: config.resumeFromCcSessionID,
+        agentSessionId: config.resumeFromAgentSessionId,
       };
       // 预创建 emitter，确保 onEvent 在 sendInput 之前就能挂上
       getEmitter(session);
@@ -161,8 +161,8 @@ export function createClaudeCodeRuntime(
         '--allowed-tools',
         tools.join(','),
       ];
-      if (session.ccSessionID) {
-        args.push('--resume', session.ccSessionID);
+      if (session.agentSessionId) {
+        args.push('--resume', session.agentSessionId);
       }
 
       interface CcUsage {
@@ -210,8 +210,8 @@ export function createClaudeCodeRuntime(
             const sid = e['session_id'];
             const cwd = e['cwd'];
             if (typeof sid === 'string') {
-              // ccSessionID 写回 session：protocol 把它标了可选 string，直接赋值即可
-              session.ccSessionID = sid;
+              // agentSessionId 写回 session：protocol 把它标了可选 string，直接赋值即可
+              session.agentSessionId = sid;
             }
             emitEvent({
               type: 'session_started',
@@ -219,7 +219,7 @@ export function createClaudeCodeRuntime(
               timestamp: new Date(),
               sequence: sequence++,
               payload: {
-                ccSessionID: typeof sid === 'string' ? sid : undefined,
+                agentSessionId: typeof sid === 'string' ? sid : undefined,
                 workingDir: typeof cwd === 'string' ? cwd : undefined,
               },
             });

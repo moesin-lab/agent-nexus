@@ -16,10 +16,10 @@ export interface EngineDeps {
   agent: AgentRuntime;
   logger: Logger;
   sessionStore: SessionStore;
-  /** 每轮 sessionId 由 Engine 生成；resumeFromCcSessionID 由 store 决定 */
+  /** 每轮 sessionId 由 Engine 生成；resumeFromAgentSessionId 由 store 决定 */
   defaultSessionConfig: Omit<
     SessionConfig,
-    'resumeFromCcSessionID' | 'sessionId'
+    'resumeFromAgentSessionId' | 'sessionId'
   >;
 }
 
@@ -41,7 +41,7 @@ export class Engine {
   private readonly sessionStore: SessionStore;
   private readonly defaultSessionConfig: Omit<
     SessionConfig,
-    'resumeFromCcSessionID' | 'sessionId'
+    'resumeFromAgentSessionId' | 'sessionId'
   >;
   /**
    * Per-SessionKey 串行队列：同 key 的 dispatch 必须按到达序排队执行，
@@ -156,7 +156,7 @@ export class Engine {
       const config: SessionConfig = {
         ...this.defaultSessionConfig,
         sessionId: randomUUID(),
-        resumeFromCcSessionID: prevAgentSessionId,
+        resumeFromAgentSessionId: prevAgentSessionId,
       };
 
       const session = this.agent.startSession(event.sessionKey, config);
@@ -167,7 +167,7 @@ export class Engine {
       const handler = async (e: AgentEvent): Promise<void> => {
         try {
           if (e.type === 'session_started') {
-            const agentSessionId = e.payload.ccSessionID;
+            const agentSessionId = e.payload.agentSessionId;
             if (agentSessionId) {
               this.sessionStore.set(event.sessionKey, {
                 agentSessionId,

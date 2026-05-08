@@ -207,7 +207,7 @@ describe('Engine', () => {
     });
 
     agent.queueEvents([
-      ev('session_started', { ccSessionID: 'cc-123' }),
+      ev('session_started', { agentSessionId: 'cc-123' }),
       ev('text_final', { text: 'hi from cc' }),
       ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
     ]);
@@ -220,7 +220,7 @@ describe('Engine', () => {
     expect(agent.startSession).toHaveBeenCalledTimes(1);
     const startArgs = agent.startSession.mock.calls[0]!;
     const cfg = startArgs[1] as SessionConfig;
-    expect(cfg.resumeFromCcSessionID).toBeUndefined();
+    expect(cfg.resumeFromAgentSessionId).toBeUndefined();
     expect(cfg.sessionId).toBeTruthy();
 
     expect(store.get(SESSION_KEY)?.agentSessionId).toBe('cc-123');
@@ -233,7 +233,7 @@ describe('Engine', () => {
     expect(agent.stopSession).toHaveBeenCalledTimes(1);
   });
 
-  it('第二轮：复用同 sessionKey，agent.startSession 收到 prev agentSessionId 作 resumeFromCcSessionID', async () => {
+  it('第二轮：复用同 sessionKey，agent.startSession 收到 prev agentSessionId 作 resumeFromAgentSessionId', async () => {
     const platform = makePlatform();
     const agent = makeAgent();
     const store = new SessionStore();
@@ -250,7 +250,7 @@ describe('Engine', () => {
 
     // 首轮：写入 cc-123
     agent.queueEvents([
-      ev('session_started', { ccSessionID: 'cc-123' }),
+      ev('session_started', { agentSessionId: 'cc-123' }),
       ev('text_final', { text: 'first' }),
       ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
     ]);
@@ -259,7 +259,7 @@ describe('Engine', () => {
 
     // 第二轮：startSession 必须收到 cc-123 作 resume
     agent.queueEvents([
-      ev('session_started', { ccSessionID: 'cc-456' }),
+      ev('session_started', { agentSessionId: 'cc-456' }),
       ev('text_final', { text: 'second' }),
       ev('turn_finished', { reason: 'stop', turnSequence: 2 }),
     ]);
@@ -267,7 +267,7 @@ describe('Engine', () => {
 
     expect(agent.startSession).toHaveBeenCalledTimes(2);
     const cfg2 = agent.startSession.mock.calls[1]![1] as SessionConfig;
-    expect(cfg2.resumeFromCcSessionID).toBe('cc-123');
+    expect(cfg2.resumeFromAgentSessionId).toBe('cc-123');
 
     expect(store.get(SESSION_KEY)?.agentSessionId).toBe('cc-456');
   });
@@ -291,7 +291,7 @@ describe('Engine', () => {
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
 
     agent.queueEvents([
-      ev('session_started', { ccSessionID: 'cc-new' }),
+      ev('session_started', { agentSessionId: 'cc-new' }),
       ev('text_final', { text: 'answer' }),
       ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
     ]);
@@ -300,7 +300,7 @@ describe('Engine', () => {
 
     expect(agent.startSession).toHaveBeenCalledTimes(1);
     const cfg = agent.startSession.mock.calls[0]![1] as SessionConfig;
-    expect(cfg.resumeFromCcSessionID).toBeUndefined();
+    expect(cfg.resumeFromAgentSessionId).toBeUndefined();
 
     expect(agent.sendInput).toHaveBeenCalledTimes(1);
     const input = agent.sendInput.mock.calls[0]![1] as AgentInput;
@@ -337,7 +337,7 @@ describe('Engine', () => {
 
   it('同 SessionKey 并发：第二条 dispatch 必须串行在第一条之后，看到首轮 agentSessionId 作 resume', async () => {
     // race regression：两条来自同一频道+同一用户的 @mention 几乎同时到达。
-    // 期望：第二条 startSession 的 config.resumeFromCcSessionID === 首轮的 agentSessionId。
+    // 期望：第二条 startSession 的 config.resumeFromAgentSessionId === 首轮的 agentSessionId。
     // 旧实现里两次 dispatch 都同步读 sessionStore（仍为 undefined），都启新 session 并互相覆盖。
     const platform = makePlatform();
     const agent = makeAgent();
@@ -356,7 +356,7 @@ describe('Engine', () => {
     // 第一条 dispatch 故意慢——session_started 在 8ms 后才进 store
     agent.queueEventsAfter(
       [
-        ev('session_started', { ccSessionID: 'cc-first' }),
+        ev('session_started', { agentSessionId: 'cc-first' }),
         ev('text_final', { text: 'first reply' }),
         ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
       ],
@@ -364,7 +364,7 @@ describe('Engine', () => {
     );
     // 第二条 dispatch 紧随其后
     agent.queueEvents([
-      ev('session_started', { ccSessionID: 'cc-second' }),
+      ev('session_started', { agentSessionId: 'cc-second' }),
       ev('text_final', { text: 'second reply' }),
       ev('turn_finished', { reason: 'stop', turnSequence: 2 }),
     ]);
@@ -375,7 +375,7 @@ describe('Engine', () => {
 
     expect(agent.startSession).toHaveBeenCalledTimes(2);
     const cfg2 = agent.startSession.mock.calls[1]![1] as SessionConfig;
-    expect(cfg2.resumeFromCcSessionID).toBe('cc-first');
+    expect(cfg2.resumeFromAgentSessionId).toBe('cc-first');
 
     // store 终态是第二轮写入的 cc-second（顺序写）
     expect(store.get(SESSION_KEY)?.agentSessionId).toBe('cc-second');
@@ -402,14 +402,14 @@ describe('Engine', () => {
     // A 慢；B 应该不被 A 拖累，可以早于 A 完成
     agent.queueEventsAfter(
       [
-        ev('session_started', { ccSessionID: 'cc-a' }),
+        ev('session_started', { agentSessionId: 'cc-a' }),
         ev('text_final', { text: 'a' }),
         ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
       ],
       30,
     );
     agent.queueEvents([
-      ev('session_started', { ccSessionID: 'cc-b' }),
+      ev('session_started', { agentSessionId: 'cc-b' }),
       ev('text_final', { text: 'b' }),
       ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
     ]);
@@ -451,7 +451,7 @@ describe('Engine', () => {
     });
 
     agent.queueEvents([
-      ev('session_started', { ccSessionID: 'cc-1' }),
+      ev('session_started', { agentSessionId: 'cc-1' }),
       ev('text_final', { text: 'hello reply' }),
       ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
     ]);
@@ -498,7 +498,7 @@ describe('Engine', () => {
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
 
     agent.queueEvents([
-      ev('session_started', { ccSessionID: 'cc-1' }),
+      ev('session_started', { agentSessionId: 'cc-1' }),
       ev('text_final', { text: 'first reply' }),
       ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
     ]);
@@ -542,7 +542,7 @@ describe('Engine', () => {
 
     // 用 fill-0 重投触发完整 agent 路径——若被淘汰，agent.startSession 会调一次
     agent.queueEvents([
-      ev('session_started', { ccSessionID: 'cc-evicted' }),
+      ev('session_started', { agentSessionId: 'cc-evicted' }),
       ev('text_final', { text: 're' }),
       ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
     ]);

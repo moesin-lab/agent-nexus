@@ -27,7 +27,8 @@ export interface EngineDeps {
  * Engine：把 platform 入站事件路由到 agent，并把 agent 输出回送 platform。
  *
  * MVP 跳过的横切能力——下一批 PR 逐个补：
- * - 幂等去重（messageId）→ docs/dev/spec/infra/idempotency.md
+ * - 持久化幂等 / auth ordering → docs/dev/spec/infra/idempotency.md
+ *   （进程内 eventId LRU 已落，详见 seenEventIds 字段）
  * - 限流 / 预算 → docs/dev/spec/infra/cost-and-limits.md
  * - allowlist 鉴权 → docs/dev/spec/security/auth.md
  * - 出口脱敏 → docs/dev/spec/security/redaction.md
@@ -49,6 +50,14 @@ export class Engine {
    * 不同 key 之间互不阻塞。
    */
   private readonly inflight = new Map<string, Promise<void>>();
+
+  /**
+   * eventId 内存去重：防 WS resume 重投同一事件触发 CC 重复扣费。
+   * Map insertion order = LRU；满 cap 后删最旧。
+   * 持久化幂等见 docs/dev/spec/infra/idempotency.md（重启窗口 ≪ Discord resume 窗口，跨进程暂不做）。
+   */
+  private static readonly DEDUP_CAP = 1024;
+  private readonly seenEventIds = new Map<string, true>();
 
   constructor(deps: EngineDeps) {
     this.platform = deps.platform;
@@ -89,8 +98,25 @@ export class Engine {
   }
 
   private async dispatchImpl(event: NormalizedEvent): Promise<void> {
+    const sessionKeyStr = serializeSessionKey(event.sessionKey);
+    if (this.seenEventIds.has(event.eventId)) {
+      this.logger.info(
+        {
+          eventId: event.eventId,
+          sessionKey: sessionKeyStr,
+          traceId: event.traceId,
+        },
+        'dispatch_dedup',
+      );
+      return;
+    }
+    this.seenEventIds.set(event.eventId, true);
+    if (this.seenEventIds.size > Engine.DEDUP_CAP) {
+      const oldest = this.seenEventIds.keys().next().value;
+      if (oldest !== undefined) this.seenEventIds.delete(oldest);
+    }
+
     try {
-      const sessionKeyStr = serializeSessionKey(event.sessionKey);
       this.logger.info(
         {
           traceId: event.traceId,

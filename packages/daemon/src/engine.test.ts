@@ -48,9 +48,11 @@ const SESSION_KEY: SessionKey = {
   initiatorUserId: 'U1',
 };
 
+let eventCounter = 0;
 function makeEvent(text: string, overrides: Partial<NormalizedEvent> = {}): NormalizedEvent {
+  eventCounter += 1;
   return {
-    eventId: 'e-1',
+    eventId: `e-${eventCounter}`,
     platform: 'discord',
     sessionKey: SESSION_KEY,
     messageId: 'm-1',
@@ -468,6 +470,88 @@ describe('Engine', () => {
     const outboundDebug = debugCalls.find(([, msg]) => msg === 'outbound');
     expect(outboundDebug).toBeDefined();
     expect(outboundDebug![0]).toMatchObject({ text: 'hello reply', traceId: 't-1' });
+  });
+
+  it('eventId 去重：同 eventId 二次投递被丢弃，agent.startSession 只调一次，info 日志 dispatch_dedup', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = {
+      info: vi.fn(),
+      debug: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      trace: vi.fn(),
+      fatal: vi.fn(),
+      child: vi.fn(),
+    } as unknown as Logger;
+
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: mockLogger,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('session_started', { ccSessionID: 'cc-1' }),
+      ev('text_final', { text: 'first reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    // 第二次 dispatch 不入 agent 队列；若代码漏 dedup，agent.sendInput 会等待空队列
+    // 然后立即返回，但 startSession 已被多调一次——这是 fixture 设计的关键。
+
+    const dup = makeEvent('hello');
+    await dispatchHandler(dup);
+    await dispatchHandler(dup);
+
+    expect(agent.startSession).toHaveBeenCalledTimes(1);
+    expect(platform.send).toHaveBeenCalledTimes(1);
+
+    const infoCalls = (mockLogger.info as ReturnType<typeof vi.fn>).mock.calls;
+    const dedupLog = infoCalls.find(([, msg]) => msg === 'dispatch_dedup');
+    expect(dedupLog).toBeDefined();
+    expect(dedupLog![0]).toMatchObject({ eventId: dup.eventId, traceId: 't-1' });
+  });
+
+  it('eventId 去重 cap 淘汰：最早 entry 被淘汰，最新 entry 仍被 dedup（非整表 clear）', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    // 用 /new 快路径填表（不动 agent），共 1024 + 1 条独立 eventId
+    // /new 不调 agent.startSession，但仍走 dispatchImpl 入口的 dedup 检查
+    for (let i = 0; i <= 1024; i++) {
+      await dispatchHandler(makeEvent('/new', { eventId: `fill-${i}` }));
+    }
+    // 此时 fill-0 应已被淘汰；fill-1024 仍在表内
+
+    // 用 fill-0 重投触发完整 agent 路径——若被淘汰，agent.startSession 会调一次
+    agent.queueEvents([
+      ev('session_started', { ccSessionID: 'cc-evicted' }),
+      ev('text_final', { text: 're' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('hello', { eventId: 'fill-0' }));
+    expect(agent.startSession).toHaveBeenCalledTimes(1);
+
+    // 用 fill-1024 重投——还在表内，应被 dedup，agent.startSession 不再增加
+    await dispatchHandler(makeEvent('hello', { eventId: 'fill-1024' }));
+    expect(agent.startSession).toHaveBeenCalledTimes(1);
   });
 
   it('error 路径：agent emit error → platform.send 收到 [CC error: ...]', async () => {

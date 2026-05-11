@@ -97,10 +97,10 @@ describe('buildSlices', () => {
     const slices = buildSlices(text, 4);
     expect(slices.join('')).toBe(text);
     for (const slice of slices) {
-      // 没有 lone surrogate：每个切片自己重新迭代 code point 数 = 实际显示字符数
-      const codePoints = Array.from(slice);
-      // 重新连接代码点 = 切片本身（不含半 surrogate）
-      expect(codePoints.join('')).toBe(slice);
+      // 真·检测 lone surrogate：用 /\p{Surrogate}/u 找 0xD800-0xDFFF 区间字符
+      // （配对正常的 emoji 内部 surrogate 在 code point 迭代后已被合成单字符，
+      // 不会被这个正则当 lone 命中——属性匹配看的是 code point，不是 code unit）
+      expect(slice).not.toMatch(/\p{Surrogate}/u);
     }
   });
 
@@ -138,10 +138,11 @@ describe('PartialSendError', () => {
     expect(err.totalSlices).toBe(5);
     expect(err.cause).toBe(cause);
     expect(err.message).toContain('2/5');
-    // pino 默认 err serializer 会序列化 enumerable own props——sentIds 必须 enumerable
+    // pino 默认 err serializer 会序列化 enumerable own props——sentIds / totalSlices / cause 必须 enumerable
     const ownKeys = Object.keys(err);
     expect(ownKeys).toContain('sentIds');
     expect(ownKeys).toContain('totalSlices');
+    expect(ownKeys).toContain('cause');
   });
 });
 

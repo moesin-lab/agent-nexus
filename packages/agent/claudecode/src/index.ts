@@ -268,6 +268,20 @@ export function createClaudeCodeRuntime(
       } catch (err) {
         // spawn 失败 / 子进程非零退出 / 行扫错误
         const message = err instanceof Error ? err.message : String(err);
+        // issue #28 选 C：textBuf 已收满但子进程非零退出时不发 partial 文本到 IM
+        // （避免没有"这是断片"标识的部分内容混淆用户），仅在日志记录 textBuf 长度
+        // 便于诊断"CC 完整输出后才异常退出"这一罕见路径。stream-json epic（#56）
+        // 落地后该路径语义会重构，届时再决定是否暴露 partial。
+        logger.warn(
+          {
+            sessionKey: session.key,
+            traceId,
+            errorKind: 'spawn_failed',
+            textBufLength: textBuf.length,
+            message,
+          },
+          'claudecode_subproc_error',
+        );
         emitEvent({
           type: 'error',
           traceId,

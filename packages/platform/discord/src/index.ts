@@ -125,7 +125,7 @@ export function buildSlices(text: string, maxUtf16: number = SLICE_SIZE): string
       currentUtf16 += cpLen;
     }
   }
-  slices.push(current);
+  if (current.length > 0) slices.push(current);
   return slices;
 }
 

@@ -390,7 +390,9 @@ describe('createClaudeCodeRuntime.interrupt / stopSession（subproc 句柄真实
       rejectFn = rej;
     });
     const kill = vi.fn((signal?: NodeJS.Signals | number) => {
-      // 模拟 SIGINT：close stdout → for-await 退出，subproc reject 模拟非零 exit
+      // 模拟 SIGINT：close stdout → for-await 退出，subproc reject 模拟非零 exit。
+      // 注意：这里是**同步**关闭 stdout + reject，跳过了真实信号传播的事件循环 tick；
+      // 用于断言"interrupt 触发后 subproc 一定退出"的最终态，不验证异步时序。
       stdout.push(null);
       rejectFn(new Error(`killed with ${String(signal)}`));
       return true;

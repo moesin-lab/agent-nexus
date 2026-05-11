@@ -49,6 +49,13 @@ export interface ClaudeCodeRuntimeOptions {
  */
 const emitterMap = new WeakMap<AgentSession, EventEmitter>();
 const configMap = new WeakMap<AgentSession, SessionConfig>();
+/**
+ * Per-session 正在运行的子进程句柄。`sendInput` 进 try 前 set，finally 清。
+ * interrupt / stopSession 通过 .kill(SIGINT|SIGTERM) 真实打断当前回合。
+ * 无 in-flight turn 时 get → undefined，kill 调用是 no-op。
+ */
+type KillableSubproc = { kill(signal?: NodeJS.Signals | number): boolean };
+const subprocMap = new WeakMap<AgentSession, KillableSubproc>();
 
 function getEmitter(session: AgentSession): EventEmitter {
   let em = emitterMap.get(session);
@@ -69,7 +76,7 @@ export function createClaudeCodeRuntime(
     supportsThinking: false,
     supportsStreaming: false,
     supportsToolCallEvents: false,
-    supportsInterrupt: false,
+    supportsInterrupt: true,
   };
 
   const runtime: AgentRuntime = {
@@ -118,14 +125,27 @@ export function createClaudeCodeRuntime(
     },
 
     interrupt(session: AgentSession): void {
-      // MVP no-op：CC CLI --print 单次调用不支持 interrupt。
-      logger.warn(
-        { sessionKey: session.key },
-        'claudecode_interrupt_noop_in_mvp',
-      );
+      // 走 SIGINT 路径；CC CLI 收到 SIGINT 会清理 stdio buffer 并以非零 exit code 退出，
+      // sendInput 的 catch 分支把 execa rejection 翻成 error + turn_finished 事件。
+      // 没 in-flight turn 时 get → undefined，本调用变 no-op。
+      // 详见 spec/agent-runtime.md §AgentRuntime.interrupt。
+      const sp = subprocMap.get(session);
+      if (sp) {
+        sp.kill('SIGINT');
+        logger.info({ sessionKey: session.key }, 'claudecode_interrupt_signaled');
+      } else {
+        logger.debug({ sessionKey: session.key }, 'claudecode_interrupt_no_inflight');
+      }
     },
 
     stopSession(session: AgentSession): void {
+      // 真实 SIGTERM；正在跑的 turn 会以非零 exit 在 sendInput 的 catch 走 error 路径。
+      // 没 in-flight turn 时仅 state 翻 Stopped（旧语义保留）。
+      const sp = subprocMap.get(session);
+      if (sp) {
+        sp.kill('SIGTERM');
+        logger.info({ sessionKey: session.key }, 'claudecode_stop_session_signaled');
+      }
       session.state = 'Stopped';
     },
 
@@ -177,13 +197,17 @@ export function createClaudeCodeRuntime(
       let usage: CcUsage | null = null;
       let totalCostUsd: number | null = null;
 
+      let subproc: ReturnType<typeof execa> | undefined;
       try {
-        const subproc = execa(claudeBin, args, {
+      try {
+        subproc = execa(claudeBin, args, {
           timeout: timeoutMs,
           buffer: false,
           cwd,
         });
-
+        // 子进程刚 spawn 就挂到 session，让 interrupt / stopSession 立刻能 SIGINT / SIGTERM。
+        // 即便后续 stdout 检查或行扫失败，subproc 已 spawn，必须经 finally 释放。
+        subprocMap.set(session, subproc);
         if (!subproc.stdout) {
           throw new Error('subprocess stdout is null');
         }
@@ -330,6 +354,11 @@ export function createClaudeCodeRuntime(
           turnSequence: 1,
         },
       });
+      } finally {
+        // turn 自然结束 / 异常 / 被 kill 都释放 session→subproc 绑定，
+        // 避免后续 interrupt 误向已退出进程发信号。
+        subprocMap.delete(session);
+      }
     },
   };
 

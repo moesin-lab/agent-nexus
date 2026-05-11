@@ -122,6 +122,12 @@ describe('buildSlices', () => {
     }
     expect(slices.join('')).toBe(text);
   });
+
+  it('退化路径不产生 trailing 空切片：buildSlices("😀😀", 1) === ["😀","😀"]', () => {
+    // 预算比单个 code point 还小（cpLen=2 > maxUtf16=1）时走强行切分支；
+    // 旧实现末尾无条件 push 会留下 trailing 空串。直接钉住该回归。
+    expect(buildSlices('😀😀', 1)).toEqual(['😀', '😀']);
+  });
 });
 
 describe('PartialSendError', () => {
@@ -138,7 +144,9 @@ describe('PartialSendError', () => {
     expect(err.totalSlices).toBe(5);
     expect(err.cause).toBe(cause);
     expect(err.message).toContain('2/5');
-    // pino 默认 err serializer 会序列化 enumerable own props——sentIds / totalSlices / cause 必须 enumerable
+    // pino 默认 err serializer 会把 enumerable own props 平铺到日志（sentIds / totalSlices 直接落字段）；
+    // `cause` 走 pino 自己的 cause-chain 处理（折进 stack 末尾，不作为顶层 key），
+    // 但 own property 仍需保留 enumerable 以便 cause 内容随同序列化。
     const ownKeys = Object.keys(err);
     expect(ownKeys).toContain('sentIds');
     expect(ownKeys).toContain('totalSlices');

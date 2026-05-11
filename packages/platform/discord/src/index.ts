@@ -59,20 +59,73 @@ export interface DiscordPlatformOptions {
   testGuildId?: string;
 }
 
+/**
+ * 单切片最多容纳的 UTF-16 code unit 数。Discord 上限是 2000 UTF-16 单位，
+ * 留 100 单位余量。该值是预算上限（不是固定切片长度）——单个代码点
+ * 最多占 2 个 UTF-16 单位（surrogate pair），所以 100 余量足够任何
+ * 代码点跨片场景。
+ */
 export const SLICE_SIZE = 1900;
 
 export type { ReplyMode } from './state.js';
 
 /**
- * Exported for tests. Splits arbitrary text into chunks of `sliceSize`.
- * Empty input returns `['']` so callers always have at least one sendable message.
+ * 多片 send 中途失败时抛出，sentIds 列出已落地的消息 id。
+ * 通过 pino 默认 err 序列化器自动序列化 enumerable 字段（含 sentIds）到日志。
  */
-export function buildSlices(text: string, sliceSize: number = SLICE_SIZE): string[] {
+export class PartialSendError extends Error {
+  public readonly sentIds: string[];
+  public readonly totalSlices: number;
+  public override readonly cause: unknown;
+  constructor(opts: { sentIds: string[]; totalSlices: number; cause: unknown }) {
+    super(
+      `platform-discord: partial send (${opts.sentIds.length}/${opts.totalSlices} slices sent)`,
+    );
+    this.name = 'PartialSendError';
+    this.sentIds = opts.sentIds;
+    this.totalSlices = opts.totalSlices;
+    this.cause = opts.cause;
+  }
+}
+
+/**
+ * 按 UTF-16 code unit 预算切片，迭代单位是 code point（`for…of` 行为）。
+ * 切点不会落在 surrogate pair 内部，因此基本 emoji 不会被劈成 `�`。
+ *
+ * 已知限制：grapheme cluster（含 ZWJ 序列 / VS-16 / 国旗 / 肤色修饰符）
+ * 仍可能在 code point 之间切——这是 BMP+emoji 约 95% 视觉场景的折中实现。
+ * 完全正确需要 `Intl.Segmenter`，留 TODO 等流式 edit 主路径替换掉切片机制
+ * （issue #56 stream-json epic 后切片会大幅缩减）。
+ *
+ * 空串返 `['']` 以保证 caller 总能拿到至少一条 sendable 消息。
+ */
+export function buildSlices(text: string, maxUtf16: number = SLICE_SIZE): string[] {
   if (text.length === 0) return [''];
   const slices: string[] = [];
-  for (let i = 0; i < text.length; i += sliceSize) {
-    slices.push(text.slice(i, i + sliceSize));
+  let current = '';
+  let currentUtf16 = 0;
+  for (const codePoint of text) {
+    const cpLen = codePoint.length;
+    if (cpLen > maxUtf16) {
+      // 预算比单个 code point 还小 → 退化成强行切（不可能在正常 ≥2 的预算下命中）
+      if (current.length > 0) {
+        slices.push(current);
+        current = '';
+        currentUtf16 = 0;
+      }
+      slices.push(codePoint);
+      continue;
+    }
+    if (currentUtf16 + cpLen > maxUtf16) {
+      slices.push(current);
+      current = codePoint;
+      currentUtf16 = cpLen;
+    } else {
+      current += codePoint;
+      currentUtf16 += cpLen;
+    }
   }
+  if (current.length > 0) slices.push(current);
   return slices;
 }
 
@@ -312,13 +365,22 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
       const slices = buildSlices(message.text);
 
       const sentIds: string[] = [];
-      let lastId: string | undefined;
-      for (const slice of slices) {
-        const msg = await channel.send(slice);
-        sentIds.push(msg.id);
-        lastId = msg.id;
+      try {
+        for (const slice of slices) {
+          const msg = await channel.send(slice);
+          sentIds.push(msg.id);
+        }
+      } catch (err) {
+        // 中途失败：上抛 PartialSendError 保留已发的 sentIds，让上层日志
+        // 可见"哪些已送出"，避免只剩"send_failed"什么都不知道的现场。
+        throw new PartialSendError({
+          sentIds,
+          totalSlices: slices.length,
+          cause: err,
+        });
       }
 
+      const lastId = sentIds[sentIds.length - 1];
       if (lastId === undefined) {
         // 理论上不会到这里——buildSlices 至少返 1 个切片
         throw new Error('platform-discord: send produced no message');

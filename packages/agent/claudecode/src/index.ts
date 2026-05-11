@@ -199,161 +199,161 @@ export function createClaudeCodeRuntime(
 
       let subproc: ReturnType<typeof execa> | undefined;
       try {
-      try {
-        subproc = execa(claudeBin, args, {
-          timeout: timeoutMs,
-          buffer: false,
-          cwd,
-        });
-        // 子进程刚 spawn 就挂到 session，让 interrupt / stopSession 立刻能 SIGINT / SIGTERM。
-        // 即便后续 stdout 检查或行扫失败，subproc 已 spawn，必须经 finally 释放。
-        subprocMap.set(session, subproc);
-        if (!subproc.stdout) {
-          throw new Error('subprocess stdout is null');
-        }
-
-        const rl = createInterface({
-          input: subproc.stdout,
-          crlfDelay: Infinity,
-        });
-
-        for await (const line of rl) {
-          if (!line.trim()) continue;
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(line);
-          } catch {
-            logger.debug({ line }, 'cc_non_json_line');
-            continue;
+        try {
+          subproc = execa(claudeBin, args, {
+            timeout: timeoutMs,
+            buffer: false,
+            cwd,
+          });
+          // 子进程刚 spawn 就挂到 session，让 interrupt / stopSession 立刻能 SIGINT / SIGTERM。
+          // 即便后续 stdout 检查或行扫失败，subproc 已 spawn，必须经 finally 释放。
+          subprocMap.set(session, subproc);
+          if (!subproc.stdout) {
+            throw new Error('subprocess stdout is null');
           }
 
-          if (!parsed || typeof parsed !== 'object') continue;
-          const e = parsed as Record<string, unknown>;
+          const rl = createInterface({
+            input: subproc.stdout,
+            crlfDelay: Infinity,
+          });
 
-          if (e['type'] === 'system' && e['subtype'] === 'init') {
-            const sid = e['session_id'];
-            const cwd = e['cwd'];
-            if (typeof sid === 'string') {
-              // agentSessionId 写回 session：protocol 把它标了可选 string，直接赋值即可
-              session.agentSessionId = sid;
+          for await (const line of rl) {
+            if (!line.trim()) continue;
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(line);
+            } catch {
+              logger.debug({ line }, 'cc_non_json_line');
+              continue;
             }
-            emitEvent({
-              type: 'session_started',
-              traceId,
-              timestamp: new Date(),
-              sequence: sequence++,
-              payload: {
-                agentSessionId: typeof sid === 'string' ? sid : undefined,
-                workingDir: typeof cwd === 'string' ? cwd : undefined,
-              },
-            });
-            continue;
-          }
 
-          if (e['type'] === 'assistant') {
-            const message = e['message'] as
-              | { content?: unknown }
-              | undefined;
-            const content = message?.content;
-            if (Array.isArray(content)) {
-              for (const part of content) {
-                if (
-                  part &&
-                  typeof part === 'object' &&
-                  ((part as { type?: unknown }).type === 'text' ||
-                    (part as { type?: unknown }).type === 'text_delta')
-                ) {
-                  const t = (part as { text?: unknown }).text;
-                  if (typeof t === 'string') {
-                    textBuf += t;
+            if (!parsed || typeof parsed !== 'object') continue;
+            const e = parsed as Record<string, unknown>;
+
+            if (e['type'] === 'system' && e['subtype'] === 'init') {
+              const sid = e['session_id'];
+              const reportedCwd = e['cwd'];
+              if (typeof sid === 'string') {
+                // agentSessionId 写回 session：protocol 把它标了可选 string，直接赋值即可
+                session.agentSessionId = sid;
+              }
+              emitEvent({
+                type: 'session_started',
+                traceId,
+                timestamp: new Date(),
+                sequence: sequence++,
+                payload: {
+                  agentSessionId: typeof sid === 'string' ? sid : undefined,
+                  workingDir: typeof reportedCwd === 'string' ? reportedCwd : undefined,
+                },
+              });
+              continue;
+            }
+
+            if (e['type'] === 'assistant') {
+              const message = e['message'] as
+                | { content?: unknown }
+                | undefined;
+              const content = message?.content;
+              if (Array.isArray(content)) {
+                for (const part of content) {
+                  if (
+                    part &&
+                    typeof part === 'object' &&
+                    ((part as { type?: unknown }).type === 'text' ||
+                      (part as { type?: unknown }).type === 'text_delta')
+                  ) {
+                    const t = (part as { text?: unknown }).text;
+                    if (typeof t === 'string') {
+                      textBuf += t;
+                    }
                   }
                 }
               }
+              continue;
             }
-            continue;
+
+            if (e['type'] === 'result') {
+              const sr = e['stop_reason'];
+              if (typeof sr === 'string') stopReason = sr;
+              const u = e['usage'];
+              if (u && typeof u === 'object') {
+                usage = u as CcUsage;
+              }
+              const cost = e['total_cost_usd'];
+              totalCostUsd = typeof cost === 'number' ? cost : null;
+              continue;
+            }
+
+            // 其他事件类型（user/tool_result 等）MVP 忽略
           }
 
-          if (e['type'] === 'result') {
-            const sr = e['stop_reason'];
-            if (typeof sr === 'string') stopReason = sr;
-            const u = e['usage'];
-            if (u && typeof u === 'object') {
-              usage = u as CcUsage;
-            }
-            const cost = e['total_cost_usd'];
-            totalCostUsd = typeof cost === 'number' ? cost : null;
-            continue;
-          }
-
-          // 其他事件类型（user/tool_result 等）MVP 忽略
+          await subproc;
+        } catch (err) {
+          // spawn 失败 / 子进程非零退出 / 行扫错误
+          const message = err instanceof Error ? err.message : String(err);
+          emitEvent({
+            type: 'error',
+            traceId,
+            timestamp: new Date(),
+            sequence: sequence++,
+            payload: {
+              errorKind: 'spawn_failed',
+              message,
+            },
+          });
+          emitEvent({
+            type: 'turn_finished',
+            traceId,
+            timestamp: new Date(),
+            sequence: sequence++,
+            payload: {
+              reason: 'error',
+              turnSequence: 1,
+            },
+          });
+          return;
         }
 
-        await subproc;
-      } catch (err) {
-        // spawn 失败 / 子进程非零退出 / 行扫错误
-        const message = err instanceof Error ? err.message : String(err);
+        // 顺序 emit 收尾事件
         emitEvent({
-          type: 'error',
+          type: 'text_final',
           traceId,
           timestamp: new Date(),
           sequence: sequence++,
-          payload: {
-            errorKind: 'spawn_failed',
-            message,
-          },
+          payload: { text: textBuf },
         });
+
+        const usageRecord: UsageRecord = {
+          model: 'claude-code',
+          inputTokens: usage?.input_tokens ?? 0,
+          outputTokens: usage?.output_tokens ?? 0,
+          cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
+          cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
+          costUsd: totalCostUsd,
+          turnSequence: 1,
+          toolCallsThisTurn: 0,
+          wallClockMs: 0,
+          completeness: totalCostUsd === null ? 'partial' : 'complete',
+        };
+        emitEvent({
+          type: 'usage',
+          traceId,
+          timestamp: new Date(),
+          sequence: sequence++,
+          payload: usageRecord,
+        });
+
         emitEvent({
           type: 'turn_finished',
           traceId,
           timestamp: new Date(),
           sequence: sequence++,
           payload: {
-            reason: 'error',
+            reason: stopReasonToEnum(stopReason),
             turnSequence: 1,
           },
         });
-        return;
-      }
-
-      // 顺序 emit 收尾事件
-      emitEvent({
-        type: 'text_final',
-        traceId,
-        timestamp: new Date(),
-        sequence: sequence++,
-        payload: { text: textBuf },
-      });
-
-      const usageRecord: UsageRecord = {
-        model: 'claude-code',
-        inputTokens: usage?.input_tokens ?? 0,
-        outputTokens: usage?.output_tokens ?? 0,
-        cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
-        cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
-        costUsd: totalCostUsd,
-        turnSequence: 1,
-        toolCallsThisTurn: 0,
-        wallClockMs: 0,
-        completeness: totalCostUsd === null ? 'partial' : 'complete',
-      };
-      emitEvent({
-        type: 'usage',
-        traceId,
-        timestamp: new Date(),
-        sequence: sequence++,
-        payload: usageRecord,
-      });
-
-      emitEvent({
-        type: 'turn_finished',
-        traceId,
-        timestamp: new Date(),
-        sequence: sequence++,
-        payload: {
-          reason: stopReasonToEnum(stopReason),
-          turnSequence: 1,
-        },
-      });
       } finally {
         // turn 自然结束 / 异常 / 被 kill 都释放 session→subproc 绑定，
         // 避免后续 interrupt 误向已退出进程发信号。

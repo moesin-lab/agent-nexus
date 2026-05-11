@@ -191,6 +191,18 @@ CC 输出的 `result.usage` 在不同路径下字段齐全度不同。daemon 在
 - 子进程意外 exit（无对应 interrupt） → `error` + `session_stopped { reason: "error" }`
 - **不**自动重启；用户需 `/resume` 或 `/end`
 
+#### Backend 私有事件 `claudecode_subproc_error`
+
+`agent/claudecode` adapter 在 stream-json 解析过程中或之后 CC 子进程非零退出时打的 warn 日志事件。命名前缀 `claudecode_` 表明 backend-private（见 [`observability.md`](../infra/observability.md) §事件名命名），不进通用清单。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `errorKind` | string | `agent`（见 [`errors.md`](../infra/errors.md)） |
+| `cause` | string | 原始错误字符串 |
+| `textBufLength` | int | 已缓冲但未发到 IM 的文本字节数 |
+
+issue #28 选 C：CC 完整输出后才异常退出时不发 partial 文本到 IM（避免没有"这是断片"标识的部分内容混淆用户），仅 warn 记 `textBufLength` 便于诊断该罕见路径。stream-json 主路径（#56）落地后该事件语义会重构，届时再决定是否暴露 partial。
+
 ## 兼容性自检（CompatibilityProbe）
 
 进程启动时执行，所有检查通过才开始接受 Discord 事件：

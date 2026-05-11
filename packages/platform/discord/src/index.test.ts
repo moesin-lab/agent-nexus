@@ -4,6 +4,7 @@ import {
   buildBotMentionRegex,
   buildSlices,
   parseInbound,
+  PartialSendError,
   SLICE_SIZE,
   type ParsedInbound,
 } from './index.js';
@@ -83,9 +84,64 @@ describe('buildSlices', () => {
     expect(slices.join('')).toBe(text);
   });
 
-  it('custom sliceSize', () => {
+  it('custom maxUtf16 budget (ASCII)', () => {
     const slices = buildSlices('abcde', 2);
     expect(slices).toEqual(['ab', 'cd', 'e']);
+  });
+
+  it('emoji 在边界不被劈成 lone surrogate', () => {
+    // 边界附近放一个 surrogate pair emoji，确保切点不落在 high/low surrogate 之间。
+    // 预算 4 (UTF-16 单位) 下：'a' (1) + '😀' (2) = 3，再加 'b' (1) = 4，第一切片塞满；
+    // 'c' (1) 进第二片；'😀' (2) + 'd' (1) = 3 仍在第二片。
+    const text = 'a😀bc😀d';
+    const slices = buildSlices(text, 4);
+    expect(slices.join('')).toBe(text);
+    for (const slice of slices) {
+      // 没有 lone surrogate：每个切片自己重新迭代 code point 数 = 实际显示字符数
+      const codePoints = Array.from(slice);
+      // 重新连接代码点 = 切片本身（不含半 surrogate）
+      expect(codePoints.join('')).toBe(slice);
+    }
+  });
+
+  it('全 emoji 长文本：每片 UTF-16 长度不超 maxUtf16', () => {
+    // 1000 个 😀，每个占 2 UTF-16 单位 → 总 2000 UTF-16 单位
+    const text = '😀'.repeat(1000);
+    const slices = buildSlices(text, 100);
+    expect(slices.join('')).toBe(text);
+    for (const slice of slices) {
+      expect(slice.length).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it('SLICE_SIZE 默认预算下，全 emoji 切片每片 UTF-16 长度 ≤ Discord 2000 上限', () => {
+    const text = '😀'.repeat(5000);
+    const slices = buildSlices(text);
+    for (const slice of slices) {
+      expect(slice.length).toBeLessThanOrEqual(2000);
+    }
+    expect(slices.join('')).toBe(text);
+  });
+});
+
+describe('PartialSendError', () => {
+  it('携带 sentIds / totalSlices / cause；通过 pino err 序列化器读得到', () => {
+    const cause = new Error('rate limit');
+    const err = new PartialSendError({
+      sentIds: ['m1', 'm2'],
+      totalSlices: 5,
+      cause,
+    });
+    expect(err).toBeInstanceOf(PartialSendError);
+    expect(err.name).toBe('PartialSendError');
+    expect(err.sentIds).toEqual(['m1', 'm2']);
+    expect(err.totalSlices).toBe(5);
+    expect(err.cause).toBe(cause);
+    expect(err.message).toContain('2/5');
+    // pino 默认 err serializer 会序列化 enumerable own props——sentIds 必须 enumerable
+    const ownKeys = Object.keys(err);
+    expect(ownKeys).toContain('sentIds');
+    expect(ownKeys).toContain('totalSlices');
   });
 });
 
@@ -365,5 +421,45 @@ describe('send: MessageRef shape (short vs long text)', () => {
     const ref = { messageId: sentIds[sentIds.length - 1], messageIds: sentIds };
     expect(ref.messageId).toBe('m-2');
     expect(ref.messageIds[0]).toBe('m-1');
+  });
+
+  /**
+   * 多片 send 中途失败：模拟 send() 内部的 try/catch 路径，验证 PartialSendError 携带
+   * 已发的 sentIds。end-to-end 集成（mock discord.js Client）走 #30 follow-up。
+   */
+  it('中途失败 → 抛 PartialSendError 携带前 N 片 sentIds', async () => {
+    const text = 'z'.repeat(SLICE_SIZE * 2 + 1); // 3 片
+    const slices = buildSlices(text);
+    expect(slices).toHaveLength(3);
+
+    let seq = 0;
+    const sendErr = new Error('rate limit');
+    const fakeSend = vi.fn(async (_content: string) => {
+      seq += 1;
+      if (seq === 2) throw sendErr;
+      return { id: `pf-${seq}` };
+    });
+
+    const sentIds: string[] = [];
+    let caught: unknown;
+    try {
+      for (const slice of slices) {
+        const msg = await fakeSend(slice);
+        sentIds.push(msg.id);
+      }
+    } catch (err) {
+      caught = new PartialSendError({
+        sentIds,
+        totalSlices: slices.length,
+        cause: err,
+      });
+    }
+
+    expect(caught).toBeInstanceOf(PartialSendError);
+    const partial = caught as PartialSendError;
+    expect(partial.sentIds).toEqual(['pf-1']);
+    expect(partial.totalSlices).toBe(3);
+    expect(partial.cause).toBe(sendErr);
+    expect(fakeSend).toHaveBeenCalledTimes(2);
   });
 });

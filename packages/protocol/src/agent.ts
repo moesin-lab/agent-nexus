@@ -28,6 +28,13 @@ export interface UsageRecord {
   turnSequence: number;
   toolCallsThisTurn: number;
   wallClockMs: number;
+  /**
+   * `costUsd` 是否可信用于 $-based 决策（非"字段全填了没"）。
+   * `complete`：`costUsd > 0` 实际美元 → 可参与 $ 预算 / metrics。
+   * `partial`：`costUsd === null|0`（订阅 / Max plan，CC 没回真实金额）→ 不应用于 $ 累加。
+   * `missing`：保留位，当前代码不产生。
+   * 完整定义见 `docs/dev/spec/infra/cost-and-limits.md` §UsageRecord.completeness 语义。
+   */
   completeness: 'complete' | 'partial' | 'missing';
 }
 

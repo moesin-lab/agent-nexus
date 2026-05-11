@@ -143,8 +143,27 @@ base = 1000ms, cap 见上表, jitter = 0.2
 - `turnSequence`
 - `toolCallsThisTurn`
 - `wallClockMs`
+- `completeness`：见下节定义
 
 这份记账是 spec 的强制契约。语义定位见 [ADR-0006](../../adr/0006-limits-layering-defense-first.md)。
+
+### `UsageRecord.completeness` 语义
+
+`completeness` 表达**该 turn 的 `costUsd` 字段是否可信用于 `$`-based 决策**——不是"字段全填了没"。
+
+| 取值 | 条件 | 下游解读 |
+|---|---|---|
+| `complete` | `costUsd` 是 `> 0` 的实际美元金额（API 路径） | 可参与 `$` 预算 gate、metrics 累加、定价校验 |
+| `partial`  | `costUsd` 不是正数：`=== null` 或 `=== 0`。覆盖订阅 / Max plan 没回真实金额、`total_cost_usd` 字段未上报（CC 解析时折叠为 `null`）等情况 | **不应**用于 `$` 累加；订阅配额跟踪走另一条路（见上文 §订阅 / Max plan） |
+| `missing`  | 保留：未来表示"usage 事件本身就没产生"的协议位（当前代码恒不产生此值） | 同 `partial` |
+
+设计动机：
+
+- 选这条语义而不是"字段完整性"，因为 token / `turnSequence` / `wallClockMs` 在 MVP 实现里 always 填齐（缺失就走 `error` 路径，没 usage 事件可言），"全填了没"的 `completeness` 总是 `complete`、字段冗余
+- 订阅模式 `costUsd === 0` 是合法数据但**不是 $1 也不是 $0** 的金额——它是"该计费走的不是 $"的信号。把它标 `partial` 让下游 $ gate 不会拿订阅模式的零值当真
+- 想做"$ 趋势 / metrics 趋势"的下游：用 `completeness === 'complete'` 过滤；想做"数据有没有丢"的下游：观察 `usage` 事件本身的出现频率（缺事件 = 异常），不靠 `completeness`
+
+锚点：issue #27、PR #24 review。
 
 ## 定价表（供 opt-in $ 预算使用）
 

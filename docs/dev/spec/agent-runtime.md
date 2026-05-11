@@ -174,11 +174,11 @@ UsageRecord {
     outputTokens: int
     cacheReadTokens: int
     cacheWriteTokens: int
-    costUsd: float | null                // 订阅模式可能为 null；见 claude-code-cli-contract §UsageCompleteness
+    costUsd: float | null                // 订阅模式可能为 0 或 null；见 cost-and-limits.md §UsageRecord.completeness 语义
     turnSequence: int
     toolCallsThisTurn: int
     wallClockMs: int
-    completeness: "complete" | "partial" | "missing"
+    completeness: "complete" | "partial" | "missing"   // SSOT 在 cost-and-limits.md
 }
 ```
 
@@ -205,7 +205,7 @@ UsageRecord {
 - **中断**：首选 SIGINT，等 5s 未 `turn_finished` → SIGKILL
 - **超时**：`SessionConfig.timeoutMs` 超过 → 走中断链 → 产出 `turn_finished { reason: "wallclock_timeout" }`
 - **崩溃**：意外 exit → `error` + `session_stopped { reason: "error" }`；不自动重启
-- **UsageCompleteness**：按 contract §"UsageCompleteness" 标注 complete / partial / missing，并在 partial/missing 时触发 `$ 预算`的 fail-closed
+- **UsageCompleteness**：按 [`cost-and-limits.md` §`UsageRecord.completeness` 语义](infra/cost-and-limits.md#usagerecordcompleteness-语义) 取值；CC backend 的 envelope → completeness 映射见 contract §UsageCompleteness
 
 contract 文档本身是 spec，任何映射或协议字段改动必须先改 contract 再改代码。
 

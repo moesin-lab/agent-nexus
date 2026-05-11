@@ -348,4 +348,80 @@ describe('createClaudeCodeRuntime.sendInput', () => {
     if (turnFinished?.type !== 'turn_finished') throw new Error('expected turn_finished');
     expect(turnFinished.payload.reason).toBe('error');
   });
+
+  // stop_reason → TurnEndReason 映射的 envelope 级覆盖（取代旧 stop-reason.ts 单测）。
+  // 锚点：docs/dev/spec/agent-backends/claude-code-cli.md §stop_reason 映射
+  describe.each([
+    ['end_turn', 'stop'],
+    ['max_tokens', 'max_tokens'],
+    ['interrupted', 'user_interrupt'],
+    ['something_unknown', 'error'],
+  ])('result.stop_reason=%s → turn_finished.reason=%s', (cliReason, expected) => {
+    it('envelope → reason', async () => {
+      const lines = [
+        JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-r', cwd: '/x' }),
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'x' }] },
+        }),
+        JSON.stringify({
+          type: 'result',
+          stop_reason: cliReason,
+          usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+          total_cost_usd: 0.001,
+        }),
+      ];
+      mockedExeca.mockReturnValueOnce(
+        makeMockSubproc(lines) as unknown as ReturnType<typeof execa>,
+      );
+
+      const runtime = createClaudeCodeRuntime({
+        claudeBin: 'claude',
+        allowedTools: ['Bash'],
+        defaultWorkingDir: '/x',
+        logger: fakeLogger,
+      });
+      const session = runtime.startSession(sessionKey, sessionConfig);
+      const events = await collectEvents(runtime, session);
+
+      await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: `t-${cliReason}` });
+
+      const turnFinished = events.find((e) => e.type === 'turn_finished');
+      if (turnFinished?.type !== 'turn_finished') throw new Error('expected turn_finished');
+      expect(turnFinished.payload.reason).toBe(expected);
+    });
+  });
+
+  it('result envelope 缺 stop_reason 字段 → turn_finished.reason=error', async () => {
+    const lines = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-miss', cwd: '/x' }),
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'x' }] },
+      }),
+      JSON.stringify({
+        type: 'result',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        total_cost_usd: 0.001,
+      }),
+    ];
+    mockedExeca.mockReturnValueOnce(
+      makeMockSubproc(lines) as unknown as ReturnType<typeof execa>,
+    );
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: 't-miss' });
+
+    const turnFinished = events.find((e) => e.type === 'turn_finished');
+    if (turnFinished?.type !== 'turn_finished') throw new Error('expected turn_finished');
+    expect(turnFinished.payload.reason).toBe('error');
+  });
 });

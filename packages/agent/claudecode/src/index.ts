@@ -21,10 +21,9 @@ import type {
   UsageRecord,
 } from '@agent-nexus/protocol';
 import type { Logger } from '@agent-nexus/daemon';
-import { stopReasonToEnum } from './stop-reason.js';
+import type { TurnEndReason } from '@agent-nexus/protocol';
 
 export { runCompatibilityProbe, AgentSpawnFailedError } from './probe.js';
-export { stopReasonToEnum } from './stop-reason.js';
 
 export interface ClaudeCodeRuntimeOptions {
   claudeBin: string;
@@ -320,13 +319,28 @@ export function createClaudeCodeRuntime(
         payload: usageRecord,
       });
 
+      // docs/dev/spec/agent-backends/claude-code-cli.md §stop_reason 映射
+      let turnReason: TurnEndReason;
+      switch (stopReason) {
+        case 'end_turn':
+          turnReason = 'stop';
+          break;
+        case 'max_tokens':
+          turnReason = 'max_tokens';
+          break;
+        case 'interrupted':
+          turnReason = 'user_interrupt';
+          break;
+        default:
+          turnReason = 'error';
+      }
       emitEvent({
         type: 'turn_finished',
         traceId,
         timestamp: new Date(),
         sequence: sequence++,
         payload: {
-          reason: stopReasonToEnum(stopReason),
+          reason: turnReason,
           turnSequence: 1,
         },
       });

@@ -147,9 +147,9 @@ export class Engine {
               traceId: event.traceId,
               sessionKey: event.sessionKey,
             });
-          } catch (err) {
+          } catch (sendErr) {
             this.logger.error(
-              { traceId: event.traceId, sessionKey: sessionKeyStr, err },
+              { traceId: event.traceId, sessionKey: sessionKeyStr, err: sendErr },
               'platform_send_failed',
             );
           }
@@ -269,7 +269,7 @@ export class Engine {
               this.agent.stopSession(session);
             } catch (stopErr) {
               this.logger.error(
-                { err: stopErr },
+                { traceId: event.traceId, sessionKey: sessionKeyStr, err: stopErr },
                 'agent_stop_session_failed',
               );
             }

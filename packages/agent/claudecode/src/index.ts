@@ -310,7 +310,11 @@ export function createClaudeCodeRuntime(
         turnSequence: 1,
         toolCallsThisTurn: 0,
         wallClockMs: 0,
-        completeness: totalCostUsd === null ? 'partial' : 'complete',
+        // 选 A：$ 视图可信度——订阅 / Max plan 给 costUsd=0 是合法但非美元金额，
+        // 与 null 一起标 partial 让下游 $ 累加 / 预算 gate 不误用。
+        // 见 spec/infra/cost-and-limits.md §UsageRecord.completeness 语义
+        completeness:
+          totalCostUsd === null || totalCostUsd === 0 ? 'partial' : 'complete',
       };
       emitEvent({
         type: 'usage',

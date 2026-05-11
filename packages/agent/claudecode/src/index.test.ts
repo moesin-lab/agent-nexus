@@ -320,6 +320,49 @@ describe('createClaudeCodeRuntime.sendInput', () => {
     expect(opts.timeout).toBe(300_000);
   });
 
+  // issue #27：completeness 选 A（$ 视图可信度）的语义合约
+  describe.each([
+    [0.01, 'complete'],
+    [0, 'partial'],
+    [null as unknown as undefined, 'partial'],
+  ])('total_cost_usd=%p → completeness=%s', (cost, expected) => {
+    it('language', async () => {
+      const resultEvent: Record<string, unknown> = {
+        type: 'result',
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      };
+      // cost === null 表达"字段缺失"：不写进 JSON
+      if (cost !== null) resultEvent['total_cost_usd'] = cost;
+      const lines = [
+        JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-c', cwd: '/x' }),
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'x' }] },
+        }),
+        JSON.stringify(resultEvent),
+      ];
+      mockedExeca.mockReturnValueOnce(
+        makeMockSubproc(lines) as unknown as ReturnType<typeof execa>,
+      );
+
+      const runtime = createClaudeCodeRuntime({
+        claudeBin: 'claude',
+        allowedTools: ['Bash'],
+        defaultWorkingDir: '/x',
+        logger: fakeLogger,
+      });
+      const session = runtime.startSession(sessionKey, sessionConfig);
+      const events = await collectEvents(runtime, session);
+
+      await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: `t-c-${String(cost)}` });
+
+      const usageEvt = events.find((e) => e.type === 'usage');
+      if (usageEvt?.type !== 'usage') throw new Error('expected usage event');
+      expect(usageEvt.payload.completeness).toBe(expected);
+    });
+  });
+
   it('execa throw → emit error + turn_finished{error}', async () => {
     mockedExeca.mockImplementationOnce(() => {
       throw new Error('spawn failed');

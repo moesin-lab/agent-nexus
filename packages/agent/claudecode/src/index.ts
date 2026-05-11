@@ -272,13 +272,14 @@ export function createClaudeCodeRuntime(
         // （避免没有"这是断片"标识的部分内容混淆用户），仅在日志记录 textBuf 长度
         // 便于诊断"CC 完整输出后才异常退出"这一罕见路径。stream-json epic（#56）
         // 落地后该路径语义会重构，届时再决定是否暴露 partial。
+        // 日志字段对齐 observability spec：errorKind ∈ {user,platform,agent,internal}（spec §错误日志必含），cause 是 spec 注册字段。
         logger.warn(
           {
             sessionKey: session.key,
             traceId,
-            errorKind: 'spawn_failed',
+            errorKind: 'agent',
             textBufLength: textBuf.length,
-            message,
+            cause: message,
           },
           'claudecode_subproc_error',
         );

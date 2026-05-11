@@ -398,13 +398,15 @@ describe('createClaudeCodeRuntime.sendInput', () => {
     expect(types).toContain('turn_finished');
     expect(types).not.toContain('text_final');
 
-    // 日志 warn 必须含 textBufLength
+    // 日志 warn 必须含 textBufLength + errorKind='agent' + cause（observability spec 合规字段）
     const warnFn = logger.warn as unknown as ReturnType<typeof vi.fn>;
     const warnCalls = warnFn.mock.calls.filter((c: unknown[]) =>
       typeof c[1] === 'string' && (c[1] as string) === 'claudecode_subproc_error',
     );
     expect(warnCalls.length).toBe(1);
-    const ctx = warnCalls[0]![0] as { textBufLength?: number };
+    const ctx = warnCalls[0]![0] as { textBufLength?: number; errorKind?: string; cause?: string };
     expect(ctx.textBufLength).toBeGreaterThan(0);
+    expect(ctx.errorKind).toBe('agent');
+    expect(ctx.cause).toBeTruthy();
   });
 });

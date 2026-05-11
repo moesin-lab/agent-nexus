@@ -348,4 +348,63 @@ describe('createClaudeCodeRuntime.sendInput', () => {
     if (turnFinished?.type !== 'turn_finished') throw new Error('expected turn_finished');
     expect(turnFinished.payload.reason).toBe('error');
   });
+
+  // issue #28：CC 输出完整 stream-json 后才非零退出（罕见 cleanup-after-output 失败），
+  // 选 C 路径：textBuf 已收 partial 文本时不 emit text_final，但 logger.warn 记 textBufLength
+  // 便于诊断。emit 序列保持只有 error + turn_finished（无 text_final 泄露）。
+  it('textBuf 收满后子进程非零退出 → 日志记 textBufLength，不 emit text_final', async () => {
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+      trace: vi.fn(),
+      fatal: vi.fn(),
+    } as unknown as import('@agent-nexus/daemon').Logger;
+
+    // 构造 mock：stdout 给完整 stream-json（含 text 内容），但 await subproc reject 模拟
+    // "stdout 流完整 + 非零 exit code"。
+    const lines = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-pf', cwd: '/x' }),
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'partial answer that user must not see' }] },
+      }),
+    ];
+    const stdout = Readable.from(lines.map((l) => l + '\n'));
+    const settled = Promise.reject(new Error('subproc exited 1'));
+    settled.catch(() => {}); // 防 unhandled rejection 噪声
+    mockedExeca.mockReturnValueOnce({
+      stdout,
+      then: settled.then.bind(settled),
+      catch: settled.catch.bind(settled),
+      finally: settled.finally.bind(settled),
+    } as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: 't-pf' });
+
+    // emit 序列：session_started（init 仍发） + error + turn_finished；无 text_final
+    const types = events.map((e) => e.type);
+    expect(types).toContain('error');
+    expect(types).toContain('turn_finished');
+    expect(types).not.toContain('text_final');
+
+    // 日志 warn 必须含 textBufLength
+    const warnFn = logger.warn as unknown as ReturnType<typeof vi.fn>;
+    const warnCalls = warnFn.mock.calls.filter((c: unknown[]) =>
+      typeof c[1] === 'string' && (c[1] as string) === 'claudecode_subproc_error',
+    );
+    expect(warnCalls.length).toBe(1);
+    const ctx = warnCalls[0]![0] as { textBufLength?: number };
+    expect(ctx.textBufLength).toBeGreaterThan(0);
+  });
 });

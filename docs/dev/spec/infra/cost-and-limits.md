@@ -154,7 +154,7 @@ base = 1000ms, cap 见上表, jitter = 0.2
 | 取值 | 条件 | 下游解读 |
 |---|---|---|
 | `complete` | `costUsd` 是 `> 0` 的实际美元金额（API 路径） | 可参与 `$` 预算 gate、metrics 累加、定价校验 |
-| `partial`  | `costUsd === null` 或 `costUsd === 0`（订阅 / Max plan，CC 没回真实金额；或字段缺失） | **不应**用于 `$` 累加；订阅配额跟踪走另一条路（见上文 §订阅 / Max plan） |
+| `partial`  | `costUsd` 不是正数：`=== null` 或 `=== 0`。覆盖订阅 / Max plan 没回真实金额、`total_cost_usd` 字段未上报（CC 解析时折叠为 `null`）等情况 | **不应**用于 `$` 累加；订阅配额跟踪走另一条路（见上文 §订阅 / Max plan） |
 | `missing`  | 保留：未来表示"usage 事件本身就没产生"的协议位（当前代码恒不产生此值） | 同 `partial` |
 
 设计动机：

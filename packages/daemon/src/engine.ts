@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import type {
   AgentEvent,
   AgentRuntime,
-  AgentSession,
   NormalizedEvent,
   PlatformAdapter,
   SessionConfig,
@@ -142,7 +141,18 @@ export class Engine {
         this.sessionStore.delete(event.sessionKey);
         const remainder = trimmed === '/new' ? '' : trimmed.slice(5).trim();
         if (remainder.length === 0) {
-          await this.safeSend(event, '[new session ready]');
+          try {
+            await this.platform.send(event.sessionKey, {
+              text: '[new session ready]',
+              traceId: event.traceId,
+              sessionKey: event.sessionKey,
+            });
+          } catch (err) {
+            this.logger.error(
+              { traceId: event.traceId, sessionKey: sessionKeyStr, err },
+              'platform_send_failed',
+            );
+          }
           return;
         }
         prompt = remainder;
@@ -193,10 +203,22 @@ export class Engine {
               },
               'agent_error',
             );
-            await this.safeSend(
-              event,
-              `[agent error: ${e.payload.errorKind}] ${e.payload.message}`,
-            );
+            try {
+              await this.platform.send(event.sessionKey, {
+                text: `[agent error: ${e.payload.errorKind}] ${e.payload.message}`,
+                traceId: event.traceId,
+                sessionKey: event.sessionKey,
+              });
+            } catch (sendErr) {
+              this.logger.error(
+                {
+                  traceId: event.traceId,
+                  sessionKey: sessionKeyStr,
+                  err: sendErr,
+                },
+                'platform_send_failed',
+              );
+            }
             this.logger.info(
               {
                 traceId: event.traceId,
@@ -210,7 +232,22 @@ export class Engine {
           if (e.type === 'turn_finished') {
             if (!errored) {
               const text = buf.length > 0 ? buf : '[empty response]';
-              await this.safeSend(event, text);
+              try {
+                await this.platform.send(event.sessionKey, {
+                  text,
+                  traceId: event.traceId,
+                  sessionKey: event.sessionKey,
+                });
+              } catch (sendErr) {
+                this.logger.error(
+                  {
+                    traceId: event.traceId,
+                    sessionKey: sessionKeyStr,
+                    err: sendErr,
+                  },
+                  'platform_send_failed',
+                );
+              }
               this.logger.info(
                 {
                   traceId: event.traceId,
@@ -228,7 +265,14 @@ export class Engine {
                 'outbound',
               );
             }
-            this.safeStopSession(session);
+            try {
+              this.agent.stopSession(session);
+            } catch (stopErr) {
+              this.logger.error(
+                { err: stopErr },
+                'agent_stop_session_failed',
+              );
+            }
             return;
           }
           // usage / session_stopped: MVP 不处理
@@ -263,30 +307,4 @@ export class Engine {
     }
   }
 
-  private async safeSend(event: NormalizedEvent, text: string): Promise<void> {
-    try {
-      await this.platform.send(event.sessionKey, {
-        text,
-        traceId: event.traceId,
-        sessionKey: event.sessionKey,
-      });
-    } catch (err) {
-      this.logger.error(
-        {
-          traceId: event.traceId,
-          sessionKey: serializeSessionKey(event.sessionKey),
-          err,
-        },
-        'platform_send_failed',
-      );
-    }
-  }
-
-  private safeStopSession(session: AgentSession): void {
-    try {
-      this.agent.stopSession(session);
-    } catch (err) {
-      this.logger.error({ err }, 'agent_stop_session_failed');
-    }
-  }
 }

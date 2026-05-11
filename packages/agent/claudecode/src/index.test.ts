@@ -321,12 +321,13 @@ describe('createClaudeCodeRuntime.sendInput', () => {
   });
 
   // issue #27：completeness 选 A（$ 视图可信度）的语义合约
-  describe.each([
+  // 显式声明 tuple 类型，避免 [number | null, string] 通过 `null as unknown as undefined` 双重 cast 兜
+  describe.each<[number | null, string]>([
     [0.01, 'complete'],
     [0, 'partial'],
-    [null as unknown as undefined, 'partial'],
+    [null, 'partial'],
   ])('total_cost_usd=%p → completeness=%s', (cost, expected) => {
-    it('language', async () => {
+    it('maps costUsd to expected completeness', async () => {
       const resultEvent: Record<string, unknown> = {
         type: 'result',
         stop_reason: 'end_turn',

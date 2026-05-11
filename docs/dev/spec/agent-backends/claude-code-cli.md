@@ -163,15 +163,16 @@ daemon 还会额外注入 `tool_limit` / `wallclock_timeout` / `budget_exceeded`
 
 ## UsageCompleteness
 
-CC 输出的 `result.usage` 在不同路径下字段齐全度不同。daemon 在记 `usage` 事件时必须标注完整度：
+`completeness` 语义的 SSOT 在 [`../infra/cost-and-limits.md` §`UsageRecord.completeness` 语义](../infra/cost-and-limits.md#usagerecordcompleteness-语义)。本节只描述 CC backend 在 result envelope → `completeness` 取值上的映射：
 
-| 级别 | 条件 | 行为 |
+| CC `result.usage` 形态 | `costUsd` | `completeness` |
 |---|---|---|
-| `complete` | `input_tokens` / `output_tokens` / `cache_*` / `total_cost_usd` 全齐 | 正常记账；`$ 预算`（opt-in）可用 |
-| `partial` | token 齐但 `total_cost_usd` 缺失或 `0`（订阅路径常见） | 记 token；`costUsd` 写 `null`；`$ 预算` 不生效 |
-| `missing` | token 也缺 | 记 0 + `warn` 日志；turn 仍按 1 计数（不依赖 usage 做 turn 限制） |
+| `total_cost_usd > 0`（API 路径） | 该数值 | `complete` |
+| `total_cost_usd === 0`（订阅 / Max plan 常见） | `0` | `partial` |
+| `total_cost_usd` 字段缺失 | `null`（实现里 typeof guard 折叠） | `partial` |
+| `usage` 事件本身不产生（spawn 失败 / 子进程错退） | — | 不发 usage 事件（走 `error` 路径） |
 
-`$ 预算`（opt-in）走 fail-closed：近 N 次（默认 3）`llm_call_finished` 为 `partial/missing` 时，自动禁用本 session 的 `$ 预算`并发 warn。
+`missing` 是协议保留位，CC backend 当前不会产生该值（见 SSOT 表）。
 
 ## 中断与超时
 

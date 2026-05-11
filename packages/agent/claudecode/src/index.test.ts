@@ -349,3 +349,177 @@ describe('createClaudeCodeRuntime.sendInput', () => {
     expect(turnFinished.payload.reason).toBe('error');
   });
 });
+
+describe('createClaudeCodeRuntime.capabilities', () => {
+  it('supportsInterrupt 翻 true（issue #54 真实信号路径）', () => {
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    expect(runtime.capabilities().supportsInterrupt).toBe(true);
+  });
+});
+
+describe('createClaudeCodeRuntime.interrupt / stopSession（subproc 句柄真实信号）', () => {
+  beforeEach(() => {
+    mockedExeca.mockReset();
+  });
+
+  /**
+   * 构造一个"卡住"的 mock subprocess：stdout 永远不 close、await subproc 永远不 settle。
+   * 让 sendInput 进入 for-await 但不结束，给测试时间调 interrupt 触发 SIGINT。
+   *
+   * `kill` 是 spy；可通过 settle.resolve / reject 在测试里手动模拟"kill 后子进程退出"。
+   */
+  function makeStuckMockSubproc(): {
+    stdout: Readable;
+    kill: ReturnType<typeof vi.fn>;
+    settle: { resolve: () => void; reject: (err: Error) => void };
+    then: Promise<void>['then'];
+    catch: Promise<void>['catch'];
+    finally: Promise<void>['finally'];
+  } {
+    // 永不 push、永不 end 的 stdout
+    const stdout = new Readable({ read() {} });
+    let resolveFn: () => void = () => {};
+    let rejectFn: (err: Error) => void = () => {};
+    const settled = new Promise<void>((res, rej) => {
+      resolveFn = res;
+      rejectFn = rej;
+    });
+    const kill = vi.fn((signal?: NodeJS.Signals | number) => {
+      // 模拟 SIGINT：close stdout → for-await 退出，subproc reject 模拟非零 exit。
+      // 注意：这里是**同步**关闭 stdout + reject，跳过了真实信号传播的事件循环 tick；
+      // 用于断言"interrupt 触发后 subproc 一定退出"的最终态，不验证异步时序。
+      stdout.push(null);
+      rejectFn(new Error(`killed with ${String(signal)}`));
+      return true;
+    });
+    return {
+      stdout,
+      kill,
+      settle: { resolve: resolveFn, reject: rejectFn },
+      then: settled.then.bind(settled),
+      catch: settled.catch.bind(settled),
+      finally: settled.finally.bind(settled),
+    };
+  }
+
+  it('interrupt 在 sendInput in-flight 期间 SIGINT 子进程，sendInput 走 error 路径返回', async () => {
+    const stuck = makeStuckMockSubproc();
+    mockedExeca.mockReturnValueOnce(stuck as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    // 启动一个永远不会自然结束的 turn
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'long task',
+      traceId: 't-int',
+    });
+
+    // 让 event loop 转一圈，确保 sendInput 进了 try / subprocMap.set
+    await new Promise((r) => setTimeout(r, 0));
+
+    runtime.interrupt(session);
+    expect(stuck.kill).toHaveBeenCalledWith('SIGINT');
+
+    // turn 应当走 catch 分支 emit error + turn_finished{error} 然后返回
+    await turn;
+    const types = events.map((e) => e.type);
+    expect(types).toEqual(['error', 'turn_finished']);
+    const errEvt = events[0];
+    if (errEvt?.type !== 'error') throw new Error('expected error');
+    expect(errEvt.payload.message).toContain('SIGINT');
+  });
+
+  it('interrupt 在无 in-flight turn 时是 no-op（不抛、不调 kill）', () => {
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    // 没有 sendInput → subprocMap 没条目
+    expect(() => runtime.interrupt(session)).not.toThrow();
+  });
+
+  it('stopSession 在 in-flight 期间 SIGTERM 子进程，且 session.state=Stopped', async () => {
+    const stuck = makeStuckMockSubproc();
+    mockedExeca.mockReturnValueOnce(stuck as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'long',
+      traceId: 't-stop',
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    runtime.stopSession(session);
+    expect(stuck.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(session.state).toBe('Stopped');
+
+    await turn;
+    // catch 分支应 emit error + turn_finished
+    expect(events.map((e) => e.type)).toEqual(['error', 'turn_finished']);
+  });
+
+  it('turn 自然结束后 interrupt 退化为 no-op（finally 已释放 subproc 绑定）', async () => {
+    // 走一次完整 happy-path turn，结束后再 interrupt
+    const lines = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-int', cwd: '/x' }),
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'ok' }] },
+      }),
+      JSON.stringify({
+        type: 'result',
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        total_cost_usd: 0.001,
+      }),
+    ];
+    const stdout = Readable.from(lines.map((l) => l + '\n'));
+    const settled = Promise.resolve();
+    const kill = vi.fn(() => true);
+    mockedExeca.mockReturnValueOnce({
+      stdout,
+      kill,
+      then: settled.then.bind(settled),
+      catch: settled.catch.bind(settled),
+      finally: settled.finally.bind(settled),
+    } as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: 't-late' });
+
+    // turn 已结束 → subprocMap 应被 finally 清空
+    runtime.interrupt(session);
+    expect(kill).not.toHaveBeenCalled();
+  });
+});

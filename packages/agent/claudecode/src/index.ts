@@ -18,10 +18,10 @@ import type {
   AgentSession,
   SessionConfig,
   SessionKey,
+  TurnEndReason,
   UsageRecord,
 } from '@agent-nexus/protocol';
 import type { Logger } from '@agent-nexus/daemon';
-import type { TurnEndReason } from '@agent-nexus/protocol';
 
 export { runCompatibilityProbe, AgentSpawnFailedError } from './probe.js';
 

@@ -193,15 +193,18 @@ CC 输出的 `result.usage` 在不同路径下字段齐全度不同。daemon 在
 
 #### Backend 私有事件 `claudecode_subproc_error`
 
-`agent/claudecode` adapter 在 stream-json 解析过程中或之后 CC 子进程非零退出时打的 warn 日志事件。命名前缀 `claudecode_` 表明 backend-private（见 [`observability.md`](../infra/observability.md) §事件名命名），不进通用清单。
+`agent/claudecode` adapter 在 stream-json 解析过程中或之后 CC 子进程非零退出时打的 warn 日志事件。命名前缀 `claudecode_` 表明 backend-private（见 [`observability.md`](../infra/observability.md) §事件名命名），不进通用清单。字段由本 contract spec 拥有（backend-private 事件的字段 owner = 该 backend contract）。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `errorKind` | string | `agent`（见 [`errors.md`](../infra/errors.md)） |
-| `cause` | string | 原始错误字符串 |
-| `textBufLength` | int | 已缓冲但未发到 IM 的文本字节数 |
+| `code` | string | `spawn_failed`；对齐 [`observability.md`](../infra/observability.md) §错误日志必含 |
+| `cause` | string | 安全 cause 字符串：仅允许 execa / Error 结构化字段（`name` / `code` / `exitCode` / `signal` / `timedOut` / `isCanceled`），**禁止**写 `err.message` / `err.shortMessage` —— 后者在 execa 中拼接了 `escapedCommand`（含完整 argv 与 `input.text`，可能泄露用户消息正文 / 密钥 / PII） |
+| `textBufLength` | int | 已缓冲但未发到 IM 的 assistant 文本字符长度（JS string length，UTF-16 code unit；窗口 = since turn start） |
 
-issue #28 选 C：CC 完整输出后才异常退出时不发 partial 文本到 IM（避免没有"这是断片"标识的部分内容混淆用户），仅 warn 记 `textBufLength` 便于诊断该罕见路径。stream-json 主路径（#56）落地后该事件语义会重构，届时再决定是否暴露 partial。
+issue #28 选 C：CC 完整输出后才异常退出时不发 partial 文本到 IM（避免没有"这是断片"标识的部分内容混淆用户），仅 warn 记 `textBufLength` 便于诊断该罕见路径。**升级路径**：本 PR 是临时止血；stream-json 主路径（[`ADR-0012`](../../adr/0012-claudecode-stream-json-mainline.md) §Consequences）落地后，流式 assistant 增量 emit 减少 / 消除 textBuf 丢失（消除程度取决于 PR-B 是否启用 `--include-partial-messages`，由 ADR-0012 实施 PR-B 决定）；cleanup-after-output 失败本身不会消失，语义从"丢 textBuf 内容"变成"已发 delta 后如何收尾/标脏/记账"，须在 PR-B 重新定义。
+
+catch 路径若已收到 `result.usage`，仍 emit `usage` 事件，避免 daemon counters / `$ 预算` 把有 token 成本的一回合误算成零成本；`completeness` 按上文 §UsageCompleteness 字段完整度判定（与 happy path 一致），turn 失败由 `turn_finished.reason='error'` 表达，**不**靠 `completeness` 区分 "turn 失败 vs usage 数据缺失"。
 
 ## 兼容性自检（CompatibilityProbe）
 

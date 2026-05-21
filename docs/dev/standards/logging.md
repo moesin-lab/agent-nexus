@@ -23,7 +23,12 @@ related:
 
 ## 字段来源
 
-日志字段、事件名和事件附加字段只以 [`observability.md`](../spec/infra/observability.md) 为准。实现侧不得在 log site 自创新字段、同义字段或改写事件契约；字段缺失按 bug 处理。
+日志字段、事件名和事件附加字段以下面分层为准：
+
+- **通用事件**（跨 backend / 跨 platform 的事件，如 `agent_*` / `inbound_*` / `outbound_*`）：以 [`observability.md`](../spec/infra/observability.md) 为准；
+- **backend-private 事件**（某个 backend 实现内部独有的事件，如 `claudecode_*` / `codex_*`）：事件名前缀与字段以对应 backend contract spec 为准，须被 observability §事件名命名 §通用 vs backend 私有 规则授权（见 [`observability.md`](../spec/infra/observability.md) §事件名命名）。
+
+实现侧不得在 log site 自创新字段、同义字段或改写事件契约；字段缺失按 bug 处理。
 
 ## 等级语义
 

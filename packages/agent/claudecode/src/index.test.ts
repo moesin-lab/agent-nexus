@@ -350,12 +350,21 @@ describe('createClaudeCodeRuntime.sendInput', () => {
   });
 
   // stop_reason → TurnEndReason 映射的 envelope 级覆盖（取代旧 stop-reason.ts 单测）。
-  // 锚点：docs/dev/spec/agent-backends/claude-code-cli.md §stop_reason 映射
+  // 锚点：docs/dev/spec/agent-backends/claude-code-cli.md §stop_reason 到 turn_finished.reason 的映射
+  //
+  // 对 reason='error' 的几条用例（unknown / 缺字段 / tool_use），额外断言事件序列没有混入
+  // 'error' event：这样可以区分"switch default 产出 error"与"catch 早退也会产出 error" —
+  // 否则两条 error 路径无法分辨，本测试就可能假阳。
+  //
+  // `tool_use` 是 defense-in-depth：spec 把它标为"中间态、不应成为 final stop"，CC CLI 实际
+  // 也不会在 result envelope 里发它。本用例不是把 tool_use 当成"映射规则"，而是保护未来 spec
+  // 改动 / CLI 行为漂移时，非法 final stop_reason 至少落到防御性的 'error' 而非误用别的 reason。
   it.each([
     ['end_turn', 'stop'],
     ['max_tokens', 'max_tokens'],
     ['interrupted', 'user_interrupt'],
     ['something_unknown', 'error'],
+    ['tool_use', 'error'],
   ])('result.stop_reason=%s → turn_finished.reason=%s', async (cliReason, expected) => {
     const lines = [
       JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-r', cwd: '/x' }),
@@ -385,6 +394,13 @@ describe('createClaudeCodeRuntime.sendInput', () => {
 
     await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: `t-${cliReason}` });
 
+    // 走的是正常 envelope→reason 路径，不能混入 catch 早退的 'error' event
+    expect(events.map((e) => e.type)).toEqual([
+      'session_started',
+      'text_final',
+      'usage',
+      'turn_finished',
+    ]);
     const turnFinished = events.find((e) => e.type === 'turn_finished');
     if (turnFinished?.type !== 'turn_finished') throw new Error('expected turn_finished');
     expect(turnFinished.payload.reason).toBe(expected);
@@ -418,6 +434,13 @@ describe('createClaudeCodeRuntime.sendInput', () => {
 
     await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: 't-miss' });
 
+    // 同上：必须是 envelope 正常路径推出 'error'，不能是 catch 早退路径
+    expect(events.map((e) => e.type)).toEqual([
+      'session_started',
+      'text_final',
+      'usage',
+      'turn_finished',
+    ]);
     const turnFinished = events.find((e) => e.type === 'turn_finished');
     if (turnFinished?.type !== 'turn_finished') throw new Error('expected turn_finished');
     expect(turnFinished.payload.reason).toBe('error');

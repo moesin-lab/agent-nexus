@@ -60,10 +60,11 @@ export interface DiscordPlatformOptions {
 }
 
 /**
- * 单切片最多容纳的 UTF-16 code unit 数。Discord 上限是 2000 UTF-16 单位，
- * 留 100 单位余量。该值是预算上限（不是固定切片长度）——单个代码点
- * 最多占 2 个 UTF-16 单位（surrogate pair），所以 100 余量足够任何
- * 代码点跨片场景。
+ * 单切片最多容纳的 UTF-16 code unit 数。Discord docs 声明 message content 上限
+ * "2000 characters"（未指定字符口径——可能是 code point / grapheme / UTF-16）；
+ * 本实现按 JS UTF-16 code unit 做保守预算，默认 1900 留 100 单位余量。
+ * 该值是预算上限（不是固定切片长度）——单个 code point 最多占 2 个 UTF-16 单位
+ * （surrogate pair），所以 100 余量足够任何 code point 跨片场景。
  */
 export const SLICE_SIZE = 1900;
 
@@ -71,7 +72,16 @@ export type { ReplyMode } from './state.js';
 
 /**
  * 多片 send 中途失败时抛出，sentIds 列出已落地的消息 id。
- * 通过 pino 默认 err 序列化器自动序列化 enumerable 字段（含 sentIds）到日志。
+ *
+ * 序列化语义：`sentIds` / `totalSlices` 作为 enumerable own props，会被 pino 默认 err
+ * serializer 平铺到日志的 `err` 子对象。`cause` 走 pino 自己的 cause-chain 处理
+ * （折进 stack 末尾），**cause 上的附加字段（如 `DiscordAPIError.code` / `status`）
+ * 不会作为顶层字段输出**——需要看 Discord 错误码时仍要展开 cause；该缺口由 daemon
+ * engine 错误日志契约整体落地时解决（见 spec/infra/observability.md §错误日志必含 +
+ * spec/infra/errors.md）。
+ *
+ * 顺序契约：`sentIds` 按 `buildSlices` 输出顺序排列，依赖 send() 串行 await 的实现。
+ * 改并发（如 `Promise.allSettled`）需重新定义"前 N 片"语义。
  */
 export class PartialSendError extends Error {
   public readonly sentIds: string[];

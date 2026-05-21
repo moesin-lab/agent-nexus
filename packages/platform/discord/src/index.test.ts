@@ -128,10 +128,56 @@ describe('buildSlices', () => {
     // 旧实现末尾无条件 push 会留下 trailing 空串。直接钉住该回归。
     expect(buildSlices('😀😀', 1)).toEqual(['😀', '😀']);
   });
+
+  /**
+   * 已知限制（src/index.ts buildSlices doc 已注明）：当前按 code point 迭代，不识别
+   * grapheme cluster。下面这组用例把"当前接受的折中行为"显式钉死，避免：
+   *   1. 未来误以为已经做到 grapheme-safe；
+   *   2. 等 issue #56 stream-json epic 落地后切换到 `Intl.Segmenter` 时，这些用例
+   *      会以"应失败"形式提醒重写预期。
+   *
+   * 注：这些切法不是 lone surrogate（surrogate pair 在 `for…of` 迭代下已被正确合成单
+   * code point），只是 grapheme 被劈成两个独立 code point；Discord 渲染端看到的会是
+   * 两个独立字符而不是 �。
+   */
+  describe('known degenerate behavior（grapheme cluster 当前可被劈，钉死等 #56 收掉）', () => {
+    it('VS-16（❤️ = U+2764 + U+FE0F）：变体选择符可被切到下一片', () => {
+      // ❤(U+2764) 与 VS-16(U+FE0F) 都在 BMP，各 1 UTF-16 单位。
+      // 预算 1：第一片 ❤，第二片只剩孤立 VS-16。
+      const slices = buildSlices('❤️', 1);
+      expect(slices).toHaveLength(2);
+      expect(slices[0]).toBe('❤');
+      expect(slices[1]).toBe('️');
+      expect(slices.join('')).toBe('❤️');
+    });
+
+    it('国旗（🇨🇳 = 两个 regional indicator）：可在两个 indicator 间被切', () => {
+      // 每个 regional indicator 占 2 UTF-16。预算 2：第一片 🇨，第二片 🇳。
+      const slices = buildSlices('🇨🇳', 2);
+      expect(slices).toEqual(['\u{1F1E8}', '\u{1F1F3}']);
+      expect(slices.join('')).toBe('🇨🇳');
+    });
+
+    it('肤色修饰符（👋🏽 = 👋 + 🏽）：可在基础 emoji 与肤色修饰符间被切', () => {
+      // 各占 2 UTF-16。预算 2：第一片 👋（无肤色），第二片孤立肤色修饰符。
+      const slices = buildSlices('👋🏽', 2);
+      expect(slices).toEqual(['\u{1F44B}', '\u{1F3FD}']);
+      expect(slices.join('')).toBe('👋🏽');
+    });
+
+    it('ZWJ 序列（👨‍👩 = 👨 + ZWJ + 👩）：可在 ZWJ 前后被切', () => {
+      // 👨(2) + ZWJ(1) + 👩(2) = 5 UTF-16。预算 3：第一片 👨+ZWJ(3)，第二片 👩(2)。
+      const slices = buildSlices('👨‍👩', 3);
+      expect(slices).toHaveLength(2);
+      expect(slices[0]).toBe('\u{1F468}‍');
+      expect(slices[1]).toBe('\u{1F469}');
+      expect(slices.join('')).toBe('👨‍👩');
+    });
+  });
 });
 
 describe('PartialSendError', () => {
-  it('携带 sentIds / totalSlices / cause；通过 pino err 序列化器读得到', () => {
+  it('携带 sentIds / totalSlices / cause 作为 enumerable own props', () => {
     const cause = new Error('rate limit');
     const err = new PartialSendError({
       sentIds: ['m1', 'm2'],

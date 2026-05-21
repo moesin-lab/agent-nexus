@@ -105,7 +105,7 @@ base = 1000ms, cap 见上表, jitter = 0.2
 
 启用时：
 
-- 每个 `llm_call_finished` 事件的 `costUsd` 累加到对应层级
+- 仅当 `llm_call_finished` 事件满足 `completeness === 'complete' && costUsd > 0` 时，把 `costUsd` 累加到对应层级（见下文 §`UsageRecord.completeness` 语义 的消费方硬不变量）
 - 软阈值（50%/80%/100%）发 `info/warn`
 - 硬阈值（100%）拒绝新 turn，session → Errored（单 session）或全局 BudgetHalted（每日/每月）
 
@@ -143,8 +143,29 @@ base = 1000ms, cap 见上表, jitter = 0.2
 - `turnSequence`
 - `toolCallsThisTurn`
 - `wallClockMs`
+- `completeness`：见下节定义
 
 这份记账是 spec 的强制契约。语义定位见 [ADR-0006](../../adr/0006-limits-layering-defense-first.md)。
+
+### `UsageRecord.completeness` 语义
+
+`completeness` 表达**该 turn 的 `costUsd` 字段是否可信用于 `$`-based 决策**——不是"字段全填了没"。决策依据见 [ADR-0013](../../adr/0013-usage-completeness-cost-confidence.md)，本 spec 不复述论证。
+
+**归一化契约**：`UsageRecord.costUsd` 只能是**有限非负数**或 `null`。backend 原始负数、非数字、`NaN`、`Infinity` 由 backend 适配层折叠为 `null`，不会出现在 `UsageRecord` 表面。
+
+| 取值 | 条件（归一化后） |
+|---|---|
+| `complete` | `costUsd > 0` 的有限正数 |
+| `partial`  | `costUsd === null` 或 `costUsd === 0`。覆盖订阅 / Max plan 没回真实金额、`total_cost_usd` 字段未上报、backend 原始非法值被折叠等情况 |
+| `missing`  | 协议保留位：未来表示"usage 事件本身就没产生"的 daemon-side audit 信号。**MVP 下 backend `AgentEvent{type:"usage"}` producer 不会产生此值；只可能由未来 daemon-generated audit record 携带**。当前代码恒不产生 |
+
+**消费方硬不变量**（spec 强制契约）：
+
+- `$` 预算 gate、美元 metrics 累加、定价校验**唯一**允许的判定条件是 `completeness === 'complete' && costUsd > 0`
+- 消费方**不得**用 `costUsd != null` 或 `costUsd ?? 0` 推断"可计费金额"——`partial` 下 `costUsd` 仅是 backend 原始信号回显，不代表美元
+- 想观察"数据有没有丢"：观察 `usage` 事件本身的出现频率（缺事件 = 异常），不靠 `completeness`
+
+锚点：issue #27、PR #24 review、ADR-0013。
 
 ## 定价表（供 opt-in $ 预算使用）
 

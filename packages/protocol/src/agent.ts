@@ -28,6 +28,18 @@ export interface UsageRecord {
   turnSequence: number;
   toolCallsThisTurn: number;
   wallClockMs: number;
+  /**
+   * `costUsd` 是否可信用于 $-based 决策（非"字段全填了没"）。
+   * 归一化前提：`costUsd` 已被 backend 适配层折叠为有限非负数或 null。
+   * `complete`：`costUsd > 0` 有限正数 → 可参与 $ 预算 / metrics。
+   * `partial`：`costUsd === null || costUsd === 0`（订阅 / Max plan、字段缺失、
+   *           backend 原始非法值被折叠）→ 不应用于 $ 累加。
+   * `missing`：协议保留位，MVP backend producer 不产生；仅留给未来 daemon-side
+   *           audit record（"usage 事件本身没产生"）。
+   * 消费方硬契约：`$` 累加 / 美元 metrics 唯一条件是
+   * `completeness === 'complete' && costUsd > 0`；不得用 `costUsd != null` 推断可计费。
+   * 完整定义见 `docs/dev/spec/infra/cost-and-limits.md` §UsageRecord.completeness 语义、ADR-0013。
+   */
   completeness: 'complete' | 'partial' | 'missing';
 }
 

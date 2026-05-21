@@ -21,6 +21,7 @@ import type {
   TurnEndReason,
   UsageRecord,
 } from '@agent-nexus/protocol';
+import { serializeSessionKey } from '@agent-nexus/protocol';
 import type { Logger } from '@agent-nexus/daemon';
 import {
   costUsdToCompleteness,
@@ -35,6 +36,37 @@ export {
   isValidCcUsage,
   normalizeTotalCostUsd,
 } from './usage-normalize.js';
+
+/**
+ * 把 ExecaError 等结构化错误对象拼成安全 cause 字符串，**避免** `err.message` /
+ * `err.shortMessage` 携带的 escapedCommand（含 argv → input.text → 用户消息正文 / 密钥 / PII）
+ * 进日志。只读取结构化字段名（name/code/exitCode/signal/timedOut/isCanceled），不读 message。
+ */
+function buildSafeCause(err: unknown): string {
+  if (err === null || typeof err !== 'object') return 'subprocess failure';
+  const e = err as {
+    name?: unknown;
+    code?: unknown;
+    exitCode?: unknown;
+    signal?: unknown;
+    timedOut?: unknown;
+    isCanceled?: unknown;
+  };
+  const name = typeof e.name === 'string' ? e.name : 'Error';
+  const isExecaError =
+    e.code !== undefined ||
+    e.exitCode !== undefined ||
+    e.signal !== undefined ||
+    e.timedOut !== undefined;
+  if (!isExecaError) return name;
+  const parts: string[] = [name];
+  if (typeof e.code === 'string') parts.push(`code=${e.code}`);
+  if (typeof e.exitCode === 'number') parts.push(`exitCode=${e.exitCode}`);
+  if (typeof e.signal === 'string') parts.push(`signal=${e.signal}`);
+  if (e.timedOut === true) parts.push('timedOut=true');
+  if (e.isCanceled === true) parts.push('isCanceled=true');
+  return parts.join(' ');
+}
 
 export interface ClaudeCodeRuntimeOptions {
   claudeBin: string;
@@ -508,6 +540,23 @@ export function createClaudeCodeRuntime(
             return;
           }
 
+          // issue #28 选 C：textBuf 已收满但子进程非零退出时不发 partial 文本到 IM
+          // （避免没有"这是断片"标识的部分内容混淆用户），仅在日志记录 textBuf 长度
+          // 便于诊断"CC 完整输出后才异常退出"这一罕见路径。
+          // 日志字段对齐 observability spec：errorKind ∈ {user,platform,agent,internal}，
+          // cause / code / textBufLength 是 spec 注册字段；cause 走 buildSafeCause
+          // 避免 err.message 携带的 escapedCommand 泄露 input.text。
+          logger.warn(
+            {
+              sessionKey: serializeSessionKey(session.key),
+              traceId,
+              errorKind: 'agent',
+              code: 'spawn_failed',
+              textBufLength: textBuf.length,
+              cause: buildSafeCause(err),
+            },
+            'claudecode_subproc_error',
+          );
           emitEvent({
             type: 'error',
             traceId,
@@ -515,6 +564,31 @@ export function createClaudeCodeRuntime(
             sequence: sequence++,
             payload: { errorKind: 'spawn_failed', message },
           });
+          // catch 前 stream-json 解析循环可能已收到 result.usage（CC 完整输出后才异常退出
+          // 的罕见路径），仍 emit usage 避免 daemon counters / $ 预算 把已产生 token 成本的
+          // 一回合误算成零成本。turn 失败由 turn_finished.reason='error' 表达；
+          // 不靠 completeness 区分 "turn 失败 vs usage 数据缺失"。
+          if (usage) {
+            const partialUsage: UsageRecord = {
+              model: 'claude-code',
+              inputTokens: usage.input_tokens ?? 0,
+              outputTokens: usage.output_tokens ?? 0,
+              cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+              cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+              costUsd: totalCostUsd,
+              turnSequence: 1,
+              toolCallsThisTurn: 0,
+              wallClockMs: 0,
+              completeness: costUsdToCompleteness(totalCostUsd),
+            };
+            emitEvent({
+              type: 'usage',
+              traceId,
+              timestamp: new Date(),
+              sequence: sequence++,
+              payload: partialUsage,
+            });
+          }
           emitEvent({
             type: 'turn_finished',
             traceId,

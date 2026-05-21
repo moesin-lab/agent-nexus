@@ -390,11 +390,19 @@ describe('createClaudeCodeRuntime.interrupt / stopSession（subproc 句柄真实
       rejectFn = rej;
     });
     const kill = vi.fn((signal?: NodeJS.Signals | number) => {
-      // 模拟 SIGINT：close stdout → for-await 退出，subproc reject 模拟非零 exit。
+      // 模拟 SIGINT/SIGTERM：close stdout → for-await 退出，subproc reject 模拟"因信号终止"的非零 exit。
       // 注意：这里是**同步**关闭 stdout + reject，跳过了真实信号传播的事件循环 tick；
-      // 用于断言"interrupt 触发后 subproc 一定退出"的最终态，不验证异步时序。
+      // 用于断言"interrupt/stop 触发后 subproc 一定退出"的最终态，不验证异步时序。
+      // 关键：reject 的 error 带 signal/isTerminated 字段以匹配 execa 9.x 的真实形态，
+      // 让实现里的 wasInterrupted 判定能拿到"clean 信号退出"的证据。
       stdout.push(null);
-      rejectFn(new Error(`killed with ${String(signal)}`));
+      const signalName = typeof signal === 'string' ? signal : 'SIGTERM';
+      rejectFn(
+        Object.assign(new Error(`killed with ${String(signal)}`), {
+          signal: signalName,
+          isTerminated: true,
+        }),
+      );
       return true;
     });
     return {
@@ -433,13 +441,15 @@ describe('createClaudeCodeRuntime.interrupt / stopSession（subproc 句柄真实
     runtime.interrupt(session);
     expect(stuck.kill).toHaveBeenCalledWith('SIGINT');
 
-    // turn 应当走 catch 分支 emit error + turn_finished{error} 然后返回
+    // 用户 interrupt 是"正常收尾"，不应 emit error 事件——否则 daemon engine
+    // 会把它当 agent 失败发回 IM。spec/agent-backends/claude-code-cli.md §stop_reason 映射：
+    // SIGINT → turn_finished{user_interrupt}。无 usage 解析过则不 emit usage。
     await turn;
     const types = events.map((e) => e.type);
-    expect(types).toEqual(['error', 'turn_finished']);
-    const errEvt = events[0];
-    if (errEvt?.type !== 'error') throw new Error('expected error');
-    expect(errEvt.payload.message).toContain('SIGINT');
+    expect(types).toEqual(['turn_finished']);
+    const turnEvt = events[0];
+    if (turnEvt?.type !== 'turn_finished') throw new Error('expected turn_finished');
+    expect(turnEvt.payload.reason).toBe('user_interrupt');
   });
 
   it('interrupt 在无 in-flight turn 时是 no-op（不抛、不调 kill）', () => {
@@ -479,8 +489,472 @@ describe('createClaudeCodeRuntime.interrupt / stopSession（subproc 句柄真实
     expect(session.state).toBe('Stopped');
 
     await turn;
-    // catch 分支应 emit error + turn_finished
+    // stopSession 在 in-flight 期间应走 stopRequested 分支：
+    //   turn_finished{error}（子进程被切断属异常）+ session_stopped{user_stop}（lifecycle 焦点）。
+    // 不要复用 user_interrupt 语义。
+    expect(events.map((e) => e.type)).toEqual(['turn_finished', 'session_stopped']);
+    const turnEvt = events[0];
+    if (turnEvt?.type !== 'turn_finished') throw new Error('expected turn_finished');
+    expect(turnEvt.payload.reason).toBe('error');
+    const stoppedEvt = events[1];
+    if (stoppedEvt?.type !== 'session_stopped') throw new Error('expected session_stopped');
+    expect(stoppedEvt.payload.reason).toBe('user_stop');
+  });
+
+  it('CC 输出 stop_reason=interrupted 后再 reject（真实 SIGINT 路径）→ user_interrupt 而非 error，且 usage 不丢', async () => {
+    // 模拟更接近真实的 CC SIGINT 行为：先 emit 一行 result{stop_reason:'interrupted', usage:...}，
+    // 然后 stdout close + subproc 非零 exit reject。
+    // 当前 mock `makeStuckMockSubproc` 在 kill 时同步 push(null) + reject，所以我们在调
+    // interrupt 前手动把 result 行推进 stdout，再 trigger kill。
+    const stuck = makeStuckMockSubproc();
+    mockedExeca.mockReturnValueOnce(stuck as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'long',
+      traceId: 't-interrupted-line',
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // 真实流序：CC 收到 SIGINT → 先冲 stdout 把 result 写出 → 再退出
+    stuck.stdout.push(
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        stop_reason: 'interrupted',
+        usage: { input_tokens: 3, output_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      }) + '\n',
+    );
+    // 让 for-await 处理这行
+    await new Promise((r) => setTimeout(r, 0));
+
+    runtime.interrupt(session);
+    expect(stuck.kill).toHaveBeenCalledWith('SIGINT');
+
+    await turn;
+    // 事件流：interrupt 收尾路径不 emit error（contract：user SIGINT 是正常收尾）；
+    //         必须保留已解析的 usage 满足 spec §UsageRecord 顺序保证。
+    const types = events.map((e) => e.type);
+    expect(types).not.toContain('error');
+    expect(types).toContain('usage');
+    expect(types).toContain('turn_finished');
+
+    const turnEvt = events.find((e) => e.type === 'turn_finished');
+    if (!turnEvt || turnEvt.type !== 'turn_finished') throw new Error('expected turn_finished');
+    expect(turnEvt.payload.reason).toBe('user_interrupt');
+
+    const usageEvt = events.find((e) => e.type === 'usage');
+    if (!usageEvt || usageEvt.type !== 'usage') throw new Error('expected usage event in catch');
+    expect(usageEvt.payload.inputTokens).toBe(3);
+    expect(usageEvt.payload.outputTokens).toBe(2);
+    expect(usageEvt.payload.completeness).toBe('partial');
+  });
+
+  it('CC 收到 SIGINT 后 exit 0 且无 stop_reason（成功路径兜底）→ turn_finished{user_interrupt}', async () => {
+    // 模拟 CC 在某些异常下被 SIGINT 杀掉，但 await subproc resolve（exit 0）且 stdout 已 EOF；
+    // 没有任何 result 行 → stopReason undefined → 默认 mapping 'error'。
+    // 必须靠 inflightFlag.interruptRequested 兜底翻 user_interrupt。
+    const stdout = new Readable({ read() {} });
+    let resolveFn: () => void = () => {};
+    const settled = new Promise<void>((res) => {
+      resolveFn = res;
+    });
+    const kill = vi.fn((_signal?: NodeJS.Signals | number) => {
+      stdout.push(null); // EOF
+      resolveFn(); // exit 0
+      return true;
+    });
+    const fakeSub = {
+      stdout,
+      kill,
+      then: settled.then.bind(settled),
+      catch: settled.catch.bind(settled),
+      finally: settled.finally.bind(settled),
+    };
+    mockedExeca.mockReturnValueOnce(fakeSub as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'q',
+      traceId: 't-int-resolve',
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    runtime.interrupt(session);
+
+    await turn;
+    const turnEvt = events.find((e) => e.type === 'turn_finished');
+    if (!turnEvt || turnEvt.type !== 'turn_finished') throw new Error('expected turn_finished');
+    expect(turnEvt.payload.reason).toBe('user_interrupt');
+  });
+
+  it('interrupt 时 kill 返回 false（进程已退出）→ 不翻 interruptRequested，按真实 exit 归类', async () => {
+    // 模拟"已退出但 finally 没跑"的窗口：kill 返回 false。
+    // 此时若实现盲翻 interruptRequested，下游真实错误（reject）会被误标 user_interrupt。
+    const stdout = new Readable({ read() {} });
+    let rejectFn: (err: Error) => void = () => {};
+    const settled = new Promise<void>((_res, rej) => {
+      rejectFn = rej;
+    });
+    const kill = vi.fn(() => false); // 关键：已退出
+    const fakeSub = {
+      stdout,
+      kill,
+      then: settled.then.bind(settled),
+      catch: settled.catch.bind(settled),
+      finally: settled.finally.bind(settled),
+    };
+    mockedExeca.mockReturnValueOnce(fakeSub as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'q',
+      traceId: 't-kill-false',
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    runtime.interrupt(session);
+    expect(kill).toHaveBeenCalledWith('SIGINT');
+    expect(kill.mock.results[0]?.value).toBe(false); // sanity: 真返回 false
+
+    // 现在 trigger 真实 reject 模拟"进程因 OOM 等无关原因死了"
+    stdout.push(null);
+    rejectFn(new Error('unrelated crash'));
+    await turn;
+
+    // 错误必须按 spawn_failed 走，不能被错误标记成 user_interrupt
+    const errEvt = events.find((e) => e.type === 'error');
+    if (!errEvt || errEvt.type !== 'error') throw new Error('expected error');
+    expect(errEvt.payload.errorKind).toBe('spawn_failed');
+    const turnEvt = events.find((e) => e.type === 'turn_finished');
+    if (!turnEvt || turnEvt.type !== 'turn_finished') throw new Error('expected turn_finished');
+    expect(turnEvt.payload.reason).toBe('error');
+  });
+
+  it('interrupt 后子进程因非中断原因失败（exit 1，无 SIGINT signal）→ 维持 error，不掩盖成 user_interrupt', async () => {
+    // CC 捕获 SIGINT 后由于 OOM/exit 1 等无关原因失败：
+    //   - execa error 没有 signal:'SIGINT' / isTerminated
+    //   - 也没收到 stop_reason='interrupted'
+    // 此时 wasInterrupted 判定收紧后应为 false，按 spawn_failed/error 归类，
+    // 避免把"中断失败 + 实际崩溃"掩盖成"中断成功"。
+    const stdout = new Readable({ read() {} });
+    let rejectFn: (err: Error) => void = () => {};
+    const settled = new Promise<void>((_res, rej) => {
+      rejectFn = rej;
+    });
+    const kill = vi.fn(() => true);
+    const fakeSub = {
+      stdout,
+      kill,
+      then: settled.then.bind(settled),
+      catch: settled.catch.bind(settled),
+      finally: settled.finally.bind(settled),
+    };
+    mockedExeca.mockReturnValueOnce(fakeSub as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'q',
+      traceId: 't-int-then-crash',
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    runtime.interrupt(session);
+
+    // 关键：reject 的 error 没有 signal/isTerminated/timedOut，模拟 CC 自己 exit 1
+    stdout.push(null);
+    const crashErr = Object.assign(new Error('CC crashed exit 1'), { exitCode: 1 });
+    rejectFn(crashErr);
+    await turn;
+
+    const errEvt = events.find((e) => e.type === 'error');
+    if (!errEvt || errEvt.type !== 'error') throw new Error('expected error');
+    expect(errEvt.payload.errorKind).toBe('spawn_failed');
+    const turnEvt = events.find((e) => e.type === 'turn_finished');
+    if (!turnEvt || turnEvt.type !== 'turn_finished') throw new Error('expected turn_finished');
+    expect(turnEvt.payload.reason).toBe('error');
+  });
+
+  it('interrupt 后子进程因 SIGINT 真实终止（execa signal=SIGINT）→ user_interrupt（保留原快路径）', async () => {
+    // 与上一个测试对照：execa error 带 signal:'SIGINT' + isTerminated:true 时认定 clean SIGINT 退出。
+    const stdout = new Readable({ read() {} });
+    let rejectFn: (err: Error) => void = () => {};
+    const settled = new Promise<void>((_res, rej) => {
+      rejectFn = rej;
+    });
+    const kill = vi.fn(() => true);
+    const fakeSub = {
+      stdout,
+      kill,
+      then: settled.then.bind(settled),
+      catch: settled.catch.bind(settled),
+      finally: settled.finally.bind(settled),
+    };
+    mockedExeca.mockReturnValueOnce(fakeSub as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'q',
+      traceId: 't-sigint-clean',
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    runtime.interrupt(session);
+
+    stdout.push(null);
+    const sigintErr = Object.assign(new Error('killed by SIGINT'), {
+      signal: 'SIGINT',
+      isTerminated: true,
+    });
+    rejectFn(sigintErr);
+    await turn;
+
+    const types = events.map((e) => e.type);
+    expect(types).not.toContain('error');
+    const turnEvt = events.find((e) => e.type === 'turn_finished');
+    if (!turnEvt || turnEvt.type !== 'turn_finished') throw new Error('expected turn_finished');
+    expect(turnEvt.payload.reason).toBe('user_interrupt');
+  });
+
+  it('stopSession success 路径（CC 优雅 exit 0）→ 不发 text_final 给 daemon，emit turn_finished{error} + session_stopped{user_stop}', async () => {
+    // CC 在收到 SIGTERM 前已经完成回复并 stop_reason=end_turn；之后 stopSession 才被调。
+    // 但 stopRequested 流转的本质："session 已被强停" 而非"回合正常完成"。
+    // 实现选择：忽略 buffered text，直接 emit usage（如有） + turn_finished{error} + session_stopped{user_stop}。
+    const lines = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-st', cwd: '/x' }),
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'a partial answer' }] },
+      }),
+      JSON.stringify({
+        type: 'result',
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 5, output_tokens: 3, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        total_cost_usd: 0.005,
+      }),
+    ];
+
+    // 自定义 mock：在 sendInput 跑到 await subproc 时让外部代码先调 stopSession 再 resolve
+    const stdout = Readable.from(lines.map((l) => l + '\n'));
+    let resolveFn: () => void = () => {};
+    const settled = new Promise<void>((res) => {
+      resolveFn = res;
+    });
+    const kill = vi.fn(() => true);
+    const fakeSub = {
+      stdout,
+      kill,
+      then: settled.then.bind(settled),
+      catch: settled.catch.bind(settled),
+      finally: settled.finally.bind(settled),
+    };
+    mockedExeca.mockReturnValueOnce(fakeSub as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'q',
+      traceId: 't-stop-success',
+    });
+    // 让 stdout 行被消费完
+    await new Promise((r) => setTimeout(r, 5));
+    // 在 await subproc 前调 stopSession，触发 stopRequested=true
+    runtime.stopSession(session);
+    // 然后 subproc 优雅 exit 0
+    resolveFn();
+    await turn;
+
+    const types = events.map((e) => e.type);
+    expect(types).not.toContain('text_final'); // 不发给 daemon 当 happy path
+    expect(types).toContain('usage');
+    expect(types).toContain('turn_finished');
+    expect(types).toContain('session_stopped');
+    const turnEvt = events.find((e) => e.type === 'turn_finished');
+    if (!turnEvt || turnEvt.type !== 'turn_finished') throw new Error('expected turn_finished');
+    expect(turnEvt.payload.reason).toBe('error');
+    const stoppedEvt = events.find((e) => e.type === 'session_stopped');
+    if (!stoppedEvt || stoppedEvt.type !== 'session_stopped') throw new Error('expected session_stopped');
+    expect(stoppedEvt.payload.reason).toBe('user_stop');
+  });
+
+  it('execa timeout（CC 忽略 SIGINT 或 wallclock 触发）→ wallclock_timeout，不被误标 user_interrupt', async () => {
+    // 模拟用户调 interrupt 但 CC 忽略 SIGINT，最终 execa 内置 timeout 触发 reject（带 timedOut:true）。
+    // 当前实现的 catch 分支必须用 err.timedOut 区分，不能因 interruptRequested=true 就翻 user_interrupt。
+    const stdout = new Readable({ read() {} });
+    let rejectFn: (err: Error & { timedOut?: boolean }) => void = () => {};
+    const settled = new Promise<void>((_res, rej) => {
+      rejectFn = rej as (err: Error & { timedOut?: boolean }) => void;
+    });
+    const kill = vi.fn(() => true);
+    const fakeSub = {
+      stdout,
+      kill,
+      then: settled.then.bind(settled),
+      catch: settled.catch.bind(settled),
+      finally: settled.finally.bind(settled),
+    };
+    mockedExeca.mockReturnValueOnce(fakeSub as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'q',
+      traceId: 't-timeout',
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // 用户调 interrupt（CC 假装忽略 SIGINT）
+    runtime.interrupt(session);
+
+    // 然后 execa timeout 触发
+    stdout.push(null);
+    const timeoutErr = Object.assign(new Error('Command timed out'), { timedOut: true });
+    rejectFn(timeoutErr);
+
+    await turn;
+
+    // 必须按 wallclock_timeout 归类，不能因 interruptRequested=true 就翻 user_interrupt
+    // 同时 contract 要求伴随 session_stopped{error}（spec/agent-backends/claude-code-cli.md §中断与超时）
+    const errEvt = events.find((e) => e.type === 'error');
+    if (!errEvt || errEvt.type !== 'error') throw new Error('expected error');
+    expect(errEvt.payload.errorKind).toBe('wallclock_timeout');
+    const turnEvt = events.find((e) => e.type === 'turn_finished');
+    if (!turnEvt || turnEvt.type !== 'turn_finished') throw new Error('expected turn_finished');
+    expect(turnEvt.payload.reason).toBe('wallclock_timeout');
+    const stoppedEvt = events.find((e) => e.type === 'session_stopped');
+    if (!stoppedEvt || stoppedEvt.type !== 'session_stopped') throw new Error('expected session_stopped');
+    expect(stoppedEvt.payload.reason).toBe('error');
+  });
+
+  it('sendInput 在 session.state=Stopped 时 fail-fast（不再 spawn 子进程）', async () => {
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    // stopSession 在无 in-flight 时只翻 state，无 spawn
+    runtime.stopSession(session);
+    expect(session.state).toBe('Stopped');
+
+    await runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'should-be-rejected',
+      traceId: 't-stopped',
+    });
+
+    expect(mockedExeca).not.toHaveBeenCalled();
     expect(events.map((e) => e.type)).toEqual(['error', 'turn_finished']);
+    const errEvt = events[0];
+    if (errEvt?.type !== 'error') throw new Error('expected error');
+    expect(errEvt.payload.errorKind).toBe('session_stopped');
+  });
+
+  it('同 session 并发 sendInput（防御层 fail-fast）→ 第二轮 emit concurrent_send_input', async () => {
+    const stuck = makeStuckMockSubproc();
+    mockedExeca.mockReturnValueOnce(stuck as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    // 第一轮 in-flight
+    const turn1 = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'first',
+      traceId: 't-c1',
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // 第二轮：spec 已声明同 session 严格串行；此处 daemon 没排队，adapter 必须 fail-fast，
+    // 否则 subprocMap 会被覆盖，第一轮 subproc 引用丢失。
+    await runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'second-overlap',
+      traceId: 't-c2',
+    });
+
+    // 第二轮的事件
+    const c2Events = events.filter((e) => e.traceId === 't-c2');
+    expect(c2Events.map((e) => e.type)).toEqual(['error', 'turn_finished']);
+    const errEvt = c2Events[0];
+    if (errEvt?.type !== 'error') throw new Error('expected error');
+    expect(errEvt.payload.errorKind).toBe('concurrent_send_input');
+
+    // execa 只应被第一轮调用一次（第二轮 fail-fast 没进 spawn）
+    expect(mockedExeca).toHaveBeenCalledTimes(1);
+
+    // 清理：interrupt 第一轮以免测试 hang
+    runtime.interrupt(session);
+    await turn1;
   });
 
   it('turn 自然结束后 interrupt 退化为 no-op（finally 已释放 subproc 绑定）', async () => {

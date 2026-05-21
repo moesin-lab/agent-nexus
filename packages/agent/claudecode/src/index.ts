@@ -22,8 +22,19 @@ import type {
   UsageRecord,
 } from '@agent-nexus/protocol';
 import type { Logger } from '@agent-nexus/daemon';
+import {
+  costUsdToCompleteness,
+  isValidCcUsage,
+  normalizeTotalCostUsd,
+  type CcUsage,
+} from './usage-normalize.js';
 
 export { runCompatibilityProbe, AgentSpawnFailedError } from './probe.js';
+export {
+  costUsdToCompleteness,
+  isValidCcUsage,
+  normalizeTotalCostUsd,
+} from './usage-normalize.js';
 
 export interface ClaudeCodeRuntimeOptions {
   claudeBin: string;
@@ -227,17 +238,14 @@ export function createClaudeCodeRuntime(
         args.push('--resume', session.agentSessionId);
       }
 
-      interface CcUsage {
-        input_tokens?: number;
-        output_tokens?: number;
-        cache_read_input_tokens?: number;
-        cache_creation_input_tokens?: number;
-      }
-
       let textBuf = '';
       let stopReason: string | undefined;
       let usage: CcUsage | null = null;
       let totalCostUsd: number | null = null;
+      // 防止 backend 正常退出但缺 result / 缺 usage payload 时合成 usage 掩盖事件 absence
+      // （见 spec/cost-and-limits.md §UsageRecord.completeness 语义 "缺事件 = 异常"）。
+      let sawResult = false;
+      let sawUsage = false;
 
       // 防御性 fail-fast #1：session 已 Stopped → 直接 emit error 返回，
       // 不允许在终态 session 上重 spawn 子进程。
@@ -366,14 +374,17 @@ export function createClaudeCodeRuntime(
             }
 
             if (e['type'] === 'result') {
+              sawResult = true;
               const sr = e['stop_reason'];
               if (typeof sr === 'string') stopReason = sr;
-              const u = e['usage'];
-              if (u && typeof u === 'object') {
-                usage = u as CcUsage;
+              // usage 形态校验（见 usage-normalize.ts）：拒绝 null/[]/{}/字符串字段等"假 usage"
+              // 防止 backend 异常 payload 被合成成 0 token 的正常事件掩盖问题。
+              if (isValidCcUsage(e['usage'])) {
+                usage = e['usage'];
+                sawUsage = true;
               }
-              const cost = e['total_cost_usd'];
-              totalCostUsd = typeof cost === 'number' ? cost : null;
+              // 归一化 backend total_cost_usd（spec/cost-and-limits.md §UsageRecord.completeness 语义）
+              totalCostUsd = normalizeTotalCostUsd(e['total_cost_usd']);
               continue;
             }
 
@@ -421,7 +432,7 @@ export function createClaudeCodeRuntime(
               turnSequence: 1,
               toolCallsThisTurn: 0,
               wallClockMs: 0,
-              completeness: totalCostUsd === null ? 'partial' : 'complete',
+              completeness: costUsdToCompleteness(totalCostUsd),
             };
             emitEvent({
               type: 'usage',
@@ -514,6 +525,36 @@ export function createClaudeCodeRuntime(
           return;
         }
 
+        // 子进程优雅退出但 stream-json 缺 result / 缺 usage payload → backend 异常，
+        // 走 error 路径不合成 usage（spec/cost-and-limits.md §UsageRecord.completeness 语义
+        // "缺事件 = 异常"）。stopRequested / interruptRequested 优先级更高（见下一段）—
+        // 用户主动停或主动 interrupt 时即使没有 result 也属"正常路径"，不算 backend 异常。
+        if (
+          !inflightFlag.stopRequested &&
+          !inflightFlag.interruptRequested &&
+          (!sawResult || !sawUsage)
+        ) {
+          const errorKind = !sawResult ? 'agent_no_result' : 'agent_no_usage';
+          const message = !sawResult
+            ? 'claude-code subprocess exited without emitting a result event'
+            : 'claude-code result event missing usage payload';
+          emitEvent({
+            type: 'error',
+            traceId,
+            timestamp: new Date(),
+            sequence: sequence++,
+            payload: { errorKind, message },
+          });
+          emitEvent({
+            type: 'turn_finished',
+            traceId,
+            timestamp: new Date(),
+            sequence: sequence++,
+            payload: { reason: 'error', turnSequence: 1 },
+          });
+          return;
+        }
+
         // 顺序 emit 收尾事件。
         // stopSession 路径优先：即便 CC 优雅 exit 0，也不能把"被强停的回合"当正常回复发出去。
         // 不 emit text_final（daemon engine 看到 text_final + turn_finished{stop} 会 safeSend 给用户）；
@@ -530,7 +571,7 @@ export function createClaudeCodeRuntime(
               turnSequence: 1,
               toolCallsThisTurn: 0,
               wallClockMs: 0,
-              completeness: totalCostUsd === null ? 'partial' : 'complete',
+              completeness: costUsdToCompleteness(totalCostUsd),
             };
             emitEvent({
               type: 'usage',
@@ -573,7 +614,7 @@ export function createClaudeCodeRuntime(
             turnSequence: 1,
             toolCallsThisTurn: 0,
             wallClockMs: 0,
-            completeness: totalCostUsd === null ? 'partial' : 'complete',
+            completeness: costUsdToCompleteness(totalCostUsd),
           };
           emitEvent({
             type: 'usage',

@@ -22,9 +22,20 @@ import type {
 } from '@agent-nexus/protocol';
 import type { Logger } from '@agent-nexus/daemon';
 import { stopReasonToEnum } from './stop-reason.js';
+import {
+  costUsdToCompleteness,
+  isValidCcUsage,
+  normalizeTotalCostUsd,
+  type CcUsage,
+} from './usage-normalize.js';
 
 export { runCompatibilityProbe, AgentSpawnFailedError } from './probe.js';
 export { stopReasonToEnum } from './stop-reason.js';
+export {
+  costUsdToCompleteness,
+  isValidCcUsage,
+  normalizeTotalCostUsd,
+} from './usage-normalize.js';
 
 export interface ClaudeCodeRuntimeOptions {
   claudeBin: string;
@@ -165,17 +176,14 @@ export function createClaudeCodeRuntime(
         args.push('--resume', session.agentSessionId);
       }
 
-      interface CcUsage {
-        input_tokens?: number;
-        output_tokens?: number;
-        cache_read_input_tokens?: number;
-        cache_creation_input_tokens?: number;
-      }
-
       let textBuf = '';
       let stopReason: string | undefined;
       let usage: CcUsage | null = null;
       let totalCostUsd: number | null = null;
+      // 防止 backend 正常退出但缺 result / 缺 usage payload 时合成 usage 掩盖事件 absence
+      // （见 spec/cost-and-limits.md §UsageRecord.completeness 语义 "缺事件 = 异常"）。
+      let sawResult = false;
+      let sawUsage = false;
 
       try {
         const subproc = execa(claudeBin, args, {
@@ -250,14 +258,18 @@ export function createClaudeCodeRuntime(
           }
 
           if (e['type'] === 'result') {
+            sawResult = true;
             const sr = e['stop_reason'];
             if (typeof sr === 'string') stopReason = sr;
-            const u = e['usage'];
-            if (u && typeof u === 'object') {
-              usage = u as CcUsage;
+            // usage 形态校验（见 usage-normalize.ts）：拒绝 null/[]/{}/字符串字段等"假 usage"
+            // 防止 backend 异常 payload 被合成成 0 token 的正常事件掩盖问题。
+            if (isValidCcUsage(e['usage'])) {
+              usage = e['usage'];
+              sawUsage = true;
             }
-            const cost = e['total_cost_usd'];
-            totalCostUsd = typeof cost === 'number' ? cost : null;
+            // 归一化 backend total_cost_usd 字段（见 usage-normalize.ts / spec
+            // cost-and-limits.md §UsageRecord.completeness 语义 归一化契约）。
+            totalCostUsd = normalizeTotalCostUsd(e['total_cost_usd']);
             continue;
           }
 
@@ -275,6 +287,36 @@ export function createClaudeCodeRuntime(
           sequence: sequence++,
           payload: {
             errorKind: 'spawn_failed',
+            message,
+          },
+        });
+        emitEvent({
+          type: 'turn_finished',
+          traceId,
+          timestamp: new Date(),
+          sequence: sequence++,
+          payload: {
+            reason: 'error',
+            turnSequence: 1,
+          },
+        });
+        return;
+      }
+
+      // 子进程正常退出但 stream-json 缺 result / 缺 usage payload → backend 异常，走 error 路径
+      // 不合成 usage（spec/cost-and-limits.md §UsageRecord.completeness 语义 "缺事件 = 异常"）。
+      if (!sawResult || !sawUsage) {
+        const errorKind = !sawResult ? 'agent_no_result' : 'agent_no_usage';
+        const message = !sawResult
+          ? 'claude-code subprocess exited without emitting a result event'
+          : 'claude-code result event missing usage payload';
+        emitEvent({
+          type: 'error',
+          traceId,
+          timestamp: new Date(),
+          sequence: sequence++,
+          payload: {
+            errorKind,
             message,
           },
         });
@@ -310,11 +352,9 @@ export function createClaudeCodeRuntime(
         turnSequence: 1,
         toolCallsThisTurn: 0,
         wallClockMs: 0,
-        // 选 A：$ 视图可信度——订阅 / Max plan 给 costUsd=0 是合法但非美元金额，
-        // 与 null 一起标 partial 让下游 $ 累加 / 预算 gate 不误用。
-        // 见 spec/infra/cost-and-limits.md §UsageRecord.completeness 语义
-        completeness:
-          totalCostUsd === null || totalCostUsd === 0 ? 'partial' : 'complete',
+        // $ 视图可信度（ADR-0013）：归一化后正数 → complete；其他 → partial。
+        // 语义 SSOT：spec/infra/cost-and-limits.md §UsageRecord.completeness 语义
+        completeness: costUsdToCompleteness(totalCostUsd),
       };
       emitEvent({
         type: 'usage',

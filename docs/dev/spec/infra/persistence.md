@@ -115,10 +115,13 @@ contracts:
 | `cache_read_tokens` | INTEGER | |
 | `cache_write_tokens` | INTEGER | |
 | `cost_usd` | REAL | NULL 允许（订阅模式） |
+| `completeness` | TEXT NOT NULL | `complete` / `partial` / `missing`；语义见 [`cost-and-limits.md` §`UsageRecord.completeness` 语义](cost-and-limits.md#usagerecordcompleteness-语义) |
 | `model` | TEXT | |
 | `recorded_at` | TEXT NOT NULL | |
 
 用于使用量审计与复盘。表名从 `budget_events` 改为 `usage_events`（原表名暗示以 $ 为主轴，已不准确）。
+
+**聚合约束**：所有美元 counter / `$` 预算 snapshot 的聚合**只能基于** `completeness = 'complete' AND cost_usd > 0` 的记录（语义见 [`cost-and-limits.md` §`UsageRecord.completeness` 语义](cost-and-limits.md#usagerecordcompleteness-语义) 消费方硬不变量）。直接 `SUM(cost_usd)` 是反模式。
 
 ## Transcript 文件
 
@@ -187,7 +190,7 @@ interface Store {
 
     // usage / budget
     recordUsageEvent(event) -> void
-    getSessionCounters(key) -> SessionCounters      // turns, toolCalls, wallClockMs, tokens, costUsd
+    getSessionCounters(key) -> SessionCounters      // turns, toolCalls, wallClockMs, tokens, costUsd（costUsd 仅累加 completeness=complete && cost_usd>0；见 usage_events §聚合约束）
     getSessionBudget(key) -> BudgetSnapshot?        // null 当 $ 预算未启用
 }
 ```

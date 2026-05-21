@@ -167,9 +167,9 @@ daemon 还会额外注入 `tool_limit` / `wallclock_timeout` / `budget_exceeded`
 
 | CC `result.usage` 形态 | `costUsd` | `completeness` |
 |---|---|---|
-| `total_cost_usd > 0`（API 路径） | 该数值 | `complete` |
+| `total_cost_usd` 是有限正数（API 路径） | 该数值 | `complete` |
 | `total_cost_usd === 0`（订阅 / Max plan 常见） | `0` | `partial` |
-| `total_cost_usd` 字段缺失 | `null`（实现里 typeof guard 折叠） | `partial` |
+| `total_cost_usd` 字段缺失 / 非数字 / 负数 / 非有限值 | `null`（解析层折叠） | `partial` |
 | `usage` 事件本身不产生（spawn 失败 / 子进程错退） | — | 不发 usage 事件（走 `error` 路径） |
 
 `missing` 是协议保留位，CC backend 当前不会产生该值（见 SSOT 表）。

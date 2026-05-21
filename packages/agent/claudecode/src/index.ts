@@ -20,6 +20,7 @@ import type {
   SessionKey,
   UsageRecord,
 } from '@agent-nexus/protocol';
+import { serializeSessionKey } from '@agent-nexus/protocol';
 import type { Logger } from '@agent-nexus/daemon';
 import { stopReasonToEnum } from './stop-reason.js';
 
@@ -57,6 +58,80 @@ function getEmitter(session: AgentSession): EventEmitter {
     emitterMap.set(session, em);
   }
   return em;
+}
+
+/**
+ * 从 execa / 通用 Error 提取**不含 argv 的安全 cause 字符串**，用于 logger.warn 字段。
+ *
+ * 为什么不直接用 `err.message` / `err.shortMessage`：execa 在错误对象上拼了
+ * `escapedCommand`（完整命令行，含 argv），而 argv 里有 `--print <input.text>` —
+ * 即用户消息正文，可能含密钥 / PII。直接落日志会泄露。
+ *
+ * 策略：execa-shaped error → 用结构化字段拼；普通 Error → 用 `name`；其他 → 固定字符串。
+ * 故意不取 `message`，宁可信息少也不冒泄露风险。
+ */
+/**
+ * 按 [claude-code-cli.md §UsageCompleteness](../../docs/dev/spec/agent-backends/claude-code-cli.md)
+ * 的三档定义判定 UsageRecord.completeness。turn 失败由 `turn_finished.reason='error'` 表达，
+ * 与本字段解耦。
+ *
+ * - `complete`：token 全齐 + `total_cost_usd` 为 number > 0
+ * - `partial`：token 齐但 `total_cost_usd` 缺失 / null / 0（订阅路径常见）
+ * - `missing`：token 也缺
+ */
+function deriveCompleteness(
+  usage: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  } | null,
+  totalCostUsd: number | null,
+): 'complete' | 'partial' | 'missing' {
+  // spec: `missing` = token 缺
+  if (
+    !usage ||
+    typeof usage.input_tokens !== 'number' ||
+    typeof usage.output_tokens !== 'number'
+  ) {
+    return 'missing';
+  }
+  // spec: `complete` 要求 input/output/cache_* 全齐 + total_cost_usd 是 number > 0
+  const cacheReadOk = typeof usage.cache_read_input_tokens === 'number';
+  const cacheWriteOk = typeof usage.cache_creation_input_tokens === 'number';
+  const costOk = totalCostUsd !== null && totalCostUsd > 0;
+  if (cacheReadOk && cacheWriteOk && costOk) {
+    return 'complete';
+  }
+  // spec: `partial` = token 齐但 cost 缺失/0 或 cache_* 缺失
+  return 'partial';
+}
+
+function buildSafeCause(err: unknown): string {
+  if (err === null || typeof err !== 'object') return 'subprocess failure';
+  const e = err as {
+    name?: unknown;
+    code?: unknown;
+    exitCode?: unknown;
+    signal?: unknown;
+    timedOut?: unknown;
+    isCanceled?: unknown;
+  };
+  const name = typeof e.name === 'string' ? e.name : 'Error';
+  // execa error 一般有 code / exitCode / signal / timedOut 之一
+  const isExecaError =
+    e.code !== undefined ||
+    e.exitCode !== undefined ||
+    e.signal !== undefined ||
+    e.timedOut !== undefined;
+  if (!isExecaError) return name;
+  const parts: string[] = [name];
+  if (typeof e.code === 'string') parts.push(`code=${e.code}`);
+  if (typeof e.exitCode === 'number') parts.push(`exitCode=${e.exitCode}`);
+  if (typeof e.signal === 'string') parts.push(`signal=${e.signal}`);
+  if (e.timedOut === true) parts.push('timedOut=true');
+  if (e.isCanceled === true) parts.push('isCanceled=true');
+  return parts.join(' ');
 }
 
 export function createClaudeCodeRuntime(
@@ -139,6 +214,7 @@ export function createClaudeCodeRuntime(
       const emitter = getEmitter(session);
       let sequence = 0;
       const traceId = input.traceId;
+      const turnStartedAt = Date.now();
 
       const emitEvent = (evt: AgentEvent): void => {
         emitter.emit('event', evt);
@@ -257,7 +333,9 @@ export function createClaudeCodeRuntime(
               usage = u as CcUsage;
             }
             const cost = e['total_cost_usd'];
-            totalCostUsd = typeof cost === 'number' ? cost : null;
+            // contract: `total_cost_usd` 缺失或 `0`（订阅路径常见）→ costUsd 写 null
+            // （见 docs/dev/spec/agent-backends/claude-code-cli.md §UsageCompleteness 表第 2 行）
+            totalCostUsd = typeof cost === 'number' && cost > 0 ? cost : null;
             continue;
           }
 
@@ -266,20 +344,32 @@ export function createClaudeCodeRuntime(
 
         await subproc;
       } catch (err) {
-        // spawn 失败 / 子进程非零退出 / 行扫错误
+        // spawn 失败 / 子进程非零退出 / 行扫错误。
+        // 日志侧的 `cause` 必须**不含 argv**——execa 的 `err.message` 和 `err.shortMessage`
+        // 都会拼接 `escapedCommand`（即完整命令行包括 argv，含 `input.text` 用户消息正文 /
+        // 可能含密钥 / PII，见 execa/lib/return/message.js）。改用 execa error 的结构化字段
+        // （`code` / `exitCode` / `signal` / `timedOut` / `name`）拼安全 cause；普通 Error 退化为 `name`。
+        // emit 的 error event payload.message 仍传 err.message 是 pre-existing 行为
+        // （daemon engine 转写到 IM `[agent error: ...] <message>`）；全链路脱敏属于
+        // 另一个 issue，本 PR 仅约束 PR 新引入的 logger.warn 一处不放大泄露面。
+        const safeCause = buildSafeCause(err);
         const message = err instanceof Error ? err.message : String(err);
         // issue #28 选 C：textBuf 已收满但子进程非零退出时不发 partial 文本到 IM
         // （避免没有"这是断片"标识的部分内容混淆用户），仅在日志记录 textBuf 长度
-        // 便于诊断"CC 完整输出后才异常退出"这一罕见路径。stream-json epic（#56）
-        // 落地后该路径语义会重构，届时再决定是否暴露 partial。
-        // 日志字段对齐 observability spec：errorKind ∈ {user,platform,agent,internal}（spec §错误日志必含），cause 是 spec 注册字段。
+        // 便于诊断"CC 完整输出后才异常退出"这一罕见路径。stream-json 主路径
+        // （ADR-0012）落地后该路径会被流式 assistant 增量 emit 重新定义失败收尾语义
+        // （见 ADR-0012 §Consequences）。
+        // 日志字段对齐 observability spec：errorKind ∈ {user,platform,agent,internal}
+        // （spec §错误日志必含，warn 级 error-like 事件同样适用），cause 与 code 是 spec 注册字段。
+        // textBufLength 单位：JS string length（UTF-16 code unit），窗口为 since turn start。
         logger.warn(
           {
-            sessionKey: session.key,
+            sessionKey: serializeSessionKey(session.key),
             traceId,
             errorKind: 'agent',
+            code: 'spawn_failed',
             textBufLength: textBuf.length,
-            cause: message,
+            cause: safeCause,
           },
           'claudecode_subproc_error',
         );
@@ -293,6 +383,33 @@ export function createClaudeCodeRuntime(
             message,
           },
         });
+        // catch 前若 stream-json 解析循环已收到 `result.usage`（CC 完整输出后才异常退出
+        // 的罕见路径），仍 emit usage 事件，避免 daemon counters / `$ 预算` 把已产生 token 成本
+        // 的一回合误算成零成本。`completeness` 按 CC contract §UsageCompleteness 的字段完整度
+        // 定义判定（与 happy path 一致），turn 失败由 turn_finished.reason='error' 表达；
+        // 不靠 completeness 区分 "turn 失败 vs usage 数据缺失"。
+        if (usage) {
+          const wallClockMs = Date.now() - turnStartedAt;
+          const partialUsage: UsageRecord = {
+            model: 'claude-code',
+            inputTokens: usage.input_tokens ?? 0,
+            outputTokens: usage.output_tokens ?? 0,
+            cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+            cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+            costUsd: totalCostUsd,
+            turnSequence: 1,
+            toolCallsThisTurn: 0,
+            wallClockMs,
+            completeness: deriveCompleteness(usage, totalCostUsd),
+          };
+          emitEvent({
+            type: 'usage',
+            traceId,
+            timestamp: new Date(),
+            sequence: sequence++,
+            payload: partialUsage,
+          });
+        }
         emitEvent({
           type: 'turn_finished',
           traceId,
@@ -315,6 +432,7 @@ export function createClaudeCodeRuntime(
         payload: { text: textBuf },
       });
 
+      const wallClockMs = Date.now() - turnStartedAt;
       const usageRecord: UsageRecord = {
         model: 'claude-code',
         inputTokens: usage?.input_tokens ?? 0,
@@ -324,8 +442,8 @@ export function createClaudeCodeRuntime(
         costUsd: totalCostUsd,
         turnSequence: 1,
         toolCallsThisTurn: 0,
-        wallClockMs: 0,
-        completeness: totalCostUsd === null ? 'partial' : 'complete',
+        wallClockMs,
+        completeness: deriveCompleteness(usage, totalCostUsd),
       };
       emitEvent({
         type: 'usage',

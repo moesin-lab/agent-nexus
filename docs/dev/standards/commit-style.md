@@ -1,17 +1,19 @@
 ---
-title: Commit 与分支命名规范
+title: Commit、PR title 与分支命名规范
 type: standards
 status: active
-summary: Conventional Commits 格式、type 枚举、breaking change 写法、分支命名格式、commit 粒度合格条件、Co-Authored-By 标签
-tags: [commit, standards, branch-naming, conventional-commits]
+summary: Conventional Commits 格式、type 枚举、subject 语义合格条件（同适用 PR title）、breaking change 写法、分支命名格式、commit 粒度、Co-Authored-By 标签
+tags: [commit, pr-title, standards, branch-naming, conventional-commits]
 related:
   - dev/process/commit-and-branch
   - dev/standards/docs-style
 ---
 
-# Commit 与分支命名规范
+# Commit、PR title 与分支命名规范
 
-本文件定义 commit message、分支名作为产物的形态合格条件。**何时打 commit / 何时合分支 / 失败如何处理**等流程编排见 [`../process/commit-and-branch.md`](../process/commit-and-branch.md)。
+本文件定义 commit message、PR title、分支名作为产物的形态合格条件。仓库走 squash merge（见 [`../process/commit-and-branch.md` §合并策略](../process/commit-and-branch.md#合并策略)），PR title 即落到 main 上的 commit subject，因此 PR title 与 commit subject 共享本文件所有规则。
+
+**何时打 commit / 何时合分支 / 失败如何处理**等流程编排见 [`../process/commit-and-branch.md`](../process/commit-and-branch.md)。
 
 ## Conventional Commits
 
@@ -96,9 +98,7 @@ BREAKING CHANGE: session key 从 (platform, channelId, userId) 改为
 
 ## Subject 语义合格条件
 
-`<subject>` 必须承载完整 thesis ——**只看 git log 这一行**、没读 issue body、没参与改动 session 的读者，要能用一句话复述出这条 commit 做了什么。
-
-squash merge 后 PR title 即落到 main 上的 commit subject，所以本节规则同时适用 PR title 与 commit subject。
+`<subject>` 必须承载完整 thesis ——**只看 git log 这一行**、没读 issue body、没参与改动 session 的读者，要能用一句话复述出这条 commit 做了什么。本节规则对 PR title 同样有效（squash merge 下两者等价，见本文件开头说明）。
 
 ### 不合格模式
 

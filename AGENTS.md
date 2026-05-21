@@ -48,7 +48,7 @@ related:
 | 写 / 维护 fixture | `docs/dev/testing/fixtures.md` |
 | 开 PR / codex review 触发 | `docs/dev/process/code-review.md` |
 | commit 流程编排（合并策略 / stacked PR） | `docs/dev/process/commit-and-branch.md` |
-| 写 commit message / 给分支命名 | `docs/dev/standards/commit-style.md` |
+| 写 commit message / PR title / 给分支命名 | `docs/dev/standards/commit-style.md` |
 | 判命名 / 函数 / 模块边界 / 注释 / 依赖引入是否合格 | `docs/dev/standards/coding.md` |
 | 引入 / 升级依赖 | `docs/dev/standards/dependencies.md` |
 | 写日志（写法约束） | `docs/dev/standards/logging.md` |

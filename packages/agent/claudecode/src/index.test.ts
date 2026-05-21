@@ -352,13 +352,9 @@ describe('createClaudeCodeRuntime.sendInput', () => {
   // stop_reason → TurnEndReason 映射的 envelope 级覆盖（取代旧 stop-reason.ts 单测）。
   // 锚点：docs/dev/spec/agent-backends/claude-code-cli.md §stop_reason 到 turn_finished.reason 的映射
   //
-  // 对 reason='error' 的几条用例（unknown / 缺字段 / tool_use），额外断言事件序列没有混入
-  // 'error' event：这样可以区分"switch default 产出 error"与"catch 早退也会产出 error" —
-  // 否则两条 error 路径无法分辨，本测试就可能假阳。
-  //
-  // `tool_use` 是 defense-in-depth：spec 把它标为"中间态、不应成为 final stop"，CC CLI 实际
-  // 也不会在 result envelope 里发它。本用例不是把 tool_use 当成"映射规则"，而是保护未来 spec
-  // 改动 / CLI 行为漂移时，非法 final stop_reason 至少落到防御性的 'error' 而非误用别的 reason。
+  // reason='error' 同时来自两条路径：switch default 与 catch 早退。下面每个用例都断言完整
+  // 事件序列以锁死走的是 envelope 正常路径，避免和早退路径串味儿。tool_use 在 spec 标为
+  // 中间态，真出现在 final result 时落到 switch default 的 error。
   it.each([
     ['end_turn', 'stop'],
     ['max_tokens', 'max_tokens'],
@@ -394,7 +390,6 @@ describe('createClaudeCodeRuntime.sendInput', () => {
 
     await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: `t-${cliReason}` });
 
-    // 走的是正常 envelope→reason 路径，不能混入 catch 早退的 'error' event
     expect(events.map((e) => e.type)).toEqual([
       'session_started',
       'text_final',
@@ -434,7 +429,6 @@ describe('createClaudeCodeRuntime.sendInput', () => {
 
     await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: 't-miss' });
 
-    // 同上：必须是 envelope 正常路径推出 'error'，不能是 catch 早退路径
     expect(events.map((e) => e.type)).toEqual([
       'session_started',
       'text_final',

@@ -94,6 +94,32 @@ BREAKING CHANGE: session key 从 (platform, channelId, userId) 改为
 - 修 bug + 顺手改别的——顺手的部分不要做，或开独立 commit
 - 纯格式化（缩进、换行）单独一个 commit
 
+## Subject 语义合格条件
+
+`<subject>` 必须承载完整 thesis ——**只看 git log 这一行**、没读 issue body、没参与改动 session 的读者，要能用一句话复述出这条 commit 做了什么。
+
+squash merge 后 PR title 即落到 main 上的 commit subject，所以本节规则同时适用 PR title 与 commit subject。
+
+### 不合格模式
+
+| 不做 | 做 |
+|---|---|
+| `inline stopReasonToEnum + 加固 envelope→reason 测试覆盖` | 找统一动作覆盖；找不到 → 拆 commit / 拆 PR |
+| `emoji-safe slicing + PartialSendError 保留 sentIds` | 同上（这条 `+` 通常还是 PR scope 该拆的信号） |
+| `子进程句柄挂 session，interrupt / stopSession 真实生效` | 选 mechanism 或 outcome 之一作 subject |
+| `钉死 UsageRecord.completeness 语义（选 A）` | 写实际选了什么（如 `按 $ 视图可信度三态判定`） |
+| `partial textBuf 在异常退出时落日志（option C）` | 同上，把 option 字母换成实际方案描述 |
+| `补 X 视角 + 反例` | 用承载 thesis 的强动词（如 `加可执行判据`） |
+
+### 诊断信号
+
+写完 subject 跑这套自检：
+
+- **有 `+` / `、` / `,` / `；` 把两件事并列**：多半 thesis 没浓缩。问：两件事服务同一动作吗？是 → 用动作覆盖；不是 → **拆 commit / 拆 PR**（title 写不顺往往是 scope 该拆的信号，不只是写法问题）。
+- **括号里有 `(选 A)` / `(option C)` 这种内部 reference**：把选项名换成实际选的内容。"选 A" 不传递语义，"按 $ 视图可信度三态判定" 才传递。
+- **subject 里有刚发明的 framing 词或抽象名词**（"加固覆盖"、"冷上下文读者视角"等）：留给 body / doc，subject 用读者首读就能消化的具象内容。
+- **想用"补 / 加固 / 完善 / 整理"等弱动词**：通常是 thesis 没找到，换强动词（`钉死` / `inline` / `禁` / `让 X 生效`）逼自己说清楚到底改了什么。
+
 ## Co-Authored-By
 
 使用 AI 辅助生成的 commit，在 footer 加上对应的 Co-Authored-By 行，便于审计：
@@ -121,4 +147,7 @@ reviewer 在 PR 里看到下列模式应直接拒绝：
 - 未声明 breaking change 但实际改动破坏了对外契约
 - 分支名不符合 `<type>/<short-description>` 格式或超过 50 字符
 - 一个 commit 同时做了"新增功能 + 顺手重构"等多件逻辑事
+- subject 用 `+` / `、` / `,` 把两件 mechanic 并列（违反 [§Subject 语义合格条件](#subject-语义合格条件)，多半 thesis 没浓缩或 PR 该拆）
+- subject 含 `(选 A)` / `(option C)` 等只在 issue body 才有意义的内部 reference
+- subject 含改动期间发明的 framing 词或抽象名词，未替换为具象内容
 - AI 辅助生成的 commit 缺 `Co-Authored-By` footer

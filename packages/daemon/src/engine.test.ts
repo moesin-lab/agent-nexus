@@ -582,4 +582,187 @@ describe('Engine', () => {
     expect(out.text).toContain('spawn_failed');
     expect(out.text).toContain('boom');
   });
+
+  // inline safeSend 后三处 send 失败的本地 try/catch 行为各自 lock 一遍，
+  // 防止任一 callsite 的字段 / await / catch 漂移到 handlerErr 兜底路径。
+  //
+  // 每个 case 都断言：dispatch 不 throw + 日志事件名 platform_send_failed +
+  // 字段含 traceId/sessionKey/err + 没有升级为 agent_event_handler_failed。
+
+  function makeMockLogger(): Logger {
+    return {
+      info: vi.fn(),
+      debug: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      trace: vi.fn(),
+      fatal: vi.fn(),
+      child: vi.fn(),
+    } as unknown as Logger;
+  }
+
+  function assertSendFailedLog(
+    mockLogger: Logger,
+    expectedErr: Error,
+  ): void {
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    const sendFailedLog = errorCalls.find(([, msg]) => msg === 'platform_send_failed');
+    expect(sendFailedLog).toBeDefined();
+    expect(sendFailedLog![0]).toMatchObject({
+      traceId: 't-1',
+      err: expectedErr,
+    });
+    expect(sendFailedLog![0]).toHaveProperty('sessionKey');
+    // 同步/异步 throw 都必须被本地 catch 抓住，不能升级到 handlerErr / 外层 dispatch catch
+    const handlerErrLog = errorCalls.find(([, msg]) => msg === 'agent_event_handler_failed');
+    expect(handlerErrLog).toBeUndefined();
+    const dispatchFailedLog = errorCalls.find(([, msg]) => msg === 'dispatch_failed');
+    expect(dispatchFailedLog).toBeUndefined();
+  }
+
+  it('platform.send 失败（/new ack 路径）：错误被吞 + 写 platform_send_failed 含 traceId/sessionKey/err', async () => {
+    const platform = makePlatform();
+    const sendErr = new Error('platform down /new');
+    (platform.send as ReturnType<typeof vi.fn>).mockRejectedValueOnce(sendErr);
+
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: mockLogger,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    await expect(dispatchHandler(makeEvent('/new'))).resolves.toBeUndefined();
+
+    assertSendFailedLog(mockLogger, sendErr);
+    // /new ack 路径不走 agent
+    expect(agent.startSession).not.toHaveBeenCalled();
+    expect(agent.stopSession).not.toHaveBeenCalled();
+  });
+
+  it('platform.send 失败（agent error 回送路径）：错误被吞 + 写 platform_send_failed + 后续仍走 stopSession', async () => {
+    const platform = makePlatform();
+    const sendErr = new Error('platform down agent_error');
+    (platform.send as ReturnType<typeof vi.fn>).mockRejectedValueOnce(sendErr);
+
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: mockLogger,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    agent.queueEvents([
+      ev('error', { errorKind: 'spawn_failed', message: 'boom' }),
+      ev('turn_finished', { reason: 'error', turnSequence: 1 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    await expect(dispatchHandler(makeEvent('hello'))).resolves.toBeUndefined();
+
+    assertSendFailedLog(mockLogger, sendErr);
+    // error 后 turn_finished 仍要 stopSession（资源清理）
+    expect(agent.stopSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('platform.send 失败（turn_finished 回送路径）：错误被吞 + 写 platform_send_failed + 仍走 stopSession', async () => {
+    const platform = makePlatform();
+    const sendErr = new Error('platform down turn_finished');
+    (platform.send as ReturnType<typeof vi.fn>).mockRejectedValueOnce(sendErr);
+
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: mockLogger,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-1' }),
+      ev('text_final', { text: 'reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    await expect(dispatchHandler(makeEvent('hello'))).resolves.toBeUndefined();
+
+    assertSendFailedLog(mockLogger, sendErr);
+    expect(agent.stopSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('agent.stopSession 抛出：错误被吞 + 写 agent_stop_session_failed 含 traceId/sessionKey/err', async () => {
+    // 7a1f916 改了 stopSession 失败日志字段（加了 traceId/sessionKey），
+    // 这里 lock 住，防止后续误删字段或 inline 时漏带 context。
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const stopErr = new Error('stop boom');
+    (agent.stopSession as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+      throw stopErr;
+    });
+
+    const store = new SessionStore();
+    const mockLogger = {
+      info: vi.fn(),
+      debug: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      trace: vi.fn(),
+      fatal: vi.fn(),
+      child: vi.fn(),
+    } as unknown as Logger;
+
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: mockLogger,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-1' }),
+      ev('text_final', { text: 'reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    await expect(dispatchHandler(makeEvent('hello'))).resolves.toBeUndefined();
+
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    const stopFailedLog = errorCalls.find(([, msg]) => msg === 'agent_stop_session_failed');
+    expect(stopFailedLog).toBeDefined();
+    expect(stopFailedLog![0]).toMatchObject({
+      traceId: 't-1',
+      err: stopErr,
+    });
+    expect(stopFailedLog![0]).toHaveProperty('sessionKey');
+
+    // 同步 throw 应被本地 catch 兜住，不应升级成 handlerErr / agent_event_handler_failed
+    const handlerErrLog = errorCalls.find(([, msg]) => msg === 'agent_event_handler_failed');
+    expect(handlerErrLog).toBeUndefined();
+  });
 });

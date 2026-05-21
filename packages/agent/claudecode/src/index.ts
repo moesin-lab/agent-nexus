@@ -18,13 +18,12 @@ import type {
   AgentSession,
   SessionConfig,
   SessionKey,
+  TurnEndReason,
   UsageRecord,
 } from '@agent-nexus/protocol';
 import type { Logger } from '@agent-nexus/daemon';
-import { stopReasonToEnum } from './stop-reason.js';
 
 export { runCompatibilityProbe, AgentSpawnFailedError } from './probe.js';
-export { stopReasonToEnum } from './stop-reason.js';
 
 export interface ClaudeCodeRuntimeOptions {
   claudeBin: string;
@@ -588,7 +587,21 @@ export function createClaudeCodeRuntime(
           // - 优先用 CC stopReason 映射（end_turn → stop / interrupted → user_interrupt / …）
           // - 兜底：若调用方主动 interrupt 但 CC 仍 exit 0 且未输出 stopReason，
           //   不能让默认值跌到 'error'，应表达为 user_interrupt
-          const mappedReason = stopReasonToEnum(stopReason);
+          // docs/dev/spec/agent-backends/claude-code-cli.md §stop_reason 到 turn_finished.reason 的映射
+          let mappedReason: TurnEndReason;
+          switch (stopReason) {
+            case 'end_turn':
+              mappedReason = 'stop';
+              break;
+            case 'max_tokens':
+              mappedReason = 'max_tokens';
+              break;
+            case 'interrupted':
+              mappedReason = 'user_interrupt';
+              break;
+            default:
+              mappedReason = 'error';
+          }
           const finalReason =
             inflightFlag.interruptRequested && mappedReason === 'error'
               ? 'user_interrupt'

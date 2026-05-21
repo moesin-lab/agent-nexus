@@ -40,6 +40,7 @@ const agentCaps: AgentCapabilitySet = {
   supportsStreaming: false,
   supportsToolCallEvents: false,
   supportsInterrupt: false,
+  supportsStdinInterrupt: false,
 };
 
 const SESSION_KEY: SessionKey = {

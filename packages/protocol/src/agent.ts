@@ -46,8 +46,10 @@ export interface UsageRecord {
 /**
  * docs/dev/spec/agent-runtime.md §AgentEvent
  *
- * MVP 子集：仅 session_started / text_final / turn_finished / usage / error / session_stopped。
- * thinking / text_delta / tool_call_* 留给 stream-json 升级 PR。
+ * Protocol union 已对齐 spec 全集（ADR-0012 决策点 1 / Option 1A）。
+ * Runtime 本期 PR-B 只实际 emit text_delta / tool_call_started / tool_call_finished；
+ * thinking / tool_call_progress 在 protocol 上声明但当前无 runtime 来源——
+ * 见 docs/dev/spec/agent-runtime.md §"声明位 vs 实际产出"。
  */
 export type AgentEvent =
   | {
@@ -61,11 +63,67 @@ export type AgentEvent =
       };
     }
   | {
+      /** 内部推理片段（可选；声明位——当前无 runtime 来源，CC thinking content part 预留） */
+      type: 'thinking';
+      traceId: string;
+      timestamp: Date;
+      sequence: number;
+      payload: { text: string };
+    }
+  | {
+      /** 文本增量（流式输出，token-by-token）；拼合等于随后的 text_final.text */
+      type: 'text_delta';
+      traceId: string;
+      timestamp: Date;
+      sequence: number;
+      payload: { text: string };
+    }
+  | {
       type: 'text_final';
       traceId: string;
       timestamp: Date;
       sequence: number;
       payload: { text: string };
+    }
+  | {
+      /** 工具调用开始；必有对应 tool_call_finished（顺序保证见 spec §顺序保证） */
+      type: 'tool_call_started';
+      traceId: string;
+      timestamp: Date;
+      sequence: number;
+      payload: {
+        callId: string;
+        toolName: string;
+        inputSummary: string;
+      };
+    }
+  | {
+      /** 工具调用中间进度（可选；声明位——当前无 runtime 来源） */
+      type: 'tool_call_progress';
+      traceId: string;
+      timestamp: Date;
+      sequence: number;
+      payload: {
+        callId: string;
+        note: string;
+      };
+    }
+  | {
+      /**
+       * 工具调用完成。
+       * resultSummary 含义：ADR-0012 决策点 1-tr-A——CC user/tool_result 合入此字段。
+       * 前提：CC 对每个 tool_use_id 恰好回一条终态 tool_result（fixture 验证义务见 PR-B）。
+       */
+      type: 'tool_call_finished';
+      traceId: string;
+      timestamp: Date;
+      sequence: number;
+      payload: {
+        callId: string;
+        toolName: string;
+        status: 'ok' | 'error';
+        resultSummary: string;
+      };
     }
   | {
       type: 'usage';

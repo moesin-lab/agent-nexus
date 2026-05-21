@@ -137,6 +137,8 @@ export function createClaudeCodeRuntime(
     supportsStreaming: false,
     supportsToolCallEvents: false,
     supportsInterrupt: true,
+    // ADR-0012 决策点 2 / Option 2A：SIGINT 主路径，stdin control 保留设施位但默认关闭
+    supportsStdinInterrupt: false,
   };
 
   const runtime: AgentRuntime = {

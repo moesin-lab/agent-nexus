@@ -25,12 +25,18 @@ export interface PlatformAdapter {
   react(ref: MessageRef, emoji: string): Promise<void>;
 }
 
-/** MVP 简化版能力声明；完整版见 docs/dev/spec/agent-runtime.md */
+/** 能力声明；完整版见 docs/dev/spec/agent-runtime.md */
 export interface AgentCapabilitySet {
   supportsThinking: boolean;
   supportsStreaming: boolean;
   supportsToolCallEvents: boolean;
   supportsInterrupt: boolean;
+  /**
+   * stdin `control/interrupt` 路径是否启用。
+   * false（默认）→ interrupt() 走 SIGINT；true → 走 stdin control 消息，SIGINT 退化为 fallback。
+   * ADR-0012 决策点 2 / Option 2A：暂保持 SIGINT 主路径；反转走独立 ADR。
+   */
+  supportsStdinInterrupt: boolean;
 }
 
 /** docs/dev/spec/agent-runtime.md §AgentRuntime */

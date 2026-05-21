@@ -115,9 +115,9 @@ BREAKING CHANGE: session key 从 (platform, channelId, userId) 改为
 
 写完 subject 跑这套自检：
 
-- **有 `+` / `、` / `,` / `；` 把两件事并列**：多半 thesis 没浓缩。问：两件事服务同一动作吗？是 → 用动作覆盖；不是 → **拆 commit / 拆 PR**（title 写不顺往往是 scope 该拆的信号，不只是写法问题）。
+- **有 `+` / `、` / `,` / `，` / `;` / `；` 把两件独立 mechanic / action 并列**：多半 thesis 没浓缩。问：两件事服务同一动作吗？是 → 用动作覆盖；不是 → **拆 commit / 拆 PR**（title 写不顺往往是 scope 该拆的信号，不只是写法问题）。注意符号本身不违规，**只在分隔独立改动时违规**——`feat(perf): N+1 query 修复` 的 `+` 是数学符号、`fix(daemon): SIGINT/SIGTERM 链路统一` 的 `/` 是同质 API 列举、`fix(claudecode): 子进程 SIGINT、SIGTERM、SIGKILL 三档处理` 的 `、` 是同质枚举，都合法。
 - **括号里有 `(选 A)` / `(option C)` 这种内部 reference**：把选项名换成实际选的内容。"选 A" 不传递语义，"按 $ 视图可信度三态判定" 才传递。
-- **subject 里有刚发明的 framing 词或抽象名词**（"加固覆盖"、"冷上下文读者视角"等）：留给 body / doc，subject 用读者首读就能消化的具象内容。
+- **subject 里有刚发明的 framing 词或抽象名词、且未在 subject 内被具体反例 / 协议名 / API 名展开**（如裸 "加固覆盖"、"冷上下文读者视角"）：留给 body / doc，subject 用读者首读就能消化的具象内容。判据是"framing 词**替代**了具体改动"，不是"含 framing 词"——"语义 / 策略 / 契约 / 规则" 本身合格，只要后面跟得上具象对象。
 - **想用"补 / 加固 / 完善 / 整理"等弱动词**：通常是 thesis 没找到，换强动词（`钉死` / `inline` / `禁` / `让 X 生效`）逼自己说清楚到底改了什么。
 
 ## Co-Authored-By
@@ -133,7 +133,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 PR 合入 main 时的产物形态判据：
 
 - CI 全绿（unit + integration 必跑层全过；E2E / Eval 按 [`../process/tdd.md` §运行节奏与 CI 门槛](../process/tdd.md#运行节奏与-ci-门槛) 判定）
-- 所有 commit message 符合本文件 §Conventional Commits + §Commit 粒度
+- PR title 与所有 commit message 符合本文件 §Conventional Commits、§Commit 粒度、§Subject 语义合格条件
 - CHANGELOG 更新（若改动影响用户）
 - 走 squash merge（按 [`../process/commit-and-branch.md` §合并策略](../process/commit-and-branch.md#合并策略)）
 
@@ -147,7 +147,7 @@ reviewer 在 PR 里看到下列模式应直接拒绝：
 - 未声明 breaking change 但实际改动破坏了对外契约
 - 分支名不符合 `<type>/<short-description>` 格式或超过 50 字符
 - 一个 commit 同时做了"新增功能 + 顺手重构"等多件逻辑事
-- subject 用 `+` / `、` / `,` 把两件 mechanic 并列（违反 [§Subject 语义合格条件](#subject-语义合格条件)，多半 thesis 没浓缩或 PR 该拆）
+- subject 用 `+` / `、` / `,` / `，` / `;` / `；` 把两件独立 mechanic / action 并列（违反 [§Subject 语义合格条件](#subject-语义合格条件)，多半 thesis 没浓缩或 PR 该拆；符号本身不违规，分隔独立改动才违规——`N+1` / `SIGINT/SIGTERM` 等同质列举不算）
 - subject 含 `(选 A)` / `(option C)` 等只在 issue body 才有意义的内部 reference
-- subject 含改动期间发明的 framing 词或抽象名词，未替换为具象内容
+- subject 含改动期间发明的 framing 词或抽象名词、且未在 subject 内被具体反例 / 协议名 / API 名展开补足
 - AI 辅助生成的 commit 缺 `Co-Authored-By` footer

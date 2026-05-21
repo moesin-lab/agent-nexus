@@ -320,21 +320,25 @@ describe('createClaudeCodeRuntime.sendInput', () => {
     expect(opts.timeout).toBe(300_000);
   });
 
-  // issue #27：completeness 选 A（$ 视图可信度）的语义合约
-  // 显式声明 tuple 类型，避免 [number | null, string] 通过 `null as unknown as undefined` 双重 cast 兜
-  describe.each<[number | null, string]>([
-    [0.01, 'complete'],
-    [0, 'partial'],
-    [null, 'partial'],
-  ])('total_cost_usd=%p → completeness=%s', (cost, expected) => {
-    it('maps costUsd to expected completeness', async () => {
+  // issue #27 / ADR-0013：completeness $ 视图可信度的语义合约（stream-json 集成路径）。
+  // 这里只测 JSON-roundtrippable 输入；NaN / Infinity / -Infinity / 类型异常等非 JSON
+  // 可表达分支由 usage-normalize.test.ts 纯函数单元测试覆盖（避免 JSON.stringify(NaN)
+  // === "null" 造成的假覆盖）。
+  describe.each<[unknown, number | null, 'complete' | 'partial']>([
+    [0.01, 0.01, 'complete'],
+    [0, 0, 'partial'],
+    [undefined, null, 'partial'],
+    [-1, null, 'partial'],
+    ['0.01', null, 'partial'],
+  ])('total_cost_usd=%p → costUsd=%p / completeness=%s', (rawCost, expectedCost, expected) => {
+    it('maps backend cost field to UsageRecord per ADR-0013', async () => {
       const resultEvent: Record<string, unknown> = {
         type: 'result',
         stop_reason: 'end_turn',
         usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
       };
-      // cost === null 表达"字段缺失"：不写进 JSON
-      if (cost !== null) resultEvent['total_cost_usd'] = cost;
+      // undefined 表达"字段缺失"：不写进 JSON
+      if (rawCost !== undefined) resultEvent['total_cost_usd'] = rawCost;
       const lines = [
         JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-c', cwd: '/x' }),
         JSON.stringify({
@@ -356,12 +360,128 @@ describe('createClaudeCodeRuntime.sendInput', () => {
       const session = runtime.startSession(sessionKey, sessionConfig);
       const events = await collectEvents(runtime, session);
 
-      await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: `t-c-${String(cost)}` });
+      await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: `t-c-${String(rawCost)}` });
 
       const usageEvt = events.find((e) => e.type === 'usage');
       if (usageEvt?.type !== 'usage') throw new Error('expected usage event');
       expect(usageEvt.payload.completeness).toBe(expected);
+      expect(usageEvt.payload.costUsd).toBe(expectedCost);
+      // ADR-0013：MVP 阶段任何路径都不产生 missing
+      expect(usageEvt.payload.completeness).not.toBe('missing');
     });
+  });
+
+  // backend usage 形态无效场景（spec "缺事件 = 异常" 的形态校验扩展，见 usage-normalize.isValidCcUsage）
+  describe.each<[string, unknown]>([
+    ['empty object', {}],
+    ['array', []],
+    ['string token field', { input_tokens: '1', output_tokens: 2 }],
+    ['missing output_tokens', { input_tokens: 1 }],
+  ])('result.usage 形态无效（%s）', (label, badUsage) => {
+    it('→ emit error{agent_no_usage} 不合成 usage', async () => {
+      const lines = [
+        JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-bad', cwd: '/x' }),
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'p' }] },
+        }),
+        JSON.stringify({ type: 'result', stop_reason: 'end_turn', usage: badUsage }),
+      ];
+      mockedExeca.mockReturnValueOnce(
+        makeMockSubproc(lines) as unknown as ReturnType<typeof execa>,
+      );
+
+      const runtime = createClaudeCodeRuntime({
+        claudeBin: 'claude',
+        allowedTools: ['Bash'],
+        defaultWorkingDir: '/x',
+        logger: fakeLogger,
+      });
+      const session = runtime.startSession(sessionKey, sessionConfig);
+      const events = await collectEvents(runtime, session);
+
+      await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: `t-bad-${label}` });
+
+      const types = events.map((e) => e.type);
+      expect(types).not.toContain('usage');
+      expect(types).not.toContain('text_final');
+      const errEvt = events.find((e) => e.type === 'error');
+      if (errEvt?.type !== 'error') throw new Error('expected error event');
+      expect(errEvt.payload.errorKind).toBe('agent_no_usage');
+    });
+  });
+
+  it('子进程正常退出但 result 缺 usage payload → emit error{agent_no_usage} 不合成 usage', async () => {
+    // backend 异常路径：spawn 成功，result 事件来了但没 usage 字段
+    const lines = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-nu', cwd: '/x' }),
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'partial' }] },
+      }),
+      JSON.stringify({ type: 'result', stop_reason: 'end_turn' }), // 注意：无 usage
+    ];
+    mockedExeca.mockReturnValueOnce(
+      makeMockSubproc(lines) as unknown as ReturnType<typeof execa>,
+    );
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: 't-nu' });
+
+    const types = events.map((e) => e.type);
+    expect(types).not.toContain('usage');
+    expect(types).not.toContain('text_final');
+    const errEvt = events.find((e) => e.type === 'error');
+    if (errEvt?.type !== 'error') throw new Error('expected error event');
+    expect(errEvt.payload.errorKind).toBe('agent_no_usage');
+    const lastEvt = events[events.length - 1];
+    if (lastEvt?.type !== 'turn_finished') throw new Error('expected turn_finished tail');
+    expect(lastEvt.payload.reason).toBe('error');
+  });
+
+  it('子进程正常退出但无 result event → emit error{agent_no_result} 不合成 usage', async () => {
+    // backend 异常路径：spawn 成功，stream-json 只发 system/init 与 assistant，无 result
+    const lines = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sid-nr', cwd: '/x' }),
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'partial' }] },
+      }),
+    ];
+    mockedExeca.mockReturnValueOnce(
+      makeMockSubproc(lines) as unknown as ReturnType<typeof execa>,
+    );
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    await runtime.sendInput(session, { type: 'user_message', text: 'hi', traceId: 't-nr' });
+
+    const types = events.map((e) => e.type);
+    // 不能出现 usage（spec "缺事件 = 异常"）也不能出现 text_final
+    expect(types).not.toContain('usage');
+    expect(types).not.toContain('text_final');
+    // 必须以 error + turn_finished{error} 收尾
+    const errEvt = events.find((e) => e.type === 'error');
+    if (errEvt?.type !== 'error') throw new Error('expected error event');
+    expect(errEvt.payload.errorKind).toBe('agent_no_result');
+    const lastEvt = events[events.length - 1];
+    if (lastEvt?.type !== 'turn_finished') throw new Error('expected turn_finished tail');
+    expect(lastEvt.payload.reason).toBe('error');
   });
 
   it('execa throw → emit error + turn_finished{error}', async () => {

@@ -60,28 +60,24 @@ export interface DiscordPlatformOptions {
 }
 
 /**
- * 单切片最多容纳的 UTF-16 code unit 数。Discord docs 声明 message content 上限
- * "2000 characters"（未指定字符口径——可能是 code point / grapheme / UTF-16）；
- * 本实现按 JS UTF-16 code unit 做保守预算，默认 1900 留 100 单位余量。
- * 该值是预算上限（不是固定切片长度）——单个 code point 最多占 2 个 UTF-16 单位
- * （surrogate pair），所以 100 余量足够任何 code point 跨片场景。
+ * 单切片字符预算（UTF-16 code unit）。Discord 文档说 message content 上限 "2000
+ * characters" 但没明指口径（code point / UTF-16 / grapheme 都可能），保守按最严的
+ * UTF-16 取 1900。
  */
 export const SLICE_SIZE = 1900;
 
 export type { ReplyMode } from './state.js';
 
 /**
- * 多片 send 中途失败时抛出，sentIds 列出已落地的消息 id。
+ * 多片 send 中途失败时抛出。`sentIds` 列出已落地的消息 id，顺序对应 `buildSlices`
+ * 的输出 —— 依赖 `send()` 串行 await；如果未来改成并发，需要重新定义"前 N 片"语义。
  *
- * 序列化语义：`sentIds` / `totalSlices` 作为 enumerable own props，会被 pino 默认 err
- * serializer 平铺到日志的 `err` 子对象。`cause` 走 pino 自己的 cause-chain 处理
- * （折进 stack 末尾），**cause 上的附加字段（如 `DiscordAPIError.code` / `status`）
- * 不会作为顶层字段输出**——需要看 Discord 错误码时仍要展开 cause；该缺口由 daemon
- * engine 错误日志契约整体落地时解决（见 spec/infra/observability.md §错误日志必含 +
- * spec/infra/errors.md）。
- *
- * 顺序契约：`sentIds` 按 `buildSlices` 输出顺序排列，依赖 send() 串行 await 的实现。
- * 改并发（如 `Promise.allSettled`）需重新定义"前 N 片"语义。
+ * 日志序列化：`sentIds` / `totalSlices` 是 enumerable own props，pino 默认 err
+ * serializer 会平铺到 `err.sentIds` / `err.totalSlices`。`cause` 走 pino 自身的
+ * cause-chain（折进 stack 末尾），cause 上的字段（如 `DiscordAPIError.code` /
+ * `status`）不会作为顶层字段输出 —— 想查 Discord 错误码要自行展开 cause 链。
+ * 这个缺口由 daemon 错误日志契约整体落地时收口，见
+ * spec/infra/observability.md §错误日志必含 + spec/infra/errors.md。
  */
 export class PartialSendError extends Error {
   public readonly sentIds: string[];
@@ -99,15 +95,14 @@ export class PartialSendError extends Error {
 }
 
 /**
- * 按 UTF-16 code unit 预算切片，迭代单位是 code point（`for…of` 行为）。
- * 切点不会落在 surrogate pair 内部，因此基本 emoji 不会被劈成 `�`。
+ * 按 UTF-16 code unit 预算切片，迭代单位是 code point（`for…of`），切点不落在
+ * surrogate pair 内部 —— 基本 emoji 不会变成 `�`。
  *
- * 已知限制：grapheme cluster（含 ZWJ 序列 / VS-16 / 国旗 / 肤色修饰符）
- * 仍可能在 code point 之间切——这是 BMP+emoji 约 95% 视觉场景的折中实现。
- * 完全正确需要 `Intl.Segmenter`，留 TODO 等流式 edit 主路径替换掉切片机制
- * （issue #56 stream-json epic 后切片会大幅缩减）。
+ * 已知缺口：grapheme cluster（ZWJ 序列 / VS-16 / 国旗 / 肤色修饰）仍可能在 code point
+ * 之间被切；测试里有 known-degenerate 用例钉死当前行为。彻底正确要 `Intl.Segmenter`，
+ * 留到 stream-json epic（#56）替换整套切片机制时一并处理。
  *
- * 空串返 `['']` 以保证 caller 总能拿到至少一条 sendable 消息。
+ * 空串返 `['']` 以保 caller 总能拿到至少一条 sendable 消息。
  */
 export function buildSlices(text: string, maxUtf16: number = SLICE_SIZE): string[] {
   if (text.length === 0) return [''];
@@ -117,7 +112,7 @@ export function buildSlices(text: string, maxUtf16: number = SLICE_SIZE): string
   for (const codePoint of text) {
     const cpLen = codePoint.length;
     if (cpLen > maxUtf16) {
-      // 预算比单个 code point 还小 → 退化成强行切（不可能在正常 ≥2 的预算下命中）
+      // 防御性兜底：预算比单个 code point 还小时强行切；正常预算（≥2）下不会命中
       if (current.length > 0) {
         slices.push(current);
         current = '';
@@ -381,8 +376,9 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
           sentIds.push(msg.id);
         }
       } catch (err) {
-        // 中途失败：上抛 PartialSendError 保留已发的 sentIds，让上层日志
-        // 可见"哪些已送出"，避免只剩"send_failed"什么都不知道的现场。
+        // 包成 PartialSendError 而不是直接 rethrow：保留已发出的 sentIds，让上层日志
+        // 能看到"中断在第几片"。直接 rethrow 时栈帧销毁，daemon 那边只剩孤零零的
+        // platform_send_failed，无法重建已落地的消息序列。
         throw new PartialSendError({
           sentIds,
           totalSlices: slices.length,
@@ -396,7 +392,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
         throw new Error('platform-discord: send produced no message');
       }
 
-      // Collect every slice's ID into messageIds; messageId points at the last one (single-slice compat)
+      // messageIds 列全部切片 id；messageId 指向最后一片（单片场景兼容）
       // → docs/dev/spec/platform-adapter.md §MessageRef
       return {
         platform: 'discord',

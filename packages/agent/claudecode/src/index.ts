@@ -319,7 +319,7 @@ export function createClaudeCodeRuntime(
         payload: usageRecord,
       });
 
-      // docs/dev/spec/agent-backends/claude-code-cli.md §stop_reason 映射
+      // docs/dev/spec/agent-backends/claude-code-cli.md §stop_reason 到 turn_finished.reason 的映射
       let turnReason: TurnEndReason;
       switch (stopReason) {
         case 'end_turn':

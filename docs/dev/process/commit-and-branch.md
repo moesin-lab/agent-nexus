@@ -12,7 +12,7 @@ related:
 
 # Commit 与分支编排
 
-本文件编排"何时开分支、何时打 commit、何时合并、失败如何处理"。**commit message 与分支名的产物形态合格条件**（Conventional Commits 格式、type 枚举、breaking change 写法、分支命名规则、commit 粒度合格条件、Co-Authored-By footer）住 [`../standards/commit-style.md`](../standards/commit-style.md)，本文件不复述。
+本文件编排"何时开分支、何时打 commit、何时合并、失败如何处理"。**commit message、PR title、分支名的产物形态合格条件**（Conventional Commits 格式、type 枚举、subject 语义合格条件、breaking change 写法、分支命名规则、commit 粒度合格条件、Co-Authored-By footer）住 [`../standards/commit-style.md`](../standards/commit-style.md)，本文件不复述。
 
 ## 分支先行（硬性要求）
 
@@ -57,4 +57,4 @@ main
 - 禁止跳过 hook：`--no-verify` 只有在 hook 本身出 bug 且得到维护者同意时才用
 - 禁止在 `main` 上直接 commit / push 未经 PR 的改动
 
-commit message 与分支名的合格条件违反（含 `wip` 信息、无 type 前缀、分支名超过 50 字符等）由 reviewer 拒绝——见 [`../standards/commit-style.md` §Reviewer 拒绝条件](../standards/commit-style.md#reviewer-拒绝条件)。
+commit message、PR title、分支名的合格条件违反（含 `wip` 信息、无 type 前缀、subject 未承载 thesis、分支名超过 50 字符等）由 reviewer 拒绝——见 [`../standards/commit-style.md` §Reviewer 拒绝条件](../standards/commit-style.md#reviewer-拒绝条件)。

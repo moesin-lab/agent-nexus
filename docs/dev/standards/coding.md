@@ -62,6 +62,18 @@ related:
 - 外部约束（协议要求、三方 bug workaround）
 - TODO / FIXME 必须带 issue 编号：`// TODO(#42): ...`
 
+### 视角：写给冷上下文读者
+
+写每条注释时，心里设一个**没参与本次 session、不知道改动历史**的 reader（未来的 agent，或新加入的人）。他们读到代码时只会问几类问题——注释只回答这些：
+
+- 为什么是这个数 / 阈值？（`SLICE_SIZE = 1900` 会被问"为啥不是 2000"）
+- 这个分支什么时候触发？（看起来"不可能"的 fallback / catch / guard）
+- 这里有哪些已知坑？（哪些字段 logger 不会平铺、哪些 emoji 边界会切坏）
+- 谁来把这个坑收口？（指向 spec / ADR / issue）
+- 为什么不是更显然的别的写法？（为什么包成 typed error 而不是直接 rethrow）
+
+不要复述代码本身已经说清的事（函数名、类型签名、变量名）；不要做教科书延伸（"surrogate pair 占 2 个 UTF-16 单位"、"WeakMap GC 时机"），除非阈值或分支直接由它推出。
+
 ### 做 / 不做
 
 | 不做 | 做 |
@@ -69,6 +81,9 @@ related:
 | `// 发送消息` 之前是 `send(msg)` | 不加（代码自己说清楚了） |
 | `// hack: 因为 XX API 返回不一致这里绕一下` | 好的——解释了 why |
 | `// 用于后续可能的 Y 功能` | 不加（YAGNI） |
+| `// 覆盖 BMP+emoji 约 95% 视觉场景的折中实现` | 换成可验证表述（"测试里有 known-degenerate 用例钉死当前行为"） |
+| `// defense-in-depth: 防 spec 漂移` | 写清楚防什么（"防非法 stop_reason 落到合法 reason"） |
+| 行内 `// Collect every slice's ID into messageIds` | 中文写，且不复述代码本身（说"为什么有两个字段"） |
 
 ## 依赖
 

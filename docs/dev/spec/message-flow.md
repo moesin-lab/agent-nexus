@@ -87,8 +87,8 @@ contracts:
   - 解析后端 stdout 为 AgentEvent
     （EventType 完整枚举权威源：agent-runtime.md §AgentEvent §EventType；含
      session_started / thinking / text_delta / text_final / tool_call_started /
-     tool_call_progress / tool_call_finished / turn_finished / usage / error /
-     session_stopped）
+     tool_call_progress / tool_result / tool_call_finished / turn_finished / usage /
+     error / session_stopped）
   - tool 调用前 daemon.toolguard 校验（见下文 §工具边界校验）
         │
         │  (2) AgentEvent 流（push 给 daemon）

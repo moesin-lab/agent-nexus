@@ -183,7 +183,7 @@ Agent 输出是流式的（`text_delta`）。适配到 IM 的策略：
 - 优点：实时反馈
 - 缺点：消息数不变但编辑次数多；Discord 对 edit 也有 rate limit
 
-MVP 优先实现模式 A；模式 B 已由 [ADR-0012](../adr/0012-claudecode-stream-json-mainline.md)（stream-json 主路径切换）评审通过，作为 stream-json 切换后的增强落地——节流窗口 / edit 周期等数值见 [`infra/cost-and-limits.md`](infra/cost-and-limits.md)，平台 `edit()` / capability 见 [`platform-adapter.md`](platform-adapter.md)。
+MVP 优先实现模式 A；模式 B 的协议契约已由 [ADR-0012](../adr/0012-claudecode-stream-json-mainline.md)（stream-json 主路径切换）评审通过（取代原"独立 ADR 中评审"占位）。MVP 仍默认模式 A；模式 B 的具体落地（节流数值、平台 `edit()` capability）随 ADR-0012 PR-C 及配套 spec 更新。
 
 ## 控制语义
 

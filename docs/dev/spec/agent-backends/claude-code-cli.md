@@ -156,7 +156,7 @@ MVP 只依赖两类输入：
 | `stream_event`（`event.type:content_block_delta`，`delta.type:text_delta`；**仅 `--include-partial-messages` 下出现**，Anthropic SSE 包裹，不在 assistant content） | `text_delta`（默认模板无此事件，攒整段走 `text`→`text_final`） |
 | `assistant / tool_use` | `tool_call_started`（`callId` ← `tool_use.id`） |
 | `user / tool_result` | `tool_result`（独立事件；`content` 按 [`agent-runtime.md`](../agent-runtime.md) ToolResultContent 判别优先级映射，`isError` ← `is_error`，`callId` ← `tool_use_id`，同 `tool_use_id` 多条按到达序 `resultSequence` 0+ 递增）¹ |
-| （工具块终结，无独立 CC 事件，runtime 合成） | `tool_call_finished`：runtime 在该 `tool_use_id` 结果流终结时合成；`callId` ← 对应 `tool_call_started.callId`、`toolName` ← 缓存的 `tool_use.name`；`status` 由工具块**终结态**决定（**不得仅凭某条中间 result 的 `is_error` 推导**）——0-result 异常终止、或终结该 `tool_use_id` 的 result 为 error 且无后续恢复 → `error`，中断 / 取消 → `cancelled`，否则 `ok`；`status != "ok"` 时 `errorSummary` 尽力填² |
+| （工具块终结，无独立 CC 事件，runtime 合成） | `tool_call_finished`：runtime 在该 `tool_use_id` 结果流终结时合成；`callId` ← 对应 `tool_call_started.callId`、`toolName` ← 缓存的 `tool_use.name`；`status` 由工具块**终结态**决定（**不得仅凭某条中间 result 的 `is_error` 推导**）——0-result 异常终止、或该 `tool_use_id` 的终结性 result 为 error（执行失败 / backend error / timeout）→ `error`，中断 / 取消 → `cancelled`，否则 `ok`；`status != "ok"` 时 `errorSummary` 尽力填² |
 | `result / success` | `turn_finished { reason: stop_reason_to_enum(...) }` + `usage` 事件 |
 | `result / error_during_execution` + `terminal_reason:"aborted_streaming"`（SIGINT 中断） | `turn_finished { reason: "user_interrupt" }`（见 §中断；runtime 识别 terminal_reason 或合成，**不**走 error 路径） |
 | `result / error_*`（其余错误态） | `turn_finished { reason: "error" }` + `error` 事件 |

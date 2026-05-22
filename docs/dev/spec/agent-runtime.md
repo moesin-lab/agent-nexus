@@ -152,7 +152,9 @@ enum EventType {
 | `error` | `{ errorKind, code, message, cause? }` |
 | `session_stopped` | `{ reason: "idle_timeout" | "user_stop" | "error" | "budget_exceeded" | "turn_limit" | "wallclock_timeout" }` |
 
-**ToolResultContent**（`tool_result.content` 字段类型）—— 按 `kind` 区分的判别联合，结构化承载 CC `tool_result.content` 多形态（不压扁为单字符串）。runtime 按以下**判别优先级**（自上而下首个匹配）归类，保证边界唯一：
+### ToolResultContent
+
+`tool_result.content` 字段类型 —— 按 `kind` 区分的判别联合，结构化承载 CC `tool_result.content` 多形态（不压扁为单字符串）。runtime 按以下**判别优先级**（自上而下首个匹配）归类，保证边界唯一：
 
 1. content 字段缺失 / null → `{ kind: "empty" }`
 2. string（含空串 `""`）→ `{ kind: "text", text: string }`
@@ -162,7 +164,7 @@ enum EventType {
 4. plain object → `{ kind: "object", object: <JSON object> }`
 5. 其他 JSON scalar（number / bool）→ `{ kind: "unknown", raw: string }`
 
-`ContentBlock = { type: string, ...保留原始字段 }`。**未识别的块原样保留在 `blocks` 数组内**（不上升为顶层 `unknown`）；仅当整个 content 落不进 1-4 时才用顶层 `unknown`。`unknown.raw` 为原始 JSON 截断字符串，**必须经 redactor**；截断长度与脱敏规则见 [`security/redaction.md`](security/redaction.md)。
+`ContentBlock = { type: string, ...保留原始字段 }`。**未识别的块原样保留在 `blocks` 数组内**（不上升为顶层 `unknown`）；仅当整个 content 落不进 1-4 时才用顶层 `unknown`。`unknown.raw` 为原始 JSON 截断字符串，写入前**必须经 redactor 脱敏**（见 [`security/redaction.md`](security/redaction.md)）；其截断上限同属 redaction 策略，由该 spec 统一约束，实现不得落地无界 raw。
 
 字段语义：
 

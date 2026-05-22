@@ -304,8 +304,9 @@ Adapter 必须有下列合约测试：
 3. 超长文本 → 正确切片
 4. 能力声明与实现一致（不声称支持但不实现）
 5. 幂等：同一事件 fixture 两次投递行为一致
-6. typing 能力门槛：`supportsTypingIndicator=false` 的 fake adapter → daemon 不调用 `setTyping` / `clearTyping`
-7. `clearTyping` 幂等：未 `setTyping` 直接 `clearTyping` → no-op 不抛
+6. `clearTyping` 幂等：未 `setTyping` 直接 `clearTyping` → no-op 不抛
+
+> daemon 侧消费契约（`supportsTypingIndicator=false` 时不得调用 typing primitive、按 `typingRefreshMs` 周期续期、turn 结束/interrupt/错误时 `clearTyping`）由 daemon engine 落地与测试（ADR-0012 §PR-C 最小集成契约），不在 adapter 合约——本表只覆盖 adapter 自身实现行为。
 
 ## 反模式
 

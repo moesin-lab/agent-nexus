@@ -292,6 +292,8 @@ cacheWrite = 18.75
 - **L2 不误杀 in-flight 工具**：`tool_call_started` 后工具执行 > `streamStallTimeoutMs` 但 < L3 且未 finished → 不触发 L2（仅 L3 / `maxToolCallsPerTurn` 兜底）
 - **阈值耦合校验**：配置 `typingRefreshMs ≥ 10000` 或 `streamStallTimeoutMs ≥ perInputTimeoutMs` → 启动校验报错
 - **并发排队**：4 个 session 同时 spawn，第 4 个排队；超时后拒绝
+
+> 阈值消费方的**行为合约测试**不在本 spec：节流 edit / final-edit flush / typing 周期与清除等集成行为归 daemon engine（ADR-0012 §PR-C 最小集成契约，PR-C owner）；synthetic 投递 SLA 与 cleanup 两段升级（graceful → soft-kill → hard-kill）等状态机行为归 runtime（ADR-0012 §interrupt 投递契约，PR-B owner）。本 spec §合约测试 仅覆盖阈值本身的启动校验与 L2/L3 触发判定。
 - **Discord 429**：mock 429 响应 → 按 `Retry-After` 退避 + 重试
 - **Anthropic 429**：指数退避 + jitter 观察
 - **熔断**：连续 3 次 agent error → Errored + 通知

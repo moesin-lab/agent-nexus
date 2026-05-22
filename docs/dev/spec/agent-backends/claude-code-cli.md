@@ -29,7 +29,7 @@ contracts:
 |---|---|
 | CLI 命令名 | `claude` |
 | 最低支持版本 | **待实现前跑 `claude --version` 锁定**；建议 `>= 2.0.0`（占位，实现首 PR 内敲定） |
-| 已对账版本 | `2.1.119` |
+| 已对账版本 | help 落盘 `2.1.119`；CLI 行为实测 `2.1.148`（§stdout 映射 / §中断 / §权限边界 / json 输出形态 等实测标注以 2.1.148 为准） |
 | 运行时 | 用户本机（ADR-0003），由用户自行维护 CC 的安装与升级 |
 | 订阅 / API 支持 | 两类都支持；`usage.costUsd` 在订阅路径下可能缺失（见下文 UsageCompleteness） |
 
@@ -57,9 +57,10 @@ claude \
 - **`--output-format stream-json`**：stdout 按行输出 JSON 事件
 - **`--verbose`**：`--print --output-format stream-json` 组合的**强制前提**——不带会直接报错 `Error: When using --print, --output-format=stream-json requires --verbose` 退出（CC 2.1.148 实测）；不是可选诊断 flag，不能省
 - **工作目录**：不通过 CLI flag 传；由子进程 `cwd` 选项锁定，见 [`security/tool-boundary.md`](../security/tool-boundary.md#工作目录)。
-- **`--allowed-tools` / `--disallowed-tools`**：工具白名单；**必须**显式传入，不依赖 CC 默认
-- **`--resume`**：恢复上次被 Interrupted 的 session；无则新建
-- **`--permission-mode`**：`default` 需要交互批准；`plan` 只读；MVP 不使用 `bypassPermissions` / `acceptEdits`（见 security）
+- **`--allowed-tools`**：**必传**（表配置意图，不依赖 CC 默认）；但 `--print` 非交互主路径下白名单**不强制**（见 §权限边界 ⚠️），不可当隔离保证
+- **`--disallowed-tools`**：可选；实测有效，仅作 defense-in-depth / 临时禁危险工具，**不替代** allowlist 安全模型
+- **`--resume <id>`**：按 session id 续话（跨进程恢复上下文，不限于被中断的 session）；无则新建。裸用打开 picker，本项目不用
+- **`--permission-mode`**：`default`（交互式需批准，但 `--print` 非交互下 `init` 实报 `bypassPermissions`，见 §权限边界 ⚠️）/ `plan`（交互式只读，非交互**不**阻止写）；MVP 不使用 `bypassPermissions` / `acceptEdits`（见 security）
 
 ### 一次性查询（probe 用）
 
@@ -68,22 +69,22 @@ claude --version
 claude --print "<single prompt>" --output-format json
 ```
 
-> **`--output-format json` 输出形态**（CC 2.1.148 实测）：`--print` 下返回**单个 result envelope object**（不是数组）；probe 直接读顶层 `result.stop_reason` 即可。详见下文 §Flag 参考矩阵。
+> **`--output-format json` 输出形态**（CC 2.1.148 实测）：`--print` 下返回**单个 result envelope object**（不是数组）；probe 直接读**顶层 `stop_reason`**（不是 `result.stop_reason` 嵌套——`result` 是同级的文本字段）。详见下文 §Flag 参考矩阵。
 
 ## Flag 参考矩阵
 
 只列项目当前依赖或明确禁止的 flag。未列出的用户向 / GUI / IDE / worktree / 调试增强类 flag，一律视为**不依赖**；后续若开始依赖，再补进本表。
 
-| Flag | CC CLI 2.1.119 实测语义 | 项目用法 | 引用 |
+| Flag | CC CLI 实测语义（help 落盘 2.1.119；stream-json 行为以 2.1.148 实测为准） | 项目用法 | 引用 |
 |---|---|---|---|
 | `--print` / `-p` | 非交互模式，写完一次响应就退出；workspace trust 对话框被跳过 | **必传** | §交互式 session、§一次性查询 |
 | `--input-format <text\|stream-json>` | 仅在 `--print` 下生效；`text` 默认（接 stdin 一段纯文本），`stream-json` 按行读 JSON | **计划用**（MVP 主路径走 stream-json，当前暂走 text） | §交互式 session（标 TODO 升级，见 `index.ts`） |
 | `--output-format <text\|json\|stream-json>` | 仅在 `--print` 下生效；`json` 返回**单 object** result envelope（顶层含 `type:"result"` / `stop_reason` / `result`(文本) / `usage` / `session_id`，**非数组**；2.1.148 实测），`stream-json` 按行 JSON 流 | **必传**（probe 用 `json`、运行用 `stream-json`） | §一次性查询 / §stdout 事件格式 |
-| `--allowed-tools` / `--allowedTools` | 工具白名单（逗号或空格分隔，支持 `Bash(git *)` 子模式） | **必传** | §权限边界、`security/tool-boundary.md` |
+| `--allowed-tools` / `--allowedTools` | 工具白名单（逗号或空格分隔；`Bash(git *)` 子模式语法被接受但 2.1.148 实测**不拦截**非匹配命令）；`--print` 非交互下白名单**不强制**（见 §权限边界 ⚠️） | **必传**（表配置意图，非隔离保证） | §权限边界、`security/tool-boundary.md` |
 | `--disallowed-tools` / `--disallowedTools` | 工具黑名单 | **不用**（当前只用白名单） | §交互式 session（保留为可选） |
 | `--model <id>` | 模型别名（`sonnet` / `opus`）或全名（`claude-sonnet-4-6`） | **用**（按 SessionConfig 注入） | §交互式 session |
 | `--resume [value]` / `-r` | 按 session id（UUID）续话；裸用打开 picker | **用**（持有 `agentSessionId` 时传） | §交互式 session、`agent-runtime.md` |
-| `--permission-mode <…>` | 取值：`acceptEdits` / `auto` / `bypassPermissions` / `default` / `dontAsk` / `plan` | **用** `default` / `plan`；**禁用** `bypassPermissions` / `acceptEdits` | §权限边界、`security/tool-boundary.md` |
+| `--permission-mode <…>` | 取值：`acceptEdits` / `auto` / `bypassPermissions` / `default` / `dontAsk` / `plan`；`--print` 非交互下 `default` 的 `init` 实报 `bypassPermissions`、`plan` 不阻止写（见 §权限边界 ⚠️） | **用** `default` / `plan`；**禁用** `bypassPermissions` / `acceptEdits` | §权限边界、`security/tool-boundary.md` |
 | `--dangerously-skip-permissions` | 等价于 `--permission-mode bypassPermissions` | **禁用** | `security/README.md` |
 | `--allow-dangerously-skip-permissions` | 让用户可以**选择**开启 bypass，但不默认开启 | **禁用** | `security/README.md` |
 | `--mcp-config <configs…>` | 加载 MCP server（JSON 文件或 JSON 串，空格分隔多个） | **计划用**（MVP 不开 MCP；future 接入要走显式配置） | `security/tool-boundary.md` §MCP 默认全禁 |
@@ -156,7 +157,8 @@ MVP 只依赖两类输入：
 | `assistant / tool_use` | `tool_call_started` |
 | `user / tool_result` | `tool_call_finished`（status 由 `is_error` 决定）¹ |
 | `result / success` | `turn_finished { reason: stop_reason_to_enum(...) }` + `usage` 事件 |
-| `result / error_*` | `turn_finished { reason: "error" }` + `error` 事件 |
+| `result / error_during_execution` + `terminal_reason:"aborted_streaming"`（SIGINT 中断） | `turn_finished { reason: "user_interrupt" }`（见 §中断；runtime 识别 terminal_reason 或合成，**不**走 error 路径） |
+| `result / error_*`（其余错误态） | `turn_finished { reason: "error" }` + `error` 事件 |
 | `system / error` | `error` 事件 |
 | `system / hook_*`（SessionStart 等 hook 生命周期） | **过滤丢弃**，不进解析路径（见 §hook 事件与未知 type 兜底） |
 | `rate_limit_event` | 暂不映射 AgentEvent；限额信号是否接入 limits 由 [`cost-and-limits.md`](../infra/cost-and-limits.md) 决定（TODO） |
@@ -206,6 +208,7 @@ daemon 还会额外注入 `tool_limit` / `wallclock_timeout` / `budget_exceeded`
 
 - 首选：向子进程发 SIGINT（不是 stdin 写 interrupt 控制消息；避免 stdin buffering 延迟）
 - **CC 2.1.148 实测**：SIGINT 后 CC 产出 `result/error_during_execution`（`stop_reason:null`，`terminal_reason:"aborted_streaming"`，`is_error:true`），**不产 `interrupted` 终态**。runtime 必须据 `terminal_reason:"aborted_streaming"` 映射为 `user_interrupt`，或按 [`ADR-0012`](../../adr/0012-claudecode-stream-json-mainline.md) §interrupt 投递契约 毫秒级合成 synthetic `turn_finished{user_interrupt}`——**不能依赖 CC 主动产中断终态**；超时 5s 未见进程退出 → SIGKILL
+- **terminal 去重**：单个 turn runtime **只 emit 一次** terminal `turn_finished`。若已毫秒级合成 synthetic `turn_finished{user_interrupt}`，随后到达的真实 `result/error_during_execution` 仅用于 cleanup / usage 记账，**丢弃**、不再重复 emit terminal（避免双发；与 [`ADR-0012`](../../adr/0012-claudecode-stream-json-mainline.md) §interrupt 投递契约的 late event 处置一致——该段随 ADR-0012 修订 PR 合入 main）
 - 补充：若 CC 后续版本稳定支持 `{"type": "control", "subtype": "interrupt"}` 的 stdin 中断，可作为备选；保留 SIGINT 为 MVP 默认
 
 ### 超时
@@ -238,8 +241,8 @@ catch 路径若已收到 `result.usage`，仍 emit `usage` 事件，避免 daemo
 进程启动时执行，所有检查通过才开始接受 Discord 事件：
 
 1. `claude --version` → 解析版本号，比对最低支持版本；失败 → 启动失败 + 清晰错误
-2. `claude --print "ping" --output-format json` → 预期 `result.stop_reason == "end_turn"` + 非空 `assistant` 文本；超时 30s
-3. 可选：跑一次 `claude --print "read README.md" --output-format stream-json --allowed-tools Read`（子进程 `cwd` 选项指向 `<testDir>`）→ 验证 stream-json 输出结构能被解析器消费
+2. `claude --print "ping" --output-format json` → 返回单 object envelope，校验**顶层** `stop_reason == "end_turn"` + **顶层** `result` 文本非空（`stop_reason` / `result` 均为 envelope 顶层字段，**不是** `result.stop_reason` 嵌套）；超时 30s
+3. 可选：跑一次 `claude --print "read README.md" --output-format stream-json --verbose --allowed-tools Read`（`--verbose` 为 stream-json 输出强制项；子进程 `cwd` 选项指向 `<testDir>`）→ 验证 stream-json 输出结构能被解析器消费
 4. 失败则：打 `agent_spawn_failed` 日志（见 observability.md），拒绝启动 Discord gateway
 
 ## 权限边界（与 security.md 对齐）
@@ -248,7 +251,9 @@ catch 路径若已收到 `result.usage`，仍 emit `usage` 事件，避免 daemo
 > - `--permission-mode default` 的 `init` 事件实报 `permissionMode:"bypassPermissions"`；`plan` 不阻止写操作
 > - 白名单**外**的工具、子模式不匹配的命令照常执行，`permission_denials` 为空（实测：白名单只给 `Read`，模型用 `Bash` 跑 echo 仍成功）
 >
-> 即下面"工具白名单 / permission-mode"假定的隔离在 stream-json 主路径**实际不生效**。MVP 工具隔离不能仅靠这些 CLI flag，须叠加 OS 级手段（沙箱 / 容器 / 只读挂载）或 `--bare` + 自管权限层。security 缓解方案待 `security/tool-boundary.md` 评估修订（本 spec 仅记录实测事实）。
+> - `--disallowed-tools` 黑名单**实测有效**（黑名单工具不出现在模型工具列表），但黑名单**不能替代** allowlist 安全模型，只作 defense-in-depth / 临时禁危险工具
+>
+> 即下面"工具白名单 / permission-mode"假定的隔离在 stream-json 主路径**实际不生效，不能作为安全边界**。MVP 工具隔离须靠 OS 级手段（沙箱 / 容器 / 只读挂载）或自管权限层。`--bare` 只减少 hook / memory / 插件注入面，**不修工具隔离**，不算隔离替代。security 缓解方案待 `security/tool-boundary.md` 评估修订（本 spec 仅记录实测事实）。
 
 - 工作目录：通过子进程 `cwd` 选项传入（CC CLI 没有 `--cwd` flag），**不继承** agent-nexus 进程的 cwd
 - 工具白名单：**必须**显式传 `--allowed-tools`，不依赖 CC 默认集
@@ -262,7 +267,8 @@ catch 路径若已收到 `result.usage`，仍 emit `usage` 事件，避免 daemo
 - 依赖 CC 的 stderr 做业务判断（stderr 是诊断通道）
 - 不传 `--allowed-tools` 依赖 CC 默认（安全边界隐式）
 - `bypassPermissions` 作为 MVP 默认（安全边界失守）
-- 忽略 `result.stop_reason`（用来判定 turn 结束的唯一权威信号）
+- 把 `--allowed-tools` / `--permission-mode` 当作 `--print` stream-json 主路径的工具安全边界（2.1.148 实测不强制，见 §权限边界 ⚠️）
+- 忽略 result 事件的 `stop_reason`（stream-json 下 turn 结束的权威信号；注意 `--output-format json` 单 object 模式 `stop_reason` 是 envelope 顶层字段，非 `result.stop_reason` 嵌套）
 - 把 `total_cost_usd` 当硬预算依据（订阅路径可能为 0 或 null）
 
 ## Out of spec

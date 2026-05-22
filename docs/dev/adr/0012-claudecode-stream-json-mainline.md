@@ -31,6 +31,7 @@ superseded_by: null
 - 2026-04-28：Proposed
 - 2026-05-21：第四 / 五 / 六轮 GAN review 修订（详见 §异议 & 回应）
 - 2026-05-22：补决策点 5（工具隔离强制点）——stream-json 主路径实测暴露 `--allowed-tools` / `--permission-mode` 不强制工具边界，纳入本 ADR（详见 §异议 & 回应 第七轮）
+- 2026-05-22：§interrupt 投递契约 §进程 cleanup 层 措辞收紧（非反转）——kill 路径从 POSIX `kill(-pid)` process group 抽象为平台等价子进程树终止语义，限定仅约束主动 kill 路径不反转 graceful interrupt 不变量（cline tree-kill 跨平台实现对照触发，详见 §异议 & 回应 第八轮）
 
 ## Context
 
@@ -128,19 +129,19 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
 - `source: "runtime-synthesized"` 标记**仅限于** runtime synthesized terminal turn_finished 投递给 daemon；不复用于其它 runtime 生成事件
 - **入口屏障两层分离**（避免 daemon 接受 sendInput 与 runtime 实际写 CC stdin 混淆）：
   - daemon 入口：在 synthetic turn_finished **投递之前**阻塞同 session 的下一 sendInput；投递完成即解锁（可接受 / 排队下一请求）
-  - runtime 投递屏障：daemon 解锁后调用 `sendInput`，runtime 实际写入同一常驻 CC stdin 之前，**必须**等 stdin sync ack / CC turn boundary / process exit + replacement subprocess ready 任一成立；否则在 runtime 层排队（建议有界队列），队列满或 cleanup 进入 SIGKILL 路径 → session Errored
+  - runtime 投递屏障：daemon 解锁后调用 `sendInput`，runtime 实际写入同一常驻 CC stdin 之前，**必须**等 stdin sync ack / CC turn boundary / process exit + replacement subprocess ready 任一成立；否则在 runtime 层排队（建议有界队列），队列满或 cleanup 进入 hard-kill 阶段 → session Errored
 - **late event 处理规则**：synthetic 投递之后 CC 子进程仍可能产出该 turn 的 late events（text_delta / tool_call_* / tool_result / CC 自己的 turn_finished）；runtime 必须**丢弃并 debug log**，**不**转发 daemon——避免污染 daemon 状态
 
-**第 2 层：进程 cleanup 层（process group lifecycle）**
+**第 2 层：进程 cleanup 层（子进程树 lifecycle）**
 
 第 1 层投递后并行启动 cleanup state machine：
 
-1. **process group 隔离**（语义层锁定，平台实现细节归 spec/PR-B）：所有 kill 通过 `kill(-pid, sig)` 打整个 process group——参考 cc-connect 实证，不 kill group 时 MCP 子进程残留孤儿
+1. **子进程树终止语义**（平台等价，实现细节归 spec/PR-B）：runtime **主动进入 kill 路径**（cleanup 升级到 soft-kill / hard-kill 阶段）时，终止必须覆盖**整个 CC 子进程树**——CC 主进程 + 由其启动、本应随之清理的 MCP 子孙进程；只杀主进程不覆盖子进程树会留孤儿（cc-connect 实证 MCP 孙进程残留 100% CPU）。**此语义仅约束主动 kill 路径**：正常 graceful interrupt 成功路径不要求杀 CC 主进程或其仍应存活的子进程（见 (2.1) 升级判据），自然 process exit 亦不受本条约束。平台终止域的具体机制（POSIX process group / Windows process-tree / job object / tree-kill 封装）与其覆盖边界差异 → spec
 2. **三段升级**（阈值与时长 → spec）：
    - **(2.1) 升级判据**：在 `gracefulInterruptMs` 内 runtime 既未观察到 **(i)** turn cleanup ack（stdin 回到 sync 状态 / CC 主动产生 turn 边界事件 / 收到 CC 自己的 turn_finished）也未观察到 **(ii)** process exit，才升级。**不**以 process exit 单一为判据——常驻子进程的正常 interrupt 成功路径就是"turn 中止 + 进程存活 + stdin sync"
-   - **(2.2)** 升级到 `kill(-pid, SIGTERM)` → 等 `sigtermGraceMs`
-   - **(2.3)** 仍未达成 (i)/(ii) 任一 → `kill(-pid, SIGKILL)`
-3. **session 终态**：cleanup 进入 SIGKILL 路径 → session Errored；正常达成 turn cleanup ack 或 process exit 自然路径 → session 维持 active（多 turn 续话能力保留）
+   - **(2.2)** 升级到 soft-kill 阶段（POSIX 映射 SIGTERM）→ 等 `sigtermGraceMs`
+   - **(2.3)** 仍未达成 (i)/(ii) 任一 → hard-kill 阶段（POSIX 映射 SIGKILL）
+3. **session 终态**：cleanup 进入 hard-kill 阶段 → session Errored；正常达成 turn cleanup ack 或 process exit 自然路径 → session 维持 active（多 turn 续话能力保留）
 
 **两层互不阻塞**：第 1 层立即完成 → daemon UI 即时反馈；第 2 层后台跑 → 子进程清理与下一 turn 解耦。
 
@@ -151,7 +152,7 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
 - protocol 一次性对齐 spec（含独立 `tool_result`），下游 exhaustive switch 一次配齐，未来增 emit 不触发 breaking
 - runtime 切持续子进程，IM 可见工具调用（消解 #45）；token 级 emit 让 partial output 不丢（消解 #28）
 - interrupt 投递契约**两层分离**：事件投递立即完成 → daemon/UI 即时反馈；进程 cleanup 并行不阻塞下一 turn；cleanup 升级判据建模 turn-level ack 而非 process-exit，常驻子进程的正常 interrupt 成功路径不会被误判
-- 三层 watchdog + 投递契约两层结构区分"队列拥堵 / 流中卡死 / runaway"恢复策略；session 级子进程仅在 SIGKILL 路径或 session idle 被杀
+- 三层 watchdog + 投递契约两层结构区分"队列拥堵 / 流中卡死 / runaway"恢复策略；session 级子进程仅在 hard-kill 阶段或 session idle 被杀
 - Discord 平台能力门槛 + PR-C 最小集成契约锁定，#45 / #30 在 PR-A+B+C+D 合入后落地，不依赖 UX issue 收敛节奏
 - `tool_result` 独立事件 + 协议层保证承载五类 content 变体能力（具体字段 → spec），CC 多形态输出场景下不丢信息；`tool_call_finished` 必须携带 terminal status 覆盖 0-result error case
 - spec §顺序保证锁模型 A（`tool_result*` 在 `tool_call_finished` 前 → finished 即结果流终态）
@@ -171,12 +172,12 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
 ### 需要后续跟进的事
 
 - **PR-A（协议层）**：union 补齐到 spec 全集（含 `tool_result`）；扩 `AgentCapabilitySet.supportsStdinInterrupt`；选定 timeoutLayer 实现机制（payload 字段 或 TurnEndReason 枚举，不允许 daemon 内部状态）；`tool_call_finished` 加 terminal status 字段。具体类型 / 字段 / 测试细节 → PR 描述 + spec
-- **PR-B（claudecode runtime）**：切持续子进程；process group 隔离；stream-json stdin/stdout；emit 四类事件；`_normalize_tool_result` 覆盖五变体；实现 §interrupt 投递契约 两层状态机（事件投递层立即合成 + late event 丢弃 + cleanup 多源升级判据）；interrupt SIGINT + stdin control 双轨；保留 `--print --resume` legacy 代码路径
+- **PR-B（claudecode runtime）**：切持续子进程；子进程树终止（平台等价终止域）；stream-json stdin/stdout；emit 四类事件；`_normalize_tool_result` 覆盖五变体；实现 §interrupt 投递契约 两层状态机（事件投递层立即合成 + late event 丢弃 + cleanup 多源升级判据）；interrupt SIGINT + stdin control 双轨；保留 `--print --resume` legacy 代码路径
 - **PR-C（daemon engine）**：按 §PR-C 最小集成契约 实现节流 edit + typing 周期刷新 + 工具事件最小可见性路由；处理 synthetic turn_finished `source` 字段；synthetic 投递前阻塞下一 sendInput，投递后解锁
 - **PR-D（Discord adapter）**：翻 capability + 实现 primitive；具体 UI 策略按 UX issue 演进
 - **spec 修订**（详见各 spec 文件 SSOT）：
   - agent-runtime.md：union 加 `tool_result` 事件 + payload schema 字段表 + `tool_call_finished` terminal status 字段 + §顺序保证补"每 toolUseId 0+条 tool_result，必须在 tool_call_finished 前"
-  - agent-backends/claude-code-cli.md：§中断 / §超时 改写为本 ADR §interrupt 投递契约两层结构 + capability flag；process group 平台细节
+  - agent-backends/claude-code-cli.md：§中断 / §超时 改写为本 ADR §interrupt 投递契约两层结构 + capability flag；子进程树终止平台细节与覆盖边界
   - message-protocol.md：§流式语义 模式 B 标记本 ADR 评审通过
   - platform-adapter.md：加 `setTyping` / `clearTyping` + `supportsTypingIndicator` capability
   - cost-and-limits.md：三层 watchdog + cleanup 两段阈值 + 投递层确认窗口 + 节流 edit / typing 周期等数值 + 阈值耦合关系
@@ -184,7 +185,7 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
   - security/tool-boundary.md：§白名单外拒绝 合约 + §核心威胁关联 按决策点 5 重写（强制点从 CLI flag 改为 control/hook 进程内执行前拦截 + OS 纵深）；`--allowed-tools` 改述为配置意图声明
   - agent-backends/claude-code-cli.md：已记 `--allowed-tools` / `--permission-mode` 不强制的实测事实（§权限边界 ⚠️），补 control protocol / PreToolUse hook 执行前强制机制的契约
 - **issue 处置**：#45 在 PR-A/B/C 合入后关；#56 epic 在 PR-A/B/C/D 全部合入后关；#28 / #54（部分）/ #30 / #55-B 在对应 PR 合入后由 reviewer 评估关闭
-- **证据收集合并门槛（决策点 2 反转的前提）**：PR-B 合并前必须 (a) 提交可重跑 fixture 测三类数据（stdin control 延迟 / SIGINT 多层传播事实 / process group kill 覆盖事实） (b) 创建 tracking issue 含 owner / 验收 schema / 复审日期 4 周 (c) 挂 `adr-review` label。复审到期 → maintainer 在 issue 上记录决策结论 → 若反转决策点 2，maintainer 发独立 ADR PR。**门槛未达 PR-B 不允许合并**
+- **证据收集合并门槛（决策点 2 反转的前提）**：PR-B 合并前必须 (a) 提交可重跑 fixture 测三类数据（stdin control 延迟 / SIGINT 多层传播事实 / 平台等价子进程树终止域覆盖事实） (b) 创建 tracking issue 含 owner / 验收 schema / 复审日期 4 周 (c) 挂 `adr-review` label。复审到期 → maintainer 在 issue 上记录决策结论 → 若反转决策点 2，maintainer 发独立 ADR PR。**门槛未达 PR-B 不允许合并**
 - **legacy fallback 保留门槛**：PR-B 保留 `--print --resume` legacy 代码路径至证据收集复审完成；**默认不启用**但实现层必须保留可配置切换入口（环境变量 / 配置文件 / runtime flag）；删除 fallback 须独立 ADR/修订 PR
 - **工具隔离实现前置验证门槛（决策点 5.2 control vs hook 的前提）**：实现工具隔离的 PR 落地前必须在目标 CC 版本上坐实裸 CLI 能否触发 `can_use_tool`（查当前 `@anthropic-ai/claude-agent-sdk` 的 initialize permission capability 声明 + 实测真拦一次）。坐实 → control 为主（协议原生、最契合 §白名单外拒绝 语义，故为验证时的优先候选）；不可行 → hook 为主。两者都必须满足 5.2 的 fail-closed / 配置不可篡改要求。结论记入 spec。OS 级 defense-in-depth 技术选型（容器 vs seccomp vs 只读挂载）结合 ADR-0003 部署形态另定（可独立 ADR 或 tool-boundary 修订）
 - **流程门槛**：本 ADR 合入 main 进入 Proposed 状态后，任何对 Decision 段的修订必须独立 ADR 修订 PR 经 review 后合并，遵守 `docs/dev/standards/adr.md §评审约束`
@@ -232,7 +233,12 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
 - 收敛口径：决策点 5 仅锁三条架构不变量（CLI flag 非边界 / 进程内执行前强制点 / OS 纵深），机制对比与 control vs hook 谁为主下沉为实现前置验证项 + spec，遵守异议 19 "ADR 仅保留架构不变量"的瘦身原则
 - 第七轮 GAN（2 轮收敛）verdict：R1 提 7 条（5 important + 2 nit），developer accept 6 / reject 1（I6 标题收敛 nit，体例既定，reviewer R2 复核后 withdrawn）；R2 全部 resolved/withdrawn、无新主 issue，verdict 接近最优。采纳要点——决策点 5 不变量不再排序未坐实的 control（偏好降为验证时优先候选）、5.2 补 fail-closed + 配置不可篡改边界、5.3 给 OS 纵深最低语义 + 无法满足须显式声明、关键事实 6 拆分「推断」与「确定事实」、5.1 限定到目标运行形态、"取代合约" 改为 "保留语义废弃 observer 实现路径"
 
-外部证据来源：`chenhg5/cc-connect`（process group kill 必要性 + Discord edit/typing 节奏 viable）+ `banteg/takopi`（tool_result 5 种 content 变体 + `-p --resume` 反证）+ PR #88 CC 2.1.148 实测（`--allowed-tools` 不强制 / `permission-mode default` 退化 bypassPermissions / PreToolUse hook 能 deny / control protocol 握手裸 CLI 可用）
+**第八轮（cleanup 措辞收紧，2026-05-22）**：
+
+- 起因：P1 外部对照 `cline/cline`（`src/utils/process-termination.ts` 用 `tree-kill` 做跨平台 process-tree 终止）提供子进程树终止的**跨平台实现对照**；结合 cc-connect 的 MCP 孙进程残留实证，说明「只杀主进程不足以清理子孙进程」非 POSIX-only 诉求。§进程 cleanup 层 原 `kill(-pid, sig)` process group 写法把不变量钉死在 POSIX、Windows 无等价
+- 收敛口径：Decision 措辞收紧（语义不变、非反转）——kill 路径抽象为平台等价子进程树终止语义、显式限定仅约束主动 kill 路径不反转 graceful interrupt 不变量、三段升级改 soft-kill / hard-kill 阶段语义；具体平台命令下沉 spec。GAN-on-draft 3 轮收敛（R1 1 blocker + 4 important：阻止 process group/taskkill/tree-kill 被写成严格等价、阻止把自然 process exit 读进 kill 路径、阻止信号名当跨平台通用动作、防 Decision 实现细节回胀；R2 修 Rationale 残留命令 framing；R3 接近最优）
+
+外部证据来源：`chenhg5/cc-connect`（process group kill 必要性 + Discord edit/typing 节奏 viable）+ `banteg/takopi`（tool_result 5 种 content 变体 + `-p --resume` 反证）+ PR #88 CC 2.1.148 实测（`--allowed-tools` 不强制 / `permission-mode default` 退化 bypassPermissions / PreToolUse hook 能 deny / control protocol 握手裸 CLI 可用）+ `cline/cline`（`tree-kill` 跨平台子进程树终止实现对照 → 第八轮 cleanup 措辞收紧）
 
 ## 参考
 

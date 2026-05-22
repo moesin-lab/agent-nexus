@@ -164,7 +164,7 @@ enum EventType {
 4. plain object → `{ kind: "object", object: <JSON object> }`
 5. 其他 JSON scalar（number / bool）→ `{ kind: "unknown", raw: string }`
 
-`ContentBlock = { type: string, ...保留原始字段 }`。**未识别的块原样保留在 `blocks` 数组内**（不上升为顶层 `unknown`）；仅当整个 content 落不进 1-4 时才用顶层 `unknown`。`unknown.raw` 为原始 JSON 截断字符串，写入前**必须经 redactor 脱敏**（见 [`security/redaction.md`](security/redaction.md)）；其截断上限同属 redaction 策略，由该 spec 统一约束，实现不得落地无界 raw。
+`ContentBlock = { type: string, ...保留原始字段 }`。**未识别的块原样保留在 `blocks` 数组内**（不上升为顶层 `unknown`）；仅当整个 content 落不进 1-4 时才用顶层 `unknown`。`unknown.raw` 为原始 JSON 截断字符串：截断上限默认 **4 KB**（够保留诊断信息又不爆日志；最终值可随 observability 日志策略校准），写入前**必须经 redactor 脱敏**（脱敏规则见 [`security/redaction.md`](security/redaction.md)）。截断上限是 ToolResultContent 的协议约束（本 spec owner），脱敏才属 redaction——实现不得落地无界 raw。
 
 字段语义：
 

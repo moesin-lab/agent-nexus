@@ -6,6 +6,7 @@ summary: Agent 后端适配层接口契约；SessionConfig、AgentEvent 流、CC
 tags: [spec, agent-runtime, cc-cli, subprocess]
 related:
   - dev/adr/0002-agent-backend-claude-code-cli
+  - dev/adr/0012-claudecode-stream-json-mainline
   - dev/spec/agent-backends/claude-code-cli
   - dev/spec/message-protocol
   - dev/spec/security/README
@@ -125,7 +126,8 @@ enum EventType {
     text_final             // 一轮文本输出完成
     tool_call_started      // 工具调用开始
     tool_call_progress     // 工具调用中（可选）
-    tool_call_finished     // 工具调用完成（含结果摘要）
+    tool_result            // 工具结果（独立事件；CC 多形态 content 结构化承载，见 ADR-0012 决策点 1 子问题 1-tr-B）
+    tool_call_finished     // 工具调用终态（不承载完整结果；结果走 tool_result）
     turn_finished          // 一个完整回合结束（等待下一条输入）
     usage                  // token/成本事件
     error                  // 错误事件
@@ -143,11 +145,33 @@ enum EventType {
 | `text_final` | `{ text: string }` |
 | `tool_call_started` | `{ callId, toolName, inputSummary }` |
 | `tool_call_progress` | `{ callId, note }` |
-| `tool_call_finished` | `{ callId, toolName, status: "ok" | "error", resultSummary }` |
+| `tool_result` | `{ callId, resultSequence: int, content: ToolResultContent, isError: bool }` |
+| `tool_call_finished` | `{ callId, toolName, status: "ok" | "error" | "cancelled", errorSummary? }` |
 | `turn_finished` | `{ reason: TurnEndReason, turnSequence: int }` |
 | `usage` | `UsageRecord` — 见下方 |
 | `error` | `{ errorKind, code, message, cause? }` |
 | `session_stopped` | `{ reason: "idle_timeout" | "user_stop" | "error" | "budget_exceeded" | "turn_limit" | "wallclock_timeout" }` |
+
+### ToolResultContent
+
+`tool_result.content` 字段类型 —— 按 `kind` 区分的判别联合，结构化承载 CC `tool_result.content` 多形态（不压扁为单字符串）。runtime 按以下**判别优先级**（自上而下首个匹配）归类，保证边界唯一：
+
+1. content 字段缺失 / null → `{ kind: "empty" }`
+2. string（含空串 `""`）→ `{ kind: "text", text: string }`
+3. array：
+   - 元素均 block-like（`type` 为 string 的 object）或空数组 `[]` → `{ kind: "blocks", blocks: ContentBlock[] }`
+   - 否则（标量数组 / 混杂非 block）→ `{ kind: "unknown", raw: string }`
+4. plain object → `{ kind: "object", object: <JSON object> }`
+5. 其他 JSON scalar（number / bool）→ `{ kind: "unknown", raw: string }`
+
+`ContentBlock = { type: string, ...保留原始字段 }`。**未识别的块原样保留在 `blocks` 数组内**（不上升为顶层 `unknown`）；仅当整个 content 落不进 1-4 时才用顶层 `unknown`。`unknown.raw` 为原始 JSON 截断字符串：截断上限默认 **4 KB**（够保留诊断信息又不爆日志；最终值可随 observability 日志策略校准），写入前**必须经 redactor 脱敏**（脱敏规则见 [`security/redaction.md`](security/redaction.md)）。截断上限是 ToolResultContent 的协议约束（本 spec owner），脱敏才属 redaction——实现不得落地无界 raw。
+
+字段语义：
+
+- `status`（`tool_call_finished`）是**工具调用块的终态**，由工具块终态决定、**不可由单条 `tool_result.isError` 推导**：`ok`=正常结束；`error`=执行失败 / 超时 / 后端错误，含 0 条 result 直接异常终止；`cancelled`=用户中断 / runtime 主动取消。`status != "ok"` 时 `errorSummary` 尽力填——这是 **0-result error case 唯一的错误信息来源**（完整结果一律走独立 `tool_result` 事件，不再压进 `tool_call_finished`）。
+- `callId` = CC 后端的 `tool_use.id` / `tool_result.tool_use_id` 归一化 ID（对应 `tool_call_started.callId`）。
+- `resultSequence` 同一 `callId` 内从 0 连续递增、不重复；不同 callId 间无可比性；最终投递顺序仍以 AgentEvent `sequence`（session 全局单调）为准。
+- `isError` ← CC `tool_result.is_error`，单条 result 级。
 
 ### TurnEndReason 枚举
 
@@ -189,7 +213,10 @@ UsageRecord {
 - 同 session 的事件严格按 `sequence` 升序投递
 - `text_delta` 的文本拼起来等于随后的 `text_final.text`
 - 每个 `tool_call_started` 必有且仅有一个对应的 `tool_call_finished`
-- `turn_finished` 在一轮的最后一个 `text_final` / `tool_call_finished` 之后
+- 每个 callId 有 **0 条或多条** `tool_result`，且**全部在对应 `tool_call_finished` 之前**（模型 A：`tool_call_finished` 即该工具结果流终态——见 ADR-0012 决策点 1 子问题）
+- 同一 callId 的多条 `tool_result` 按 `resultSequence` 升序投递
+- `tool_call_finished` 之后到达的同 callId `tool_result` 是 late event，runtime **必须丢弃 + debug log，不得重排到 finished 前**（与 ADR-0012 §interrupt 投递契约 late event 规则一致）
+- `turn_finished` 在一轮的最后一个 `text_final` / `tool_call_finished` 之后（`tool_result` 因 happens-before `tool_call_finished`，无需单独锚定）
 
 ## CC CLI 专属说明（Claude Code 实现）
 
@@ -226,6 +253,8 @@ Agent runtime 实现必须有：
 4. 超时 → 产出 `turn_finished { reason: "error" }` + `error` 事件
 5. 子进程崩溃 fixture → 产出 `error` + `session_stopped`
 6. `usage` 事件的 token 数可被 daemon 成功记账
+7. tool_result 多变体 + 边界 fixture：content 为 string / 空串 / null / 缺字段 / 块数组 / 空数组 / 非 block 数组 / 未识别块 / plain object 各形态 → 产出 kind 正确的 ToolResultContent（按判别优先级），未识别块原样留在 `blocks` 内
+8. 排序与终态 fixture：同 callId 多条 result 按 `resultSequence` 升序且全在 `tool_call_finished` 前；0-result 异常终止 → `tool_call_finished.status` 为 error/cancelled 且 `errorSummary` 非空；finished 后 late result 被丢弃；`isError` 真假 × `status` ok/error 各组合不互相推导
 
 transcript fixture 放在 `testdata/cc-cli/` 下（见 [`../testing/fixtures.md`](../testing/fixtures.md)）。
 

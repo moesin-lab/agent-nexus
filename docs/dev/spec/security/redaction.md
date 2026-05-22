@@ -32,7 +32,7 @@ contracts:
 | IPv4/IPv6 地址 | `<redacted:ip>`（可配置） |
 | 用户消息正文（IM 入站原文） | 摘要或 hash；完整正文走 transcript 落盘，不进 log / outbound |
 | Agent 子进程完整输出原文（CC CLI stdout） | 摘要或 hash；完整输出走专门的 transcript 落盘 |
-| `tool_result` event 的 content（含 `ToolResultContent.unknown.raw` 原始 JSON 回显） | 按本表逐项过滤后方可进任何出口；截断上限属 [`agent-runtime.md`](../agent-runtime.md) 协议约束，本层只负责脱敏 |
+| `tool_result` event 的 content（**所有类型**：text / blocks / object / unknown） | 任一类型进任何出口前都按本表逐项过滤；`ToolResultContent.unknown.raw`（原始 JSON 回显）是其中**高风险点**（承载未识别的原始工具输出），非唯一覆盖项 |
 
 本表是**全出口必过滤项的权威源**——日志、IM outbound、transcript 等任何出口均按此过滤。日志写法约束见 [`../../standards/logging.md`](../../standards/logging.md)（写法）；observability 的字段契约见 [`../infra/observability.md`](../infra/observability.md)（字段表）。
 
@@ -48,7 +48,9 @@ contracts:
 - 性能影响可接受（字符串扫描；用预编译正则）
 - Redactor 必须是**纯函数**：输入 → 输出，不持 state、不副作用
 - Redactor 失败（panic / 异常）→ 降级为丢弃该输出并记错误，而不是把原文泄露出去
-- `tool_result` content 在 runtime emit → daemon 转发 IM / 落 transcript / 进日志的**任一出口前**必须过 redactor；`unknown.raw` 因承载未识别的原始工具输出，是脱敏高风险点，不得绕过
+- `tool_result` content（所有类型）在 runtime emit → daemon 转发 IM / 落 transcript / 进日志的**任一出口前**必须过 redactor；`unknown.raw` 因承载未识别的原始工具输出，是脱敏高风险点，不得绕过
+- **脱敏先于截断**：`unknown.raw` 的 4KB 截断（[`agent-runtime.md`](../agent-runtime.md) 协议约束）必须在脱敏**之后**执行——否则截断点可能切在密钥中间（如 `sk-ant-…` 被切成 `sk-ant-a`），残片不触发前缀正则、绕过脱敏进入出口
+- `unknown.raw` 是字符串，redactor 按既有文本过滤方式**直接对序列化后的 JSON 字符串做正则扫描**（不 JSON decode 后逐字段扫）；与本层"纯文本过滤"定位一致
 
 ## 两层视角（future）
 

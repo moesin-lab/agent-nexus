@@ -43,31 +43,40 @@ related:
 - `limits.maxToolCallsPerTurn`（默认 `30`）：单 turn 内最大工具调用数；超限 → 触发 `turn_finished { reason: "tool_limit" }`
 - `limits.maxConsecutiveToolErrors`（默认 `5`）：单 turn 内连续工具失败数；超限 → 触发 `turn_finished { reason: "error" }`
 
-### 流式 watchdog（三层，默认启用）
+### sendInput 失控保护（三层 watchdog）
 
-stream-json 主路径下单次 `sendInput` 的失控保护分三层，对应三类失败模式（ADR-0012 决策点 4 + Consequences）：
+stream-json 主路径下单次 `sendInput` 的失控保护分三层，对应三类失败模式（ADR-0012 决策点 4 + Consequences）。**注意 L1 是流开始之前的入队阶段保护，L2 / L3 才是流中保护**——三层覆盖 sendInput 的完整生命周期，不全是"流中"监控：
 
 | 层 | 失败模式 | 阈值（默认） | 触发 |
 |---|---|---|---|
-| L1 入队等待 | 队列拥堵：sendInput 排队迟迟未开始流 | `sessionQueueMaxWaitMs` = `30000` | 拒绝 + 用户可见提示（见 §并发上限，归此层） |
+| L1 入队等待（**流开始前**） | 队列拥堵：sendInput 排队迟迟未开始流 | `sessionQueueMaxWaitMs` = `30000` | 拒绝 + 用户可见提示（见 §并发上限，归此层） |
 | L2 流中停滞 | 流中卡死：turn 活跃、**不处于 in-flight 工具等待态**、却长时间无任何 agent 事件 | `limits.streamStallTimeoutMs`（默认 `60000`） | 视为停滞 → 进入 interrupt 投递契约 |
 | L3 墙钟总时长 | runaway：单 turn 总时长超限（含 in-flight 工具执行） | `limits.perInputTimeoutMs`（默认 `300000` = 5 分钟） | 进入 interrupt 投递契约 |
 
 - L2 计时锚点：最近一条 agent 事件（`text_delta` / `tool_call_*` / `tool_result`）到达时刻，每条事件重置 L2 计时
 - **L2 不适用于 in-flight 工具等待态**：已 `tool_call_started` 但未配对 `tool_call_finished` 的工具，其执行期可合法长时间无事件（如长 build / 慢网络），不计入 L2 停滞；该期间仅由 L3 墙钟总时长 + `maxToolCallsPerTurn` 兜底——避免误杀正常长工具
+  - **计时语义**：in-flight 期间 L2 计时**冻结**（不推进、不触发）；`tool_call_finished` 本身是 agent 事件，到达即按上一条规则重置 L2 锚点并从该时刻恢复计时
+  - **多工具并发**：只要**存在任一** in-flight 工具（有 `tool_call_started` 未配对 `tool_call_finished`）即处于豁免态；必须**所有** in-flight 工具都 finished 后 L2 才恢复检测
 - L2 / L3 任一命中 → 不直接 SIGKILL，而走 [ADR-0012 §interrupt 投递契约](../../adr/0012-claudecode-stream-json-mainline.md)：runtime 立即向 daemon 投递 synthetic `turn_finished` + 并行启动进程 cleanup state machine
 - **L2 vs L3 的日志判别**依赖 agent-runtime 后续协议变更落地 ADR-0012 决策点 4 的 timeout layer 区分机制（payload 字段或 TurnEndReason 枚举二选一，protocol owner 定形态）；**该机制落地前 observability 不得宣称可区分 L2 与 L3**，本 spec 不定义字段名
 - `perInputTimeoutMs` 与 `SessionConfig.timeoutMs`（见 `agent-runtime.md`）对齐；后者是每 session 可覆盖值
 
 ### interrupt 投递 + cleanup 阶段阈值
 
-机制状态机本体见 [ADR-0012 §interrupt 投递契约](../../adr/0012-claudecode-stream-json-mainline.md)；本 spec 仅定义其中下放的数值：
+机制状态机本体见 [ADR-0012 §interrupt 投递契约](../../adr/0012-claudecode-stream-json-mainline.md)；本 spec 仅定义其中下放的数值。**两类阈值语义不同，分表列出**——投递 SLA 超时只告警、不改变行为；cleanup 窗口超时则升级到下一阶段。
+
+**第 1 层：投递 SLA（仅告警，不升级）**
 
 | 阈值 | 默认 | 语义 |
 |---|---|---|
-| `limits.syntheticTurnFinishedDeliveryMs` | `250` | 第 1 层投递的 **SLA / 告警阈值**（非 cleanup 等待窗口）：runtime 投递 synthetic `turn_finished` 的延迟目标上界；**超此值不改变投递语义**——runtime 仍继续投递并记 `warn`，daemon 入口屏障解锁以**实际投递完成**为准 |
-| `limits.gracefulInterruptMs` | `5000` | 第 2 层 (2.1)：发出 interrupt 后等待 turn cleanup ack 或 process exit 的窗口；未达成才升级 |
-| `limits.sigtermGraceMs` | `5000` | 第 2 层 (2.2)：soft-kill（POSIX 映射 SIGTERM）后等待窗口；仍未达成则 hard-kill |
+| `limits.syntheticTurnFinishedDeliveryMs` | `250` | runtime 投递 synthetic `turn_finished` 的延迟目标上界。**超此值不改变投递语义**——runtime 仍继续投递并记 `warn`，daemon 入口屏障解锁以**实际投递完成**为准，不以本阈值为准 |
+
+**第 2 层：cleanup 升级窗口（超时则升级）**
+
+| 阈值 | 默认 | 语义 |
+|---|---|---|
+| `limits.gracefulInterruptMs` | `5000` | (2.1)：发出 interrupt 后等待 turn cleanup ack 或 process exit 的窗口；未达成才升级到 soft-kill |
+| `limits.sigtermGraceMs` | `5000` | (2.2)：soft-kill（POSIX 映射 SIGTERM）后等待窗口；仍未达成则升级到 hard-kill |
 
 hard-kill（2.3，POSIX 映射 SIGKILL）为终态，无后续等待；进入 hard-kill → session Errored（见 ADR §进程 cleanup 层 session 终态）。
 
@@ -309,7 +318,7 @@ cacheWrite = 18.75
 
 - `turn_limit_hit`（session, turn 序号）
 - `tool_limit_hit`（session, turn 序号, toolCalls）
-- `wallclock_timeout`（session, elapsedMs）——L2 流中停滞 / L3 墙钟均可触发；L2 vs L3 的判别依赖 agent-runtime 后续落地 ADR-0012 决策点 4 的 timeout layer 区分机制，该机制落地前不得宣称可区分
+- `wallclock_timeout`（session, elapsedMs）——L2 流中停滞 / L3 墙钟均可触发；**`elapsedMs` 两种触发下统一为该 turn 从 sendInput 起的总墙钟时长**（不是 L2 的停滞时长），保证字段含义单一。L2 vs L3 的判别依赖 agent-runtime 后续落地 ADR-0012 决策点 4 的 timeout layer 区分机制，该机制落地前不得宣称可区分
 - `rate_limit_hit`
 - `circuit_opened` / `circuit_reset`
 - `budget_threshold_crossed`（仅 opt-in 启用时）

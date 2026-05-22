@@ -31,7 +31,7 @@ superseded_by: null
 - 2026-04-28：Proposed
 - 2026-05-21：第四 / 五 / 六轮 GAN review 修订（详见 §异议 & 回应）
 - 2026-05-22：补决策点 5（工具隔离强制点）——stream-json 主路径实测暴露 `--allowed-tools` / `--permission-mode` 不强制工具边界，纳入本 ADR（详见 §异议 & 回应 第七轮）
-- 2026-05-22：§interrupt 投递契约 §进程 cleanup 层 措辞收紧（非反转）——kill 路径从 POSIX `kill(-pid)` process group 抽象为平台等价子进程树终止语义，限定仅约束主动 kill 路径不反转 graceful interrupt 不变量（cline tree-kill 跨平台实证触发，详见 §异议 & 回应 第八轮）
+- 2026-05-22：§interrupt 投递契约 §进程 cleanup 层 措辞收紧（非反转）——kill 路径从 POSIX `kill(-pid)` process group 抽象为平台等价子进程树终止语义，限定仅约束主动 kill 路径不反转 graceful interrupt 不变量（cline tree-kill 跨平台实现对照触发，详见 §异议 & 回应 第八轮）
 
 ## Context
 
@@ -235,10 +235,10 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
 
 **第八轮（cleanup 措辞收紧，2026-05-22）**：
 
-- 起因：P1 外部对照 `cline/cline`（`src/utils/process-termination.ts` 用 `tree-kill` 跨平台覆盖子进程树）实证「只杀主进程不足以清理 MCP 子孙进程」非 POSIX-only 诉求。§进程 cleanup 层 原 `kill(-pid, sig)` process group 写法把不变量钉死在 POSIX、Windows 无等价
+- 起因：P1 外部对照 `cline/cline`（`src/utils/process-termination.ts` 用 `tree-kill` 做跨平台 process-tree 终止）提供子进程树终止的**跨平台实现对照**；结合 cc-connect 的 MCP 孙进程残留实证，说明「只杀主进程不足以清理子孙进程」非 POSIX-only 诉求。§进程 cleanup 层 原 `kill(-pid, sig)` process group 写法把不变量钉死在 POSIX、Windows 无等价
 - 收敛口径：Decision 措辞收紧（语义不变、非反转）——kill 路径抽象为平台等价子进程树终止语义、显式限定仅约束主动 kill 路径不反转 graceful interrupt 不变量、三段升级改 soft-kill / hard-kill 阶段语义；具体平台命令下沉 spec。GAN-on-draft 3 轮收敛（R1 1 blocker + 4 important：阻止 process group/taskkill/tree-kill 被写成严格等价、阻止把自然 process exit 读进 kill 路径、阻止信号名当跨平台通用动作、防 Decision 实现细节回胀；R2 修 Rationale 残留命令 framing；R3 接近最优）
 
-外部证据来源：`chenhg5/cc-connect`（process group kill 必要性 + Discord edit/typing 节奏 viable）+ `banteg/takopi`（tool_result 5 种 content 变体 + `-p --resume` 反证）+ PR #88 CC 2.1.148 实测（`--allowed-tools` 不强制 / `permission-mode default` 退化 bypassPermissions / PreToolUse hook 能 deny / control protocol 握手裸 CLI 可用）+ `cline/cline`（`tree-kill` 跨平台子进程树终止实证 → 第八轮 cleanup 措辞收紧）
+外部证据来源：`chenhg5/cc-connect`（process group kill 必要性 + Discord edit/typing 节奏 viable）+ `banteg/takopi`（tool_result 5 种 content 变体 + `-p --resume` 反证）+ PR #88 CC 2.1.148 实测（`--allowed-tools` 不强制 / `permission-mode default` 退化 bypassPermissions / PreToolUse hook 能 deny / control protocol 握手裸 CLI 可用）+ `cline/cline`（`tree-kill` 跨平台子进程树终止实现对照 → 第八轮 cleanup 措辞收紧）
 
 ## 参考
 

@@ -48,6 +48,10 @@ interface PlatformAdapter {
     edit(messageRef: MessageRef, OutboundMessage) -> void
     delete(messageRef: MessageRef) -> void
 
+    // 输入指示（仅 supportsTypingIndicator=true 时由 daemon 调用）
+    setTyping(sessionKey) -> void       // 开始/续期 typing 指示
+    clearTyping(sessionKey) -> void     // 显式清除（turn 结束/interrupt/错误）
+
     // 可选：反应/表情
     react(messageRef: MessageRef, emoji: string) -> void
 }
@@ -59,6 +63,9 @@ type EventHandler = fn(NormalizedEvent) -> void
 
 - `start(ctx, handler)`：建立连接（Discord gateway WebSocket），注册事件分发。每次收到并归一化一个事件后调用 `handler`。
 - `stop(ctx)`：关闭连接、释放资源；必须幂等，支持多次调用。
+- `setTyping(sessionKey)`：单次"现在显示 typing"语义；周期续期由 daemon 按 [`cost-and-limits.md`](infra/cost-and-limits.md) §流式集成数值 的 `typingRefreshMs` 重复调用，adapter **不持有定时器**（周期由 daemon engine 驱动，见 [`adr/0012-claudecode-stream-json-mainline.md`](../adr/0012-claudecode-stream-json-mainline.md) §PR-C 最小集成契约）。
+- `clearTyping(sessionKey)`：turn 结束 / interrupt / 错误路径必须调用；幂等（无活跃 typing 时 no-op）。
+- `setTyping` / `clearTyping` 仅在 `capabilities().supportsTypingIndicator === true` 时被 daemon 调用；为 false 时 daemon 不得调用（与 §CapabilitySet "不支持的能力不使用"一致）。
 
 `start` 必须：
 
@@ -297,6 +304,8 @@ Adapter 必须有下列合约测试：
 3. 超长文本 → 正确切片
 4. 能力声明与实现一致（不声称支持但不实现）
 5. 幂等：同一事件 fixture 两次投递行为一致
+6. typing 能力门槛：`supportsTypingIndicator=false` 的 fake adapter → daemon 不调用 `setTyping` / `clearTyping`
+7. `clearTyping` 幂等：未 `setTyping` 直接 `clearTyping` → no-op 不抛
 
 ## 反模式
 

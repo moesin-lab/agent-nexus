@@ -20,6 +20,7 @@ related:
 | 威胁 | 机制 |
 |---|---|
 | 用户不在场的失控（本机桌面 + IM 远程） | turn 硬限 + wall-clock 超时 + 熔断 |
+| 流中卡死（stream 停止产事件但 turn 未结束） | 三层 watchdog L2 流中停滞 + interrupt 投递契约 |
 | 订阅配额窗口被一次失控吃光（Claude Pro/Max 5h 滚动窗口） | turn / tool-call 硬限（默认值按保守配额估算） |
 | Prompt injection 导致无限工具调用循环 | maxToolCallsPerTurn + 熔断 |
 | Discord 429 被滥刷封禁 | 出站 rate limit 退避 + jitter |
@@ -42,11 +43,60 @@ related:
 - `limits.maxToolCallsPerTurn`（默认 `30`）：单 turn 内最大工具调用数；超限 → 触发 `turn_finished { reason: "tool_limit" }`
 - `limits.maxConsecutiveToolErrors`（默认 `5`）：单 turn 内连续工具失败数；超限 → 触发 `turn_finished { reason: "error" }`
 
-### Wall-clock 硬限
+### 流式 watchdog（三层，默认启用）
 
-- `limits.perInputTimeoutMs`（默认 `300000` = 5 分钟）：单次 `sendInput` 到 `turn_finished` 的墙钟超时
-- 与 `SessionConfig.timeoutMs`（见 `agent-runtime.md`）对齐；后者是每 session 可覆盖值
-- 超时处理链：先发 `interrupt`（SIGINT）→ 等 5 秒 → 仍未 `turn_finished` 则 SIGKILL 并投递 `error` + `session_stopped`
+stream-json 主路径下单次 `sendInput` 的失控保护分三层，对应三类失败模式（ADR-0012 决策点 4 + Consequences）：
+
+| 层 | 失败模式 | 阈值（默认） | 触发 |
+|---|---|---|---|
+| L1 入队等待 | 队列拥堵：sendInput 排队迟迟未开始流 | `sessionQueueMaxWaitMs` = `30000` | 拒绝 + 用户可见提示（见 §并发上限，归此层） |
+| L2 流中停滞 | 流中卡死：turn 活跃、**不处于 in-flight 工具等待态**、却长时间无任何 agent 事件 | `limits.streamStallTimeoutMs`（默认 `60000`） | 视为停滞 → 进入 interrupt 投递契约 |
+| L3 墙钟总时长 | runaway：单 turn 总时长超限（含 in-flight 工具执行） | `limits.perInputTimeoutMs`（默认 `300000` = 5 分钟） | 进入 interrupt 投递契约 |
+
+- L2 计时锚点：最近一条 agent 事件（`text_delta` / `tool_call_*` / `tool_result`）到达时刻，每条事件重置 L2 计时
+- **L2 不适用于 in-flight 工具等待态**：已 `tool_call_started` 但未配对 `tool_call_finished` 的工具，其执行期可合法长时间无事件（如长 build / 慢网络），不计入 L2 停滞；该期间仅由 L3 墙钟总时长 + `maxToolCallsPerTurn` 兜底——避免误杀正常长工具
+- L2 / L3 任一命中 → 不直接 SIGKILL，而走 [ADR-0012 §interrupt 投递契约](../../adr/0012-claudecode-stream-json-mainline.md)：runtime 立即向 daemon 投递 synthetic `turn_finished` + 并行启动进程 cleanup state machine
+- **L2 vs L3 的日志判别**依赖 agent-runtime 后续协议变更落地 ADR-0012 决策点 4 的 timeout layer 区分机制（payload 字段或 TurnEndReason 枚举二选一，protocol owner 定形态）；**该机制落地前 observability 不得宣称可区分 L2 与 L3**，本 spec 不定义字段名
+- `perInputTimeoutMs` 与 `SessionConfig.timeoutMs`（见 `agent-runtime.md`）对齐；后者是每 session 可覆盖值
+
+### interrupt 投递 + cleanup 阶段阈值
+
+机制状态机本体见 [ADR-0012 §interrupt 投递契约](../../adr/0012-claudecode-stream-json-mainline.md)；本 spec 仅定义其中下放的数值：
+
+| 阈值 | 默认 | 语义 |
+|---|---|---|
+| `limits.syntheticTurnFinishedDeliveryMs` | `250` | 第 1 层投递的 **SLA / 告警阈值**（非 cleanup 等待窗口）：runtime 投递 synthetic `turn_finished` 的延迟目标上界；**超此值不改变投递语义**——runtime 仍继续投递并记 `warn`，daemon 入口屏障解锁以**实际投递完成**为准 |
+| `limits.gracefulInterruptMs` | `5000` | 第 2 层 (2.1)：发出 interrupt 后等待 turn cleanup ack 或 process exit 的窗口；未达成才升级 |
+| `limits.sigtermGraceMs` | `5000` | 第 2 层 (2.2)：soft-kill（POSIX 映射 SIGTERM）后等待窗口；仍未达成则 hard-kill |
+
+hard-kill（2.3，POSIX 映射 SIGKILL）为终态，无后续等待；进入 hard-kill → session Errored（见 ADR §进程 cleanup 层 session 终态）。
+
+### 流式集成数值（PR-C 最小集成契约配套）
+
+ADR-0012 §PR-C 最小集成契约 的节流 edit / typing 周期数值：
+
+| 阈值 | 默认 | 语义 |
+|---|---|---|
+| `limits.streaming.streamEditThrottleMs` | `1500` | daemon 缓冲 `text_delta` 后调 `edit()` 的最小间隔；**coalesce 下限**，降低高频 edit 触发 Discord 429 的概率 |
+| `limits.streaming.typingRefreshMs` | `8000` | `supportsTypingIndicator=true` 时 daemon 重复调 `setTyping()` 的周期 |
+
+- `turn_finished` 到达时立即触发一次 final `edit()`（不受 `streamEditThrottleMs` 节流约束），确保末尾内容不被节流吞掉
+- typing 在 turn 结束 / interrupt / 错误时由 daemon 调 `clearTyping()` 停止
+- **`streamEditThrottleMs` 是应用层 coalesce 下限，不是 Discord rate-limit 的替代**：HTTP 层仍以 §出站 Rate Limit（Discord）的响应头 / `Retry-After` 为准退避；本阈值只减少触发概率
+
+### 阈值耦合关系
+
+**(a) 启动校验硬不变量**（配置覆盖默认值时校验，违反则启动报错——可测试谓词）：
+
+1. `typingRefreshMs < 10000`：Discord typing 指示约 10s 自动失效，续期必须早于过期，否则 typing 闪断（默认 `8000` 留 2s 余量）
+2. `streamStallTimeoutMs < perInputTimeoutMs`：流中停滞检测必须早于总墙钟 runaway 上限，否则 L2 永不先于 L3 触发、失去区分意义
+
+**(b) 设计建议**（推荐满足以保持各层语义清晰，**非启动校验**——避免把可调默认值钉成硬约束）：
+
+3. `syntheticTurnFinishedDeliveryMs <= gracefulInterruptMs / 10`：synthetic 投递（第 1 层）应远早于 cleanup 升级（第 2 层），保证 ADR "两层互不阻塞"——UI 即时反馈不被进程清理阻塞
+4. `gracefulInterruptMs + sigtermGraceMs <= perInputTimeoutMs / 10`：cleanup 全程预算应远小于单 turn 总时长，避免 cleanup 自身成为新的卡死源
+
+`streamEditThrottleMs` 不在耦合不变量内——它是应用层 coalesce 下限，HTTP 层退避以 Discord 响应头为准（见 §流式集成数值），不与上述阈值构成可校验关系。
 
 ### 并发上限
 
@@ -190,6 +240,14 @@ maxConcurrentSessions = 3
 maxConcurrentLlmCalls = 3
 globalMessagesPerSec = 5
 sessionQueueMaxWaitMs = 30000
+streamStallTimeoutMs = 60000            # L2 流中停滞
+syntheticTurnFinishedDeliveryMs = 250   # synthetic turn_finished 投递 SLA / warn 阈值
+gracefulInterruptMs = 5000              # cleanup (2.1)
+sigtermGraceMs = 5000                   # cleanup (2.2) soft-kill grace
+
+[limits.streaming]
+streamEditThrottleMs = 1500
+typingRefreshMs = 8000
 
 [limits.session]
 idleTimeoutMs = 1800000          # 30 分钟
@@ -229,7 +287,10 @@ cacheWrite = 18.75
 
 - **Turn 超限**：session 跑到第 51 个 turn → 自动归档 + 通知
 - **工具调用循环**：单 turn 内 31 次工具调用 → `turn_finished { reason: "tool_limit" }`
-- **Wall-clock 超时**：构造长任务 > 5 分钟 → SIGINT → SIGKILL 路径 + session 标 Errored
+- **L3 墙钟超时**：构造长任务 > `perInputTimeoutMs` → 走 interrupt 投递契约（synthetic `turn_finished` + cleanup 升级至 hard-kill）→ session 标 Errored
+- **L2 流中停滞**：turn 活跃、无 in-flight 工具、`streamStallTimeoutMs` 内无 agent 事件 → 触发 interrupt 投递契约
+- **L2 不误杀 in-flight 工具**：`tool_call_started` 后工具执行 > `streamStallTimeoutMs` 但 < L3 且未 finished → 不触发 L2（仅 L3 / `maxToolCallsPerTurn` 兜底）
+- **阈值耦合校验**：配置 `typingRefreshMs ≥ 10000` 或 `streamStallTimeoutMs ≥ perInputTimeoutMs` → 启动校验报错
 - **并发排队**：4 个 session 同时 spawn，第 4 个排队；超时后拒绝
 - **Discord 429**：mock 429 响应 → 按 `Retry-After` 退避 + 重试
 - **Anthropic 429**：指数退避 + jitter 观察
@@ -246,7 +307,7 @@ cacheWrite = 18.75
 
 - `turn_limit_hit`（session, turn 序号）
 - `tool_limit_hit`（session, turn 序号, toolCalls）
-- `wallclock_timeout`（session, elapsedMs）
+- `wallclock_timeout`（session, elapsedMs）——L2 流中停滞 / L3 墙钟均可触发；L2 vs L3 的判别依赖 agent-runtime 后续落地 ADR-0012 决策点 4 的 timeout layer 区分机制，该机制落地前不得宣称可区分
 - `rate_limit_hit`
 - `circuit_opened` / `circuit_reset`
 - `budget_threshold_crossed`（仅 opt-in 启用时）

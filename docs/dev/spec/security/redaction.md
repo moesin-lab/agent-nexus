@@ -32,6 +32,7 @@ contracts:
 | IPv4/IPv6 地址 | `<redacted:ip>`（可配置） |
 | 用户消息正文（IM 入站原文） | 摘要或 hash；完整正文走 transcript 落盘，不进 log / outbound |
 | Agent 子进程完整输出原文（CC CLI stdout） | 摘要或 hash；完整输出走专门的 transcript 落盘 |
+| `tool_result` event 的 content（含 `ToolResultContent.unknown.raw` 原始 JSON 回显） | 按本表逐项过滤后方可进任何出口；截断上限属 [`agent-runtime.md`](../agent-runtime.md) 协议约束，本层只负责脱敏 |
 
 本表是**全出口必过滤项的权威源**——日志、IM outbound、transcript 等任何出口均按此过滤。日志写法约束见 [`../../standards/logging.md`](../../standards/logging.md)（写法）；observability 的字段契约见 [`../infra/observability.md`](../infra/observability.md)（字段表）。
 
@@ -47,6 +48,7 @@ contracts:
 - 性能影响可接受（字符串扫描；用预编译正则）
 - Redactor 必须是**纯函数**：输入 → 输出，不持 state、不副作用
 - Redactor 失败（panic / 异常）→ 降级为丢弃该输出并记错误，而不是把原文泄露出去
+- `tool_result` content 在 runtime emit → daemon 转发 IM / 落 transcript / 进日志的**任一出口前**必须过 redactor；`unknown.raw` 因承载未识别的原始工具输出，是脱敏高风险点，不得绕过
 
 ## 两层视角（future）
 
@@ -64,6 +66,7 @@ MVP 的假设：
 - **env 格式**：`ANTHROPIC_API_KEY=sk-ant-abc` → 替换为 `ANTHROPIC_API_KEY=<redacted>`
 - **错误栈注入**：构造含密钥的错误栈 → log formatter 后无原文
 - **性能基线**：1 KB 文本过滤 < 1ms（CI benchmark）
+- **tool_result unknown 脱敏**：构造含密钥的 `ToolResultContent.unknown.raw`（如工具输出里嵌 `sk-ant-...`）→ 经 redactor 后出口无原文
 
 ## 反模式
 

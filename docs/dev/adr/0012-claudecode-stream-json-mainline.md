@@ -1,9 +1,9 @@
 ---
-title: ADR-0012 claudecode 切到 stream-json 主路径——协议合约 / interrupt / timeout
+title: ADR-0012 claudecode 切到 stream-json 主路径——协议合约 / interrupt / timeout / 工具隔离强制点
 type: adr
 status: active
-summary: claudecode runtime 切 stream-json 持续子进程；锁定 protocol union 对齐、interrupt 暂保持 SIGINT、timeout 三层、平台能力门槛四项架构决策
-tags: [adr, decision, agent-runtime, claude-code, subprocess, message-protocol]
+summary: claudecode runtime 切 stream-json 持续子进程；锁定 protocol union 一次性对齐（含独立 tool_result）、interrupt 暂保持 SIGINT + 投递契约两层状态机、平台能力门槛 + PR-C 最小集成契约、legacy fallback 保留、工具隔离强制点（CLI flag 非边界 / 进程内执行前拦截 + OS 纵深）六项架构决策
+tags: [adr, decision, agent-runtime, claude-code, subprocess, message-protocol, tool-boundary, security]
 related:
   - dev/adr/0002-agent-backend-claude-code-cli
   - dev/adr/0011-turn-layering
@@ -11,6 +11,7 @@ related:
   - dev/spec/agent-backends/claude-code-cli
   - dev/spec/message-protocol
   - dev/spec/platform-adapter
+  - dev/spec/security/tool-boundary
 adr_status: Proposed
 adr_number: "0012"
 decision_date: 2026-04-28
@@ -18,7 +19,7 @@ supersedes: null
 superseded_by: null
 ---
 
-# ADR-0012：claudecode 切到 stream-json 主路径——协议合约 / interrupt / timeout
+# ADR-0012：claudecode 切到 stream-json 主路径——协议合约 / interrupt / timeout / 工具隔离强制点
 
 - **状态**：Proposed
 - **日期**：2026-04-28
@@ -28,192 +29,171 @@ superseded_by: null
 ## 状态变更日志
 
 - 2026-04-28：Proposed
+- 2026-05-21：第四 / 五 / 六轮 GAN review 修订（详见 §异议 & 回应）
+- 2026-05-22：补决策点 5（工具隔离强制点）——stream-json 主路径实测暴露 `--allowed-tools` / `--permission-mode` 不强制工具边界，纳入本 ADR（详见 §异议 & 回应 第七轮）
 
 ## Context
 
-`docs/dev/spec/agent-backends/claude-code-cli.md` §交互式 session 已把 stream-json 标为 MVP 主路径，但 `packages/agent/claudecode/src/index.ts` 仍是 `--print` 单次调用形态——每次 `sendInput` spawn 新子进程，跑完即退。这个 spec/impl gap 是当前一组缺陷的共同上游：
+`docs/dev/spec/agent-backends/claude-code-cli.md` §交互式 session 已把 stream-json 标为 MVP 主路径，但实现侧仍是 `--print` 单次调用——每次 `sendInput` spawn → 跑完 → 退出。这个 spec/impl gap 是 #45（IM 看不到工具调用）/ #28（partial output 丢失）/ #54（interrupt 只能整子进程）/ #30 / #55-B（Discord 长回复无流式 edit）的共同上游。把它们当独立 issue 修，大概率在 stream-json 切换时被全部重写。
 
-- IM 端看不到 agent 的工具调用过程（issue #45）
-- partial output 在子进程异常退出时丢失（issue #28）
-- interrupt / stopSession 只能 SIGINT 整子进程（issue #54）
-- Discord 长回复必须切多片，没有流式 edit（issue #30 / #55-B）
-
-把它们当独立 issue 修，最后大概率在 stream-json 切换时被全部重写。本 ADR 立 epic 协议层 + 实现层共识，**只锁不可逆的架构决策**——协议契约、interrupt 主路径、流式 timeout 分层、平台能力门槛。具体 UX / UI 文案 / 操作入口 / 视觉策略由 spec 修订 + 后续 issue 演进，不进 ADR（避免过度承诺会随用户反馈演进的产品决策）。
+本 ADR 立 epic 协议层 + 实现层共识，**只锁不可逆的架构决策**——协议契约、interrupt 主路径、流式 timeout 分层、平台能力门槛、interrupt 投递契约、legacy fallback 保留、工具隔离强制点。具体 UX / UI 文案、协议字段表、阈值数值、平台实现细节由 spec 修订 + 后续 issue 演进。
 
 观察到的关键事实：
 
-1. **spec 已锁完整 AgentEvent union**——`docs/dev/spec/agent-runtime.md` §AgentEvent 已经把独立事件类型（`text_delta` / `thinking` / `tool_call_started` / `tool_call_progress` / `tool_call_finished`）和顺序保证（`text_delta` 拼起来等于 `text_final.text`、每个 `tool_call_started` 必有对应 `tool_call_finished`）定死。`packages/protocol/src/agent.ts:34-39` 的 union 是 spec 的裁剪版，注释挂 TODO 等本 ADR 解锁。
-2. **spec 已锁 interrupt 主路径**——`docs/dev/spec/agent-backends/claude-code-cli.md` §中断 当前定义"首选向子进程发 SIGINT；stdin `control/interrupt` 作为补充，CC 后续版本稳定后可作备选"。issue #56 epic 提议反转。
-3. **message-protocol §流式语义 已留 ADR 位**——MVP 默认是模式 A（`text_delta` 缓冲到 `text_final` 整段发送），模式 B（分步 edit）写"作为后续增强，在独立 ADR 中评审"——本 ADR 命中此范畴。
-4. **Discord adapter 当前 capability 全为 false**——`packages/platform/discord/src/index.ts:193-206` 把 `supportsEdit` / `supportsThreads` / `supportsTypingIndicator` 都标 false。流式落地需要先翻平台能力门槛。
+1. spec 已锁完整 AgentEvent union（含 `text_delta` / `thinking` / `tool_call_*` / `tool_result` 概念位）+ 顺序保证
+2. spec 已锁 interrupt 主路径（SIGINT 主，stdin control 备）
+3. message-protocol §流式语义 模式 B 留 ADR 位
+4. Discord adapter 当前 capability 全为 false
+5. **外部对照实证**：
+   - `chenhg5/cc-connect`（Go IM-bridge，长驻 stream-json 子进程）实证 process group kill 必要（不 kill group → MCP 孙进程 100% CPU 孤儿）+ Discord edit + 周期 typing 节奏 viable
+   - `banteg/takopi`（Python Telegram bridge）实证 CC `tool_result.content` 在生产环境至少存在 5 种变体（str / list / dict / None / 其他 + `is_error`）；并以 `-p --resume` 一次性模式作为持续子进程的对照存在
+   - 两个项目均未实现三层 watchdog 仍能运行
+6. **工具隔离实测证伪**（2026-05-22，CC 2.1.148）：本 ADR 锁定的 `--print --output-format stream-json` 非交互主路径下，`--allowed-tools` 白名单 / `Bash(git *)` 子模式 / `--permission-mode default`（`init` 实报 `permissionMode:"bypassPermissions"`）均**不强制**工具边界——白名单只给 `Read`，模型用未列入的 `Bash` 仍执行成功，`permission_denials` 为空。**现象的当前推断**（非实测坐实）：CC 的交互批准框架可能依赖 TUI，`--print` 下检测不到批准通道即退化放行。**架构层的确定事实**：stream-json 架构下 agent-nexus 是子进程 stdout 的**观察者**，在事件流里看到 `tool_use` 时工具已执行完，无法事后拦截——这一条不依赖前述推断即成立。`security/tool-boundary.md` §白名单外拒绝 合约（"CC 调未在白名单的工具 → 不转发工具调用请求"）的前提因此被证伪。同测发现两个 CC 进程内的**有效**执行前强制点：(a) PreToolUse hook 能在执行前 deny（实测 `tool_result.is_error=true` + `permission_denials` 记录）；(b) stream-json control protocol 握手裸 CLI 可用（`control_request{subtype:initialize}` → `control_response`），其 `can_use_tool` / `sdk_control_request{subtype:permission}` 是协议原生的执行前权限请求机制（官方 Agent SDK `canUseTool` callback 即走此协议），但裸 CLI 触发 `can_use_tool` 的确切方式在 2.1.148 未坐实
 
 ## Options
 
-四个真架构决策点。具体 UI / UX 策略由 spec 修订 + 后续 issue 跟踪，不进本 ADR。
+五个真架构决策点。具体阈值 / payload 字段表 / 平台细节由 spec 修订；本 ADR 不展开。
 
-### 决策点 1：AgentEvent union 形态——protocol 该一次性对齐 spec，还是按 MVP 实际需要分批？
+### 决策点 1：AgentEvent union 形态
 
-#### Option 1A：protocol 一次性对齐 spec 完整 union；runtime 选择性 emit
+- **Option 1A**：protocol 一次性对齐 spec 完整 union（含 `tool_result`）；runtime 选择性 emit
+- **Option 1B**：按 MVP 分批暴露 union
 
-- **是什么**：本 ADR 阶段 protocol 把 spec 列出的所有事件类型一次性补齐（`text_delta` / `thinking` / `tool_call_started` / `tool_call_progress` / `tool_call_finished`）；runtime 本期 PR 只**实际产出** `text_delta` / `tool_call_started` / `tool_call_finished` 三类，其余在 protocol 上**有定义**但 runtime 不 emit
-- **优点**：契约先行，protocol 一次到位与 spec 对齐；下游 daemon engine 的 exhaustive switch 一次配齐 case，未来加 emit 不再触发 breaking
-- **缺点**：protocol 上会有"暂无来源"的事件类型，需要 spec 标注"声明位 vs 实际产出"
-- **主要风险**：spec 标注缺位会让读者把"声明位"误读成"已实现"，下游消费方误依赖未实现事件
+### 决策点 1 子问题：CC `user.tool_result` 怎么落 protocol
 
-#### Option 1B：按 MVP 分批暴露 union
+- **Option 1-tr-A**：合入 `tool_call_finished.payload.resultSummary`
+  - ⚠️ 已知反证：takopi/claude.py 实证 5 种 content 变体，1-tr-A "CC 单条假设" 已被外部证伪
+- **Option 1-tr-B**：新增独立 `tool_result` 事件，多变体由 protocol 显式承载
 
-- **是什么**：本 ADR 阶段 protocol 只补齐"runtime 实际会 emit"的三类，其余留下次 ADR
-- **优点**：契约与实际产出严格一致
-- **缺点**：违反契约先行原则；TS discriminated union 后续逐个加 case 会接连击穿下游 exhaustive switch，造成多轮 breaking wave
-- **主要风险**：每次 union 扩展都引发跨 protocol/daemon/runtime 三包改动，breaking 节奏与上游 spec 演进锁死
+### 决策点 2：interrupt 主路径
 
-### 决策点 1 子问题：CC `user.tool_result` 怎么落 protocol？
+- **Option 2A**：保持 SIGINT 主路径；stdin `control/interrupt` 作为 capability flag 控制的备路径；反转走独立 ADR
+- **Option 2B**：直接反转为 stdin control 主路径
 
-#### Option 1-tr-A：合入 `tool_call_finished.payload.resultSummary`
+### 决策点 3：Discord 平台能力门槛
 
-- **是什么**：runtime 把 CC `user.content[].type=tool_result` 解析后写进对应 `tool_call_finished` 事件的 `resultSummary` 字段（spec 已留位）
-- **优点**：daemon engine 路由更简——一次 finished 事件携带完整对偶；UI 端只需配对呈现
-- **缺点**：依赖一个外部假设——CC 对每个 `tool_use_id` 恰好回**一条**终态 `tool_result`，且无"多块 / 结构化 / 空 + error"等变体；该假设未经 fixture 实证
-- **主要风险**：若假设不成立，`resultSummary` 收口会**静默丢信息**，且丢在 protocol 层而非 UI 层
+- **Option 3A**：本 ADR 锁平台**能力门槛 + 最小集成契约**；具体 UI 策略 / 阈值下沉 spec + issue
+- **Option 3B**：本 ADR 同时锁定具体 UI 策略（已被第三轮 argue 否决）
 
-#### Option 1-tr-B：新增独立 `tool_result` 事件类型
+### 决策点 4：流式 timeout 分层
 
-- **是什么**：protocol 加 `tool_result` 事件，runtime 把 CC `user/tool_result` 直接转发；finished 事件只在 spec 已留的 status 字段做配对
-- **优点**：对 CC 输出多变体场景鲁棒；fixture 不全时也不丢信息
-- **缺点**：spec 当前未列；多一类事件需要 daemon engine 多一处路由
-- **主要风险**：与 spec §顺序保证语义重叠——同一逻辑动作（工具结束）由 finished 与 result 两类事件承载，daemon 路由层易出现配对歧义
+- **Option 4A**：三层 watchdog（firstEvent / streamIdle / perTurnWallclock）+ 三类不同恢复策略；不杀子进程
+- **Option 4B**：保持单一 wallclock；失败模式由观测层区分
+- **Option 4C**：idle-only
 
-### 决策点 2：interrupt 主路径——保持 SIGINT，还是升 stdin control？
+### 决策点 5：工具隔离强制点
 
-#### Option 2A：保持 spec 现状（SIGINT 主，stdin control 备）；待证据再考虑反转
+`--print` 非交互主路径下 `--allowed-tools` / `--permission-mode` 实测不强制工具边界（关键事实 6），tool-boundary §白名单外拒绝 合约前提被证伪、observer 架构无法事后拦截。工具隔离的真正强制点何在：
 
-- **是什么**：runtime 实现 SIGINT 路径作为 `interrupt()` 的默认行为；stdin `control/interrupt` 路径**也实现**但默认不启用，由 `AgentCapabilitySet.supportsStdinInterrupt` flag 控制；本 ADR 只承诺"暂保持现 spec"，在补齐两类证据前不反转：
-  - (i) stdin control 在 CC 2.1.x 的实测延迟 / 失效率
-  - (ii) CC 卡在外部工具循环（spawn-tool-loop）时 SIGINT 的 reachability 数据
-- **优点**：不强行翻 spec；为 interrupt 路径留容易切换的设施位
-- **缺点**：本 ADR 不给 interrupt 路径下最终结论，留尾巴
-- **主要风险**：capability flag 长期默认关闭可能让 stdin control 路径无人维护，CC 升级后 silently 失效
-
-#### Option 2B：跟随 issue #56 提议——stdin control 主，SIGINT fallback
-
-- **是什么**：本 ADR 直接反转 spec
-- **优点**：与 stream-json 协议层对齐；持续子进程下 stdin 控制语义最准
-- **缺点**：CC 2.1.x 的 stdin control 稳定性未实测；推翻 spec 需要充分实证
-- **主要风险**：在缺证据时反转 spec，CC 后续 minor 改了 stdin control 语义会让本 ADR 立刻过期
-
-### 决策点 3：Discord 平台必须提供流式呈现能力（capability 门槛）
-
-#### Option 3A：本 ADR 只锁平台**能力门槛**，具体 UI 策略下沉到 spec + issue
-
-- **是什么**：本 ADR 决定 Discord adapter `CapabilitySet` 必须翻 `supportsEdit: true` 与 `supportsTypingIndicator: true`，并实现对应方法（`edit()` / `setTyping()` / `clearTyping()`）；具体的 UI 决策——工具调用形态（inline 嵌入 / 折叠 thread / 独立消息）、typing 节奏（持续 / 阶段性）、错误呈现（inline ❌ / 独立 reply）、mid-stream 收尾标记、切片之间时序锚定（reply 链 / 扇出 / 不锚定）、interrupt 用户入口（slash command / emoji / 文本）——**不进本 ADR**，由 `docs/dev/spec/message-protocol.md` 修订 + 后续 issue 跟踪 PR-D 实施
-- **优点**：ADR 守住"架构决策"本位（contract / 不可逆 / 跨模块边界）；UI / UX 决策由用户反馈演进而非一次性锁定，调整成本低
-- **缺点**：本 ADR 不直接消解 #45 / #30；落地节奏取决于后续 issue 推进
-- **主要风险**：UX issue 推进慢会让平台能力门槛已就位但用户感受层长期空缺，PR-D 落地依赖外部 issue 收敛节奏
-
-#### Option 3B：本 ADR 同时锁定具体 UI / UX 策略
-
-- **是什么**：本 ADR 同时决定 inline vs thread / typing 节奏 / 错误文案 / 切片锚定方式 / interrupt 入口
-- **优点**：实施 PR 启动时所有方向都明确
-- **缺点**：UI / UX 决策本质会随用户反馈演进，锁 ADR 是过度承诺；调整需要发新 ADR / Amendment 成本高；ADR 体量膨胀脱离"架构决策"本位
-- **主要风险**：UX 调整需要发 ADR Amendment / supersede，调整成本远高于 issue 演进；ADR 评审带宽被 UI 文案占用
-
-### 决策点 4：流式下的 timeout 分层
-
-`--print` 单次调用模式下 `perInputTimeoutMs`（默认 300s）直接绑 execa `timeout`——子进程跑超就杀。流式持续子进程下三类失败模式应该分开测、且子进程是 session 级资源不能因单 turn 超时就杀（否则丢失多 turn 续话能力）。
-
-#### Option 4A：三层 watchdog——firstEvent / streamIdle / perTurnWallclock，只定义 runtime/backend 层
-
-- **是什么**：
-  - `limits.firstEventTimeoutMs`：sendInput 到**首个业务事件**（`text_delta` / `tool_call_started`，**不**含 `system/init` —— 后者归 spawn probe）的 TTFB 上限
-  - `limits.streamIdleTimeoutMs`：首事件后**连续无新事件**的 idle 上限
-  - `limits.perTurnWallclockMs`：sendInput 到 `turn_finished` 的整体 wallclock 兜底（沿用 `perInputTimeoutMs` 旧位）
-  - **三层各自有独立的恢复策略**：
-    - firstEvent 超时 → interrupt + 标记疑似"队列拥堵 / 网络问题"，session 不立刻 Errored，允许下一 turn 继续
-    - streamIdle 超时 → interrupt + session Errored
-    - perTurnWallclock 超时 → interrupt + session Errored
-  - **超时处理链（强约束）**：触发 interrupt（按决策点 2 capability flag 选 SIGINT 或 stdin control）→ 等 runtime 层在 5 秒内产出 `turn_finished{wallclock_timeout}`（**`wallclock_timeout` reason 由 runtime 层构造投递，CC 子进程不直接产出此 reason**——见 spec/agent-runtime.md §TurnEndReason "daemon 注入"列）；**5s 内未产出** → 升级到 SIGKILL 子进程 + session 进 Errored + 投递 `error` + `session_stopped{error}`。子进程仅在 SIGKILL 路径或 `session.idleTimeoutMs` 命中时被杀；单 turn 超时本身**不**杀子进程
-  - **三层超时区分语义**：runtime 层必须能让 daemon 区分"firstEvent 超时（可重试）vs streamIdle 超时（不可恢复）vs perTurnWallclock 超时（不可恢复）vs user_interrupt（用户主动中断）"四类。具体实现机制（在 `turn_finished` payload 加 `timeoutLayer` 字段 / 新增 TurnEndReason 枚举值 / daemon 维护内部状态）由 PR-A（协议层）+ PR-B（runtime）决定，本 ADR 锁定语义需求不锁实现
-  - **本决策点只定义 runtime/backend watchdog 层**，不定义 daemon 视角的"等多久该告知用户超时"——后者归 daemon 层 spec / 后续独立 ADR
-  - 默认阈值留 spec/cost-and-limits.md 修订（PR-B/PR-C 落实）；本 ADR 不锁数值
-- **优点**：三类失败模式有不同恢复动作（不只是观测维度）；与 ADR-0011 分层一致；session 级子进程在单 turn 超时时不被杀，多 turn 续话能力受保护
-- **缺点**：三个旋钮的运维负担
-- **主要风险**：阈值耦合关系（如 `streamIdleTimeoutMs < perTurnWallclockMs`）若 spec 写不清，调参陷入"调一个杀一类"的反复
-
-#### Option 4B：保持单一 wallclock，失败模式由观测层区分
-
-- **是什么**：仍用 `perInputTimeoutMs` 单一阈值；TTFB / idle / runaway 在 log + metrics 区分
-- **优点**：单一旋钮
-- **缺点**：三类失败模式只能用同一阈值（必然偏向某类），且只能用同一恢复动作
-- **主要风险**：单一 wallclock 把"队列拥堵可重试"误判为"卡死不可恢复"，丢失 session 续话能力
-
-#### Option 4C：idle-only
-
-- **是什么**：取消 turn 级 wallclock，只看 idle；runaway 由 `maxToolCallsPerTurn` + 用户 interrupt 兜底
-- **优点**：贴流式语义最直接
-- **缺点**：runaway 失去硬约束；"长思考" idle 会被误判
-- **主要风险**：取消 wallclock 后 runaway 工具循环没硬限，单 turn 可能跑到几十分钟才被 maxToolCallsPerTurn 兜底
+- **Option 5A**：只靠 OS 级隔离（容器 / 沙箱 / 只读挂载），CLI flag 纯配置意图——硬边界但粒度粗（按进程能力非工具语义），与 ADR-0003 local-desktop 部署张力大
+- **Option 5B**：只靠 PreToolUse hook（实测可执行前 deny）——工具级粒度、不需容器，但单层无纵深、hook 配置被篡改即失效
+- **Option 5C**：只靠 stream-json control protocol `can_use_tool`（协议原生执行前权限请求，最契合 §白名单外拒绝 语义）——但裸 CLI 触发方式在 2.1.148 未坐实
+- **Option 5D**：进程内执行前强制点（control 或 hook，坐实其一）+ OS 级 defense-in-depth 纵深——不把赌注押在任一未坐实机制上，代价是三层实现复杂度
 
 ## Decision
 
-四个决策点综合选：
+五个决策点综合选：
 
-- **决策点 1**：选 **Option 1A**（protocol 一次性对齐 spec；runtime 本期 PR 只 emit `text_delta` / `tool_call_started` / `tool_call_finished`）
-- **决策点 1 子问题**：选 **Option 1-tr-A**（CC `user.tool_result` 合入 `tool_call_finished.payload.resultSummary`），**附 fixture 前提**——本 ADR 实施 PR 必须先落 fixture 验证 CC 对每个 `tool_use_id` 恰好回一条终态 tool_result；若 fixture 验证失败（CC 存在多变体场景），实施 PR 应在合并前**直接更新本 ADR Decision 段**切到 1-tr-B（本 ADR 处于 Proposed 状态，不走 Amendment 流程——Amendment 是 Accepted 之后的修订机制）
-- **决策点 2**：选 **Option 2A**（暂保持 SIGINT；runtime 双轨设施位，capability flag 切换；反转走独立 ADR）
-- **决策点 3**：选 **Option 3A**（本 ADR 只锁平台**能力门槛**：Discord adapter `supportsEdit: true` + `supportsTypingIndicator: true` + 实现 `edit()`/`setTyping()`/`clearTyping()`；具体 UI 策略由 message-protocol.md 修订 + 后续 issue 演进）
-- **决策点 4**：选 **Option 4A**（三层 watchdog + 三类不同恢复策略 + 强约束兜底链；单 turn 超时不杀子进程；只定义 runtime watchdog，不定义 daemon UX SLA）
+- **决策点 1**：选 **Option 1A**——protocol 一次性对齐 spec 完整 union（含独立 `tool_result` 事件位）；runtime 本期 PR 实际 emit `text_delta` / `tool_call_started` / `tool_call_finished` / `tool_result` 四类
+- **决策点 1 子问题**：选 **Option 1-tr-B**——基于 takopi 外部实证（CC tool_result 存在 5 种变体）反转 1-tr-A。**协议契约要求**：
+  - `tool_result` event 必须能**结构化承载** CC 输出的多类 content 形态（至少 string / list-of-blocks / object / empty / unknown 五类），不允许统一压扁为 single string；同一 toolUseId 多条 result 需有 sequence 区分
+  - `tool_call_finished` event 必须携带 terminal status / error summary，覆盖 0 条 result 的错误终态（CC 在某些场景下可能取消 / 超时未回 result 直接 finished）。该字段独立于 `tool_result.isError`——前者是 tool 块终态，后者是单条 result 错误
+  - 具体 payload 字段表 + 字段类型 + unknown 兜底机制（如原始 JSON 截断 + 脱敏）→ `docs/dev/spec/agent-runtime.md` 修订
+- **决策点 2**：选 **Option 2A**——暂保持 SIGINT；runtime 双轨设施位 + capability flag `supportsStdinInterrupt`；反转走独立 ADR（前提：证据收集合并门槛见 §需要后续跟进）
+- **决策点 3**：选 **Option 3A**——Discord adapter `supportsEdit: true` + `supportsTypingIndicator: true` + 实现 `edit()` / `setTyping()` / `clearTyping()`；具体 UI 策略下放后续 issue；本 ADR 同时锁定 **PR-C 最小集成契约**（见下）
+- **决策点 4**：选 **Option 4A**——三层 watchdog；timeoutLayer 区分语义**必须进 protocol**（payload 字段或 TurnEndReason 枚举，二选一，不允许 daemon 内部状态）；阈值与具体实现机制选哪个 → spec/cost-and-limits.md + PR-A
+- **决策点 5**：选 **Option 5D**——锁三条工具隔离不变量：
+  - (5.1) 在本 ADR 目标运行形态（`--print` 非交互 stream-json 主路径）下，**不得**把 `--allowed-tools` / `--permission-mode` 当作安全边界——实测该形态下不强制（关键事实 6）；即便未来 CC 版本修复该形态，也只能作为附加约束，不能替代 5.2 / 5.3
+  - (5.2) 工具隔离**必须有一个已验证 fail-closed 的 CC 进程内执行前强制点**：候选为 stream-json control protocol `can_use_tool`（agent-nexus 作 control 对端据 `toolWhitelist` allow/deny）或 **PreToolUse hook**（实测已验证可 deny）；实现前置验证坐实其一为主强制点后方可落地，二者都无法坐实则**不允许**落地该工具隔离实现。无论选哪个，其配置必须位于被隔离对象（模型）**不可写的边界外**，启动时校验已加载，缺失 / 加载失败 / 规则解析失败一律 **fail closed**（禁止启动或禁用全部工具）
+  - (5.3) **必须叠加 OS 级 defense-in-depth**，最低语义：限制工作目录写入范围 + 敏感路径不可读 + 网络能力有明确策略（容器 / 沙箱 / 只读挂载 / 网络隔离等任一可行手段达成）；若目标平台无法提供任何 OS 级限制，**必须显式声明"不满足工具隔离强安全承诺"**、不得宣称满足 5.3——因为进程内强制点随 CC 被攻破或配置被篡改而失效
+  - 该强制点**保留** tool-boundary §白名单外拒绝 的安全语义，**废弃**其"agent-nexus 事后不转发"的（observer 架构下无法落地的）实现路径，改由执行前强制点实现。"control 还是 hook 作主强制"由实现前置验证坐实（见 §需要后续跟进），不在本 ADR 钉死——无论哪个，5.1 / 5.2 / 5.3 都成立
+
+### PR-C 最小集成契约（决策点 3 配套）
+
+daemon engine 检测平台 capability 后必须实现最小调用路径，不允许 capability=true 但无人调用：
+
+- `supportsEdit=true` → 缓冲 `text_delta` + 按节流窗口调 `edit()` 更新当前回复 + `turn_finished` 触发 final edit
+- `supportsTypingIndicator=true` → turn 开始 `setTyping()` + 周期刷新（需兼容 Discord typing 自动失效阈值） + turn 结束/interrupt/错误 `clearTyping()`
+- 检测 `tool_call_*` / `tool_result` 事件 → 必须至少调用一次 platform send/edit 让用户看到工具发生了（最小可见性）
+
+具体节流毫秒数 / 刷新周期 → spec/cost-and-limits.md（不在本 ADR）。
+
+### interrupt 投递契约（决策点 2 + 决策点 4 的兼容层）
+
+无论 interrupt 触发源（用户主动 / 三层 timeout 任一），无论第一步发送语义（SIGINT 或 stdin control，由决策点 2 capability flag 决定），兜底链拆为**两层独立状态机**：
+
+**第 1 层：事件投递层（synthetic turn_finished）**
+
+- interrupt / timeout 命中后，runtime 在很短确认窗口内（毫秒级，具体值 → spec）向 daemon 投递 synthetic `turn_finished{reason, source: "runtime-synthesized"}`；不等待 CC 子进程产出
+- `source: "runtime-synthesized"` 标记**仅限于** runtime synthesized terminal turn_finished 投递给 daemon；不复用于其它 runtime 生成事件
+- **入口屏障两层分离**（避免 daemon 接受 sendInput 与 runtime 实际写 CC stdin 混淆）：
+  - daemon 入口：在 synthetic turn_finished **投递之前**阻塞同 session 的下一 sendInput；投递完成即解锁（可接受 / 排队下一请求）
+  - runtime 投递屏障：daemon 解锁后调用 `sendInput`，runtime 实际写入同一常驻 CC stdin 之前，**必须**等 stdin sync ack / CC turn boundary / process exit + replacement subprocess ready 任一成立；否则在 runtime 层排队（建议有界队列），队列满或 cleanup 进入 SIGKILL 路径 → session Errored
+- **late event 处理规则**：synthetic 投递之后 CC 子进程仍可能产出该 turn 的 late events（text_delta / tool_call_* / tool_result / CC 自己的 turn_finished）；runtime 必须**丢弃并 debug log**，**不**转发 daemon——避免污染 daemon 状态
+
+**第 2 层：进程 cleanup 层（process group lifecycle）**
+
+第 1 层投递后并行启动 cleanup state machine：
+
+1. **process group 隔离**（语义层锁定，平台实现细节归 spec/PR-B）：所有 kill 通过 `kill(-pid, sig)` 打整个 process group——参考 cc-connect 实证，不 kill group 时 MCP 子进程残留孤儿
+2. **三段升级**（阈值与时长 → spec）：
+   - **(2.1) 升级判据**：在 `gracefulInterruptMs` 内 runtime 既未观察到 **(i)** turn cleanup ack（stdin 回到 sync 状态 / CC 主动产生 turn 边界事件 / 收到 CC 自己的 turn_finished）也未观察到 **(ii)** process exit，才升级。**不**以 process exit 单一为判据——常驻子进程的正常 interrupt 成功路径就是"turn 中止 + 进程存活 + stdin sync"
+   - **(2.2)** 升级到 `kill(-pid, SIGTERM)` → 等 `sigtermGraceMs`
+   - **(2.3)** 仍未达成 (i)/(ii) 任一 → `kill(-pid, SIGKILL)`
+3. **session 终态**：cleanup 进入 SIGKILL 路径 → session Errored；正常达成 turn cleanup ack 或 process exit 自然路径 → session 维持 active（多 turn 续话能力保留）
+
+**两层互不阻塞**：第 1 层立即完成 → daemon UI 即时反馈；第 2 层后台跑 → 子进程清理与下一 turn 解耦。
 
 ## Consequences
 
 ### 正向
 
-- protocol 一次性对齐 spec，下游 exhaustive switch 一次配齐，未来增 emit 不触发 breaking
-- runtime 切持续子进程后，IM 看到工具调用过程的协议层条件就绪（解决 #45 的协议根因）；token 级 emit 让 partial output 自然不丢（自然消解 #28）
-- interrupt 路径设施位齐备（双轨），未来切主备只需翻 capability flag，不需要新 ADR
-- 三层 watchdog 让"队列拥堵 / 流中卡死 / runaway"区分到 timeout 层而非只在观测层；session 级子进程仅在 SIGKILL 路径或 session idle 时被杀，多 turn 续话能力在单 turn 超时时不被打断
-- Discord 平台能力门槛锁定（`supportsEdit` + `supportsTypingIndicator`），后续 UI 决策有明确扩展位；ADR 守住"架构决策"本位，UI / UX 决策按用户反馈演进而非一次性锁定
+- protocol 一次性对齐 spec（含独立 `tool_result`），下游 exhaustive switch 一次配齐，未来增 emit 不触发 breaking
+- runtime 切持续子进程，IM 可见工具调用（消解 #45）；token 级 emit 让 partial output 不丢（消解 #28）
+- interrupt 投递契约**两层分离**：事件投递立即完成 → daemon/UI 即时反馈；进程 cleanup 并行不阻塞下一 turn；cleanup 升级判据建模 turn-level ack 而非 process-exit，常驻子进程的正常 interrupt 成功路径不会被误判
+- 三层 watchdog + 投递契约两层结构区分"队列拥堵 / 流中卡死 / runaway"恢复策略；session 级子进程仅在 SIGKILL 路径或 session idle 被杀
+- Discord 平台能力门槛 + PR-C 最小集成契约锁定，#45 / #30 在 PR-A+B+C+D 合入后落地，不依赖 UX issue 收敛节奏
+- `tool_result` 独立事件 + 协议层保证承载五类 content 变体能力（具体字段 → spec），CC 多形态输出场景下不丢信息；`tool_call_finished` 必须携带 terminal status 覆盖 0-result error case
+- spec §顺序保证锁模型 A（`tool_result*` 在 `tool_call_finished` 前 → finished 即结果流终态）
+- legacy `--print --resume` fallback 保留代码路径，在持续子进程在 Windows / sandbox / 容器死锁等场景失败时有 escape hatch
+- 工具隔离落到**真正能在执行前拦截**的机制（control / hook + OS 纵深），不再依赖实测已失效的 CLI flag；tool-boundary §白名单外拒绝 的安全语义获得可落地实现路径，不再悬空；control protocol 正是 stream-json 双向通道的一部分，与本 ADR 主路径同源
 
 ### 负向
 
 - protocol 上会有"暂无 runtime 来源"的事件类型（`thinking` / `tool_call_progress`），需要 spec 标"声明位 vs 实际产出"
-- interrupt 决策留尾巴——本 ADR 不锁死最终主路径，需要后续证据收集与可能的反转 ADR
-- `tool_call_finished.resultSummary` 收口依赖 fixture 验证；CC 升级若引入 tool_result 多变体，需要 Amendment + spec 修订
-- 三层 timeout 增加运维负担（三个旋钮 + 阈值耦合关系约束），spec/cost-and-limits.md 修订需要写清三层默认值与互相关系（如 `streamIdleTimeoutMs < perTurnWallclockMs`）
-- 长 TTFB（首个 LLM 事件 30s+）期间用户感受层缺反馈——本 ADR 不在 daemon 层补"等多久该提示用户"的 SLA，需要后续 daemon 层 spec / ADR 跟进
-- 具体 UI 决策（工具调用呈现 / typing 节奏 / 错误呈现 / mid-stream 收尾 / interrupt 入口 / 切片时序）由后续 issue 演进，本 ADR 不一次性锁定——节奏更慢但每个决策更贴用户反馈
+- interrupt 决策留尾巴——需要后续证据收集与可能的反转 ADR
+- 三层 timeout + 两段 cleanup = 5 个相关阈值，运维负担明显，阈值耦合关系由 spec 写清
+- 已知 cc-connect / takopi 都没做三层 watchdog 仍能运行——若 PR-B 落地数据显示三类失败模式实际可合并，spec 调整不需要新 ADR
+- runtime `_normalize_tool_result` 五变体处理 + `tool_result` payload 五类承载 + late event 丢弃 + cleanup 升级判据多源判定，runtime 实现复杂度上升
+- legacy fallback 保留意味着维护两套 spawn 代码路径至证据收集复审完成
+- 工具隔离强制点 control protocol `can_use_tool` 的最后一公里（裸 CLI 触发方式）未坐实，存在回退到 hook 的可能（fallback 已验证，不阻塞但增加分支）；OS 级 defense-in-depth 与 ADR-0003（local-desktop 部署）有张力——用户本机隔离手段受限，可能只能要求"信任工作目录 + 只读挂载"等弱化形态
 
 ### 需要后续跟进的事
 
-后续 PR / spec / issue 落实清单：
-
-- **PR-A（协议层）**：`packages/protocol/src/agent.ts` 把 union 补齐到 spec 全集；扩 `AgentCapabilitySet` 加 `supportsStdinInterrupt` flag；删 `:34-39` 注释；新增/修改测试覆盖新事件类型的判别
-- **PR-B（claudecode runtime）**：`packages/agent/claudecode/src/index.ts` 切持续子进程，stdin 持续 write `{type:user,...}`，stdout `for-await` 解析 stream-json 并 emit 三类事件（`text_delta` / `tool_call_started` / `tool_call_finished`）；`interrupt()` 实现 SIGINT 路径（默认）+ stdin control 路径（capability flag 控制）；`stopSession()` 关 stdin EOF + 等清理；落 fixture 验证 CC tool_result 单条假设；**是否启用 `--include-partial-messages`**（影响 `text_delta` 粒度——token 级 vs 整段，进而影响 PR-C 缓冲逻辑与 PR-D edit 频率）由 PR-B 内部决定
-- **PR-C（daemon engine）**：`packages/daemon/src/engine.ts` 改流式消费——`text_delta` 累积 / 转发；`tool_call_started/finished` 路由到 platform；`turn_finished` 收尾不变
-- **PR-D（Discord adapter 平台能力门槛）**：`packages/platform/discord/src/index.ts` 翻 `supportsEdit: true` + `supportsTypingIndicator: true`，实现 `edit()` / `setTyping()` / `clearTyping()`；具体 UI 策略按对应 UX issue 演进
-- **spec 修订**：
-  - `docs/dev/spec/agent-runtime.md` 在 union 表前补"声明位 vs 实际产出"说明；§TurnEndReason 与 §turn_finished payload 按 PR-A 选定的"三层超时区分语义"实现机制对应修订（如选 payload 加 `timeoutLayer` 字段则扩 payload；如选新增 reason 枚举则扩 union；如选 daemon 内部状态则 spec 不动）
-  - `docs/dev/spec/agent-backends/claude-code-cli.md` §中断 段补 capability flag；§超时 段把"超时 → SIGINT → 5s → SIGKILL"改写为本 ADR 决策点 4 的三层 watchdog 语义（含强约束兜底链）
-  - `docs/dev/spec/message-protocol.md` §流式语义 标记"模式 B 已由 ADR-0012 决策点 3 评审通过"；UI 细节（工具调用呈现 / typing / 错误 / 切片锚定）按后续 UX issue 收敛
-  - `docs/dev/spec/platform-adapter.md` 加 `setTyping` / `clearTyping` 接口与 `supportsTypingIndicator` capability
-  - `docs/dev/spec/infra/cost-and-limits.md` §Wall-clock 硬限 把 `perInputTimeoutMs` 拆成 `firstEventTimeoutMs` / `streamIdleTimeoutMs` / `perTurnWallclockMs` 三层
-- **issue 处置**（不属本 ADR 决策本身，列在此处便于实施 PR 时回检）：#45 在 PR-A + PR-B 合入后由 reviewer 关闭（"fixed by ADR-0012 + PR-#NN"）；#56 epic 在 PR-A/B/C/D 全部合入后关闭；#28 / #54（部分）/ #30 / #55-B 在对应 PR 合入后由 reviewer 评估关闭
-- **证据收集（决策点 2 反转的前提）**：runtime PR-B 落地后，跑长任务（10s+ 工具循环）记录两类数据 (i) stdin `control/interrupt` 从写入到 CC 产出 `turn_finished{user_interrupt}` 的延迟分布 (ii) SIGINT 在工具子进程链路下能否打到正确边界。**Owner**：PR-B 作者；**Trigger**：数据落地后由 PR-B 作者开 issue（标 `adr-review` label）触发决策点 2 反转 ADR 讨论——避免该决策因无 owner 沉默消亡
-- **UX / UI 实施细节**：不在本 ADR，由 #54（interrupt 入口）+ #63 / #64 / #65 / #66 跟踪 PR-D 实施；issue 列表见 §参考
+- **PR-A（协议层）**：union 补齐到 spec 全集（含 `tool_result`）；扩 `AgentCapabilitySet.supportsStdinInterrupt`；选定 timeoutLayer 实现机制（payload 字段 或 TurnEndReason 枚举，不允许 daemon 内部状态）；`tool_call_finished` 加 terminal status 字段。具体类型 / 字段 / 测试细节 → PR 描述 + spec
+- **PR-B（claudecode runtime）**：切持续子进程；process group 隔离；stream-json stdin/stdout；emit 四类事件；`_normalize_tool_result` 覆盖五变体；实现 §interrupt 投递契约 两层状态机（事件投递层立即合成 + late event 丢弃 + cleanup 多源升级判据）；interrupt SIGINT + stdin control 双轨；保留 `--print --resume` legacy 代码路径
+- **PR-C（daemon engine）**：按 §PR-C 最小集成契约 实现节流 edit + typing 周期刷新 + 工具事件最小可见性路由；处理 synthetic turn_finished `source` 字段；synthetic 投递前阻塞下一 sendInput，投递后解锁
+- **PR-D（Discord adapter）**：翻 capability + 实现 primitive；具体 UI 策略按 UX issue 演进
+- **spec 修订**（详见各 spec 文件 SSOT）：
+  - agent-runtime.md：union 加 `tool_result` 事件 + payload schema 字段表 + `tool_call_finished` terminal status 字段 + §顺序保证补"每 toolUseId 0+条 tool_result，必须在 tool_call_finished 前"
+  - agent-backends/claude-code-cli.md：§中断 / §超时 改写为本 ADR §interrupt 投递契约两层结构 + capability flag；process group 平台细节
+  - message-protocol.md：§流式语义 模式 B 标记本 ADR 评审通过
+  - platform-adapter.md：加 `setTyping` / `clearTyping` + `supportsTypingIndicator` capability
+  - cost-and-limits.md：三层 watchdog + cleanup 两段阈值 + 投递层确认窗口 + 节流 edit / typing 周期等数值 + 阈值耦合关系
+  - security/redaction.md：与 `tool_result` unknown 兜底字段的脱敏联动
+  - security/tool-boundary.md：§白名单外拒绝 合约 + §核心威胁关联 按决策点 5 重写（强制点从 CLI flag 改为 control/hook 进程内执行前拦截 + OS 纵深）；`--allowed-tools` 改述为配置意图声明
+  - agent-backends/claude-code-cli.md：已记 `--allowed-tools` / `--permission-mode` 不强制的实测事实（§权限边界 ⚠️），补 control protocol / PreToolUse hook 执行前强制机制的契约
+- **issue 处置**：#45 在 PR-A/B/C 合入后关；#56 epic 在 PR-A/B/C/D 全部合入后关；#28 / #54（部分）/ #30 / #55-B 在对应 PR 合入后由 reviewer 评估关闭
+- **证据收集合并门槛（决策点 2 反转的前提）**：PR-B 合并前必须 (a) 提交可重跑 fixture 测三类数据（stdin control 延迟 / SIGINT 多层传播事实 / process group kill 覆盖事实） (b) 创建 tracking issue 含 owner / 验收 schema / 复审日期 4 周 (c) 挂 `adr-review` label。复审到期 → maintainer 在 issue 上记录决策结论 → 若反转决策点 2，maintainer 发独立 ADR PR。**门槛未达 PR-B 不允许合并**
+- **legacy fallback 保留门槛**：PR-B 保留 `--print --resume` legacy 代码路径至证据收集复审完成；**默认不启用**但实现层必须保留可配置切换入口（环境变量 / 配置文件 / runtime flag）；删除 fallback 须独立 ADR/修订 PR
+- **工具隔离实现前置验证门槛（决策点 5.2 control vs hook 的前提）**：实现工具隔离的 PR 落地前必须在目标 CC 版本上坐实裸 CLI 能否触发 `can_use_tool`（查当前 `@anthropic-ai/claude-agent-sdk` 的 initialize permission capability 声明 + 实测真拦一次）。坐实 → control 为主（协议原生、最契合 §白名单外拒绝 语义，故为验证时的优先候选）；不可行 → hook 为主。两者都必须满足 5.2 的 fail-closed / 配置不可篡改要求。结论记入 spec。OS 级 defense-in-depth 技术选型（容器 vs seccomp vs 只读挂载）结合 ADR-0003 部署形态另定（可独立 ADR 或 tool-boundary 修订）
+- **流程门槛**：本 ADR 合入 main 进入 Proposed 状态后，任何对 Decision 段的修订必须独立 ADR 修订 PR 经 review 后合并，遵守 `docs/dev/standards/adr.md §评审约束`
 
 ## Out of scope
 
-本 ADR 明确不决定的事项：
+**架构层**：跨 backend 抽象、MCP 接入、跨 turn thinking 持久化、capability flag 翻起的具体时机、daemon 视角的 UX SLA、三层 watchdog / 两段 cleanup 默认阈值与耦合关系、投递层确认窗口数值、节流 edit / typing 周期数值
 
-**架构层（留给后续 ADR / spec）**：
-- 跨 backend 抽象（GPT / Gemini / 其他 agent）——本 ADR 仅 claudecode
-- MCP 接入——见 `docs/dev/spec/security/tool-boundary.md`
-- 跨 turn 的 thinking 持久化
-- capability flag `supportsStdinInterrupt` 翻起的具体时机——证据补齐后由独立 ADR 决定
-- 双轨期间 legacy `--print` 路径保留期限——由 PR-B 内部决定，不写入 spec
-- daemon 视角的"等多久该告知用户超时"UX SLA——daemon 层 spec / 独立 ADR
-- 三层 watchdog 默认阈值——spec/cost-and-limits.md 修订
-
-**UX / UI 层（留给后续 issue，#58–#66）**：工具调用呈现形态、typing 持续策略、错误呈现、mid-stream 收尾、切片时序锚定、interrupt UX 入口、长回复体积控制（截断 / 外链 / 附件）、脱敏边界、多用户 channel 并发、turn 收尾摘要、超时重试可见性、rate 累计预算
+**UX / UI 层**（issue #58–#66 演进）：工具调用呈现形态、typing 节奏最终阈值、错误呈现、mid-stream 收尾、切片时序锚定、interrupt UX 入口、长回复体积控制、脱敏边界、多用户 channel 并发、turn 收尾摘要、超时重试可见性、rate 累计预算
 
 ## Amendments
 
@@ -221,33 +201,42 @@ superseded_by: null
 
 （暂无）
 
-## 异议 & 回应（来自 argue self-check）
+## 异议 & 回应（来自 argue self-check + GAN review）
 
-本 ADR 起草过程中用 codex-review skill（gpt-5 系列异构模型）跑了三轮反方分析；用户视角在第三轮覆盖了 ADR 体量边界。每条只留结论性 verdict，论证展开见 commit history。
+起草过程跑了三轮 codex-review argue self-check；用户在第三轮覆盖 ADR 体量边界。2026-05-21 跑第四 / 第五 / 第六轮 GAN review（adversarial-review + 外部对照 cc-connect / takopi）。只留 verdict。
 
-**第一轮 argue（协议层）**：
+**第一 / 二 / 三轮 argue**（同原版）
 
-- **异议 1（决策点 1）**：草案"按 MVP 分批暴露 union"违反契约先行；加 case 触发下游二次 breaking。**回应**：采纳，改为 protocol 一次性对齐 spec
-- **异议 2（决策点 1 子问题）**：风险不在 daemon 路由层数，而在 CC 外部契约是否成立。**回应**：采纳，附 fixture 前提；多变体场景由实施 PR 合并前直接切 1-tr-B
-- **异议 3（决策点 2）**："保持 SIGINT 因为 spec 已锁"循环论证。**回应**：部分采纳，降级为"暂保持 + 待证据"，双轨设施位 + capability flag
+**第四轮 GAN R1（含外部证据，2026-05-21）**：
+- 异议 8（interrupt delivery 缺 process group / 5s 边界）→ 采纳，新增 §投递契约 process group + 三段兜底（细节见正文）
+- 异议 9（timeoutLayer 三选一隐藏降级）→ 采纳，删 daemon 内部状态
+- 异议 10（Proposed 改 Decision 例外）→ 采纳，删
+- 异议 11（1-tr-A → 1-tr-B 隐式 supersede）→ 升级——外部 takopi 实证反转到 1-tr-B
+- 异议 12（capability=true 但无人调）→ 采纳，加 PR-C 最小集成契约
+- 异议 13（证据收集弱 owner）→ 采纳，改为 PR-B 合并门槛
 
-**第二轮 argue（流式 timeout）**：
+**第五轮 GAN R2（2026-05-21）**：
+- 异议 14（synthetic turn_finished 投递与 cleanup 升级互锁）→ 采纳，拆事件投递层 + 进程 cleanup 层两层状态机
+- 异议 15（tool_result 缺 payload schema）→ 采纳，ADR 锁"协议层结构化承载五类 content"；具体字段表下移 spec（详见第六轮）
+- 异议 16（tool_call_finished vs tool_result happens-before）→ 采纳，模型 A：tool_result* 在 tool_call_finished 前
+- 异议 17（takopi `-p --resume` 反证未转 legacy 保留策略）→ 采纳，加 legacy fallback 保留门槛
 
-- **异议 4**：默认值 30s/60s/300s 偏激进；"事件"定义不清。**回应**：采纳，不锁数值留 spec 修订；事件定义"首个业务事件"排除 `system/init`
-- **异议 5**：三层若动作一样就是过设计。**回应**：采纳并强化论证，三层有**不同恢复策略**（firstEvent 仅 interrupt；streamIdle / wallclock 进 Errored）
-- **异议 6**：interrupt → 5s → kill 必须升格强约束。**回应**：采纳，写成**强约束**；单 turn 超时不杀子进程
-- **异议 7**：不该顺手定义 daemon UX SLA。**回应**：采纳，明确"本决策点只定义 runtime/backend watchdog"
+**第六轮 GAN R3（2026-05-21）**：
+- 异议 18（cleanup 升级判据 = process group 退出 错）→ 采纳，升级判据改为"turn cleanup ack 或 process exit 任一未达成才升级"；加 late event 丢弃规则；澄清 daemon sendInput 阻塞窗口锚定在事件投递层（非 cleanup 层）
+- 异议 19（ADR 又膨胀超 250 行 / 锁了 spec-level 细节）→ 采纳，大幅瘦身——payload 字段表 / 阈值数值 / 平台实现细节 / 文件级 PR checklist 全部下移 spec；ADR 仅保留架构不变量
+- 异议 20（0 条 tool_result 错误终态无表达）→ 采纳，`tool_call_finished` 必须携带 terminal status / error summary 覆盖 0-result error case，独立于 `tool_result.isError`
 
-**第三轮（用户覆盖：ADR vs PRD 边界）**：
+**第七轮（决策点 5 工具隔离强制点纳入，2026-05-22）**：
 
-ADR 第二轮迭代后膨胀到 416 行，6 个 UI / UX 决策点（typing / 错误呈现 / mid-stream 收尾 / interrupt 入口 / 切片锚定 / 工具调用呈现）进了 Decision 段并锁文案。**回应**：采纳，瘦身——决策点 3 收敛为"平台能力门槛"，具体 UI 策略转 issue + spec 修订；原决策点 4（issue 关闭管理）转 §issue 处置段；Decision 段从 10 → 4 真架构决策。
+- 起因：PR #88 对 CC 2.1.148 全量实测发现 `--print` 非交互主路径下 `--allowed-tools` / `--permission-mode` 不强制工具边界（关键事实 6），tool-boundary §白名单外拒绝 合约前提被证伪。初稿曾拟开独立 ADR-0014 承载；经权衡——工具隔离失效是本 ADR 切 `--print` 非交互主路径的**直接后果**、内聚性强于"独立维度"，且本 ADR 仍 Proposed 未合入、在可改窗口——合并为本 ADR 决策点 5，弃用 ADR-0014
+- 收敛口径：决策点 5 仅锁三条架构不变量（CLI flag 非边界 / 进程内执行前强制点 / OS 纵深），机制对比与 control vs hook 谁为主下沉为实现前置验证项 + spec，遵守异议 19 "ADR 仅保留架构不变量"的瘦身原则
+- 第七轮 GAN（2 轮收敛）verdict：R1 提 7 条（5 important + 2 nit），developer accept 6 / reject 1（I6 标题收敛 nit，体例既定，reviewer R2 复核后 withdrawn）；R2 全部 resolved/withdrawn、无新主 issue，verdict 接近最优。采纳要点——决策点 5 不变量不再排序未坐实的 control（偏好降为验证时优先候选）、5.2 补 fail-closed + 配置不可篡改边界、5.3 给 OS 纵深最低语义 + 无法满足须显式声明、关键事实 6 拆分「推断」与「确定事实」、5.1 限定到目标运行形态、"取代合约" 改为 "保留语义废弃 observer 实现路径"
+
+外部证据来源：`chenhg5/cc-connect`（process group kill 必要性 + Discord edit/typing 节奏 viable）+ `banteg/takopi`（tool_result 5 种 content 变体 + `-p --resume` 反证）+ PR #88 CC 2.1.148 实测（`--allowed-tools` 不强制 / `permission-mode default` 退化 bypassPermissions / PreToolUse hook 能 deny / control protocol 握手裸 CLI 可用）
 
 ## 参考
 
-- 相关 issue：
-  - 上游：#56（本 epic 来源）、#45（root cause 分析被吸收）、#28（partial output 丢失）、#54（interrupt 路径 + 用户入口）、#30 / #55（Discord 长回复切片相关）
-  - 产品维度待办：#58（脱敏边界）、#59（多用户 channel 隔离）、#60（turn 收尾摘要）、#61（重试可见性）、#62（rate 累计预算）
-  - UX 实施待办（PR-D）：#63（typing 持续策略）、#64（错误呈现）、#65（mid-stream 收尾标记）、#66（切片时序锚定）
-- 相关 spec：见 §Consequences §需要后续跟进的事
-- 相关 ADR：ADR-0002（CC CLI 选型）、ADR-0011（turn 分层）
-- 当前实现：`packages/protocol/src/agent.ts:34-98`（裁剪版 union + TODO）、`packages/agent/claudecode/src/index.ts:120-333`（`--print` 单次调用 / interrupt no-op / 解析层）、`packages/platform/discord/src/index.ts:193-206`（capability set）
+- 相关 issue：#56（epic 来源）、#45 / #28 / #54 / #30 / #55、UX 待办 #54 / #58-#66
+- 相关 spec / ADR：见 §需要后续跟进的事
+- 当前实现：`packages/protocol/src/agent.ts:34-98` / `packages/agent/claudecode/src/index.ts:120-333` / `packages/platform/discord/src/index.ts:193-206`
+- **外部对照项目**：cc-connect（https://github.com/chenhg5/cc-connect）/ takopi（https://github.com/banteg/takopi）

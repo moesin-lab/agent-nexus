@@ -1,9 +1,9 @@
 ---
-title: ADR-0012 claudecode 切到 stream-json 主路径——协议合约 / interrupt / timeout
+title: ADR-0012 claudecode 切到 stream-json 主路径——协议合约 / interrupt / timeout / 工具隔离强制点
 type: adr
 status: active
-summary: claudecode runtime 切 stream-json 持续子进程；锁定 protocol union 一次性对齐（含独立 tool_result）、interrupt 暂保持 SIGINT + 投递契约两层状态机、平台能力门槛 + PR-C 最小集成契约、legacy fallback 保留五项架构决策
-tags: [adr, decision, agent-runtime, claude-code, subprocess, message-protocol]
+summary: claudecode runtime 切 stream-json 持续子进程；锁定 protocol union 一次性对齐（含独立 tool_result）、interrupt 暂保持 SIGINT + 投递契约两层状态机、平台能力门槛 + PR-C 最小集成契约、legacy fallback 保留、工具隔离强制点（CLI flag 非边界 / 进程内执行前拦截 + OS 纵深）六项架构决策
+tags: [adr, decision, agent-runtime, claude-code, subprocess, message-protocol, tool-boundary, security]
 related:
   - dev/adr/0002-agent-backend-claude-code-cli
   - dev/adr/0011-turn-layering
@@ -11,6 +11,7 @@ related:
   - dev/spec/agent-backends/claude-code-cli
   - dev/spec/message-protocol
   - dev/spec/platform-adapter
+  - dev/spec/security/tool-boundary
 adr_status: Proposed
 adr_number: "0012"
 decision_date: 2026-04-28
@@ -18,7 +19,7 @@ supersedes: null
 superseded_by: null
 ---
 
-# ADR-0012：claudecode 切到 stream-json 主路径——协议合约 / interrupt / timeout
+# ADR-0012：claudecode 切到 stream-json 主路径——协议合约 / interrupt / timeout / 工具隔离强制点
 
 - **状态**：Proposed
 - **日期**：2026-04-28
@@ -29,12 +30,13 @@ superseded_by: null
 
 - 2026-04-28：Proposed
 - 2026-05-21：第四 / 五 / 六轮 GAN review 修订（详见 §异议 & 回应）
+- 2026-05-22：补决策点 5（工具隔离强制点）——stream-json 主路径实测暴露 `--allowed-tools` / `--permission-mode` 不强制工具边界，纳入本 ADR（详见 §异议 & 回应 第七轮）
 
 ## Context
 
 `docs/dev/spec/agent-backends/claude-code-cli.md` §交互式 session 已把 stream-json 标为 MVP 主路径，但实现侧仍是 `--print` 单次调用——每次 `sendInput` spawn → 跑完 → 退出。这个 spec/impl gap 是 #45（IM 看不到工具调用）/ #28（partial output 丢失）/ #54（interrupt 只能整子进程）/ #30 / #55-B（Discord 长回复无流式 edit）的共同上游。把它们当独立 issue 修，大概率在 stream-json 切换时被全部重写。
 
-本 ADR 立 epic 协议层 + 实现层共识，**只锁不可逆的架构决策**——协议契约、interrupt 主路径、流式 timeout 分层、平台能力门槛、interrupt 投递契约、legacy fallback 保留。具体 UX / UI 文案、协议字段表、阈值数值、平台实现细节由 spec 修订 + 后续 issue 演进。
+本 ADR 立 epic 协议层 + 实现层共识，**只锁不可逆的架构决策**——协议契约、interrupt 主路径、流式 timeout 分层、平台能力门槛、interrupt 投递契约、legacy fallback 保留、工具隔离强制点。具体 UX / UI 文案、协议字段表、阈值数值、平台实现细节由 spec 修订 + 后续 issue 演进。
 
 观察到的关键事实：
 
@@ -46,10 +48,11 @@ superseded_by: null
    - `chenhg5/cc-connect`（Go IM-bridge，长驻 stream-json 子进程）实证 process group kill 必要（不 kill group → MCP 孙进程 100% CPU 孤儿）+ Discord edit + 周期 typing 节奏 viable
    - `banteg/takopi`（Python Telegram bridge）实证 CC `tool_result.content` 在生产环境至少存在 5 种变体（str / list / dict / None / 其他 + `is_error`）；并以 `-p --resume` 一次性模式作为持续子进程的对照存在
    - 两个项目均未实现三层 watchdog 仍能运行
+6. **工具隔离实测证伪**（2026-05-22，CC 2.1.148）：本 ADR 锁定的 `--print --output-format stream-json` 非交互主路径下，`--allowed-tools` 白名单 / `Bash(git *)` 子模式 / `--permission-mode default`（`init` 实报 `permissionMode:"bypassPermissions"`）均**不强制**工具边界——白名单只给 `Read`，模型用未列入的 `Bash` 仍执行成功，`permission_denials` 为空。根因有二：CC 的交互批准框架依赖 TUI，`--print` 下检测不到批准通道即退化放行；更根本地，stream-json 架构下 agent-nexus 是子进程 stdout 的**观察者**，在事件流里看到 `tool_use` 时工具已执行完，无法事后拦截。`security/tool-boundary.md` §白名单外拒绝 合约（"CC 调未在白名单的工具 → 不转发工具调用请求"）的前提因此被证伪。同测发现两个 CC 进程内的**有效**执行前强制点：(a) PreToolUse hook 能在执行前 deny（实测 `tool_result.is_error=true` + `permission_denials` 记录）；(b) stream-json control protocol 握手裸 CLI 可用（`control_request{subtype:initialize}` → `control_response`），其 `can_use_tool` / `sdk_control_request{subtype:permission}` 是协议原生的执行前权限请求机制（官方 Agent SDK `canUseTool` callback 即走此协议），但裸 CLI 触发 `can_use_tool` 的确切方式在 2.1.148 未坐实
 
 ## Options
 
-四个真架构决策点。具体阈值 / payload 字段表 / 平台细节由 spec 修订；本 ADR 不展开。
+五个真架构决策点。具体阈值 / payload 字段表 / 平台细节由 spec 修订；本 ADR 不展开。
 
 ### 决策点 1：AgentEvent union 形态
 
@@ -78,9 +81,18 @@ superseded_by: null
 - **Option 4B**：保持单一 wallclock；失败模式由观测层区分
 - **Option 4C**：idle-only
 
+### 决策点 5：工具隔离强制点
+
+`--print` 非交互主路径下 `--allowed-tools` / `--permission-mode` 实测不强制工具边界（关键事实 6），tool-boundary §白名单外拒绝 合约前提被证伪、observer 架构无法事后拦截。工具隔离的真正强制点何在：
+
+- **Option 5A**：只靠 OS 级隔离（容器 / 沙箱 / 只读挂载），CLI flag 纯配置意图——硬边界但粒度粗（按进程能力非工具语义），与 ADR-0003 local-desktop 部署张力大
+- **Option 5B**：只靠 PreToolUse hook（实测可执行前 deny）——工具级粒度、不需容器，但单层无纵深、hook 配置被篡改即失效
+- **Option 5C**：只靠 stream-json control protocol `can_use_tool`（协议原生执行前权限请求，最契合 §白名单外拒绝 语义）——但裸 CLI 触发方式在 2.1.148 未坐实
+- **Option 5D**：进程内执行前强制点（control 优先 / hook 等效 fallback）+ OS 级 defense-in-depth 纵深——不把赌注押在任一未坐实机制上，代价是三层实现复杂度
+
 ## Decision
 
-四个决策点综合选：
+五个决策点综合选：
 
 - **决策点 1**：选 **Option 1A**——protocol 一次性对齐 spec 完整 union（含独立 `tool_result` 事件位）；runtime 本期 PR 实际 emit `text_delta` / `tool_call_started` / `tool_call_finished` / `tool_result` 四类
 - **决策点 1 子问题**：选 **Option 1-tr-B**——基于 takopi 外部实证（CC tool_result 存在 5 种变体）反转 1-tr-A。**协议契约要求**：
@@ -90,6 +102,11 @@ superseded_by: null
 - **决策点 2**：选 **Option 2A**——暂保持 SIGINT；runtime 双轨设施位 + capability flag `supportsStdinInterrupt`；反转走独立 ADR（前提：证据收集合并门槛见 §需要后续跟进）
 - **决策点 3**：选 **Option 3A**——Discord adapter `supportsEdit: true` + `supportsTypingIndicator: true` + 实现 `edit()` / `setTyping()` / `clearTyping()`；具体 UI 策略下放后续 issue；本 ADR 同时锁定 **PR-C 最小集成契约**（见下）
 - **决策点 4**：选 **Option 4A**——三层 watchdog；timeoutLayer 区分语义**必须进 protocol**（payload 字段或 TurnEndReason 枚举，二选一，不允许 daemon 内部状态）；阈值与具体实现机制选哪个 → spec/cost-and-limits.md + PR-A
+- **决策点 5**：选 **Option 5D**——锁三条工具隔离不变量：
+  - (5.1) `--allowed-tools` / `--permission-mode` **不是安全边界**，`--print` 非交互主路径下不强制（实测证伪），仅作配置意图声明 / UX
+  - (5.2) 工具隔离**必须有 CC 进程内的执行前强制点**：优先用 stream-json control protocol `can_use_tool`（agent-nexus 作 control 对端据 `toolWhitelist` allow/deny）；若该机制在目标 CC 版本裸 CLI 下无法坐实，用 **PreToolUse hook** 作等效 fallback（实测已验证可 deny）。二者择一，必居其一
+  - (5.3) **必须叠加 OS 级 defense-in-depth**（容器 / 沙箱 / 只读挂载 / 网络隔离任一可行手段），因为进程内强制点随 CC 被攻破或配置被篡改而失效
+  - 该强制点**取代** tool-boundary §白名单外拒绝 合约中"agent-nexus 事后不转发"的（observer 架构下无法落地的）实现路径。"control 还是 hook 作主强制"由实现前置验证坐实（见 §需要后续跟进），不在本 ADR 钉死——无论哪个，5.1/5.2/5.3 都成立
 
 ### PR-C 最小集成契约（决策点 3 配套）
 
@@ -139,6 +156,7 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
 - `tool_result` 独立事件 + 协议层保证承载五类 content 变体能力（具体字段 → spec），CC 多形态输出场景下不丢信息；`tool_call_finished` 必须携带 terminal status 覆盖 0-result error case
 - spec §顺序保证锁模型 A（`tool_result*` 在 `tool_call_finished` 前 → finished 即结果流终态）
 - legacy `--print --resume` fallback 保留代码路径，在持续子进程在 Windows / sandbox / 容器死锁等场景失败时有 escape hatch
+- 工具隔离落到**真正能在执行前拦截**的机制（control / hook + OS 纵深），不再依赖实测已失效的 CLI flag；tool-boundary §白名单外拒绝 合约获得可落地实现路径，不再悬空；control protocol 正是 stream-json 双向通道的一部分，与本 ADR 主路径同源
 
 ### 负向
 
@@ -148,6 +166,7 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
 - 已知 cc-connect / takopi 都没做三层 watchdog 仍能运行——若 PR-B 落地数据显示三类失败模式实际可合并，spec 调整不需要新 ADR
 - runtime `_normalize_tool_result` 五变体处理 + `tool_result` payload 五类承载 + late event 丢弃 + cleanup 升级判据多源判定，runtime 实现复杂度上升
 - legacy fallback 保留意味着维护两套 spawn 代码路径至证据收集复审完成
+- 工具隔离强制点 control protocol `can_use_tool` 的最后一公里（裸 CLI 触发方式）未坐实，存在回退到 hook 的可能（fallback 已验证，不阻塞但增加分支）；OS 级 defense-in-depth 与 ADR-0003（local-desktop 部署）有张力——用户本机隔离手段受限，可能只能要求"信任工作目录 + 只读挂载"等弱化形态
 
 ### 需要后续跟进的事
 
@@ -162,9 +181,12 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
   - platform-adapter.md：加 `setTyping` / `clearTyping` + `supportsTypingIndicator` capability
   - cost-and-limits.md：三层 watchdog + cleanup 两段阈值 + 投递层确认窗口 + 节流 edit / typing 周期等数值 + 阈值耦合关系
   - security/redaction.md：与 `tool_result` unknown 兜底字段的脱敏联动
+  - security/tool-boundary.md：§白名单外拒绝 合约 + §核心威胁关联 按决策点 5 重写（强制点从 CLI flag 改为 control/hook 进程内执行前拦截 + OS 纵深）；`--allowed-tools` 改述为配置意图声明
+  - agent-backends/claude-code-cli.md：已记 `--allowed-tools` / `--permission-mode` 不强制的实测事实（§权限边界 ⚠️），补 control protocol / PreToolUse hook 执行前强制机制的契约
 - **issue 处置**：#45 在 PR-A/B/C 合入后关；#56 epic 在 PR-A/B/C/D 全部合入后关；#28 / #54（部分）/ #30 / #55-B 在对应 PR 合入后由 reviewer 评估关闭
 - **证据收集合并门槛（决策点 2 反转的前提）**：PR-B 合并前必须 (a) 提交可重跑 fixture 测三类数据（stdin control 延迟 / SIGINT 多层传播事实 / process group kill 覆盖事实） (b) 创建 tracking issue 含 owner / 验收 schema / 复审日期 4 周 (c) 挂 `adr-review` label。复审到期 → maintainer 在 issue 上记录决策结论 → 若反转决策点 2，maintainer 发独立 ADR PR。**门槛未达 PR-B 不允许合并**
 - **legacy fallback 保留门槛**：PR-B 保留 `--print --resume` legacy 代码路径至证据收集复审完成；**默认不启用**但实现层必须保留可配置切换入口（环境变量 / 配置文件 / runtime flag）；删除 fallback 须独立 ADR/修订 PR
+- **工具隔离实现前置验证门槛（决策点 5.2 control vs hook 的前提）**：实现工具隔离的 PR 落地前必须在目标 CC 版本上坐实裸 CLI 能否触发 `can_use_tool`（查当前 `@anthropic-ai/claude-agent-sdk` 的 initialize permission capability 声明 + 实测真拦一次）。坐实 → control 为主；不可行 → hook 为主。结论记入 spec。OS 级 defense-in-depth 技术选型（容器 vs seccomp vs 只读挂载）结合 ADR-0003 部署形态另定（可独立 ADR 或 tool-boundary 修订）
 - **流程门槛**：本 ADR 合入 main 进入 Proposed 状态后，任何对 Decision 段的修订必须独立 ADR 修订 PR 经 review 后合并，遵守 `docs/dev/standards/adr.md §评审约束`
 
 ## Out of scope
@@ -204,7 +226,13 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
 - 异议 19（ADR 又膨胀超 250 行 / 锁了 spec-level 细节）→ 采纳，大幅瘦身——payload 字段表 / 阈值数值 / 平台实现细节 / 文件级 PR checklist 全部下移 spec；ADR 仅保留架构不变量
 - 异议 20（0 条 tool_result 错误终态无表达）→ 采纳，`tool_call_finished` 必须携带 terminal status / error summary 覆盖 0-result error case，独立于 `tool_result.isError`
 
-外部证据来源：`chenhg5/cc-connect`（process group kill 必要性 + Discord edit/typing 节奏 viable）+ `banteg/takopi`（tool_result 5 种 content 变体 + `-p --resume` 反证）
+**第七轮（决策点 5 工具隔离强制点纳入，2026-05-22）**：
+
+- 起因：PR #88 对 CC 2.1.148 全量实测发现 `--print` 非交互主路径下 `--allowed-tools` / `--permission-mode` 不强制工具边界（关键事实 6），tool-boundary §白名单外拒绝 合约前提被证伪。初稿曾拟开独立 ADR-0014 承载；经权衡——工具隔离失效是本 ADR 切 `--print` 非交互主路径的**直接后果**、内聚性强于"独立维度"，且本 ADR 仍 Proposed 未合入、在可改窗口——合并为本 ADR 决策点 5，弃用 ADR-0014
+- 收敛口径：决策点 5 仅锁三条架构不变量（CLI flag 非边界 / 进程内执行前强制点 / OS 纵深），机制对比与 control vs hook 谁为主下沉为实现前置验证项 + spec，遵守异议 19 "ADR 仅保留架构不变量"的瘦身原则
+- GAN review verdict 待第七轮 adversarial-review 跑完回填
+
+外部证据来源：`chenhg5/cc-connect`（process group kill 必要性 + Discord edit/typing 节奏 viable）+ `banteg/takopi`（tool_result 5 种 content 变体 + `-p --resume` 反证）+ PR #88 CC 2.1.148 实测（`--allowed-tools` 不强制 / `permission-mode default` 退化 bypassPermissions / PreToolUse hook 能 deny / control protocol 握手裸 CLI 可用）
 
 ## 参考
 

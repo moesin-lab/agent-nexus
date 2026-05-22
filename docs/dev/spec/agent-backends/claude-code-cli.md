@@ -140,7 +140,7 @@ MVP 只依赖两类输入：
 // 加 --include-partial-messages 时，token 增量以 stream_event（Anthropic SSE 包裹）出现，不在 assistant content 里：
 // {"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hel"}}}
 {"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_123","name":"Bash","input":{"command":"..."}}]}}
-// tool_result.content 在本次实测样例中为 string；AgentEvent 层如何承载 tool_result 变体，待 ADR-0012 / agent-runtime.md 落地后同步
+// tool_result.content 在本次实测样例中为 string；多形态（string/块数组/object/空/其他）由独立 tool_result 事件承载，见 agent-runtime.md §ToolResultContent
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_123","content":"...","is_error":false}]}}
 {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1779441000,"rateLimitType":"five_hour","overageStatus":"..."}}
 {"type":"result","subtype":"success","stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50}}
@@ -154,8 +154,9 @@ MVP 只依赖两类输入：
 | `system / init`（**每 turn 重发，session_id 不变**） | 仅首个 init / session_id 变化时发 `session_started`；后续同 session_id 的 init 当 turn 边界，**不重复**发 |
 | `assistant / text`（完整块，**MVP 默认形态**） | `text_final` |
 | `stream_event`（`event.type:content_block_delta`，`delta.type:text_delta`；**仅 `--include-partial-messages` 下出现**，Anthropic SSE 包裹，不在 assistant content） | `text_delta`（默认模板无此事件，攒整段走 `text`→`text_final`） |
-| `assistant / tool_use` | `tool_call_started` |
-| `user / tool_result` | `tool_call_finished`（status 由 `is_error` 决定）¹ |
+| `assistant / tool_use` | `tool_call_started`（`callId` ← `tool_use.id`） |
+| `user / tool_result` | `tool_result`（独立事件；`content` 按 [`agent-runtime.md`](../agent-runtime.md) ToolResultContent 判别优先级映射，`isError` ← `is_error`，`callId` ← `tool_use_id`，同 `tool_use_id` 多条按到达序 `resultSequence` 0+ 递增）¹ |
+| （工具块终结，无独立 CC 事件，runtime 合成） | `tool_call_finished`：runtime 在该 `tool_use_id` 结果流终结时合成；`callId` ← 对应 `tool_call_started.callId`、`toolName` ← 缓存的 `tool_use.name`；`status` 由工具块**终结态**决定（**不得仅凭某条中间 result 的 `is_error` 推导**）——0-result 异常终止、或终结该 `tool_use_id` 的 result 为 error 且无后续恢复 → `error`，中断 / 取消 → `cancelled`，否则 `ok`；`status != "ok"` 时 `errorSummary` 尽力填² |
 | `result / success` | `turn_finished { reason: stop_reason_to_enum(...) }` + `usage` 事件 |
 | `result / error_during_execution` + `terminal_reason:"aborted_streaming"`（SIGINT 中断） | `turn_finished { reason: "user_interrupt" }`（见 §中断；runtime 识别 terminal_reason 或合成，**不**走 error 路径） |
 | `result / error_*`（其余错误态） | `turn_finished { reason: "error" }` + `error` 事件 |
@@ -164,7 +165,9 @@ MVP 只依赖两类输入：
 | `rate_limit_event` | 暂不映射 AgentEvent；限额信号是否接入 limits 由 [`cost-and-limits.md`](../infra/cost-and-limits.md) 决定（TODO） |
 | **未列出的 type / subtype** | **debug log + 忽略，不报错**（兜底，见下） |
 
-¹ `tool_result` → AgentEvent 的具体形态（独立 `tool_result` 事件 vs 并入 `tool_call_finished`）以 ADR-0012 决策点 1 / `agent-runtime.md` 修订为准；本表保持现状映射，ADR-0012 实施时同步更新。
+¹ `tool_result` 形态已按 ADR-0012 决策点 1 子问题（1-tr-B 独立事件）落地：CC `user/tool_result` 映射为独立 `tool_result` AgentEvent，content 五类承载见 [`agent-runtime.md`](../agent-runtime.md) §ToolResultContent。
+
+² `tool_call_finished` 无 CC 原生事件，由 runtime 据结果流终结合成——终结判定：该 `tool_use_id` 不再有后续 result + turn 推进 / stop。`status` / `errorSummary` 字段语义 SSOT 在 [`agent-runtime.md`](../agent-runtime.md)。
 
 ## hook 事件与未知 type 兜底
 

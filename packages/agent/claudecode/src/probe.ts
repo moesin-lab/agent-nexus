@@ -47,6 +47,7 @@ export class AgentSpawnFailedError extends Error {
 export interface CompatibilityProbeOptions {
   claudeBin: string;
   logger: Logger;
+  workingDir?: string;
 }
 
 interface StreamJsonChild {
@@ -72,7 +73,7 @@ interface PermissionScenario {
 export async function runCompatibilityProbe(
   opts: CompatibilityProbeOptions,
 ): Promise<void> {
-  const { claudeBin, logger } = opts;
+  const { claudeBin, logger, workingDir } = opts;
 
   // step 1: --version
   let version: string;
@@ -168,7 +169,7 @@ export async function runCompatibilityProbe(
   }
 
   try {
-    await runPersistentStreamJsonProbe(claudeBin);
+    await runPersistentStreamJsonProbe(claudeBin, workingDir);
   } catch (err) {
     throw new AgentSpawnFailedError(
       `cc cli stream-json probe failed: ${(err as Error).message}`,
@@ -177,7 +178,7 @@ export async function runCompatibilityProbe(
   }
 
   try {
-    await runPermissionControlProbe(claudeBin);
+    await runPermissionControlProbe(claudeBin, workingDir);
   } catch (err) {
     throw new AgentSpawnFailedError(
       `cc cli permission control probe failed: ${(err as Error).message}`,
@@ -236,8 +237,11 @@ function writeJsonLine(child: StreamJsonChild, value: unknown): void {
   child.stdin.write(`${JSON.stringify(value)}\n`);
 }
 
-async function runPersistentStreamJsonProbe(claudeBin: string): Promise<void> {
-  const child = spawnStreamJsonProbe(claudeBin, ['Read']);
+async function runPersistentStreamJsonProbe(
+  claudeBin: string,
+  cwd?: string,
+): Promise<void> {
+  const child = spawnStreamJsonProbe(claudeBin, ['Read'], cwd);
   let resultCount = 0;
   let sawAssistant = false;
   let sawInit = false;
@@ -273,14 +277,19 @@ async function runPersistentStreamJsonProbe(claudeBin: string): Promise<void> {
   }
 }
 
-async function runPermissionControlProbe(claudeBin: string): Promise<void> {
-  const testDir = await mkdtemp(
-    path.join(tmpdir(), 'agent-nexus-cc-permission-probe-'),
-  );
+async function runPermissionControlProbe(
+  claudeBin: string,
+  cwd?: string,
+): Promise<void> {
+  const testDir =
+    cwd ??
+    (await mkdtemp(path.join(tmpdir(), 'agent-nexus-cc-permission-probe-')));
   const denySentinel = path.join(testDir, 'deny-sentinel.txt');
   const allowSentinel = path.join(testDir, 'allow-sentinel.txt');
 
   try {
+    await rm(denySentinel, { force: true });
+    await rm(allowSentinel, { force: true });
     await runPermissionScenario(claudeBin, testDir, {
       behavior: 'deny',
       sentinelPath: denySentinel,
@@ -297,7 +306,12 @@ async function runPermissionControlProbe(claudeBin: string): Promise<void> {
       throw new Error('allow scenario did not create sentinel file');
     }
   } finally {
-    await rm(testDir, { recursive: true, force: true });
+    if (cwd) {
+      await rm(denySentinel, { force: true });
+      await rm(allowSentinel, { force: true });
+    } else {
+      await rm(testDir, { recursive: true, force: true });
+    }
   }
 }
 

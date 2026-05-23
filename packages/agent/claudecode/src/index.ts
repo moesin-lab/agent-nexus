@@ -61,6 +61,7 @@ interface TurnState {
   toolCalls: Map<string, ToolCallState>;
   terminalEmitted: boolean;
   syntheticTerminalEmitted: boolean;
+  interruptRequested: boolean;
   resolve: () => void;
   timeout?: NodeJS.Timeout;
 }
@@ -276,7 +277,11 @@ function finishTurn(
     if (turn.textBuf.length > 0) {
       emitEvent(state, 'text_final', turn.traceId, { text: turn.textBuf });
     }
-    finishToolCalls(state, turn);
+    finishToolCalls(
+      state,
+      turn,
+      reason === 'user_interrupt' ? 'cancelled' : undefined,
+    );
   }
 
   emitEvent(state, 'turn_finished', turn.traceId, {
@@ -643,8 +648,16 @@ export function createClaudeCodeRuntime(
       cleanupAfterRealResult(state);
       return;
     }
-    const reason = mapStopReason(e['stop_reason'] ?? e['terminal_reason']);
-    finishToolCalls(state, turn);
+    const mappedReason = mapStopReason(e['stop_reason'] ?? e['terminal_reason']);
+    const reason =
+      turn.interruptRequested && mappedReason === 'error'
+        ? 'user_interrupt'
+        : mappedReason;
+    finishToolCalls(
+      state,
+      turn,
+      reason === 'user_interrupt' ? 'cancelled' : undefined,
+    );
     emitUsageIfValid(state, turn, e);
     finishTurn(state, reason);
     cleanupAfterRealResult(state);
@@ -717,6 +730,7 @@ export function createClaudeCodeRuntime(
         toolCalls: new Map(),
         terminalEmitted: false,
         syntheticTerminalEmitted: false,
+        interruptRequested: false,
         resolve,
         timeout: undefined,
       };
@@ -815,6 +829,7 @@ export function createClaudeCodeRuntime(
       }
       const signaled = state.proc.kill('SIGINT');
       if (!signaled) return;
+      turn.interruptRequested = true;
       setTimeout(() => {
         if (!state.currentTurn || state.currentTurn !== turn || turn.terminalEmitted) {
           return;

@@ -688,6 +688,153 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     expect(finished.payload).not.toHaveProperty('source');
   });
 
+  it('maps a real error result after SIGINT but before synthetic delay as user_interrupt', async () => {
+    vi.useFakeTimers();
+    const child = makeInteractiveSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+      syntheticTurnFinishedDeliveryMs: 250,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'long',
+      traceId: 't-interrupt-error',
+    });
+    await nextTick();
+    child.emitJson({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu-1',
+            name: 'Bash',
+            input: { command: 'sleep 30' },
+          },
+        ],
+      },
+    });
+    runtime.interrupt(session);
+    child.emitJson({
+      type: 'user',
+      message: {
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu-1',
+            content: 'The user does not want to proceed.',
+            is_error: true,
+          },
+        ],
+      },
+    });
+    child.emitJson({
+      type: 'result',
+      subtype: 'error_during_execution',
+      stop_reason: null,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      total_cost_usd: 0,
+    });
+    await turn;
+    await vi.advanceTimersByTimeAsync(250);
+
+    const finished = events.find(
+      (event) => event.type === 'turn_finished',
+    );
+    if (finished?.type !== 'turn_finished') throw new Error('expected turn_finished');
+    expect(finished.payload).toMatchObject({ reason: 'user_interrupt' });
+    expect(finished.payload).not.toHaveProperty('source');
+
+    const toolFinished = events.find(
+      (event) => event.type === 'tool_call_finished',
+    );
+    if (toolFinished?.type !== 'tool_call_finished') {
+      throw new Error('expected tool_call_finished');
+    }
+    expect(toolFinished.payload.status).toBe('cancelled');
+  });
+
+  it('does not rewrite a successful real result after SIGINT as user_interrupt', async () => {
+    vi.useFakeTimers();
+    const child = makeInteractiveSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+      syntheticTurnFinishedDeliveryMs: 250,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'almost done',
+      traceId: 't-interrupt-success',
+    });
+    await nextTick();
+    child.emitJson({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu-1',
+            name: 'Bash',
+            input: { command: 'printf done' },
+          },
+        ],
+      },
+    });
+    runtime.interrupt(session);
+    child.emitJson({
+      type: 'user',
+      message: {
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu-1',
+            content: 'done',
+            is_error: false,
+          },
+        ],
+      },
+    });
+    child.emitJson({
+      type: 'result',
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 1 },
+      total_cost_usd: 0,
+    });
+    await turn;
+    await vi.advanceTimersByTimeAsync(250);
+
+    const finished = events.find(
+      (event) => event.type === 'turn_finished',
+    );
+    if (finished?.type !== 'turn_finished') throw new Error('expected turn_finished');
+    expect(finished.payload).toMatchObject({ reason: 'stop' });
+    expect(finished.payload).not.toHaveProperty('source');
+
+    const toolFinished = events.find(
+      (event) => event.type === 'tool_call_finished',
+    );
+    if (toolFinished?.type !== 'tool_call_finished') {
+      throw new Error('expected tool_call_finished');
+    }
+    expect(toolFinished.payload.status).toBe('ok');
+  });
+
   it('marks wallclock timeout as synthetic terminal and stops the session with error', async () => {
     vi.useFakeTimers();
     const child = makeInteractiveSubproc();

@@ -9,8 +9,8 @@
 
 <为什么要做；对应的 issue / ADR / spec，或 N/A + 理由>
 
-- [ ] ADR: <链接或 N/A + 理由>
-- [ ] Spec: <链接或 N/A + 理由>
+ADR: <链接或 N/A + 理由>
+Spec: <链接或 N/A + 理由>
 
 ## Test plan
 

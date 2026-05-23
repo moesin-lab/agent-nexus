@@ -2,6 +2,7 @@ import type {
   AgentEvent,
   AgentInput,
   AgentSession,
+  AgentCapabilitySet,
   SessionConfig,
 } from './agent.js';
 import type { NormalizedEvent } from './events.js';
@@ -23,14 +24,6 @@ export interface PlatformAdapter {
   edit(ref: MessageRef, message: OutboundMessage): Promise<void>;
   delete(ref: MessageRef): Promise<void>;
   react(ref: MessageRef, emoji: string): Promise<void>;
-}
-
-/** MVP 简化版能力声明；完整版见 docs/dev/spec/agent-runtime.md */
-export interface AgentCapabilitySet {
-  supportsThinking: boolean;
-  supportsStreaming: boolean;
-  supportsToolCallEvents: boolean;
-  supportsInterrupt: boolean;
 }
 
 /** docs/dev/spec/agent-runtime.md §AgentRuntime */

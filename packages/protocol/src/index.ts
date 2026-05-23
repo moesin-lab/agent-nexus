@@ -16,16 +16,19 @@ export type {
 
 export type {
   AgentEvent,
+  AgentCapabilitySet,
   AgentInput,
   AgentSession,
   AgentSessionState,
+  ContentBlock,
   SessionConfig,
+  ToolCallStatus,
+  ToolResultContent,
   TurnEndReason,
   UsageRecord,
 } from './agent.js';
 
 export type {
-  AgentCapabilitySet,
   AgentEventHandler,
   AgentRuntime,
   EventHandler,

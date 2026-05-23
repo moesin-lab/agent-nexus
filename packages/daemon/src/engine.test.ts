@@ -40,6 +40,7 @@ const agentCaps: AgentCapabilitySet = {
   supportsStreaming: false,
   supportsToolCallEvents: false,
   supportsInterrupt: false,
+  supportsStdinInterrupt: false,
 };
 
 const SESSION_KEY: SessionKey = {
@@ -169,17 +170,32 @@ function makeAgent() {
   };
 }
 
+type SessionStartedPayload = Extract<
+  AgentEvent,
+  { type: 'session_started' }
+>['payload'];
+
 function ev<T extends AgentEvent['type']>(
   type: T,
-  payload: Extract<AgentEvent, { type: T }>['payload'],
+  payload: T extends 'session_started'
+    ? Partial<SessionStartedPayload>
+    : Extract<AgentEvent, { type: T }>['payload'],
   sequence = 0,
 ): AgentEvent {
+  const fullPayload =
+    type === 'session_started'
+      ? {
+          workingDir: DEFAULT_CFG.workingDir,
+          capabilities: agentCaps,
+          ...payload,
+        }
+      : payload;
   return {
     type,
     traceId: 't-1',
     timestamp: new Date(0),
     sequence,
-    payload,
+    payload: fullPayload,
   } as AgentEvent;
 }
 

@@ -129,7 +129,11 @@ const events = [
     traceId: 'trace-1',
     timestamp: new Date(0),
     sequence: 9,
-    payload: { reason: 'wallclock_timeout', turnSequence: 1 },
+    payload: {
+      reason: 'wallclock_timeout',
+      turnSequence: 1,
+      source: 'runtime-synthesized',
+    },
   },
   {
     type: 'error',

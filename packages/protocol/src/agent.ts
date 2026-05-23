@@ -151,7 +151,11 @@ export type AgentEvent =
       traceId: string;
       timestamp: Date;
       sequence: number;
-      payload: { reason: TurnEndReason; turnSequence: number };
+      payload: {
+        reason: TurnEndReason;
+        turnSequence: number;
+        source?: 'runtime-synthesized';
+      };
     }
   | {
       type: 'error';

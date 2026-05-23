@@ -16,8 +16,10 @@ import type {
   AgentInput,
   AgentRuntime,
   AgentSession,
+  ContentBlock,
   SessionConfig,
   SessionKey,
+  ToolResultContent,
   TurnEndReason,
   UsageRecord,
 } from '@agent-nexus/protocol';
@@ -37,11 +39,63 @@ export {
   normalizeTotalCostUsd,
 } from './usage-normalize.js';
 
-/**
- * 把 ExecaError 等结构化错误对象拼成安全 cause 字符串，**避免** `err.message` /
- * `err.shortMessage` 携带的 escapedCommand（含 argv → input.text → 用户消息正文 / 密钥 / PII）
- * 进日志。只读取结构化字段名（name/code/exitCode/signal/timedOut/isCanceled），不读 message。
- */
+type ChildProcess = ReturnType<typeof execa> & {
+  stdout?: NodeJS.ReadableStream | null;
+  stdin?: NodeJS.WritableStream | null;
+  pid?: number;
+  kill(signal?: NodeJS.Signals | number): boolean;
+};
+
+interface ToolCallState {
+  toolName: string;
+  resultSequence: number;
+  sawError: boolean;
+  finished: boolean;
+  errorSummary?: string;
+}
+
+interface TurnState {
+  traceId: string;
+  turnSequence: number;
+  textBuf: string;
+  toolCalls: Map<string, ToolCallState>;
+  terminalEmitted: boolean;
+  syntheticTerminalEmitted: boolean;
+  resolve: () => void;
+  timeout?: NodeJS.Timeout;
+}
+
+interface RuntimeState {
+  emitter: EventEmitter;
+  config: SessionConfig;
+  proc?: ChildProcess;
+  stdoutLoop?: Promise<void>;
+  queue: Promise<void>;
+  queuedTurns: number;
+  nextSequence: number;
+  nextTurnSequence: number;
+  currentTurn?: TurnState;
+  cleanupBarrier?: Promise<void>;
+  cleanupBarrierResolve?: () => void;
+  cleanupTimers: NodeJS.Timeout[];
+  sessionStarted: boolean;
+  stopped: boolean;
+  errored: boolean;
+}
+
+export interface ClaudeCodeRuntimeOptions {
+  claudeBin: string;
+  allowedTools: string[];
+  defaultWorkingDir: string;
+  logger: Logger;
+  perInputTimeoutMs?: number;
+  syntheticTurnFinishedDeliveryMs?: number;
+  gracefulInterruptMs?: number;
+  sigtermGraceMs?: number;
+}
+
+const stateMap = new WeakMap<AgentSession, RuntimeState>();
+
 function buildSafeCause(err: unknown): string {
   if (err === null || typeof err !== 'object') return 'subprocess failure';
   const e = err as {
@@ -68,62 +122,184 @@ function buildSafeCause(err: unknown): string {
   return parts.join(' ');
 }
 
-export interface ClaudeCodeRuntimeOptions {
-  claudeBin: string;
-  allowedTools: string[];
-  defaultWorkingDir: string;
-  logger: Logger;
-  /**
-   * runtime 级 spawn 超时（ms）兜底；当 SessionConfig.timeoutMs 缺失时才生效。
-   * 默认 300_000（5 分钟），与 spec/infra/cost-and-limits.md §perInputTimeoutMs 一致。
-   * 该 timer 仅作为 backend 进程寿命的 wallclock 兜底，与 daemon 视角的回合 UX 上限分开（ADR-0011）。
-   */
-  perInputTimeoutMs?: number;
+function makeEvent(
+  state: RuntimeState,
+  type: AgentEvent['type'],
+  traceId: string,
+  payload: AgentEvent['payload'],
+): AgentEvent {
+  return {
+    type,
+    traceId,
+    timestamp: new Date(),
+    sequence: state.nextSequence++,
+    payload,
+  } as AgentEvent;
 }
 
-/**
- * 内部 session 句柄上挂的 EventEmitter + 原始 SessionConfig。
- * 不在 protocol AgentSession 表面暴露——通过 WeakMap 隔离。
- *
- * configMap 是把 spec 合约 SessionConfig.{workingDir,toolWhitelist} 接到
- * sendInput 的 argv 构造里——runtime 级 defaultWorkingDir/allowedTools 仅作为
- * config 缺失时的兜底，不允许覆盖 per-session 值。
- */
-const emitterMap = new WeakMap<AgentSession, EventEmitter>();
-const configMap = new WeakMap<AgentSession, SessionConfig>();
-/**
- * Per-session 正在运行的子进程句柄。`sendInput` 进 try 前 set，finally 清。
- * interrupt / stopSession 通过 .kill(SIGINT|SIGTERM) 真实打断当前回合。
- * 无 in-flight turn 时 get → undefined，kill 调用是 no-op。
- */
-type KillableSubproc = { kill(signal?: NodeJS.Signals | number): boolean };
-const subprocMap = new WeakMap<AgentSession, KillableSubproc>();
-
-/**
- * Per-session 本回合内主动信号请求的两类区分（互斥语义不同，必须分两个 flag）：
- * - `interruptRequested`：用户主动 interrupt（SIGINT），收尾走 `turn_finished{user_interrupt}`，
- *   按 contract 不发 `error` 事件——避免 daemon engine 把"用户中断成功"当 agent 失败发回 IM
- * - `stopRequested`：lifecycle stopSession（SIGTERM），收尾走 `turn_finished{reason:'error'}` +
- *   `session_stopped{reason:'user_stop'}`——sigterm 切断进行中的回合属于异常退出，
- *   语义焦点在"session 已停止"，由 session_stopped 事件承载
- *
- * 也作为单回合互斥锁：set 但还没 delete 表示 in-flight，新一轮 sendInput 直接 fail-fast，
- * 避免并发覆盖 subprocMap 指错 kill 对象（spec/architecture/session-model.md §同 session 内 严格串行
- * 已由 daemon 队列保证，此处只做防御兜底）。
- */
-interface InflightFlag {
-  interruptRequested: boolean;
-  stopRequested: boolean;
+function emitEvent(
+  state: RuntimeState,
+  type: AgentEvent['type'],
+  traceId: string,
+  payload: AgentEvent['payload'],
+): void {
+  state.emitter.emit('event', makeEvent(state, type, traceId, payload));
 }
-const inflightFlagMap = new WeakMap<AgentSession, InflightFlag>();
 
-function getEmitter(session: AgentSession): EventEmitter {
-  let em = emitterMap.get(session);
-  if (!em) {
-    em = new EventEmitter();
-    emitterMap.set(session, em);
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+function truncateRaw(value: unknown): string {
+  try {
+    return JSON.stringify(value).slice(0, 4096);
+  } catch {
+    return '[unserializable]';
   }
-  return em;
+}
+
+function normalizeToolResultContent(raw: unknown): ToolResultContent {
+  if (raw === null || raw === undefined) return { kind: 'empty' };
+  if (typeof raw === 'string') return { kind: 'text', text: raw };
+  if (Array.isArray(raw)) {
+    const blocks = raw.filter(
+      (item): item is ContentBlock =>
+        !!item &&
+        typeof item === 'object' &&
+        !Array.isArray(item) &&
+        typeof (item as { type?: unknown }).type === 'string',
+    );
+    if (blocks.length === raw.length) return { kind: 'blocks', blocks };
+    return { kind: 'unknown', raw: truncateRaw(raw) };
+  }
+  if (isPlainObject(raw)) return { kind: 'object', object: raw };
+  return { kind: 'unknown', raw: truncateRaw(raw) };
+}
+
+function inputSummary(input: unknown): string {
+  const raw = truncateRaw(input);
+  return raw.length > 240 ? `${raw.slice(0, 240)}...` : raw;
+}
+
+function toolErrorSummary(content: ToolResultContent): string | undefined {
+  if (content.kind === 'text') return content.text.slice(0, 240);
+  if (content.kind === 'object') return truncateRaw(content.object).slice(0, 240);
+  if (content.kind === 'unknown') return content.raw.slice(0, 240);
+  return undefined;
+}
+
+function validateToolWhitelist(tools: string[]): string | null {
+  if (tools.length === 0) return 'toolWhitelist is empty';
+  const unsupported = tools.find((tool) => /[()]/.test(tool));
+  if (unsupported) return `unsupported tool whitelist pattern: ${unsupported}`;
+  return null;
+}
+
+function writeJsonLine(proc: ChildProcess, value: unknown): void {
+  if (!proc.stdin) throw new Error('subprocess stdin is null');
+  proc.stdin.write(`${JSON.stringify(value)}\n`);
+}
+
+function usageRecordFromResult(
+  usage: CcUsage,
+  totalCostUsd: number | null,
+  turn: TurnState,
+): UsageRecord {
+  return {
+    model: 'claude-code',
+    inputTokens: usage.input_tokens ?? 0,
+    outputTokens: usage.output_tokens ?? 0,
+    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+    cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+    costUsd: totalCostUsd,
+    turnSequence: turn.turnSequence,
+    toolCallsThisTurn: turn.toolCalls.size,
+    wallClockMs: 0,
+    completeness: costUsdToCompleteness(totalCostUsd),
+  };
+}
+
+function mapStopReason(raw: unknown): TurnEndReason {
+  if (raw === 'end_turn') return 'stop';
+  if (raw === 'max_tokens') return 'max_tokens';
+  if (raw === 'interrupted' || raw === 'aborted_streaming') return 'user_interrupt';
+  return 'error';
+}
+
+function finishToolCalls(
+  state: RuntimeState,
+  turn: TurnState,
+  statusOverride?: 'cancelled' | 'error',
+): void {
+  for (const [callId, tool] of turn.toolCalls) {
+    if (tool.finished) continue;
+    tool.finished = true;
+    const status = statusOverride ?? (tool.sawError ? 'error' : 'ok');
+    emitEvent(state, 'tool_call_finished', turn.traceId, {
+      callId,
+      toolName: tool.toolName,
+      status,
+      ...(tool.errorSummary ? { errorSummary: tool.errorSummary } : {}),
+    });
+  }
+}
+
+function clearTurnTimer(turn: TurnState): void {
+  if (turn.timeout) clearTimeout(turn.timeout);
+  turn.timeout = undefined;
+}
+
+function clearCleanupTimers(state: RuntimeState): void {
+  for (const timer of state.cleanupTimers) clearTimeout(timer);
+  state.cleanupTimers = [];
+}
+
+function finishTurn(
+  state: RuntimeState,
+  reason: TurnEndReason,
+  source?: 'runtime-synthesized',
+): void {
+  const turn = state.currentTurn;
+  if (!turn || turn.terminalEmitted) return;
+  turn.terminalEmitted = true;
+  turn.syntheticTerminalEmitted = source === 'runtime-synthesized';
+  clearTurnTimer(turn);
+
+  if (source === 'runtime-synthesized') {
+    finishToolCalls(state, turn, reason === 'user_interrupt' ? 'cancelled' : 'error');
+  } else {
+    if (turn.textBuf.length > 0) {
+      emitEvent(state, 'text_final', turn.traceId, { text: turn.textBuf });
+    }
+    finishToolCalls(state, turn);
+  }
+
+  emitEvent(state, 'turn_finished', turn.traceId, {
+    reason,
+    turnSequence: turn.turnSequence,
+    ...(source ? { source } : {}),
+  });
+  turn.resolve();
+}
+
+function cleanupAfterRealResult(state: RuntimeState): void {
+  const turn = state.currentTurn;
+  if (!turn) return;
+  clearTurnTimer(turn);
+  clearCleanupTimers(state);
+  state.currentTurn = undefined;
+  state.cleanupBarrierResolve?.();
+  state.cleanupBarrier = undefined;
+  state.cleanupBarrierResolve = undefined;
+}
+
+function unsafePermissionMode(value: unknown): boolean {
+  return value === 'bypassPermissions' || value === 'acceptEdits';
 }
 
 export function createClaudeCodeRuntime(
@@ -131,14 +307,451 @@ export function createClaudeCodeRuntime(
 ): AgentRuntime {
   const { claudeBin, allowedTools, defaultWorkingDir, logger } = opts;
   const defaultTimeoutMs = opts.perInputTimeoutMs ?? 300_000;
+  const syntheticDeliveryMs = opts.syntheticTurnFinishedDeliveryMs ?? 250;
+  const gracefulInterruptMs = opts.gracefulInterruptMs ?? 5_000;
+  const sigtermGraceMs = opts.sigtermGraceMs ?? 5_000;
 
   const capabilities: AgentCapabilitySet = {
     supportsThinking: false,
-    supportsStreaming: false,
-    supportsToolCallEvents: false,
+    supportsStreaming: true,
+    supportsToolCallEvents: true,
     supportsInterrupt: true,
     supportsStdinInterrupt: false,
   };
+
+  function getState(session: AgentSession): RuntimeState {
+    const state = stateMap.get(session);
+    if (!state) throw new Error('unknown session');
+    return state;
+  }
+
+  function emitErrorTurn(
+    state: RuntimeState,
+    traceId: string,
+    errorKind: string,
+    message: string,
+  ): void {
+    emitEvent(state, 'error', traceId, { errorKind, message });
+    emitEvent(state, 'turn_finished', traceId, {
+      reason: 'error',
+      turnSequence: state.nextTurnSequence++,
+    });
+  }
+
+  function stopWithError(
+    session: AgentSession,
+    state: RuntimeState,
+    traceId: string,
+    errorKind: string,
+    message: string,
+  ): void {
+    state.errored = true;
+    session.state = 'Errored';
+    state.proc?.kill('SIGTERM');
+    const turn = state.currentTurn;
+    if (turn && !turn.terminalEmitted) {
+      emitEvent(state, 'error', traceId, { errorKind, message });
+      finishTurn(state, 'error');
+      cleanupAfterRealResult(state);
+    } else {
+      emitEvent(state, 'error', traceId, { errorKind, message });
+      cleanupAfterRealResult(state);
+    }
+    emitEvent(state, 'session_stopped', traceId, { reason: 'error' });
+  }
+
+  function beginCleanupBarrier(
+    session: AgentSession,
+    state: RuntimeState,
+    proc: ChildProcess,
+    traceId: string,
+  ): void {
+    if (!state.cleanupBarrier) {
+      state.cleanupBarrier = new Promise<void>((resolve) => {
+        state.cleanupBarrierResolve = resolve;
+      });
+    }
+    clearCleanupTimers(state);
+    state.cleanupTimers.push(
+      setTimeout(() => {
+        proc.kill('SIGTERM');
+      }, gracefulInterruptMs),
+      setTimeout(() => {
+        proc.kill('SIGKILL');
+        if (!state.errored && !state.stopped) {
+          state.errored = true;
+          session.state = 'Errored';
+          emitEvent(state, 'error', traceId, {
+            errorKind: 'interrupt_cleanup_failed',
+            message: 'Claude Code did not acknowledge interrupted turn cleanup',
+          });
+          emitEvent(state, 'session_stopped', traceId, { reason: 'error' });
+        }
+        cleanupAfterRealResult(state);
+      }, gracefulInterruptMs + sigtermGraceMs),
+    );
+  }
+
+  async function ensureProc(session: AgentSession, state: RuntimeState): Promise<void> {
+    if (state.proc) return;
+    const config = state.config;
+    const cwd = config.workingDir ?? defaultWorkingDir;
+    const tools = config.toolWhitelist ?? allowedTools;
+    const args = [
+      '--input-format',
+      'stream-json',
+      '--output-format',
+      'stream-json',
+      '--permission-prompt-tool',
+      'stdio',
+      '--replay-user-messages',
+      '--verbose',
+      '--allowed-tools',
+      tools.join(','),
+    ];
+    const resumeId = session.agentSessionId ?? config.resumeFromAgentSessionId;
+    if (resumeId) args.push('--resume', resumeId);
+
+    const proc = execa(claudeBin, args, {
+      buffer: false,
+      cwd,
+    }) as ChildProcess;
+    if (!proc.stdout) throw new Error('subprocess stdout is null');
+    if (!proc.stdin) throw new Error('subprocess stdin is null');
+    state.proc = proc;
+    session.pid = proc.pid;
+
+    state.stdoutLoop = readStdoutLoop(session, state, proc).catch((err: unknown) => {
+      if (!state.stopped && !state.errored) {
+        stopWithError(
+          session,
+          state,
+          state.currentTurn?.traceId ?? 'system',
+          'agent_stdout_error',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    });
+
+    void Promise.resolve(proc).catch((err: unknown) => {
+      if (!state.stopped && !state.errored) {
+        const traceId = state.currentTurn?.traceId ?? 'system';
+        logger.warn(
+          {
+            sessionKey: serializeSessionKey(session.key),
+            traceId,
+            errorKind: 'agent',
+            code: 'spawn_failed',
+            cause: buildSafeCause(err),
+          },
+          'claudecode_subproc_error',
+        );
+        stopWithError(
+          session,
+          state,
+          traceId,
+          'spawn_failed',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    });
+  }
+
+  async function readStdoutLoop(
+    session: AgentSession,
+    state: RuntimeState,
+    proc: ChildProcess,
+  ): Promise<void> {
+    const rl = createInterface({ input: proc.stdout!, crlfDelay: Infinity });
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        logger.debug({ line }, 'cc_non_json_line');
+        continue;
+      }
+      if (!parsed || typeof parsed !== 'object') continue;
+      handleStdoutMessage(session, state, proc, parsed as Record<string, unknown>);
+    }
+  }
+
+  function handleSystemInit(
+    session: AgentSession,
+    state: RuntimeState,
+    e: Record<string, unknown>,
+  ): void {
+    const traceId = state.currentTurn?.traceId ?? 'system';
+    if (unsafePermissionMode(e['permissionMode'])) {
+      stopWithError(
+        session,
+        state,
+        traceId,
+        'permission_mode_unsafe',
+        `unsafe Claude Code permissionMode: ${String(e['permissionMode'])}`,
+      );
+      return;
+    }
+    const sid = e['session_id'];
+    if (typeof sid === 'string') session.agentSessionId = sid;
+    if (state.sessionStarted) return;
+    state.sessionStarted = true;
+    emitEvent(state, 'session_started', traceId, {
+      agentSessionId: typeof sid === 'string' ? sid : undefined,
+      pid: session.pid,
+      workingDir: typeof e['cwd'] === 'string' ? e['cwd'] : state.config.workingDir,
+      capabilities,
+    });
+  }
+
+  function handleAssistant(state: RuntimeState, e: Record<string, unknown>): void {
+    const turn = state.currentTurn;
+    if (!turn || turn.terminalEmitted) return;
+    const message = e['message'] as { content?: unknown } | undefined;
+    if (!Array.isArray(message?.content)) return;
+    for (const part of message.content) {
+      if (!part || typeof part !== 'object') continue;
+      const item = part as Record<string, unknown>;
+      if (item['type'] === 'text' || item['type'] === 'text_delta') {
+        const text = item['text'];
+        if (typeof text === 'string') {
+          turn.textBuf += text;
+          emitEvent(state, 'text_delta', turn.traceId, { text });
+        }
+      } else if (item['type'] === 'tool_use') {
+        const id = item['id'];
+        const name = item['name'];
+        if (typeof id !== 'string' || typeof name !== 'string') continue;
+        turn.toolCalls.set(id, {
+          toolName: name,
+          resultSequence: 0,
+          sawError: false,
+          finished: false,
+        });
+        emitEvent(state, 'tool_call_started', turn.traceId, {
+          callId: id,
+          toolName: name,
+          inputSummary: inputSummary(item['input']),
+        });
+      }
+    }
+  }
+
+  function handleToolResult(state: RuntimeState, e: Record<string, unknown>): void {
+    const turn = state.currentTurn;
+    if (!turn || turn.terminalEmitted) return;
+    const message = e['message'] as { content?: unknown } | undefined;
+    if (!Array.isArray(message?.content)) return;
+    for (const part of message.content) {
+      if (!part || typeof part !== 'object') continue;
+      const item = part as Record<string, unknown>;
+      if (item['type'] !== 'tool_result') continue;
+      const callId = item['tool_use_id'];
+      if (typeof callId !== 'string') continue;
+      let tool = turn.toolCalls.get(callId);
+      if (!tool) {
+        tool = {
+          toolName: 'unknown',
+          resultSequence: 0,
+          sawError: false,
+          finished: false,
+        };
+        turn.toolCalls.set(callId, tool);
+      }
+      const content = normalizeToolResultContent(item['content']);
+      const isError = item['is_error'] === true;
+      if (isError) {
+        tool.sawError = true;
+        tool.errorSummary = toolErrorSummary(content);
+      }
+      emitEvent(state, 'tool_result', turn.traceId, {
+        callId,
+        resultSequence: tool.resultSequence++,
+        content,
+        isError,
+      });
+    }
+  }
+
+  function handleControlRequest(
+    session: AgentSession,
+    state: RuntimeState,
+    proc: ChildProcess,
+    e: Record<string, unknown>,
+  ): void {
+    const request = e['request'] as Record<string, unknown> | undefined;
+    if (request?.['subtype'] !== 'can_use_tool') return;
+    const requestId = e['request_id'];
+    if (typeof requestId !== 'string') return;
+    const toolName = request['tool_name'];
+    const tools = state.config.toolWhitelist ?? allowedTools;
+    const allowed =
+      typeof toolName === 'string' && tools.includes(toolName);
+    const response = allowed
+      ? {
+          behavior: 'allow',
+          updatedInput: request['input'],
+        }
+      : {
+          behavior: 'deny',
+          message: `Tool ${String(toolName)} is not in toolWhitelist`,
+        };
+    try {
+      writeJsonLine(proc, {
+        type: 'control_response',
+        response: {
+          subtype: 'success',
+          request_id: requestId,
+          response,
+        },
+      });
+    } catch (err) {
+      stopWithError(
+        session,
+        state,
+        state.currentTurn?.traceId ?? 'system',
+        'permission_control_write_failed',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  function emitUsageIfValid(
+    state: RuntimeState,
+    turn: TurnState,
+    e: Record<string, unknown>,
+  ): void {
+    if (!isValidCcUsage(e['usage'])) return;
+    emitEvent(
+      state,
+      'usage',
+      turn.traceId,
+      usageRecordFromResult(
+        e['usage'],
+        normalizeTotalCostUsd(e['total_cost_usd']),
+        turn,
+      ),
+    );
+  }
+
+  function handleResult(state: RuntimeState, e: Record<string, unknown>): void {
+    const turn = state.currentTurn;
+    if (!turn) return;
+    if (turn.syntheticTerminalEmitted) {
+      emitUsageIfValid(state, turn, e);
+      cleanupAfterRealResult(state);
+      return;
+    }
+    const reason = mapStopReason(e['stop_reason'] ?? e['terminal_reason']);
+    finishToolCalls(state, turn);
+    emitUsageIfValid(state, turn, e);
+    finishTurn(state, reason);
+    cleanupAfterRealResult(state);
+  }
+
+  function handleStdoutMessage(
+    session: AgentSession,
+    state: RuntimeState,
+    proc: ChildProcess,
+    e: Record<string, unknown>,
+  ): void {
+    if (e['type'] === 'system' && e['subtype'] === 'init') {
+      handleSystemInit(session, state, e);
+    } else if (e['type'] === 'assistant') {
+      handleAssistant(state, e);
+    } else if (e['type'] === 'user') {
+      if (e['isReplay'] === true) return;
+      handleToolResult(state, e);
+    } else if (e['type'] === 'control_request') {
+      handleControlRequest(session, state, proc, e);
+    } else if (e['type'] === 'result') {
+      handleResult(state, e);
+    } else if (e['type'] === 'stream_event') {
+      const event = e['event'] as Record<string, unknown> | undefined;
+      const delta = event?.['delta'] as Record<string, unknown> | undefined;
+      const turn = state.currentTurn;
+      if (
+        turn &&
+        !turn.terminalEmitted &&
+        event?.['type'] === 'content_block_delta' &&
+        delta?.['type'] === 'text_delta' &&
+        typeof delta['text'] === 'string'
+      ) {
+        turn.textBuf += delta['text'];
+        emitEvent(state, 'text_delta', turn.traceId, { text: delta['text'] });
+      }
+    }
+  }
+
+  async function runTurn(
+    session: AgentSession,
+    state: RuntimeState,
+    input: AgentInput,
+  ): Promise<void> {
+    const tools = state.config.toolWhitelist ?? allowedTools;
+    const invalidTools = validateToolWhitelist(tools);
+    if (invalidTools) {
+      emitErrorTurn(state, input.traceId, 'tool_whitelist_invalid', invalidTools);
+      return;
+    }
+    if (state.cleanupBarrier) await state.cleanupBarrier;
+    if (state.errored || state.stopped) {
+      emitErrorTurn(
+        state,
+        input.traceId,
+        'session_stopped',
+        'sendInput called after session cleanup failed',
+      );
+      return;
+    }
+    await ensureProc(session, state);
+    const proc = state.proc;
+    if (!proc) throw new Error('subprocess not spawned');
+
+    await new Promise<void>((resolve) => {
+      const turn: TurnState = {
+        traceId: input.traceId,
+        turnSequence: state.nextTurnSequence++,
+        textBuf: '',
+        toolCalls: new Map(),
+        terminalEmitted: false,
+        syntheticTerminalEmitted: false,
+        resolve,
+        timeout: undefined,
+      };
+      state.currentTurn = turn;
+      turn.timeout = setTimeout(() => {
+        proc.kill('SIGINT');
+        finishTurn(state, 'wallclock_timeout', 'runtime-synthesized');
+        beginCleanupBarrier(session, state, proc, input.traceId);
+        if (!state.errored && !state.stopped) {
+          state.errored = true;
+          session.state = 'Errored';
+          emitEvent(state, 'error', input.traceId, {
+            errorKind: 'wallclock_timeout',
+            message: 'Claude Code turn exceeded wallclock timeout',
+          });
+          emitEvent(state, 'session_stopped', input.traceId, { reason: 'error' });
+        }
+      }, state.config.timeoutMs ?? defaultTimeoutMs);
+      try {
+        writeJsonLine(proc, {
+          type: 'user',
+          message: { role: 'user', content: input.text ?? '' },
+        });
+      } catch (err) {
+        stopWithError(
+          session,
+          state,
+          input.traceId,
+          'stdin_write_failed',
+          err instanceof Error ? err.message : String(err),
+        );
+        resolve();
+      }
+    });
+  }
 
   const runtime: AgentRuntime = {
     name(): string {
@@ -157,21 +770,29 @@ export function createClaudeCodeRuntime(
         startedAt: new Date(),
         agentSessionId: config.resumeFromAgentSessionId,
       };
-      // 预创建 emitter，确保 onEvent 在 sendInput 之前就能挂上
-      getEmitter(session);
-      // 存 config 供 sendInput 取 workingDir / toolWhitelist
-      configMap.set(session, config);
+      stateMap.set(session, {
+        emitter: new EventEmitter(),
+        config,
+        queue: Promise.resolve(),
+        queuedTurns: 0,
+        nextSequence: 0,
+        nextTurnSequence: 1,
+        cleanupTimers: [],
+        sessionStarted: false,
+        stopped: false,
+        errored: false,
+      });
       return session;
     },
 
     isAlive(session: AgentSession): boolean {
-      return session.state !== 'Stopped';
+      const state = stateMap.get(session);
+      return session.state !== 'Stopped' && state?.errored !== true;
     },
 
     onEvent(session: AgentSession, handler: AgentEventHandler): void {
-      const em = getEmitter(session);
-      em.on('event', (e: AgentEvent) => {
-        // handler 可能是 async；不 await，但要捕获 reject 防止 unhandled rejection
+      const state = getState(session);
+      state.emitter.on('event', (e: AgentEvent) => {
         try {
           const ret = handler(e);
           if (ret && typeof (ret as Promise<void>).then === 'function') {
@@ -186,560 +807,60 @@ export function createClaudeCodeRuntime(
     },
 
     interrupt(session: AgentSession): void {
-      // 走 SIGINT 路径；CC CLI 收到 SIGINT 会清理 stdio buffer 并以非零 exit code 退出，
-      // 或先输出 `result{stop_reason:'interrupted'}` 再退出。sendInput 收尾路径按
-      // contract 翻 turn_finished{reason:user_interrupt}（不是 error），依赖
-      // inflightFlagMap 区分。没 in-flight turn 时 get → undefined，本调用变 no-op。
-      // 详见 spec/agent-runtime.md §AgentRuntime.interrupt。
-      //
-      // `kill()` 返回值很重要：Node 上对"已退出但 finally 尚未 reap"的进程返回 false。
-      // 只有 signaled=true 才把 interruptRequested 翻 true；否则真信号没发，让 catch / success
-      // 分支按真实 exit/error 归类，避免把无关错误误标 user_interrupt。
-      const sp = subprocMap.get(session);
-      const flag = inflightFlagMap.get(session);
-      if (sp && flag) {
-        const signaled = sp.kill('SIGINT');
-        if (signaled) {
-          flag.interruptRequested = true;
-          logger.info({ sessionKey: session.key }, 'claudecode_interrupt_signaled');
-        } else {
-          logger.debug(
-            { sessionKey: session.key },
-            'claudecode_interrupt_target_already_exited',
-          );
-        }
-      } else {
+      const state = getState(session);
+      const turn = state.currentTurn;
+      if (!state.proc || !turn || turn.terminalEmitted) {
         logger.debug({ sessionKey: session.key }, 'claudecode_interrupt_no_inflight');
+        return;
       }
+      const signaled = state.proc.kill('SIGINT');
+      if (!signaled) return;
+      setTimeout(() => {
+        if (!state.currentTurn || state.currentTurn !== turn || turn.terminalEmitted) {
+          return;
+        }
+        finishTurn(state, 'user_interrupt', 'runtime-synthesized');
+        beginCleanupBarrier(session, state, state.proc!, turn.traceId);
+      }, syntheticDeliveryMs);
     },
 
     stopSession(session: AgentSession): void {
-      // 真实 SIGTERM；正在跑的 turn 会以非零 exit 在 sendInput 收尾走 stopRequested 分支，
-      // 该分支 emit turn_finished{error} + session_stopped{user_stop}（不复用 user_interrupt
-      // 语义；详见 inflightFlagMap 注释）。没 in-flight turn 时仅 state 翻 Stopped（旧语义保留）。
-      // kill 返回 false（进程已退出）时不翻 flag，避免下一个错误被误归 user_stop。
-      const sp = subprocMap.get(session);
-      const flag = inflightFlagMap.get(session);
-      if (sp && flag) {
-        const signaled = sp.kill('SIGTERM');
-        if (signaled) {
-          flag.stopRequested = true;
-          logger.info({ sessionKey: session.key }, 'claudecode_stop_session_signaled');
-        } else {
-          logger.debug(
-            { sessionKey: session.key },
-            'claudecode_stop_session_target_already_exited',
-          );
-        }
-      }
+      const state = getState(session);
+      state.stopped = true;
       session.state = 'Stopped';
+      state.proc?.kill('SIGTERM');
+      clearCleanupTimers(state);
+      if (state.currentTurn && !state.currentTurn.terminalEmitted) {
+        finishTurn(state, 'error');
+        cleanupAfterRealResult(state);
+      }
+      emitEvent(state, 'session_stopped', state.currentTurn?.traceId ?? 'system', {
+        reason: 'user_stop',
+      });
     },
 
-    async sendInput(
-      session: AgentSession,
-      input: AgentInput,
-    ): Promise<void> {
-      // TODO 升级到 stream-json 主路径（--input-format stream-json + 子进程持久化 + 流式 edit Discord）
-      // → docs/dev/spec/agent-backends/claude-code-cli.md §交互式 session
-
-      const emitter = getEmitter(session);
-      let sequence = 0;
-      const traceId = input.traceId;
-
-      const emitEvent = (evt: AgentEvent): void => {
-        emitter.emit('event', evt);
-      };
-
-      // per-session config 优先；runtime 级 default 仅作 config 缺失兜底（spec 要求 --cwd / --allowed-tools 必须显式）
-      const sessionConfig = configMap.get(session);
-      const cwd = sessionConfig?.workingDir ?? defaultWorkingDir;
-      const tools = sessionConfig?.toolWhitelist ?? allowedTools;
-      const timeoutMs = sessionConfig?.timeoutMs ?? defaultTimeoutMs;
-      // CC CLI 2.1.x 不接受 `--cwd` flag（出现 → exit 1 "unknown option"）；
-      // 工作目录改由子进程 cwd option 传入。安全语义不变（子进程不继承 daemon cwd，
-      // 必须显式锁定到 SessionConfig.workingDir）。
-      const args: string[] = [
-        '--print',
-        input.text ?? '',
-        '--output-format',
-        'stream-json',
-        '--verbose',
-        '--allowed-tools',
-        tools.join(','),
-      ];
-      if (session.agentSessionId) {
-        args.push('--resume', session.agentSessionId);
-      }
-
-      let textBuf = '';
-      let stopReason: string | undefined;
-      let usage: CcUsage | null = null;
-      let totalCostUsd: number | null = null;
-      // 防止 backend 正常退出但缺 result / 缺 usage payload 时合成 usage 掩盖事件 absence
-      // （见 spec/cost-and-limits.md §UsageRecord.completeness 语义 "缺事件 = 异常"）。
-      let sawResult = false;
-      let sawUsage = false;
-
-      // 防御性 fail-fast #1：session 已 Stopped → 直接 emit error 返回，
-      // 不允许在终态 session 上重 spawn 子进程。
-      if (session.state === 'Stopped') {
-        emitEvent({
-          type: 'error',
-          traceId,
-          timestamp: new Date(),
-          sequence: sequence++,
-          payload: {
-            errorKind: 'session_stopped',
-            message: 'sendInput called on stopped session',
-          },
-        });
-        emitEvent({
-          type: 'turn_finished',
-          traceId,
-          timestamp: new Date(),
-          sequence: sequence++,
-          payload: { reason: 'error', turnSequence: 1 },
-        });
+    async sendInput(session: AgentSession, input: AgentInput): Promise<void> {
+      const state = getState(session);
+      if (session.state === 'Stopped' || state.errored) {
+        emitErrorTurn(state, input.traceId, 'session_stopped', 'sendInput called on stopped session');
         return;
       }
-
-      // 防御性 fail-fast #2：同 session 已有 in-flight turn 时立即 emit error 并退出。
-      // 串行由 daemon 队列保证（spec/architecture/session-model.md §同 session 内 严格串行），
-      // 此处只兜底防止 subprocMap 被覆盖导致 interrupt 指向错误的 subproc。
-      if (inflightFlagMap.has(session)) {
-        emitEvent({
-          type: 'error',
-          traceId,
-          timestamp: new Date(),
-          sequence: sequence++,
-          payload: {
-            errorKind: 'concurrent_send_input',
-            message: 'sendInput called while previous turn still in-flight',
-          },
-        });
-        emitEvent({
-          type: 'turn_finished',
-          traceId,
-          timestamp: new Date(),
-          sequence: sequence++,
-          payload: { reason: 'error', turnSequence: 1 },
-        });
+      if (state.currentTurn && state.queuedTurns >= 1) {
+        emitErrorTurn(
+          state,
+          input.traceId,
+          'concurrent_send_input',
+          'sendInput queue is full',
+        );
         return;
       }
-
-      const inflightFlag: InflightFlag = { interruptRequested: false, stopRequested: false };
-      inflightFlagMap.set(session, inflightFlag);
-
-      let subproc: ReturnType<typeof execa> | undefined;
-      try {
-        try {
-          subproc = execa(claudeBin, args, {
-            timeout: timeoutMs,
-            buffer: false,
-            cwd,
-          });
-          // 子进程刚 spawn 就挂到 session，让 interrupt / stopSession 立刻能 SIGINT / SIGTERM。
-          // 即便后续 stdout 检查或行扫失败，subproc 已 spawn，必须经 finally 释放。
-          subprocMap.set(session, subproc);
-          if (!subproc.stdout) {
-            throw new Error('subprocess stdout is null');
-          }
-
-          const rl = createInterface({
-            input: subproc.stdout,
-            crlfDelay: Infinity,
-          });
-
-          for await (const line of rl) {
-            if (!line.trim()) continue;
-            let parsed: unknown;
-            try {
-              parsed = JSON.parse(line);
-            } catch {
-              logger.debug({ line }, 'cc_non_json_line');
-              continue;
-            }
-
-            if (!parsed || typeof parsed !== 'object') continue;
-            const e = parsed as Record<string, unknown>;
-
-            if (e['type'] === 'system' && e['subtype'] === 'init') {
-              const sid = e['session_id'];
-              const reportedCwd = e['cwd'];
-              if (typeof sid === 'string') {
-                // agentSessionId 写回 session：protocol 把它标了可选 string，直接赋值即可
-                session.agentSessionId = sid;
-              }
-              emitEvent({
-                type: 'session_started',
-                traceId,
-                timestamp: new Date(),
-                sequence: sequence++,
-                payload: {
-                  agentSessionId: typeof sid === 'string' ? sid : undefined,
-                  workingDir: typeof reportedCwd === 'string' ? reportedCwd : cwd,
-                  capabilities,
-                },
-              });
-              continue;
-            }
-
-            if (e['type'] === 'assistant') {
-              const message = e['message'] as
-                | { content?: unknown }
-                | undefined;
-              const content = message?.content;
-              if (Array.isArray(content)) {
-                for (const part of content) {
-                  if (
-                    part &&
-                    typeof part === 'object' &&
-                    ((part as { type?: unknown }).type === 'text' ||
-                      (part as { type?: unknown }).type === 'text_delta')
-                  ) {
-                    const t = (part as { text?: unknown }).text;
-                    if (typeof t === 'string') {
-                      textBuf += t;
-                    }
-                  }
-                }
-              }
-              continue;
-            }
-
-            if (e['type'] === 'result') {
-              sawResult = true;
-              const sr = e['stop_reason'];
-              if (typeof sr === 'string') stopReason = sr;
-              // usage 形态校验（见 usage-normalize.ts）：拒绝 null/[]/{}/字符串字段等"假 usage"
-              // 防止 backend 异常 payload 被合成成 0 token 的正常事件掩盖问题。
-              if (isValidCcUsage(e['usage'])) {
-                usage = e['usage'];
-                sawUsage = true;
-              }
-              // 归一化 backend total_cost_usd（spec/cost-and-limits.md §UsageRecord.completeness 语义）
-              totalCostUsd = normalizeTotalCostUsd(e['total_cost_usd']);
-              continue;
-            }
-
-            // 其他事件类型（user/tool_result 等）MVP 忽略
-          }
-
-          await subproc;
-        } catch (err) {
-          // spawn 失败 / 子进程非零退出 / 行扫错误 / execa timeout。
-          // 收尾分流（顺序固定，优先级从高到低）：
-          //   1. execa timeout（wallclock）→ wallclock_timeout，与 interrupt 无关
-          //   2. stopRequested → turn_finished{error} + session_stopped{user_stop}
-          //   3. interruptRequested 或 stopReason='interrupted' → 不 emit error，
-          //      emit usage(if any) + turn_finished{user_interrupt}（contract：
-          //      用户主动中断属"正常收尾"，不该让 daemon 当 agent 失败发回 IM）
-          //   4. 其余 → spawn_failed + turn_finished{error}
-          // spec 锚点：agent-runtime.md §TurnEndReason 枚举 / agent-backends/claude-code-cli.md §stop_reason 映射
-          const message = err instanceof Error ? err.message : String(err);
-          // 从 execa error 上挖辨别字段（execa 9.x 提供 timedOut / signal / isTerminated）
-          const execaErr = (typeof err === 'object' && err !== null
-            ? (err as {
-                timedOut?: boolean;
-                signal?: string;
-                isTerminated?: boolean;
-              })
-            : {}) as { timedOut?: boolean; signal?: string; isTerminated?: boolean };
-          const timedOut = execaErr.timedOut === true;
-          // SIGINT 来源辨别：进程必须真因 SIGINT 终止（execa.isTerminated 且 signal===SIGINT），
-          // 或 CC 已在 stdout 写出 stop_reason='interrupted'。
-          // 仅靠"我们发了 SIGINT"不足以证明"中断成功"——CC 可能捕获信号后因别的原因失败。
-          const interruptCleanExit =
-            execaErr.signal === 'SIGINT' ||
-            (execaErr.isTerminated === true && execaErr.signal === 'SIGINT');
-
-          // helper：emit 已解析到的 usage（catch 分支也要保 spec §UsageRecord 顺序）
-          const emitUsageIfAny = (): void => {
-            if (!usage) return;
-            const usageRecord: UsageRecord = {
-              model: 'claude-code',
-              inputTokens: usage.input_tokens ?? 0,
-              outputTokens: usage.output_tokens ?? 0,
-              cacheReadTokens: usage.cache_read_input_tokens ?? 0,
-              cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
-              costUsd: totalCostUsd,
-              turnSequence: 1,
-              toolCallsThisTurn: 0,
-              wallClockMs: 0,
-              completeness: costUsdToCompleteness(totalCostUsd),
-            };
-            emitEvent({
-              type: 'usage',
-              traceId,
-              timestamp: new Date(),
-              sequence: sequence++,
-              payload: usageRecord,
-            });
-          };
-
-          if (timedOut) {
-            // spec/agent-backends/claude-code-cli.md §中断与超时：
-            // "整个过程产出 turn_finished{wallclock_timeout} + error + session_stopped{error}"
-            emitEvent({
-              type: 'error',
-              traceId,
-              timestamp: new Date(),
-              sequence: sequence++,
-              payload: { errorKind: 'wallclock_timeout', message },
-            });
-            emitUsageIfAny();
-            emitEvent({
-              type: 'turn_finished',
-              traceId,
-              timestamp: new Date(),
-              sequence: sequence++,
-              payload: { reason: 'wallclock_timeout', turnSequence: 1 },
-            });
-            emitEvent({
-              type: 'session_stopped',
-              traceId,
-              timestamp: new Date(),
-              sequence: sequence++,
-              payload: { reason: 'error' },
-            });
-            return;
-          }
-
-          if (inflightFlag.stopRequested) {
-            emitUsageIfAny();
-            emitEvent({
-              type: 'turn_finished',
-              traceId,
-              timestamp: new Date(),
-              sequence: sequence++,
-              payload: { reason: 'error', turnSequence: 1 },
-            });
-            emitEvent({
-              type: 'session_stopped',
-              traceId,
-              timestamp: new Date(),
-              sequence: sequence++,
-              payload: { reason: 'user_stop' },
-            });
-            return;
-          }
-
-          // 收紧 wasInterrupted 判定：必须有真实证据（CC 已输出 interrupted 行
-          // 或 execa 报子进程因 SIGINT 终止），不能仅凭"我们发了 SIGINT"就归类。
-          // 否则 CC 捕获信号后因 OOM/exit 1 等失败会被错误掩盖。
-          const wasInterrupted =
-            stopReason === 'interrupted' ||
-            (inflightFlag.interruptRequested && interruptCleanExit);
-          if (wasInterrupted) {
-            emitUsageIfAny();
-            emitEvent({
-              type: 'turn_finished',
-              traceId,
-              timestamp: new Date(),
-              sequence: sequence++,
-              payload: { reason: 'user_interrupt', turnSequence: 1 },
-            });
-            return;
-          }
-
-          // issue #28 选 C：textBuf 已收满但子进程非零退出时不发 partial 文本到 IM
-          // （避免没有"这是断片"标识的部分内容混淆用户），仅在日志记录 textBuf 长度
-          // 便于诊断"CC 完整输出后才异常退出"这一罕见路径。
-          // 日志字段对齐 observability spec：errorKind ∈ {user,platform,agent,internal}，
-          // cause / code / textBufLength 是 spec 注册字段；cause 走 buildSafeCause
-          // 避免 err.message 携带的 escapedCommand 泄露 input.text。
-          logger.warn(
-            {
-              sessionKey: serializeSessionKey(session.key),
-              traceId,
-              errorKind: 'agent',
-              code: 'spawn_failed',
-              textBufLength: textBuf.length,
-              cause: buildSafeCause(err),
-            },
-            'claudecode_subproc_error',
-          );
-          emitEvent({
-            type: 'error',
-            traceId,
-            timestamp: new Date(),
-            sequence: sequence++,
-            payload: { errorKind: 'spawn_failed', message },
-          });
-          // catch 前 stream-json 解析循环可能已收到 result.usage（CC 完整输出后才异常退出
-          // 的罕见路径），仍 emit usage 避免 daemon counters / $ 预算 把已产生 token 成本的
-          // 一回合误算成零成本。turn 失败由 turn_finished.reason='error' 表达；
-          // 不靠 completeness 区分 "turn 失败 vs usage 数据缺失"。
-          if (usage) {
-            const partialUsage: UsageRecord = {
-              model: 'claude-code',
-              inputTokens: usage.input_tokens ?? 0,
-              outputTokens: usage.output_tokens ?? 0,
-              cacheReadTokens: usage.cache_read_input_tokens ?? 0,
-              cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
-              costUsd: totalCostUsd,
-              turnSequence: 1,
-              toolCallsThisTurn: 0,
-              wallClockMs: 0,
-              completeness: costUsdToCompleteness(totalCostUsd),
-            };
-            emitEvent({
-              type: 'usage',
-              traceId,
-              timestamp: new Date(),
-              sequence: sequence++,
-              payload: partialUsage,
-            });
-          }
-          emitEvent({
-            type: 'turn_finished',
-            traceId,
-            timestamp: new Date(),
-            sequence: sequence++,
-            payload: { reason: 'error', turnSequence: 1 },
-          });
-          return;
-        }
-
-        // 子进程优雅退出但 stream-json 缺 result / 缺 usage payload → backend 异常，
-        // 走 error 路径不合成 usage（spec/cost-and-limits.md §UsageRecord.completeness 语义
-        // "缺事件 = 异常"）。stopRequested / interruptRequested 优先级更高（见下一段）—
-        // 用户主动停或主动 interrupt 时即使没有 result 也属"正常路径"，不算 backend 异常。
-        if (
-          !inflightFlag.stopRequested &&
-          !inflightFlag.interruptRequested &&
-          (!sawResult || !sawUsage)
-        ) {
-          const errorKind = !sawResult ? 'agent_no_result' : 'agent_no_usage';
-          const message = !sawResult
-            ? 'claude-code subprocess exited without emitting a result event'
-            : 'claude-code result event missing usage payload';
-          emitEvent({
-            type: 'error',
-            traceId,
-            timestamp: new Date(),
-            sequence: sequence++,
-            payload: { errorKind, message },
-          });
-          emitEvent({
-            type: 'turn_finished',
-            traceId,
-            timestamp: new Date(),
-            sequence: sequence++,
-            payload: { reason: 'error', turnSequence: 1 },
-          });
-          return;
-        }
-
-        // 顺序 emit 收尾事件。
-        // stopSession 路径优先：即便 CC 优雅 exit 0，也不能把"被强停的回合"当正常回复发出去。
-        // 不 emit text_final（daemon engine 看到 text_final + turn_finished{stop} 会 safeSend 给用户）；
-        // 保留 usage emit（成本归因仍有效）；turn_finished.reason='error'；末尾 emit session_stopped{user_stop}。
-        if (inflightFlag.stopRequested) {
-          if (usage) {
-            const usageRecord: UsageRecord = {
-              model: 'claude-code',
-              inputTokens: usage.input_tokens ?? 0,
-              outputTokens: usage.output_tokens ?? 0,
-              cacheReadTokens: usage.cache_read_input_tokens ?? 0,
-              cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
-              costUsd: totalCostUsd,
-              turnSequence: 1,
-              toolCallsThisTurn: 0,
-              wallClockMs: 0,
-              completeness: costUsdToCompleteness(totalCostUsd),
-            };
-            emitEvent({
-              type: 'usage',
-              traceId,
-              timestamp: new Date(),
-              sequence: sequence++,
-              payload: usageRecord,
-            });
-          }
-          emitEvent({
-            type: 'turn_finished',
-            traceId,
-            timestamp: new Date(),
-            sequence: sequence++,
-            payload: { reason: 'error', turnSequence: 1 },
-          });
-          emitEvent({
-            type: 'session_stopped',
-            traceId,
-            timestamp: new Date(),
-            sequence: sequence++,
-            payload: { reason: 'user_stop' },
-          });
-        } else {
-          emitEvent({
-            type: 'text_final',
-            traceId,
-            timestamp: new Date(),
-            sequence: sequence++,
-            payload: { text: textBuf },
-          });
-
-          const usageRecord: UsageRecord = {
-            model: 'claude-code',
-            inputTokens: usage?.input_tokens ?? 0,
-            outputTokens: usage?.output_tokens ?? 0,
-            cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
-            cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
-            costUsd: totalCostUsd,
-            turnSequence: 1,
-            toolCallsThisTurn: 0,
-            wallClockMs: 0,
-            completeness: costUsdToCompleteness(totalCostUsd),
-          };
-          emitEvent({
-            type: 'usage',
-            traceId,
-            timestamp: new Date(),
-            sequence: sequence++,
-            payload: usageRecord,
-          });
-
-          // turn_finished.reason：
-          // - 优先用 CC stopReason 映射（end_turn → stop / interrupted → user_interrupt / …）
-          // - 兜底：若调用方主动 interrupt 但 CC 仍 exit 0 且未输出 stopReason，
-          //   不能让默认值跌到 'error'，应表达为 user_interrupt
-          // docs/dev/spec/agent-backends/claude-code-cli.md §stop_reason 到 turn_finished.reason 的映射
-          let mappedReason: TurnEndReason;
-          switch (stopReason) {
-            case 'end_turn':
-              mappedReason = 'stop';
-              break;
-            case 'max_tokens':
-              mappedReason = 'max_tokens';
-              break;
-            case 'interrupted':
-              mappedReason = 'user_interrupt';
-              break;
-            default:
-              mappedReason = 'error';
-          }
-          const finalReason =
-            inflightFlag.interruptRequested && mappedReason === 'error'
-              ? 'user_interrupt'
-              : mappedReason;
-          emitEvent({
-            type: 'turn_finished',
-            traceId,
-            timestamp: new Date(),
-            sequence: sequence++,
-            payload: {
-              reason: finalReason,
-              turnSequence: 1,
-            },
-          });
-        }
-      } finally {
-        // turn 自然结束 / 异常 / 被 kill 都释放 session→subproc 绑定，
-        // 避免后续 interrupt 误向已退出进程发信号；同时清 inflight flag，让下一轮 sendInput 可入。
-        subprocMap.delete(session);
-        inflightFlagMap.delete(session);
-      }
+      state.queuedTurns++;
+      const work = state.queue.then(async () => {
+        state.queuedTurns--;
+        await runTurn(session, state, input);
+      });
+      state.queue = work.catch(() => {});
+      await work;
     },
   };
 

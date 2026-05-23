@@ -29,7 +29,7 @@ contracts:
 |---|---|
 | CLI 命令名 | `claude` |
 | 最低支持版本 | **待实现前跑 `claude --version` 锁定**；建议 `>= 2.0.0`（占位，实现首 PR 内敲定） |
-| 已对账版本 | help 落盘 `2.1.119`；CLI 行为实测 `2.1.148`（§stdout 映射 / §中断 / §权限边界 / json 输出形态 等实测标注以 2.1.148 为准） |
+| 已对账版本 | help 落盘 `2.1.119`；CLI 行为实测 `2.1.148`（§stdout 映射 / §中断 / §权限边界 / json 输出形态 等实测标注以 2.1.148 为准）；工具隔离前置验证实测 `2.1.149`（`can_use_tool` 裸 CLI 主路径证伪，PreToolUse hook 为 P4 主强制点） |
 | 运行时 | 用户本机（ADR-0003），由用户自行维护 CC 的安装与升级 |
 | 订阅 / API 支持 | 两类都支持；`usage.costUsd` 在订阅路径下可能缺失（见下文 UsageCompleteness） |
 
@@ -142,6 +142,8 @@ MVP 只依赖两类输入：
 {"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_123","name":"Bash","input":{"command":"..."}}]}}
 // tool_result.content 在本次实测样例中为 string；多形态（string/块数组/object/空/其他）由独立 tool_result 事件承载，见 agent-runtime.md §ToolResultContent
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_123","content":"...","is_error":false}]}}
+// PreToolUse hook deny：工具未执行，CC 回传错误 tool_result；result envelope 汇总 permission_denials
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_123","content":"Error: ...","is_error":true}]}}
 {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1779441000,"rateLimitType":"five_hour","overageStatus":"..."}}
 {"type":"result","subtype":"success","stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50}}
 {"type":"system","subtype":"error","error":{"kind":"...","message":"..."}}
@@ -168,6 +170,8 @@ MVP 只依赖两类输入：
 ¹ `tool_result` 形态已按 ADR-0012 决策点 1 子问题（1-tr-B 独立事件）落地：CC `user/tool_result` 映射为独立 `tool_result` AgentEvent，content 五类承载见 [`agent-runtime.md`](../agent-runtime.md) §ToolResultContent。
 
 ² `tool_call_finished` 无 CC 原生事件，由 runtime 据结果流终结合成——终结判定：该 `tool_use_id` 不再有后续 result + turn 推进 / stop。`status` / `errorSummary` 字段语义 SSOT 在 [`agent-runtime.md`](../agent-runtime.md)。
+
+PreToolUse hook deny 仍以 `user / tool_result` 进入映射：`is_error:true` 映射到 `tool_result.isError=true`；该 `tool_use_id` 的 `tool_call_finished.status` 为 `error`。最终 `result.permission_denials` 应包含对应 `tool_name` / `tool_use_id` / `tool_input`，但安全合约仍以“副作用未发生”为最低断言（见 [`tool-boundary.md`](../security/tool-boundary.md) §合约测试）。
 
 ## hook 事件与未知 type 兜底
 
@@ -246,17 +250,22 @@ catch 路径若已收到 `result.usage`，仍 emit `usage` 事件，避免 daemo
 1. `claude --version` → 解析版本号，比对最低支持版本；失败 → 启动失败 + 清晰错误
 2. `claude --print "ping" --output-format json` → 返回单 object envelope，校验**顶层** `stop_reason == "end_turn"` + **顶层** `result` 文本非空（`stop_reason` / `result` 均为 envelope 顶层字段，**不是** `result.stop_reason` 嵌套）；超时 30s
 3. 可选：跑一次 `claude --print "read README.md" --output-format stream-json --verbose --allowed-tools Read`（`--verbose` 为 stream-json 输出强制项；子进程 `cwd` 选项指向 `<testDir>`）→ 验证 stream-json 输出结构能被解析器消费
-4. 失败则：打 `agent_spawn_failed` 日志（见 observability.md），拒绝启动 Discord gateway
+4. 启用工具隔离时，跑一次临时 PreToolUse hook deny：向 CC 发起白名单外工具调用请求，断言 hook deny 生效（副作用未发生、对应 `user / tool_result` 的 `is_error:true`、`permission_denials` 非空）；哨兵工具与临时目录由实现决定
+5. 失败则：打 `agent_spawn_failed` 日志（见 observability.md），拒绝启动 Discord gateway
 
 ## 权限边界（与 security.md 对齐）
 
-> **⚠️ 已知安全 gap（CC 2.1.148 实测，待 security 评估）**：`--print` 非交互模式下，CC **不强制** `--allowed-tools` 白名单 / `Bash(git *)` 子模式 / `--permission-mode default` 的工具隔离——
+> **权限边界实测结论（CC 2.1.148 / 2.1.149）**：`--print` 非交互模式下，CC **不强制** `--allowed-tools` 白名单 / `Bash(git *)` 子模式 / `--permission-mode default` 的工具隔离——
 > - `--permission-mode default` 的 `init` 事件实报 `permissionMode:"bypassPermissions"`；`plan` 不阻止写操作
 > - 白名单**外**的工具、子模式不匹配的命令照常执行，`permission_denials` 为空（实测：白名单只给 `Read`，模型用 `Bash` 跑 echo 仍成功）
 >
 > - `--disallowed-tools` 黑名单**实测有效**（黑名单工具不出现在模型工具列表），但黑名单**不能替代** allowlist 安全模型，只作 defense-in-depth / 临时禁危险工具
 >
-> 即下面"工具白名单 / permission-mode"假定的隔离在 stream-json 主路径**实际不生效，不能作为安全边界**。MVP 工具隔离须靠 OS 级手段（沙箱 / 容器 / 只读挂载）或自管权限层。`--bare` 只减少 hook / memory / 插件注入面，**不修工具隔离**，不算隔离替代。security 缓解方案待 `security/tool-boundary.md` 评估修订（本 spec 仅记录实测事实）。
+> P4 前置验证（CC 2.1.149）进一步确认：裸 CLI control `initialize` 可用，但允许工具执行时不触发 `can_use_tool`；`--allowed-tools Read` 或 CC 自身 auto-deny 也不是 agent-nexus control deny。这些事实说明裸 CLI control 路径不能提供 agent-nexus 自定义白名单的执行前判定权。`--bare` 只减少 hook / memory / 插件注入面，**不修工具隔离**，不算隔离替代。
+
+### PreToolUse hook 主强制点
+
+PR-B 使用 PreToolUse hook 时，agent-nexus 必须在启动 CC 前加载 hook 配置；配置路径要求由 [`tool-boundary.md`](../security/tool-boundary.md) 拥有。hook deny 的 stdout 信号为 `user / tool_result` `is_error:true` + result envelope `permission_denials` 非空。CompatibilityProbe 在 §兼容性自检 中定义启动时自检步骤。安全合约（fail-closed 条件、测试最低断言、实现约束）由 [`tool-boundary.md` §工具隔离强制点](../security/tool-boundary.md#工具隔离强制点) 拥有。
 
 - 工作目录：通过子进程 `cwd` 选项传入（CC CLI 没有 `--cwd` flag），**不继承** agent-nexus 进程的 cwd
 - 工具白名单：**必须**显式传 `--allowed-tools`，不依赖 CC 默认集

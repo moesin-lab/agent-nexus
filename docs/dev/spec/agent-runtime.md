@@ -317,7 +317,7 @@ Agent runtime 实现必须有：
 1. 固定 CC 输出 transcript（JSONL fixture）→ 产出符合 spec 的 AgentEvent 流
 2. `sendInput` → 看到 `session_started` / `text_delta` / `turn_finished` 的合理序列
 3. `interrupt` → 产出 `turn_finished { reason: "user_interrupt" }`
-4. 超时 → 产出 `turn_finished { reason: "error" }` + `error` 事件
+4. 超时 → 产出 `turn_finished { reason: "wallclock_timeout" }` + `error` 事件
 5. 子进程崩溃 fixture → 产出 `error` + `session_stopped`
 6. `usage` 事件的 token 数可被 daemon 成功记账
 7. tool_result 多变体 + 边界 fixture：content 为 string / 空串 / null / 缺字段 / 块数组 / 空数组 / 非 block 数组 / 未识别块 / plain object 各形态 → 产出 kind 正确的 ToolResultContent（按判别优先级），未识别块原样留在 `blocks` 内

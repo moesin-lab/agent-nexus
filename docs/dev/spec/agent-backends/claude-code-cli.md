@@ -261,11 +261,11 @@ catch 路径若已收到 `result.usage`，仍 emit `usage` 事件，避免 daemo
 >
 > - `--disallowed-tools` 黑名单**实测有效**（黑名单工具不出现在模型工具列表），但黑名单**不能替代** allowlist 安全模型，只作 defense-in-depth / 临时禁危险工具
 >
-> P4 前置验证（CC 2.1.149）进一步确认：裸 CLI control `initialize` 可用，但允许工具执行时不触发 `can_use_tool`；`--allowed-tools Read` 或 CC 自身 auto-deny 也不是 agent-nexus control deny。这些事实说明裸 CLI control 路径不能提供 agent-nexus 自定义白名单的执行前判定权。`--bare` 只减少 hook / memory / 插件注入面，**不修工具隔离**，不算隔离替代。
+> CC 2.1.149 实测进一步确认：裸 CLI control `initialize` 可用，但允许工具执行时不触发 `can_use_tool`；`--allowed-tools Read` 或 CC 自身 auto-deny 也不是 agent-nexus control deny。这些事实说明裸 CLI control 路径不能提供 agent-nexus 自定义白名单的执行前判定权。`--bare` 只减少 hook / memory / 插件注入面，**不修工具隔离**，不算隔离替代。
 
 ### PreToolUse hook 主强制点
 
-PR-B 使用 PreToolUse hook 时，agent-nexus 必须在启动 CC 前加载 hook 配置；配置路径要求由 [`tool-boundary.md`](../security/tool-boundary.md) 拥有。hook deny 的 stdout 信号为 `user / tool_result` `is_error:true` + result envelope `permission_denials` 非空。CompatibilityProbe 在 §兼容性自检 中定义启动时自检步骤。安全合约（fail-closed 条件、测试最低断言、实现约束）由 [`tool-boundary.md` §工具隔离强制点](../security/tool-boundary.md#工具隔离强制点) 拥有。
+agent-nexus 使用 PreToolUse hook 时，必须在启动 CC 前加载 hook 配置；配置路径要求由 [`tool-boundary.md`](../security/tool-boundary.md) 拥有。hook deny 的 stdout 信号为 `user / tool_result` `is_error:true` + result envelope `permission_denials` 非空。CompatibilityProbe 在 §兼容性自检 中定义启动时自检步骤。安全合约（fail-closed 条件、测试最低断言、实现约束）由 [`tool-boundary.md` §工具隔离强制点](../security/tool-boundary.md#工具隔离强制点) 拥有。
 
 - 工作目录：通过子进程 `cwd` 选项传入（CC CLI 没有 `--cwd` flag），**不继承** agent-nexus 进程的 cwd
 - 工具白名单：**必须**显式传 `--allowed-tools`，不依赖 CC 默认集

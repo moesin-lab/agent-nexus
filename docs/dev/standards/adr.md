@@ -30,7 +30,7 @@ ADR 合格的判据：
 - body 含 Context / Options / Decision / Consequences / Out of scope 五段，按 [`../adr/template.md`](../adr/template.md) 结构
 - Options 段列出至少 2 个认真比较过的候选
 - Decision 段一句话说选哪个；不模糊措辞
-- 状态至少推到 `Proposed`（合入 main 后即视为入库可执行）；合入前已通过 codex review 并逐条回应
+- 状态至少推到 `Proposed`（合入 main 后即视为入库可执行）；合入前已通过独立 agent review 并逐条回应
 
 ## 书写要点
 

@@ -37,7 +37,7 @@ related:
 
 ## Code review
 
-所有 PR 必须经过 code review，并对大变更或跨层改动额外跑 codex review / ultrareview。流程与自查清单见 [`docs/dev/process/code-review.md`](docs/dev/process/code-review.md)。
+所有 PR 必须经过 code review，并对大变更或跨层改动额外跑独立 agent review / 深度 review。流程与自查清单见 [`docs/dev/process/code-review.md`](docs/dev/process/code-review.md)。
 
 ## 行为准则
 

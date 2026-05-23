@@ -2,7 +2,7 @@
 title: Code Review 产物合格条件
 type: standards
 status: active
-summary: PR 作者自查清单本体、code review 过程的禁入条件、反模式、Codex review 反馈响应合格条件
+summary: PR 描述模板、作者自查清单本体、code review 过程的禁入条件、反模式、独立 agent review 反馈响应合格条件
 tags: [code-review, standards]
 related:
   - dev/process/code-review
@@ -13,6 +13,33 @@ related:
 # Code Review 产物合格条件
 
 定义 PR / review 过程的产物合格条件——什么样的 PR 描述、自查、反馈响应算合格。流程编排（何时跑、谁触发、未回应怎么办）见 [`../process/code-review.md`](../process/code-review.md)；review 反馈优先级判据见 [`review.md`](review.md)。
+
+## PR 描述合格条件
+
+PR 描述必须包含下列小节；可以加其它小节，但不能省略 [`../process/code-review.md` §PR 必答三问](../process/code-review.md#pr-必答三问)、review 与验证。
+
+```markdown
+## Summary
+
+- <改了什么，1-4 条>
+
+## ADR / Spec / Tests
+
+- ADR: <链接或 N/A + 理由>
+- Spec: <链接或 N/A + 理由>
+- Tests: <测试文件 / 断言 / 未跑原因>
+
+## Review
+
+- Independent agent review: <review log / PR comment / N/A + 理由>
+- Deep review: <触发条件满足时的 review log；未触发则写 N/A + 理由>
+
+## Verification
+
+- `<命令>`: <结果>
+```
+
+`ADR / Spec / Tests` 是 PR 必答三问的承载形式；`Summary` 不能替代三问。`Verification` 不能替代 `Tests`，因为前者证明本次命令结果，后者说明测试设计覆盖了什么。
 
 ## 自查清单合格条件
 
@@ -32,22 +59,22 @@ related:
 - [ ] Markdown frontmatter 完整（[`docs-style.md`](docs-style.md) + [`metadata.md`](metadata.md)）
 - [ ] 代码改动对应文档同 PR 改
 
-## Codex review 反馈响应合格条件
+## 独立 agent review 反馈响应合格条件
 
-对 codex 的每条反馈必须有以下之一明确响应：
+对独立 agent reviewer 的每条反馈必须有以下之一明确响应：
 
 - **采纳**：修改代码并说明怎么改的
 - **部分采纳**：说明采纳哪一部分，拒绝哪一部分的理由
 - **拒绝**：说明技术理由（"性能考虑"、"spec 就是这么定义的"、"这不是本 PR 范围"）
 
-**沉默跳过不合格**——即使拒绝也要留痕，便于未来复盘。Ultrareview 的反馈响应规则相同。
+**沉默跳过不合格**——即使拒绝也要留痕，便于未来复盘。深度 review 的反馈响应规则相同。
 
 ## 禁入条件
 
 PR 满足以下任一即不合格：
 
-- 把 codex review 当橡皮图章（"它说 OK 就 OK"）
-- PR 作者自己审自己（除非单人仓库且已跑过 codex）
+- 把独立 agent review 当橡皮图章（"它说 OK 就 OK"）
+- PR 作者自己审自己（除非单人仓库且已跑过独立 agent review）
 - 合并有未回应反馈的 PR
 - 跳过 review 直接合并（不存在"太小就不 review"的例外）
 - 在 `main` 上直接 commit，绕过分支 / PR / review（见 [`commit-and-branch.md`](../process/commit-and-branch.md) 分支先行）
@@ -58,9 +85,9 @@ PR 满足以下任一即不合格：
 
 | 反模式 | 正确做法 |
 |---|---|
-| "改动简单不用 review" | 仍跑 codex review，成本很低 |
-| "codex 说没问题就合并" | 不自我放松，作者还要自查一遍 |
+| "改动简单不用 review" | 仍跑独立 agent review，成本很低 |
+| "reviewer 说没问题就合并" | 不自我放松，作者还要自查一遍 |
 | "反馈太多，捡容易的做" | 按 [`review.md`](review.md) 优先级做，正确性与安全必须全做 |
-| "ultrareview 太贵，不做" | 架构级改动强制；不做则改动不能合并 |
+| "深度 review 太贵，不做" | 架构级改动强制；不做则改动不能合并 |
 | "reviewer 只看代码不看 spec" | 必须先看 PR 描述和 spec 再看代码 |
 | "Reviewer 默认 LGTM" | Reviewer 默认态度是**质疑**，接受需要理由 |

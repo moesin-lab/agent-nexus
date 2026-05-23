@@ -36,6 +36,7 @@ related:
 ### Per-harness 实现
 
 - **Claude Code**：异构模型 → `codex-review` skill（内部 OpenAI Codex / gpt-5 系列）；独立 context → `general-purpose` subagent
+- **Codex**：异构模型 → `claude-review` / `adversarial-review` skill；独立 context → 可用 multi-agent 工具或外部 reviewer
 - **其他 harness**：按自身 subagent / external review 机制对等；规则以本 docs 为准
 
 ## 调度 prompt

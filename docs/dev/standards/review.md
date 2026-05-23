@@ -11,7 +11,7 @@ related:
 
 # Code Review 反馈质量判据
 
-定义 review 反馈"什么级别的问题算 must-fix / 可 defer"，是产物合格条件。流程编排（何时跑 codex review / ultrareview、谁触发、未回应如何处理）见 [`../process/code-review.md`](../process/code-review.md)。
+定义 review 反馈"什么级别的问题算 must-fix / 可 defer"，是产物合格条件。流程编排（何时跑独立 agent review / 深度 review、谁触发、未回应如何处理）见 [`../process/code-review.md`](../process/code-review.md)。
 
 ## 优先级分级
 

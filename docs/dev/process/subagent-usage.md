@@ -16,17 +16,25 @@ related:
 
 ## 派发哪个子代理
 
-按 `~/.claude/CLAUDE.md` 的全局约定，常用：
+本文件不绑定具体 harness 的私有 agent 名称。先按任务类型选"能力"，再按当前 harness 映射到具体工具：
 
-| 场景 | 子代理类型 |
+| 场景 | 需要的能力 |
 |---|---|
-| 代码/文件探索 | `Explore`（快速）或 `general-purpose`（深度） |
-| 实现方案设计 | `Plan` |
-| 独立 review | `superpowers:code-reviewer` 或 codex-review skill |
-| 第二意见/盲点检查 | `codex:codex-rescue` 或 codex-review skill |
-| 简化改进既有代码 | `code-simplifier` |
+| 代码/文件探索 | 独立上下文探索仓库、返回证据路径 |
+| 实现方案设计 | 独立上下文设计/拆解方案 |
+| 独立 review | 不同模型或不同上下文审 PR / diff / draft |
+| 第二意见/盲点检查 | 异构模型反方分析 |
+| 简化改进既有代码 | 聚焦删除、合并、减少抽象的 reviewer |
 
-本项目专属补充：待 ADR 0004 语言定后，如有需要可新增项目专属子代理（如"spec 合约测试生成器"），届时在本文件登记。
+### Per-harness 映射
+
+| Harness | 探索 / 设计 | 独立 review / 第二意见 | 简化改进 |
+|---|---|---|---|
+| Claude Code | `Explore` / `general-purpose` / `Plan` | `codex-review` skill / `codex:codex-rescue` / `superpowers:code-reviewer` | `code-simplifier` |
+| Codex | 可用的 multi-agent 工具或手工独立上下文；没有工具时主 session 自行探索并明确未派发 | `claude-review` / `adversarial-review` skill，或等价外部 reviewer | `claude-review` 给定简化角度，或手工执行并留自查 |
+| 其他 harness | 按自身 subagent / external review 机制对等 | 按自身 subagent / external review 机制对等 | 按自身机制对等 |
+
+本项目专属补充：如有需要可新增项目专属子代理（如"spec 合约测试生成器"），届时在本文件登记。
 
 ## 主 session 的收敛职责
 

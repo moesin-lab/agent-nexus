@@ -2,7 +2,7 @@
 title: Code Review 流程编排
 type: process
 status: active
-summary: codex review 触发时机、ultrareview 触发条件、反馈未回应如何阻断流程；产物合格条件见 standards/code-review.md
+summary: 独立 agent review 触发时机、深度 review 触发条件、反馈未回应如何阻断流程；产物合格条件见 standards/code-review.md
 tags: [code-review, process, subagent]
 related:
   - root/AGENTS
@@ -14,7 +14,7 @@ related:
 
 # Code Review 流程编排
 
-本项目所有 PR 必须经过至少一次 review。单人仓库时的"review"由**作者自查 + codex review**组成；有协作者时追加人类 review。
+本项目所有 PR 必须经过至少一次 review。单人仓库时的"review"由**作者自查 + 独立 agent review**组成；有协作者时追加人类 review。
 
 自查清单 / 反馈响应 / 禁入条件 / 反模式见 [`../standards/code-review.md`](../standards/code-review.md)；review 反馈优先级判据见 [`../standards/review.md`](../standards/review.md)。本文件只编排"何时跑、谁触发、未回应如何阻断流程"。
 
@@ -28,40 +28,48 @@ related:
 
 三问缺一，reviewer 有义务要求补齐或直接拒绝。
 
+PR 描述模板见 [`../standards/code-review.md` §PR 描述合格条件](../standards/code-review.md#pr-描述合格条件)。
+
 ## 作者自查时机
 
 开 PR 前按 [`../standards/code-review.md` §自查清单合格条件](../standards/code-review.md#自查清单合格条件) 走一遍，每项打勾。任一项未达合格不开 PR。
 
-## Codex review 触发时机
+## 独立 agent review 触发时机
 
-所有 PR 必须跑一次 codex review。用途：获取一个**独立视角**，补足作者与主 agent 的盲区。
+所有 PR 必须跑一次独立 agent review。用途：获取一个**独立视角**，补足作者与主 agent 的盲区；reviewer 应尽量使用不同模型 / 不同上下文 / 不同 harness，避免作者自己照镜子。
 
 ### 何时跑
 
 - 每个 PR 合并前至少一次
-- 改动超过 200 行或跨 3+ 文件：跑完后再跑一次 ultrareview
-- 架构级改动（新增模块、改依赖方向、改 spec 契约）：强制 ultrareview
+- 改动超过 200 行或跨 3+ 文件：跑完后再跑一次深度 review
+- 架构级改动（新增模块、改依赖方向、改 spec 契约）：强制深度 review
 
 ### 如何跑
-
-使用 skill `codex-review`：
 
 1. 准备一个 prompt 文件（Markdown），内容包括：
    - 变更目标与动机（1 段）
    - 对应的 ADR / spec 路径
    - 关键改动点（3–5 个）
-   - 想让 codex 重点看的问题（例如"有没有更简单的做法"、"有没有边界条件漏掉"）
+   - 想让独立 reviewer 重点看的问题（例如"有没有更简单的做法"、"有没有边界条件漏掉"）
    - 变更的 diff 或关键文件列表
-2. 调用 `codex-review` skill，传入 prompt 文件路径
-3. 把 codex 原始输出完整保留在 PR 评论或 `reviews/` 目录（按 PR 编号命名）
+2. 按当前 harness 的可用机制调用独立 reviewer；见下方 §Per-harness 映射
+3. 把 reviewer 原始输出完整保留在 PR 评论或 `reviews/` 目录（按 PR 编号命名）
 
-反馈响应合格条件见 [`../standards/code-review.md` §Codex review 反馈响应合格条件](../standards/code-review.md#codex-review-反馈响应合格条件)。
+反馈响应合格条件见 [`../standards/code-review.md` §独立 agent review 反馈响应合格条件](../standards/code-review.md#独立-agent-review-反馈响应合格条件)。
 
-## Ultrareview 触发
+### Per-harness 映射
 
-对大变更使用 `/ultrareview`。这是由用户触发的多 agent 云 review，不能由 Claude 自动启动。
+| 作者主 harness | 独立 review | 深度 review |
+|---|---|---|
+| Claude Code | `codex-review` skill / OpenAI Codex 侧 reviewer | 用户触发 `/ultrareview` 或项目约定的多 agent review |
+| Codex | `claude-review` / `adversarial-review` skill，或等价 Claude/外部 reviewer | `adversarial-review` 多轮，或用户触发的云端多 agent review |
+| 其他 harness | 使用不同模型 / 独立上下文的外部 reviewer | 项目约定的多 agent review |
 
-**作者职责**：在 PR 描述里标注"建议触发 ultrareview"并说明理由。**用户决定是否触发**。
+本表只定义等价机制，不改变 review 产物要求：prompt、原始输出、逐条回应都要留痕。
+
+## 深度 review 触发
+
+大变更或架构级改动必须跑深度 review。若深度 review 需要用户触发，作者职责是在 PR 描述里标注"建议触发深度 review"并说明理由；用户决定是否触发。
 
 ## 反馈处理与合并门禁
 

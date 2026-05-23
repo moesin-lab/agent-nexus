@@ -21,7 +21,7 @@ related:
 1. **分支先行**：所有改动从 `main` checkout 新分支再动手 → [`workflow.md` §分支先行](docs/dev/process/workflow.md#分支先行不可跳过)
 2. **文档先行**：改代码前先过一遍 `when-to-add-doc` 判定要不要先写 spec / ADR / 普通 doc → [`when-to-add-doc.md`](docs/dev/standards/when-to-add-doc.md)
 3. **TDD 强制**：先 spec → 先 failing test → 再 impl → [`tdd.md`](docs/dev/process/tdd.md)
-4. **Review 不走过场**：每 PR 过 codex；大变更加 ultrareview；必答三问 → [`code-review.md`](docs/dev/process/code-review.md)
+4. **Review 不走过场**：每 PR 过独立 agent review；大变更加深度 review；必答三问 → [`code-review.md`](docs/dev/process/code-review.md)
 5. **Subagent 优先**：探索 / 研究类派子代理，主 session 只做收敛 → [`subagent-usage.md`](docs/dev/process/subagent-usage.md)
 6. **Conventional Commits**：commit message 用 `type(scope): 动词起头描述变更` → [`commit-style.md`](docs/dev/standards/commit-style.md)
 7. **SSOT**：每条事实只在唯一 owner 定义，其他只 link 不复述 → [`doc-ownership.md`](docs/dev/standards/doc-ownership.md)
@@ -46,7 +46,7 @@ related:
 | 判一个测试写法是否合格 | `docs/dev/standards/testing.md` |
 | 改 / 跑 eval（对话质量回归） | `docs/dev/testing/eval.md` |
 | 写 / 维护 fixture | `docs/dev/testing/fixtures.md` |
-| 开 PR / codex review 触发 | `docs/dev/process/code-review.md` |
+| 开 PR / review 触发 | `docs/dev/process/code-review.md` |
 | commit 流程编排（合并策略 / stacked PR） | `docs/dev/process/commit-and-branch.md` |
 | 写 commit message / PR title / 给分支命名 | `docs/dev/standards/commit-style.md` |
 | 判命名 / 函数 / 模块边界 / 注释 / 依赖引入是否合格 | `docs/dev/standards/coding.md` |

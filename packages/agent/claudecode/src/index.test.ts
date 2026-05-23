@@ -294,6 +294,61 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     expect(finished.payload.status).toBe('ok');
   });
 
+  it('normalizes tool_result content shapes', async () => {
+    const child = makeInteractiveSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Read'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, {
+      ...sessionConfig,
+      toolWhitelist: ['Read'],
+    });
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'tool results',
+      traceId: 't-results',
+    });
+    await nextTick();
+    child.emitJson({
+      type: 'user',
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: 'missing' },
+          { type: 'tool_result', tool_use_id: 'null', content: null },
+          { type: 'tool_result', tool_use_id: 'text', content: 'hello' },
+          { type: 'tool_result', tool_use_id: 'empty-text', content: '' },
+          { type: 'tool_result', tool_use_id: 'blocks', content: [{ type: 'text', text: 'file' }] },
+          { type: 'tool_result', tool_use_id: 'empty-array', content: [] },
+          { type: 'tool_result', tool_use_id: 'bad-array', content: [1] },
+          { type: 'tool_result', tool_use_id: 'object', content: { ok: true } },
+          { type: 'tool_result', tool_use_id: 'scalar', content: 42 },
+        ],
+      },
+    });
+    child.emitJson({ type: 'result', stop_reason: 'end_turn' });
+    await turn;
+
+    const results = events.filter((event) => event.type === 'tool_result');
+    expect(results.map((event) => event.payload.content.kind)).toEqual([
+      'empty',
+      'empty',
+      'text',
+      'text',
+      'blocks',
+      'blocks',
+      'unknown',
+      'object',
+      'unknown',
+    ]);
+  });
+
   it('responds to can_use_tool with allow or deny based on bare tool whitelist', async () => {
     const child = makeInteractiveSubproc();
     mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
@@ -387,6 +442,53 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     await allowTurn;
   });
 
+  it('terminates fail-closed when control_response cannot be written', async () => {
+    const child = makeInteractiveSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Read'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, {
+      ...sessionConfig,
+      toolWhitelist: ['Read'],
+    });
+    const events = await collectEvents(runtime, session);
+    const originalWrite = child.stdin.write.bind(child.stdin);
+    let failWrites = false;
+    child.stdin.write = ((...args: Parameters<typeof child.stdin.write>) => {
+      if (failWrites) throw new Error('broken stdin');
+      return originalWrite(...args);
+    }) as typeof child.stdin.write;
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'maybe bash',
+      traceId: 't-control-fail',
+    });
+    await nextTick();
+    failWrites = true;
+    child.emitJson({
+      type: 'control_request',
+      request_id: 'req-fail',
+      request: {
+        subtype: 'can_use_tool',
+        tool_name: 'Bash',
+        input: { command: 'echo no' },
+      },
+    });
+    await turn;
+
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    const err = events.find((event) => event.type === 'error');
+    if (err?.type !== 'error') throw new Error('expected error');
+    expect(err.payload.errorKind).toBe('permission_control_write_failed');
+    expect(events.at(-1)?.type).toBe('session_stopped');
+  });
+
   it('fails closed when init reports bypassPermissions', async () => {
     const child = makeInteractiveSubproc();
     mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
@@ -421,6 +523,39 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
       'turn_finished',
       'session_stopped',
     ]);
+    const err = events[0];
+    if (err?.type !== 'error') throw new Error('expected error');
+    expect(err.payload.errorKind).toBe('permission_mode_unsafe');
+  });
+
+  it('fails closed when init reports acceptEdits', async () => {
+    const child = makeInteractiveSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Read'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'hi',
+      traceId: 't-accept-edits',
+    });
+    await nextTick();
+    child.emitJson({
+      type: 'system',
+      subtype: 'init',
+      session_id: 'sid-accept',
+      cwd: '/x',
+      permissionMode: 'acceptEdits',
+    });
+    await turn;
+
     const err = events[0];
     if (err?.type !== 'error') throw new Error('expected error');
     expect(err.payload.errorKind).toBe('permission_mode_unsafe');
@@ -515,5 +650,193 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
       reason: 'user_interrupt',
       source: 'runtime-synthesized',
     });
+  });
+
+  it('maps aborted_streaming result before synthetic interrupt delay as user_interrupt', async () => {
+    vi.useFakeTimers();
+    const child = makeInteractiveSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Read'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+      syntheticTurnFinishedDeliveryMs: 250,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'long',
+      traceId: 't-aborted',
+    });
+    await nextTick();
+    runtime.interrupt(session);
+    child.emitJson({
+      type: 'result',
+      stop_reason: null,
+      terminal_reason: 'aborted_streaming',
+    });
+    await turn;
+    await vi.advanceTimersByTimeAsync(250);
+
+    const finished = events.find((event) => event.type === 'turn_finished');
+    if (finished?.type !== 'turn_finished') throw new Error('expected turn_finished');
+    expect(finished.payload).toMatchObject({ reason: 'user_interrupt' });
+    expect(finished.payload).not.toHaveProperty('source');
+  });
+
+  it('marks wallclock timeout as synthetic terminal and stops the session with error', async () => {
+    vi.useFakeTimers();
+    const child = makeInteractiveSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Read'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+      perInputTimeoutMs: 100,
+    });
+    const session = runtime.startSession(sessionKey, {
+      ...sessionConfig,
+      timeoutMs: 100,
+    });
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'slow',
+      traceId: 't-timeout',
+    });
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
+    await turn;
+
+    expect(child.kill).toHaveBeenCalledWith('SIGINT');
+    expect(events.map((event) => event.type)).toEqual([
+      'turn_finished',
+      'error',
+      'session_stopped',
+    ]);
+    const finished = events[0];
+    if (finished?.type !== 'turn_finished') throw new Error('expected turn_finished');
+    expect(finished.payload).toMatchObject({
+      reason: 'wallclock_timeout',
+      source: 'runtime-synthesized',
+    });
+  });
+
+  it('upgrades interrupted turn cleanup from SIGTERM to SIGKILL', async () => {
+    vi.useFakeTimers();
+    const child = makeInteractiveSubproc();
+    child.kill.mockImplementation(() => true);
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Read'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+      syntheticTurnFinishedDeliveryMs: 10,
+      gracefulInterruptMs: 20,
+      sigtermGraceMs: 30,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'long',
+      traceId: 't-cleanup',
+    });
+    await nextTick();
+    runtime.interrupt(session);
+    await vi.advanceTimersByTimeAsync(10);
+    await turn;
+    await vi.advanceTimersByTimeAsync(20);
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    await vi.advanceTimersByTimeAsync(30);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+    const err = events.find((event) => event.type === 'error');
+    if (err?.type !== 'error') throw new Error('expected error');
+    expect(err.payload.errorKind).toBe('interrupt_cleanup_failed');
+  });
+
+  it('rejects a third sendInput while one turn is running and one is queued', async () => {
+    const child = makeInteractiveSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Read'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const first = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'first',
+      traceId: 't-q-1',
+    });
+    await nextTick();
+    const second = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'second',
+      traceId: 't-q-2',
+    });
+    await nextTick();
+    await runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'third',
+      traceId: 't-q-3',
+    });
+
+    const err = events.find(
+      (event) => event.type === 'error' && event.traceId === 't-q-3',
+    );
+    if (err?.type !== 'error') throw new Error('expected queue error');
+    expect(err.payload.errorKind).toBe('concurrent_send_input');
+
+    child.emitJson({ type: 'result', stop_reason: 'end_turn' });
+    await first;
+    await nextTick();
+    child.emitJson({ type: 'result', stop_reason: 'end_turn' });
+    await second;
+  });
+
+  it('stops the session when a persistent child fails while idle', async () => {
+    const child = makeInteractiveSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Read'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'hi',
+      traceId: 't-idle',
+    });
+    await nextTick();
+    child.emitJson({ type: 'result', stop_reason: 'end_turn' });
+    await turn;
+
+    child.reject(new Error('idle crash'));
+    await nextTick();
+
+    const err = events.find((event) => event.type === 'error');
+    if (err?.type !== 'error') throw new Error('expected error');
+    expect(err.payload.errorKind).toBe('spawn_failed');
+    expect(events.at(-1)?.type).toBe('session_stopped');
   });
 });

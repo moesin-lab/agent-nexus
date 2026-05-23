@@ -353,6 +353,7 @@ export function createClaudeCodeRuntime(
     supportsToolCallEvents: true,
     supportsInterrupt: true,
     supportsStdinInterrupt: false,
+    supportsNativeToolWhitelist: true,
   };
 
   function getState(session: AgentSession): RuntimeState {

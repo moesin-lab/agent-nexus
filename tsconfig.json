@@ -4,6 +4,7 @@
     { "path": "./packages/protocol" },
     { "path": "./packages/daemon" },
     { "path": "./packages/agent/claudecode" },
+    { "path": "./packages/agent/codex" },
     { "path": "./packages/platform/discord" },
     { "path": "./packages/cli" }
   ]

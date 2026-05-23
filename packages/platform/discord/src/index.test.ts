@@ -327,6 +327,71 @@ describe('edit / typing capabilities', () => {
     expect(ref.messageId).toBe('m-2');
   });
 
+  it('edit 多片数量不变：只 edit 既有片，不 send / delete，ref 不变', async () => {
+    const edit = vi.fn(async (id: string) => ({ id }));
+    const send = vi.fn(async () => ({ id: 'new' }));
+    const deleteMessage = vi.fn(async () => undefined);
+    discordMock.channelsFetch.mockResolvedValueOnce(makeTextChannel({ edit, send, delete: deleteMessage }));
+    const platform = makePlatform();
+    const ref = {
+      platform: 'discord',
+      channelId: 'C1',
+      messageId: 'm-2',
+      messageIds: ['m-1', 'm-2'],
+      sentAt: new Date(0),
+    };
+    const text = 'y'.repeat(SLICE_SIZE + 1);
+
+    await platform.edit(ref, {
+      text,
+      traceId: 't-1',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    });
+
+    expect(edit).toHaveBeenNthCalledWith(1, 'm-1', 'y'.repeat(SLICE_SIZE));
+    expect(edit).toHaveBeenNthCalledWith(2, 'm-2', 'y');
+    expect(send).not.toHaveBeenCalled();
+    expect(deleteMessage).not.toHaveBeenCalled();
+    expect(ref.messageIds).toEqual(['m-1', 'm-2']);
+    expect(ref.messageId).toBe('m-2');
+  });
+
+  it('edit 在 channel 不存在或非 text-based 时拒绝', async () => {
+    discordMock.channelsFetch.mockResolvedValueOnce(null);
+    const platform = makePlatform();
+
+    await expect(platform.edit({
+      platform: 'discord',
+      channelId: 'missing',
+      messageId: 'm-1',
+      messageIds: ['m-1'],
+      sentAt: new Date(0),
+    }, {
+      text: 'updated',
+      traceId: 't-1',
+      sessionKey: { platform: 'discord', channelId: 'missing', initiatorUserId: OTHER_ID },
+    })).rejects.toThrow('not text-based or not found');
+  });
+
+  it('edit 增长到新片但 channel 不可 send 时拒绝', async () => {
+    discordMock.channelsFetch.mockResolvedValueOnce(
+      makeTextChannel({ sendable: false }),
+    );
+    const platform = makePlatform();
+
+    await expect(platform.edit({
+      platform: 'discord',
+      channelId: 'C1',
+      messageId: 'm-1',
+      messageIds: ['m-1'],
+      sentAt: new Date(0),
+    }, {
+      text: 'z'.repeat(SLICE_SIZE + 1),
+      traceId: 't-1',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    })).rejects.toThrow('cannot send extra edit slices');
+  });
+
   it('edit 收缩到更少片：删除多余旧片并回写 MessageRef', async () => {
     const edit = vi.fn(async (id: string) => ({ id }));
     const deleteMessage = vi.fn(async () => undefined);

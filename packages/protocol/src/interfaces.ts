@@ -24,6 +24,8 @@ export interface PlatformAdapter {
   edit(ref: MessageRef, message: OutboundMessage): Promise<void>;
   delete(ref: MessageRef): Promise<void>;
   react(ref: MessageRef, emoji: string): Promise<void>;
+  setTyping(sessionKey: SessionKey): Promise<void>;
+  clearTyping(sessionKey: SessionKey): Promise<void>;
 }
 
 /** docs/dev/spec/agent-runtime.md §AgentRuntime */

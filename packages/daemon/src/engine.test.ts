@@ -68,11 +68,16 @@ function makeEvent(text: string, overrides: Partial<NormalizedEvent> = {}): Norm
   };
 }
 
-function makePlatform(): PlatformAdapter & {
+function makePlatform(capOverrides: Partial<CapabilitySet> = {}): PlatformAdapter & {
+  capabilities: ReturnType<typeof vi.fn>;
   send: ReturnType<typeof vi.fn>;
+  edit: ReturnType<typeof vi.fn>;
+  setTyping: ReturnType<typeof vi.fn>;
+  clearTyping: ReturnType<typeof vi.fn>;
   start: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
 } {
+  const caps = { ...platformCaps, ...capOverrides };
   const ref: MessageRef = {
     platform: 'discord',
     channelId: 'C1',
@@ -82,13 +87,15 @@ function makePlatform(): PlatformAdapter & {
   };
   return {
     name: () => 'mock-platform',
-    capabilities: () => platformCaps,
+    capabilities: vi.fn(() => caps),
     start: vi.fn(async (_h: EventHandler) => {}),
     stop: vi.fn(async () => {}),
     send: vi.fn(async (_k: SessionKey, _m: OutboundMessage) => ref),
     edit: vi.fn(async () => {}),
     delete: vi.fn(async () => {}),
     react: vi.fn(async () => {}),
+    setTyping: vi.fn(async () => {}),
+    clearTyping: vi.fn(async () => {}),
   };
 }
 
@@ -99,7 +106,7 @@ function makePlatform(): PlatformAdapter & {
  * - `queueEventsAfter(events, ms)` 入队一组并在事件分发前等 `ms` 毫秒（用于显式制造异步窗口）
  */
 function makeAgent() {
-  const handlers = new Map<AgentSession, AgentEventHandler>();
+  const handlers = new Map<AgentSession, AgentEventHandler[]>();
   type QueueEntry = { events: AgentEvent[]; delayMs: number };
   const queue: QueueEntry[] = [];
   let counter = 0;
@@ -126,19 +133,30 @@ function makeAgent() {
   const isAlive = vi.fn(() => true);
 
   const onEvent = vi.fn((s: AgentSession, h: AgentEventHandler) => {
-    handlers.set(s, h);
+    const existing = handlers.get(s) ?? [];
+    existing.push(h);
+    handlers.set(s, existing);
   });
 
   const sendInput = vi.fn(async (s: AgentSession, _input: AgentInput) => {
-    const h = handlers.get(s);
-    if (!h) return;
+    const sessionHandlers = handlers.get(s);
+    if (!sessionHandlers) return;
     const entry = queue.shift();
     if (!entry) return;
     if (entry.delayMs > 0) {
       await new Promise((r) => setTimeout(r, entry.delayMs));
     }
     for (const e of entry.events) {
-      await h(e);
+      for (const h of sessionHandlers) {
+        try {
+          const ret = h(e);
+          if (ret && typeof (ret as Promise<void>).then === 'function') {
+            void (ret as Promise<void>).catch(() => {});
+          }
+        } catch (err) {
+          return Promise.reject(err);
+        }
+      }
     }
   });
 
@@ -159,6 +177,7 @@ function makeAgent() {
     runtime,
     startSession,
     stopSession,
+    isAlive,
     onEvent,
     sendInput,
     queueEvents(events: AgentEvent[]): void {
@@ -246,10 +265,10 @@ describe('Engine', () => {
     const out = sendArgs[1] as OutboundMessage;
     expect(out.text).toBe('hi from agent');
 
-    expect(agent.stopSession).toHaveBeenCalledTimes(1);
+    expect(agent.stopSession).not.toHaveBeenCalled();
   });
 
-  it('第二轮：复用同 sessionKey，agent.startSession 收到 prev agentSessionId 作 resumeFromAgentSessionId', async () => {
+  it('第二轮：复用同 sessionKey 的活跃 AgentSession，不重新 startSession', async () => {
     const platform = makePlatform();
     const agent = makeAgent();
     const store = new SessionStore();
@@ -273,7 +292,45 @@ describe('Engine', () => {
     await dispatchHandler(makeEvent('first prompt'));
     expect(store.get(SESSION_KEY)?.agentSessionId).toBe('sid-123');
 
-    // 第二轮：startSession 必须收到 sid-123 作 resume
+    const firstSession = agent.sendInput.mock.calls[0]![0] as AgentSession;
+
+    // 第二轮：活跃 session 仍 alive，直接复用同一 AgentSession
+    agent.queueEvents([
+      ev('text_final', { text: 'second' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 2 }),
+    ]);
+    await dispatchHandler(makeEvent('second prompt'));
+
+    expect(agent.startSession).toHaveBeenCalledTimes(1);
+    expect(agent.onEvent).toHaveBeenCalledTimes(1);
+    expect(agent.sendInput.mock.calls[1]![0]).toBe(firstSession);
+    expect(store.get(SESSION_KEY)?.agentSessionId).toBe('sid-123');
+    expect(agent.stopSession).not.toHaveBeenCalled();
+  });
+
+  it('第二轮发现活跃 AgentSession 不 alive：关闭旧句柄并用 store 里的 agentSessionId resume 新 session', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-123' }),
+      ev('text_final', { text: 'first' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('first prompt'));
+
+    agent.isAlive.mockReturnValueOnce(false);
     agent.queueEvents([
       ev('session_started', { agentSessionId: 'sid-456' }),
       ev('text_final', { text: 'second' }),
@@ -281,10 +338,10 @@ describe('Engine', () => {
     ]);
     await dispatchHandler(makeEvent('second prompt'));
 
+    expect(agent.stopSession).toHaveBeenCalledTimes(1);
     expect(agent.startSession).toHaveBeenCalledTimes(2);
     const cfg2 = agent.startSession.mock.calls[1]![1] as SessionConfig;
     expect(cfg2.resumeFromAgentSessionId).toBe('sid-123');
-
     expect(store.get(SESSION_KEY)?.agentSessionId).toBe('sid-456');
   });
 
@@ -380,7 +437,6 @@ describe('Engine', () => {
     );
     // 第二条 dispatch 紧随其后
     agent.queueEvents([
-      ev('session_started', { agentSessionId: 'sid-second' }),
       ev('text_final', { text: 'second reply' }),
       ev('turn_finished', { reason: 'stop', turnSequence: 2 }),
     ]);
@@ -389,12 +445,13 @@ describe('Engine', () => {
     const p2 = dispatchHandler(makeEvent('second'));
     await Promise.all([p1, p2]);
 
-    expect(agent.startSession).toHaveBeenCalledTimes(2);
-    const cfg2 = agent.startSession.mock.calls[1]![1] as SessionConfig;
-    expect(cfg2.resumeFromAgentSessionId).toBe('sid-first');
+    expect(agent.startSession).toHaveBeenCalledTimes(1);
+    expect(agent.onEvent).toHaveBeenCalledTimes(1);
+    expect(agent.sendInput).toHaveBeenCalledTimes(2);
+    expect(agent.sendInput.mock.calls[1]![0]).toBe(agent.sendInput.mock.calls[0]![0]);
 
-    // store 终态是第二轮写入的 sid-second（顺序写）
-    expect(store.get(SESSION_KEY)?.agentSessionId).toBe('sid-second');
+    // store 仍保留当前活跃 agent session id；第二轮未重启 session。
+    expect(store.get(SESSION_KEY)?.agentSessionId).toBe('sid-first');
   });
 
   it('不同 SessionKey 并发不串行：互不阻塞', async () => {
@@ -570,6 +627,233 @@ describe('Engine', () => {
     expect(agent.startSession).toHaveBeenCalledTimes(1);
   });
 
+  it('supportsEdit=false：text_delta 只缓冲，turn_finished 发送 text_final 且不调用 edit/typing', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('text_delta', { text: 'hel' }),
+      ev('text_delta', { text: 'lo' }),
+      ev('text_final', { text: 'hello' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe('hello');
+    expect(platform.edit).not.toHaveBeenCalled();
+    expect(platform.setTyping).not.toHaveBeenCalled();
+    expect(platform.clearTyping).not.toHaveBeenCalled();
+  });
+
+  it('supportsEdit=true：首个 text_delta send 建 ref，turn_finished 立即 final edit 且不 double append text_final', async () => {
+    const platform = makePlatform({ supportsEdit: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+      streaming: { streamEditThrottleMs: 1000 },
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('text_delta', { text: 'he' }),
+      ev('text_delta', { text: 'llo' }),
+      ev('text_final', { text: 'hello' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe('he');
+    expect(platform.edit).toHaveBeenCalledTimes(1);
+    expect((platform.edit.mock.calls[0]![1] as OutboundMessage).text).toBe('hello');
+  });
+
+  it('tool event 在无文本时产生最小可见性，final edit 覆盖为最终回复', async () => {
+    const platform = makePlatform({ supportsEdit: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('tool_call_started', {
+        callId: 'tool-1',
+        toolName: 'Bash',
+        inputSummary: 'npm test',
+      }),
+      ev('tool_result', {
+        callId: 'tool-1',
+        resultSequence: 1,
+        content: { kind: 'text', text: 'private output' },
+        isError: false,
+      }),
+      ev('text_final', { text: 'done' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('run tests'));
+
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      '[tool: Bash] started',
+    );
+    expect(platform.edit).toHaveBeenCalledTimes(1);
+    expect((platform.edit.mock.calls[0]![1] as OutboundMessage).text).toBe('done');
+  });
+
+  it('supportsEdit=false：tool event 以单独状态消息满足可见性且不泄露 tool_result 内容', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('tool_result', {
+        callId: 'tool-1',
+        resultSequence: 1,
+        content: { kind: 'text', text: 'secret result' },
+        isError: false,
+      }),
+      ev('text_final', { text: 'done' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('run tool'));
+
+    expect(platform.send).toHaveBeenCalledTimes(2);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      '[tool: tool-1] result',
+    );
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).not.toContain(
+      'secret result',
+    );
+    expect((platform.send.mock.calls[1]![1] as OutboundMessage).text).toBe('done');
+    expect(platform.edit).not.toHaveBeenCalled();
+  });
+
+  it('supportsTypingIndicator=true：turn start setTyping，周期续期，turn end clearTyping 并停 timer', async () => {
+    vi.useFakeTimers();
+    try {
+      const platform = makePlatform({ supportsTypingIndicator: true });
+      const agent = makeAgent();
+      const store = new SessionStore();
+      const engine = new Engine({
+        platform,
+        agent: agent.runtime,
+        logger: SILENT_LOGGER,
+        sessionStore: store,
+        defaultSessionConfig: DEFAULT_CFG,
+        streaming: { typingRefreshMs: 10 },
+      });
+
+      await engine.start();
+      const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+      agent.queueEventsAfter(
+        [
+          ev('text_final', { text: 'slow reply' }),
+          ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+        ],
+        25,
+      );
+
+      const dispatchPromise = dispatchHandler(makeEvent('slow'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(platform.setTyping).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(10);
+      expect(platform.setTyping).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(10);
+      expect(platform.setTyping).toHaveBeenCalledTimes(3);
+
+      await vi.advanceTimersByTimeAsync(10);
+      await dispatchPromise;
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(platform.clearTyping).toHaveBeenCalledTimes(1);
+      const typingCallsAfterClear = platform.setTyping.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(30);
+      expect(platform.setTyping).toHaveBeenCalledTimes(typingCallsAfterClear);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sendInput reject 且无 agent error 时仍清理 typing timer', async () => {
+    vi.useFakeTimers();
+    try {
+      const platform = makePlatform({ supportsTypingIndicator: true });
+      const agent = makeAgent();
+      const sendErr = new Error('send failed');
+      agent.sendInput.mockRejectedValueOnce(sendErr);
+      const store = new SessionStore();
+      const engine = new Engine({
+        platform,
+        agent: agent.runtime,
+        logger: SILENT_LOGGER,
+        sessionStore: store,
+        defaultSessionConfig: DEFAULT_CFG,
+        streaming: { typingRefreshMs: 10 },
+      });
+
+      await engine.start();
+      const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+      const dispatchPromise = dispatchHandler(makeEvent('hello'));
+      await vi.advanceTimersByTimeAsync(0);
+      await dispatchPromise;
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(platform.setTyping).toHaveBeenCalledTimes(1);
+      expect(platform.clearTyping).toHaveBeenCalledTimes(1);
+
+      const typingCallsAfterClear = platform.setTyping.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(30);
+      expect(platform.setTyping).toHaveBeenCalledTimes(typingCallsAfterClear);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('error 路径：agent emit error → platform.send 收到 [agent error: ...]', async () => {
     const platform = makePlatform();
     const agent = makeAgent();
@@ -636,6 +920,14 @@ describe('Engine', () => {
     expect(dispatchFailedLog).toBeUndefined();
   }
 
+  function assertNoHandlerOrDispatchFailure(mockLogger: Logger): void {
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    const handlerErrLog = errorCalls.find(([, msg]) => msg === 'agent_event_handler_failed');
+    expect(handlerErrLog).toBeUndefined();
+    const dispatchFailedLog = errorCalls.find(([, msg]) => msg === 'dispatch_failed');
+    expect(dispatchFailedLog).toBeUndefined();
+  }
+
   it('platform.send 失败（/new ack 路径）：错误被吞 + 写 platform_send_failed 含 traceId/sessionKey/err', async () => {
     const platform = makePlatform();
     const sendErr = new Error('platform down /new');
@@ -696,7 +988,7 @@ describe('Engine', () => {
     expect(agent.stopSession).toHaveBeenCalledTimes(1);
   });
 
-  it('platform.send 失败（turn_finished 回送路径）：错误被吞 + 写 platform_send_failed + 仍走 stopSession', async () => {
+  it('platform.send 失败（turn_finished 回送路径）：错误被吞 + 写 platform_send_failed + 不关闭长驻 session', async () => {
     const platform = makePlatform();
     const sendErr = new Error('platform down turn_finished');
     (platform.send as ReturnType<typeof vi.fn>).mockRejectedValueOnce(sendErr);
@@ -725,19 +1017,50 @@ describe('Engine', () => {
     await expect(dispatchHandler(makeEvent('hello'))).resolves.toBeUndefined();
 
     assertSendFailedLog(mockLogger, sendErr);
-    expect(agent.stopSession).toHaveBeenCalledTimes(1);
+    expect(agent.stopSession).not.toHaveBeenCalled();
   });
 
-  it('agent.stopSession 抛出：错误被吞 + 写 agent_stop_session_failed 含 traceId/sessionKey/err', async () => {
-    // 7a1f916 改了 stopSession 失败日志字段（加了 traceId/sessionKey），
-    // 这里 lock 住，防止后续误删字段或 inline 时漏带 context。
-    const platform = makePlatform();
+  it('platform.edit 失败（final edit 路径）：错误被吞 + 写 platform_edit_failed', async () => {
+    const platform = makePlatform({ supportsEdit: true });
+    const editErr = new Error('platform down edit');
+    platform.edit.mockRejectedValueOnce(editErr);
+
     const agent = makeAgent();
-    const stopErr = new Error('stop boom');
-    (agent.stopSession as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
-      throw stopErr;
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: mockLogger,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
     });
 
+    agent.queueEvents([
+      ev('text_delta', { text: 'reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    await expect(dispatchHandler(makeEvent('hello'))).resolves.toBeUndefined();
+
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    const editFailedLog = errorCalls.find(([, msg]) => msg === 'platform_edit_failed');
+    expect(editFailedLog).toBeDefined();
+    expect(editFailedLog![0]).toMatchObject({
+      traceId: 't-1',
+      err: editErr,
+    });
+    expect(editFailedLog![0]).toHaveProperty('sessionKey');
+    assertNoHandlerOrDispatchFailure(mockLogger);
+  });
+
+  it('agent.stopSession 抛出（/new 关闭旧 session）：错误被吞 + 写 agent_stop_session_failed 含 traceId/sessionKey/err', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
     const store = new SessionStore();
     const mockLogger = {
       info: vi.fn(),
@@ -767,6 +1090,14 @@ describe('Engine', () => {
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
 
     await expect(dispatchHandler(makeEvent('hello'))).resolves.toBeUndefined();
+    expect(agent.stopSession).not.toHaveBeenCalled();
+
+    const stopErr = new Error('stop boom');
+    (agent.stopSession as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+      throw stopErr;
+    });
+
+    await expect(dispatchHandler(makeEvent('/new'))).resolves.toBeUndefined();
 
     const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
     const stopFailedLog = errorCalls.find(([, msg]) => msg === 'agent_stop_session_failed');
@@ -780,5 +1111,37 @@ describe('Engine', () => {
     // 同步 throw 应被本地 catch 兜住，不应升级成 handlerErr / agent_event_handler_failed
     const handlerErrLog = errorCalls.find(([, msg]) => msg === 'agent_event_handler_failed');
     expect(handlerErrLog).toBeUndefined();
+  });
+
+  it('engine.stop 关闭仍活跃的 agent session 并清空 store', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-1' }),
+      ev('text_final', { text: 'reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(store.get(SESSION_KEY)?.agentSessionId).toBe('sid-1');
+    expect(agent.stopSession).not.toHaveBeenCalled();
+
+    await engine.stop();
+
+    expect(platform.stop).toHaveBeenCalledTimes(1);
+    expect(agent.stopSession).toHaveBeenCalledTimes(1);
+    expect(store.get(SESSION_KEY)).toBeUndefined();
   });
 });

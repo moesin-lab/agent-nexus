@@ -414,5 +414,13 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
     async react(): Promise<void> {
       throw new Error('platform-discord MVP: react not supported');
     },
+
+    async setTyping(): Promise<void> {
+      // P6 will enable supportsTypingIndicator and wire the Discord typing API.
+    },
+
+    async clearTyping(): Promise<void> {
+      // No-op while supportsTypingIndicator=false.
+    },
   };
 }

@@ -7,6 +7,7 @@ export interface AgentCapabilitySet {
   supportsToolCallEvents: boolean;
   supportsInterrupt: boolean;
   supportsStdinInterrupt: boolean;
+  supportsNativeToolWhitelist: boolean;
 }
 
 /** docs/dev/spec/agent-runtime.md §AgentInput */

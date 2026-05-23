@@ -41,6 +41,7 @@ const agentCaps: AgentCapabilitySet = {
   supportsToolCallEvents: false,
   supportsInterrupt: false,
   supportsStdinInterrupt: false,
+  supportsNativeToolWhitelist: false,
 };
 
 const SESSION_KEY: SessionKey = {

@@ -13,6 +13,7 @@ const capabilities = {
   supportsToolCallEvents: true,
   supportsInterrupt: true,
   supportsStdinInterrupt: true,
+  supportsNativeToolWhitelist: true,
 } satisfies AgentCapabilitySet;
 
 const toolResultContents = [

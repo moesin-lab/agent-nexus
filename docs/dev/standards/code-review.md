@@ -16,7 +16,7 @@ related:
 
 ## PR 描述合格条件
 
-PR 描述沿用仓库既有形态：`Summary` / `Why` / `Test plan` / `Out of scope`。可以加其它小节，但不能省略 [`../process/code-review.md` §PR 必答三问](../process/code-review.md#pr-必答三问)、review 与验证；三问必须用 checkbox 明示，便于 reviewer 一眼拒绝未完成项。
+PR 描述沿用仓库既有形态：`Summary` / `Why` / `Test plan` / `Out of scope`。可以加其它小节，但不能省略 [`../process/code-review.md` §PR 必答三问](../process/code-review.md#pr-必答三问)、review 与验证；三问和 Test plan 必须用 checkbox 明示，便于 reviewer 一眼拒绝未完成项。
 
 ```markdown
 ## Summary
@@ -38,8 +38,8 @@ PR 描述沿用仓库既有形态：`Summary` / `Why` / `Test plan` / `Out of sc
 
 ## Test plan
 
-- `<命令>` — <结果>
-- <新增/修改的测试文件与断言；若无测试，写明原因>
+- [ ] `<命令>` — <结果>
+- [ ] <新增/修改的测试文件与断言；若无测试，写明原因>
 
 ## Review notes
 

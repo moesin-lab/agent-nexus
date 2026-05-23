@@ -85,7 +85,7 @@ related:
 | 经验性质 | 沉淀层 | 是否需 PR |
 |---|---|---|
 | 用户个人偏好 / 身份锚点 / **对本 agent 的**协作反馈（如"回复长度"、"用中文还是英文"、"是否追问"）/ 当前项目状态 / 外部系统指针 | 本地记忆 | 否 |
-| 项目流程规则 / 编码与错误标准 / 对项目协作流程的反馈（"本项目 PR 必走 codex review"、"issue 不套模板"等） | `docs/dev/process/` 或 `docs/dev/standards/` | 是 |
+| 项目流程规则 / 编码与错误标准 / 对项目协作流程的反馈（"本项目 PR 必走独立 agent review"、"issue 不套模板"等） | `docs/dev/process/` 或 `docs/dev/standards/` | 是 |
 | 架构级决策（新模块、选型、跨层影响、数据流变更） | `docs/dev/adr/NNNN-*.md`（新 ADR） | 是 |
 | 接口契约（模块边界、API 签名、数据结构） | `docs/dev/spec/**/*.md` | 是 |
 | 协作性 skill 新增 / 修改 | `skills/**` + `skills.manifest`（按 [ADR-0007](../../adr/0007-collaborative-skill-promotion.md)） | 是 |
@@ -121,6 +121,14 @@ related:
 - **单条文件命名惯例**：`<type>_<slug>.md`（type ∈ {user, feedback, project, reference}）
 - **frontmatter 与三段式**：全局规则文件 `~/.claude/CLAUDE.md` 有 feedback 类型的 "Rule + **Why** + **How to apply**" 三段式惯例；本 skill 沉淀时遵循
 - **检索方式**：Read `MEMORY.md` 索引 + 按需读 `<type>_<slug>.md` 全文
+
+### Codex（local memories）
+
+- **位置**：`~/.codex/memories/`
+- **索引文件**：同目录下的 `MEMORY.md`（每条 memory 一行指针）
+- **单条文件命名惯例**：`<project-slug>-<topic>.md`
+- **frontmatter**：至少包含 `name` / `description` / `metadata.type`；正文必须自洽，不依赖某个 session log 才能理解
+- **检索方式**：Read `MEMORY.md` 索引 + 按需读 `<project-slug>-<topic>.md` 全文；Claude artifacts（`~/.claude/projects/.../memory`）只作迁移 / 参考输入，不能作为 Codex 主记忆落点
 
 ### 无本地记忆机制的 harness
 

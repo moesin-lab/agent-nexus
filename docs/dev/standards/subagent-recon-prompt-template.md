@@ -11,9 +11,9 @@ related:
 
 # Subagent 探索任务回报格式模板
 
-**适用**：探索 / 侦察 / 研究类子代理（Explore / general-purpose / codex 研究类），目标是把仓库事实、代码位置、文档片段抓回主 session。
+**适用**：探索 / 侦察 / 研究类子代理（各 harness 的探索型 / 通用型 / 研究型 agent），目标是把仓库事实、代码位置、文档片段抓回主 session。
 
-**不适用**：Plan（设计类）/ code review（判断类）/ code-simplifier（修改类）——产出结构不同，需要各自的模板。
+**不适用**：设计类 / 判断类 review / 简化修改类 agent——产出结构不同，需要各自的模板。
 
 ## 为什么要硬约束
 
@@ -43,7 +43,7 @@ related:
 ## 调用端最小示例
 
 ```
-派发 Explore agent 调查仓库 skills/ 结构：
+派发探索类 agent 调查仓库 skills/ 结构：
 
 目标：搞清现有协作性 skill 的目录分层与文件约定
 

@@ -32,6 +32,7 @@ superseded_by: null
 - 2026-05-21：第四 / 五 / 六轮 GAN review 修订（详见 §异议 & 回应）
 - 2026-05-22：补决策点 5（工具隔离强制点）——stream-json 主路径实测暴露 `--allowed-tools` / `--permission-mode` 不强制工具边界，纳入本 ADR（详见 §异议 & 回应 第七轮）
 - 2026-05-22：§interrupt 投递契约 §进程 cleanup 层 措辞收紧（非反转）——kill 路径从 POSIX `kill(-pid)` process group 抽象为平台等价子进程树终止语义，限定仅约束主动 kill 路径不反转 graceful interrupt 不变量（cline tree-kill 跨平台实现对照触发，详见 §异议 & 回应 第八轮）
+- 2026-05-23：工具隔离前置验证补充非 bypass 复测——早期 `permissionMode:"bypassPermissions"` 读数确认为本机 user settings 污染，不作为 `default` 固有语义依据；决策点 5.1 仍由 `--allowed-tools` 不强制与 observer 无法事后拦截支撑（详见 §异议 & 回应 第九轮）
 
 ## Context
 
@@ -49,7 +50,7 @@ superseded_by: null
    - `chenhg5/cc-connect`（Go IM-bridge，长驻 stream-json 子进程）实证 process group kill 必要（不 kill group → MCP 孙进程 100% CPU 孤儿）+ Discord edit + 周期 typing 节奏 viable
    - `banteg/takopi`（Python Telegram bridge）实证 CC `tool_result.content` 在生产环境至少存在 5 种变体（str / list / dict / None / 其他 + `is_error`）；并以 `-p --resume` 一次性模式作为持续子进程的对照存在
    - 两个项目均未实现三层 watchdog 仍能运行
-6. **工具隔离实测证伪**（2026-05-22，CC 2.1.148）：本 ADR 锁定的 `--print --output-format stream-json` 非交互主路径下，`--allowed-tools` 白名单 / `Bash(git *)` 子模式 / `--permission-mode default`（`init` 实报 `permissionMode:"bypassPermissions"`）均**不强制**工具边界——白名单只给 `Read`，模型用未列入的 `Bash` 仍执行成功，`permission_denials` 为空。**现象的当前推断**（非实测坐实）：CC 的交互批准框架可能依赖 TUI，`--print` 下检测不到批准通道即退化放行。**架构层的确定事实**：stream-json 架构下 agent-nexus 是子进程 stdout 的**观察者**，在事件流里看到 `tool_use` 时工具已执行完，无法事后拦截——这一条不依赖前述推断即成立。`security/tool-boundary.md` §白名单外拒绝 合约（"CC 调未在白名单的工具 → 不转发工具调用请求"）的前提因此被证伪。同测发现两个 CC 进程内的**有效**执行前强制点：(a) PreToolUse hook 能在执行前 deny（实测 `tool_result.is_error=true` + `permission_denials` 记录）；(b) stream-json control protocol 握手裸 CLI 可用（`control_request{subtype:initialize}` → `control_response`），其 `can_use_tool` / `sdk_control_request{subtype:permission}` 是协议原生的执行前权限请求机制（官方 Agent SDK `canUseTool` callback 即走此协议），但裸 CLI 触发 `can_use_tool` 的确切方式在 2.1.148 未坐实
+6. **工具隔离实测证伪**（2026-05-22 CC 2.1.148；2026-05-23 CC 2.1.149 复测修正）：本 ADR 锁定的 `--print --output-format stream-json` 非交互主路径下，`--allowed-tools` 白名单 / `Bash(git *)` 子模式 / `--permission-mode default` 均**不能作为工具安全边界**——白名单只给 `Read` 时，模型用未列入的 `Bash` 仍执行成功，`permission_denials` 为空。早期 `init` 实报 `permissionMode:"bypassPermissions"` 后续确认为本机 user settings `defaultMode:"bypassPermissions"` 污染样本；隔离新目录 project settings 显式 `defaultMode:"default"` 时，`init.permissionMode` 实报 `default`，但 `--allowed-tools Read` 仍不阻止无副作用 Bash 命令。**现象的当前推断**（非实测坐实）：CC 的交互批准框架可能依赖 TUI，`--print` 下检测不到批准通道即退化放行。**架构层的确定事实**：stream-json 架构下 agent-nexus 是子进程 stdout 的**观察者**，在事件流里看到 `tool_use` 时工具已执行完，无法事后拦截——这一条不依赖前述推断即成立。`security/tool-boundary.md` §白名单外拒绝 合约（"CC 调未在白名单的工具 → 不转发工具调用请求"）的前提因此被证伪。同测发现一个 CC 进程内的**有效**执行前强制点：PreToolUse hook 能在执行前 deny（实测 `tool_result.is_error=true` + `permission_denials` 记录）。stream-json control protocol 握手裸 CLI 可用（`control_request{subtype:initialize}` → `control_response`），其 `can_use_tool` / `sdk_control_request{subtype:permission}` 是协议原生的执行前权限请求机制（官方 Agent SDK `canUseTool` callback 即走此协议），但 2.1.149 非 bypass 复测中允许执行、CLI 内部 deny 两条路径均未触发裸 CLI `control_request{subtype:"can_use_tool"}`。
 
 ## Options
 
@@ -88,7 +89,7 @@ superseded_by: null
 
 - **Option 5A**：只靠 OS 级隔离（容器 / 沙箱 / 只读挂载），CLI flag 纯配置意图——硬边界但粒度粗（按进程能力非工具语义），与 ADR-0003 local-desktop 部署张力大
 - **Option 5B**：只靠 PreToolUse hook（实测可执行前 deny）——工具级粒度、不需容器，但单层无纵深、hook 配置被篡改即失效
-- **Option 5C**：只靠 stream-json control protocol `can_use_tool`（协议原生执行前权限请求，最契合 §白名单外拒绝 语义）——但裸 CLI 触发方式在 2.1.148 未坐实
+- **Option 5C**：只靠 stream-json control protocol `can_use_tool`（协议原生执行前权限请求，最契合 §白名单外拒绝 语义）——但裸 CLI 触发方式在 2.1.149 非 bypass 复测仍未坐实
 - **Option 5D**：进程内执行前强制点（control 或 hook，坐实其一）+ OS 级 defense-in-depth 纵深——不把赌注押在任一未坐实机制上，代价是三层实现复杂度
 
 ## Decision
@@ -167,7 +168,7 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
 - 已知 cc-connect / takopi 都没做三层 watchdog 仍能运行——若 PR-B 落地数据显示三类失败模式实际可合并，spec 调整不需要新 ADR
 - runtime `_normalize_tool_result` 五变体处理 + `tool_result` payload 五类承载 + late event 丢弃 + cleanup 升级判据多源判定，runtime 实现复杂度上升
 - legacy fallback 保留意味着维护两套 spawn 代码路径至证据收集复审完成
-- 工具隔离强制点 control protocol `can_use_tool` 的最后一公里（裸 CLI 触发方式）未坐实，存在回退到 hook 的可能（fallback 已验证，不阻塞但增加分支）；OS 级 defense-in-depth 与 ADR-0003（local-desktop 部署）有张力——用户本机隔离手段受限，可能只能要求"信任工作目录 + 只读挂载"等弱化形态
+- 工具隔离强制点 control protocol `can_use_tool` 的最后一公里（裸 CLI 触发方式）未坐实，当前 spec 已回退到 PreToolUse hook（fallback 已验证，不阻塞但增加分支）；OS 级 defense-in-depth 与 ADR-0003（local-desktop 部署）有张力——用户本机隔离手段受限，可能只能要求"信任工作目录 + 只读挂载"等弱化形态
 
 ### 需要后续跟进的事
 
@@ -187,7 +188,7 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
 - **issue 处置**：#45 在 PR-A/B/C 合入后关；#56 epic 在 PR-A/B/C/D 全部合入后关；#28 / #54（部分）/ #30 / #55-B 在对应 PR 合入后由 reviewer 评估关闭
 - **证据收集合并门槛（决策点 2 反转的前提）**：PR-B 合并前必须 (a) 提交可重跑 fixture 测三类数据（stdin control 延迟 / SIGINT 多层传播事实 / 平台等价子进程树终止域覆盖事实） (b) 创建 tracking issue 含 owner / 验收 schema / 复审日期 4 周 (c) 挂 `adr-review` label。复审到期 → maintainer 在 issue 上记录决策结论 → 若反转决策点 2，maintainer 发独立 ADR PR。**门槛未达 PR-B 不允许合并**
 - **legacy fallback 保留门槛**：PR-B 保留 `--print --resume` legacy 代码路径至证据收集复审完成；**默认不启用**但实现层必须保留可配置切换入口（环境变量 / 配置文件 / runtime flag）；删除 fallback 须独立 ADR/修订 PR
-- **工具隔离实现前置验证门槛（决策点 5.2 control vs hook 的前提）**：实现工具隔离的 PR 落地前必须在目标 CC 版本上坐实裸 CLI 能否触发 `can_use_tool`（查当前 `@anthropic-ai/claude-agent-sdk` 的 initialize permission capability 声明 + 实测真拦一次）。坐实 → control 为主（协议原生、最契合 §白名单外拒绝 语义，故为验证时的优先候选）；不可行 → hook 为主。两者都必须满足 5.2 的 fail-closed / 配置不可篡改要求。结论记入 spec。OS 级 defense-in-depth 技术选型（容器 vs seccomp vs 只读挂载）结合 ADR-0003 部署形态另定（可独立 ADR 或 tool-boundary 修订）
+- **工具隔离实现前置验证门槛（决策点 5.2 control vs hook 的前提）**：实现工具隔离的 PR 落地前必须在目标 CC 版本上坐实裸 CLI 能否触发 `can_use_tool`（查当前 `@anthropic-ai/claude-agent-sdk` 的 initialize permission capability 声明 + 实测真拦一次）。坐实 → control 为主（协议原生、最契合 §白名单外拒绝 语义，故为验证时的优先候选）；不可行 → hook 为主。两者都必须满足 5.2 的 fail-closed / 配置不可篡改要求。2026-05-23 对 CC 2.1.149 的非 bypass 复测结论已记入 spec：当前主强制点选 PreToolUse hook；未来升级 CC 版本若重测坐实 `can_use_tool`，再走 spec/ADR 变更。OS 级 defense-in-depth 技术选型（容器 vs seccomp vs 只读挂载）结合 ADR-0003 部署形态另定（可独立 ADR 或 tool-boundary 修订）
 - **流程门槛**：本 ADR 合入 main 进入 Proposed 状态后，任何对 Decision 段的修订必须独立 ADR 修订 PR 经 review 后合并，遵守 `docs/dev/standards/adr.md §评审约束`
 
 ## Out of scope
@@ -238,7 +239,12 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
 - 起因：P1 外部对照 `cline/cline`（`src/utils/process-termination.ts` 用 `tree-kill` 做跨平台 process-tree 终止）提供子进程树终止的**跨平台实现对照**；结合 cc-connect 的 MCP 孙进程残留实证，说明「只杀主进程不足以清理子孙进程」非 POSIX-only 诉求。§进程 cleanup 层 原 `kill(-pid, sig)` process group 写法把不变量钉死在 POSIX、Windows 无等价
 - 收敛口径：Decision 措辞收紧（语义不变、非反转）——kill 路径抽象为平台等价子进程树终止语义、显式限定仅约束主动 kill 路径不反转 graceful interrupt 不变量、三段升级改 soft-kill / hard-kill 阶段语义；具体平台命令下沉 spec。GAN-on-draft 3 轮收敛（R1 1 blocker + 4 important：阻止 process group/taskkill/tree-kill 被写成严格等价、阻止把自然 process exit 读进 kill 路径、阻止信号名当跨平台通用动作、防 Decision 实现细节回胀；R2 修 Rationale 残留命令 framing；R3 接近最优）
 
-外部证据来源：`chenhg5/cc-connect`（process group kill 必要性 + Discord edit/typing 节奏 viable）+ `banteg/takopi`（tool_result 5 种 content 变体 + `-p --resume` 反证）+ PR #88 CC 2.1.148 实测（`--allowed-tools` 不强制 / `permission-mode default` 退化 bypassPermissions / PreToolUse hook 能 deny / control protocol 握手裸 CLI 可用）+ `cline/cline`（`tree-kill` 跨平台子进程树终止实现对照 → 第八轮 cleanup 措辞收紧）
+**第九轮（工具隔离前置验证非 bypass 复测，2026-05-23）**：
+
+- 起因：早期 CC 2.1.148/2.1.149 样本未排除本机 user settings `defaultMode:"bypassPermissions"`，把 `init.permissionMode=="bypassPermissions"` 误写成 `default` 固有语义；同版本 2.1.149 后续改用隔离目录重跑。新建隔离目录，project settings 显式 `defaultMode:"default"`，以 `--setting-sources project --permission-mode default` 复测，`init.permissionMode` 实报 `default`
+- 收敛口径：修正关键事实 6 与 spec 对账版本——不再用“default 退化 bypassPermissions”支撑决策点 5.1；5.1 仍由非 bypass 复测下 `--allowed-tools Read` 不阻止 Bash 执行、observer 无法事后拦截、裸 CLI 未触发 `can_use_tool` 支撑。当前 spec 选 PreToolUse hook 为主强制点，`can_use_tool` 仅保留为未来 CC 版本重测后的替代候选
+
+外部证据来源：`chenhg5/cc-connect`（process group kill 必要性 + Discord edit/typing 节奏 viable）+ `banteg/takopi`（tool_result 5 种 content 变体 + `-p --resume` 反证）+ PR #88 CC 2.1.148 实测（`--allowed-tools` 不强制 / PreToolUse hook 能 deny / control protocol 握手裸 CLI 可用）+ CC 2.1.149 非 bypass 新目录复测（`init.permissionMode=="default"` 下 `--allowed-tools Read` 仍不拦 Bash，project `deny` 不触发裸 CLI `can_use_tool`）+ `cline/cline`（`tree-kill` 跨平台子进程树终止实现对照 → 第八轮 cleanup 措辞收紧）
 
 ## 参考
 

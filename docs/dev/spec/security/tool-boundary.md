@@ -27,7 +27,7 @@ contracts:
 - 默认集（MVP 建议）：`Read, Grep, Glob, Edit, Write`
 - **默认禁用**：`Bash`、任何 shell 执行类工具
 - MCP server：单独配置 `config.security.mcpServers`，默认全禁
-- **`--allowed-tools` / `--permission-mode` 是配置意图声明，不是安全边界**：ADR-0012 决策点 5.1 实测（CC 2.1.148）在 `--print` 非交互 stream-json 主路径下二者不强制工具边界；工具隔离的强制点见 §工具隔离强制点
+- **`--allowed-tools` / `--permission-mode` 是配置意图声明，不是安全边界**：ADR-0012 决策点 5.1 实测（CC 2.1.148 / 2.1.149）在 `--print` 非交互 stream-json 主路径下二者不强制工具边界；工具隔离的强制点见 §工具隔离强制点
 
 ## 启用危险工具的要求
 
@@ -52,7 +52,7 @@ contracts:
 
 工具隔离的真正强制点不在 CLI flag，而在 **CC 进程内执行前拦截 + OS 纵深**（[ADR-0012 决策点 5](../../adr/0012-claudecode-stream-json-mainline.md)，本节为其 spec 落地）：
 
-1. **进程内执行前强制点（fail-closed）**：CC 2.1.149 实测已在目标裸 CLI 上证伪 `can_use_tool` 主路径：control `initialize` handshake 可用，但允许工具执行时裸 CLI 不发 `control_request{subtype:"can_use_tool"}`，agent-nexus 无法据 `toolWhitelist` 返回执行前 deny。因此主强制点为 **PreToolUse hook**。hook 必须按 `toolWhitelist` 在工具执行前 allow / deny；hook 配置与规则必须位于被隔离对象（模型）**不可写的边界外**；启动时必须验证 hook 已加载且规则可解析；缺失 / 加载失败 / 规则解析失败一律 **fail closed**（禁止启动或禁用全部工具）。stream-json control `can_use_tool` 仅可作为未来 CC 版本坐实后的替代实现，不能参与当前安全承诺。
+1. **进程内执行前强制点（fail-closed）**：CC 2.1.149 实测已在目标裸 CLI 上证伪 `can_use_tool` 主路径：control `initialize` handshake 可用；隔离新目录 project settings 显式 `defaultMode:"default"` 时 `init.permissionMode` 实报 `default`，但 `--allowed-tools Read` 仍允许模型调用 `Bash` 执行无副作用命令，显式 project `deny` 只产生 CLI 内部 `permission_denials`，均未发 `control_request{subtype:"can_use_tool"}`。agent-nexus 无法据 `toolWhitelist` 返回执行前 deny。因此主强制点为 **PreToolUse hook**。hook 必须按 `toolWhitelist` 在工具执行前 allow / deny；hook 配置与规则必须位于被隔离对象（模型）**不可写的边界外**；启动时必须验证 hook 已加载且规则可解析；缺失 / 加载失败 / 规则解析失败一律 **fail closed**（禁止启动或禁用全部工具）。stream-json control `can_use_tool` 仅可作为未来 CC 版本坐实后的替代实现，不能参与当前安全承诺。
 2. **OS 级 defense-in-depth**：最低语义 = 限制工作目录写入范围 + 敏感路径不可读 + 网络能力明确策略（容器 / 沙箱 / 只读挂载 / 网络隔离任一可行手段）。目标平台无法提供任何 OS 级限制时，**必须显式声明"不满足工具隔离强安全承诺"**，不得宣称满足。与 ADR-0003 local-desktop 部署的张力下，弱化形态（信任工作目录 + 只读挂载）须显式标注。
 3. 该强制点**保留** §合约测试 §白名单外拒绝 的安全语义，**废弃** observer 架构下"agent-nexus 事后不转发"的实现路径——stream-json 下 agent-nexus 是子进程 stdout 观察者，看到 `tool_use` 时工具已执行完，无法事后拦截。
 

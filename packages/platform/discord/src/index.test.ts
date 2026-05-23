@@ -3,6 +3,7 @@ import type { Message } from 'discord.js';
 import {
   buildBotMentionRegex,
   buildSlices,
+  createDiscordPlatform,
   parseInbound,
   PartialSendError,
   SLICE_SIZE,
@@ -24,6 +25,18 @@ const OTHER_ID = '900000000000000002';
 // 让既有测试聚焦于"非 allowlist 维度"（mention / bot guard / self / system）；
 // allowlist 自身的 fail-closed 行为在末尾的独立 describe 块里测。
 const ALLOWED: readonly string[] = [OTHER_ID, 'U7', 'U-init', 'U_X'];
+
+function makeLogger() {
+  return {
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+    child: vi.fn(),
+  };
+}
 
 function makeMsg(overrides: {
   content: string;
@@ -197,6 +210,30 @@ describe('PartialSendError', () => {
     expect(ownKeys).toContain('sentIds');
     expect(ownKeys).toContain('totalSlices');
     expect(ownKeys).toContain('cause');
+  });
+});
+
+describe('typing no-op contract', () => {
+  it('supportsTypingIndicator=false 时 setTyping / clearTyping 幂等不抛', async () => {
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+    });
+
+    expect(platform.capabilities().supportsTypingIndicator).toBe(false);
+    await expect(platform.setTyping({
+      platform: 'discord',
+      channelId: 'C1',
+      initiatorUserId: OTHER_ID,
+    })).resolves.toBeUndefined();
+    await expect(platform.clearTyping({
+      platform: 'discord',
+      channelId: 'C1',
+      initiatorUserId: OTHER_ID,
+    })).resolves.toBeUndefined();
   });
 });
 

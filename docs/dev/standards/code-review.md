@@ -16,30 +16,36 @@ related:
 
 ## PR 描述合格条件
 
-PR 描述必须包含下列小节；可以加其它小节，但不能省略 [`../process/code-review.md` §PR 必答三问](../process/code-review.md#pr-必答三问)、review 与验证。
+PR 描述沿用仓库既有形态：`Summary` / `Why` / `Test plan` / `Out of scope`。可以加其它小节，但不能省略 [`../process/code-review.md` §PR 必答三问](../process/code-review.md#pr-必答三问)、review 与验证。
 
 ```markdown
 ## Summary
 
-- <改了什么，1-4 条>
+<背景和当前问题，1-2 段>
 
-## ADR / Spec / Tests
+本 PR：
+- <改了什么，1-5 条>
 
-- ADR: <链接或 N/A + 理由>
-- Spec: <链接或 N/A + 理由>
-- Tests: <测试文件 / 断言 / 未跑原因>
+## Why
 
-## Review
+<为什么要做；对应的 issue / ADR / spec，或 N/A + 理由>
+
+## Test plan
+
+- `<命令>` — <结果>
+- <新增/修改的测试文件与断言；若无测试，写明原因>
+
+## Review notes
 
 - Independent agent review: <review log / PR comment / N/A + 理由>
 - Deep review: <触发条件满足时的 review log；未触发则写 N/A + 理由>
 
-## Verification
+## Out of scope
 
-- `<命令>`: <结果>
+- <本 PR 明确不做的事>
 ```
 
-`ADR / Spec / Tests` 是 PR 必答三问的承载形式；`Summary` 不能替代三问。`Verification` 不能替代 `Tests`，因为前者证明本次命令结果，后者说明测试设计覆盖了什么。
+`Why` 承载 ADR / spec 归属；`Test plan` 同时承载测试设计与本次命令验证；`Review notes` 承载独立 review 与深度 review 留痕。`Summary` 不能替代三问。
 
 ## 自查清单合格条件
 

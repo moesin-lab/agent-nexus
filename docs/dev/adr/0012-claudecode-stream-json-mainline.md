@@ -12,7 +12,7 @@ related:
   - dev/spec/message-protocol
   - dev/spec/platform-adapter
   - dev/spec/security/tool-boundary
-adr_status: Proposed
+adr_status: Accepted
 adr_number: "0012"
 decision_date: 2026-04-28
 supersedes: null
@@ -21,8 +21,8 @@ superseded_by: null
 
 # ADR-0012：claudecode 切到 stream-json 主路径——协议合约 / interrupt / timeout / 工具隔离强制点
 
-- **状态**：Proposed
-- **日期**：2026-04-28
+- **状态**：Accepted
+- **日期**：2026-05-23
 - **决策者**：senticx@foxmail.com
 - **相关 ADR**：ADR-0002（CC CLI 作为 agent 后端）、ADR-0011（turn 分层）
 
@@ -36,6 +36,7 @@ superseded_by: null
 - 2026-05-23：复查 cc-connect 后补测隐藏 `--permission-prompt-tool stdio`——`can_use_tool` control 主路径坐实，决策点 5 主强制点从 PreToolUse hook 修正为 stdio permission control（hook 保留为 fallback / 纵深）
 - 2026-05-23：修正 spec/ADR 启动形态——agent-nexus 主路径为**不带 `--print`、由 stdout/stdin pipe 触发 headless 的长驻 stream-json structured IO 子进程**；`--print` 只保留为一次性 probe / legacy fallback
 - 2026-05-23：对齐 `/workspace/claudecode-src` 入口扫描——stdin 输入形态以 `user` / `control_response` / 少量 `control_request` 为 MVP，stdout 权限请求为 `control_request{subtype:"can_use_tool"}`，没有独立 `permission_request` SDK 事件
+- 2026-05-23：Accepted（maintainer 复盘签字，见 PR #99）
 
 ## Context
 

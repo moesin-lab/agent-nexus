@@ -69,7 +69,7 @@ Proposed ──(显式签字盖章)──> Accepted
 | [0009](0009-tdd-mandatory.md) | 强制 TDD（先 spec → 先 failing test → 再 impl） | Proposed |
 | [0010](0010-pre-decision-agent-first.md) | 决策前结构化分析（pre-decision agent-first） | Proposed |
 | [0011](0011-turn-layering.md) | turn 层级——daemon 视角外显两层，agent 内部留给 backend | Proposed |
-| [0012](0012-claudecode-stream-json-mainline.md) | claudecode 切到 stream-json 主路径——协议合约 / interrupt / timeout | Proposed |
+| [0012](0012-claudecode-stream-json-mainline.md) | claudecode 切到 stream-json 主路径——协议合约 / interrupt / timeout / 工具隔离强制点 | Accepted |
 | [0013](0013-usage-completeness-cost-confidence.md) | UsageRecord.completeness 语义——$ 视图可信度 | Proposed |
 
 ## 职责边界

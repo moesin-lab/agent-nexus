@@ -34,10 +34,11 @@ superseded_by: null
 - 2026-05-22：§interrupt 投递契约 §进程 cleanup 层 措辞收紧（非反转）——kill 路径从 POSIX `kill(-pid)` process group 抽象为平台等价子进程树终止语义，限定仅约束主动 kill 路径不反转 graceful interrupt 不变量（cline tree-kill 跨平台实现对照触发，详见 §异议 & 回应 第八轮）
 - 2026-05-23：工具隔离前置验证补充非 bypass 复测——早期 `permissionMode:"bypassPermissions"` 读数确认为本机 user settings 污染，不作为 `default` 固有语义依据；决策点 5.1 仍由 `--allowed-tools` 不强制与 observer 无法事后拦截支撑（详见 §异议 & 回应 第九轮）
 - 2026-05-23：复查 cc-connect 后补测隐藏 `--permission-prompt-tool stdio`——`can_use_tool` control 主路径坐实，决策点 5 主强制点从 PreToolUse hook 修正为 stdio permission control（hook 保留为 fallback / 纵深）
+- 2026-05-23：修正 spec/ADR 启动形态——agent-nexus 主路径为**不带 `--print` 的长驻 stream-json 子进程**；`--print` 只保留为一次性 probe / legacy fallback
 
 ## Context
 
-`docs/dev/spec/agent-backends/claude-code-cli.md` §交互式 session 已把 stream-json 标为 MVP 主路径，但实现侧仍是 `--print` 单次调用——每次 `sendInput` spawn → 跑完 → 退出。这个 spec/impl gap 是 #45（IM 看不到工具调用）/ #28（partial output 丢失）/ #54（interrupt 只能整子进程）/ #30 / #55-B（Discord 长回复无流式 edit）的共同上游。把它们当独立 issue 修，大概率在 stream-json 切换时被全部重写。
+`docs/dev/spec/agent-backends/claude-code-cli.md` §交互式 session 现在把**不带 `--print` 的长驻 stream-json 子进程**标为 MVP 主路径：同一 Claude Code 进程通过 stdin 接收多 turn JSON，通过 stdout 持续输出 stream-json 事件。实现侧当前仍是 `--print` 单次调用——每次 `sendInput` spawn → 跑完 → 退出。这个 spec/impl gap 是 #45（IM 看不到工具调用）/ #28（partial output 丢失）/ #54（interrupt 只能整子进程）/ #30 / #55-B（Discord 长回复无流式 edit）的共同上游。把它们当独立 issue 修，大概率在 stream-json 切换时被全部重写。
 
 本 ADR 立 epic 协议层 + 实现层共识，**只锁不可逆的架构决策**——协议契约、interrupt 主路径、流式 timeout 分层、平台能力门槛、interrupt 投递契约、legacy fallback 保留、工具隔离强制点。具体 UX / UI 文案、协议字段表、阈值数值、平台实现细节由 spec 修订 + 后续 issue 演进。
 
@@ -51,7 +52,7 @@ superseded_by: null
    - `chenhg5/cc-connect`（Go IM-bridge，长驻 stream-json 子进程）实证 process group kill 必要（不 kill group → MCP 孙进程 100% CPU 孤儿）+ Discord edit + 周期 typing 节奏 viable
    - `banteg/takopi`（Python Telegram bridge）实证 CC `tool_result.content` 在生产环境至少存在 5 种变体（str / list / dict / None / 其他 + `is_error`）；并以 `-p --resume` 一次性模式作为持续子进程的对照存在
    - 两个项目均未实现三层 watchdog 仍能运行
-6. **工具隔离实测修正**（2026-05-22 CC 2.1.148；2026-05-23 CC 2.1.149 复测修正）：`--allowed-tools` 白名单 / `Bash(git *)` 子模式 / `--permission-mode default` 均**不能单独作为工具安全边界**——白名单只给 `Read` 时，模型用未列入的 `Bash` 仍可能执行成功，`permission_denials` 为空。早期 `init` 实报 `permissionMode:"bypassPermissions"` 后续确认为本机 user settings `defaultMode:"bypassPermissions"` 污染样本；隔离新目录 project settings 显式 `defaultMode:"default"` 时，`init.permissionMode` 实报 `default`，但 `--allowed-tools Read` / project `allow:["Read"]` 仍不阻止无副作用 Bash 命令。`security/tool-boundary.md` §白名单外拒绝 合约（"CC 调未在白名单的工具 → 不转发工具调用请求"）的 observer 实现前提因此被证伪：stream-json 架构下 agent-nexus 看到 `tool_use` 时工具已执行完，无法事后拦截。复查 `chenhg5/cc-connect` 后发现它启动 Claude Code 时传隐藏 `--permission-prompt-tool stdio`；补测同版本确认：加该 flag 后，`--print stream-json` 与长驻 stream-json 两种形态均在 Bash/Edit 写文件前产出 `control_request{subtype:"can_use_tool"}`。agent-nexus 回 `control_response deny` 后副作用未发生且 result 汇总 `permission_denials`；回 `allow + updatedInput` 后副作用发生。另测 local `--sdk-url` 直接拒绝非 Anthropic approved endpoint，不能作为 agent-nexus 本地 transport。PreToolUse hook 仍已验证可执行前 deny，但定位从主强制点修正为 fallback / defense-in-depth。
+6. **工具隔离实测修正**（2026-05-22 CC 2.1.148；2026-05-23 CC 2.1.149 复测修正）：`--allowed-tools` 白名单 / `Bash(git *)` 子模式 / `--permission-mode default` 均**不能单独作为工具安全边界**——白名单只给 `Read` 时，模型用未列入的 `Bash` 仍可能执行成功，`permission_denials` 为空。早期 `init` 实报 `permissionMode:"bypassPermissions"` 后续确认为本机 user settings `defaultMode:"bypassPermissions"` 污染样本；隔离新目录 project settings 显式 `defaultMode:"default"` 时，`init.permissionMode` 实报 `default`，但 `--allowed-tools Read` / project `allow:["Read"]` 仍不阻止无副作用 Bash 命令。`security/tool-boundary.md` §白名单外拒绝 合约（"CC 调未在白名单的工具 → 不转发工具调用请求"）的 observer 实现前提因此被证伪：stream-json 架构下 agent-nexus 看到 `tool_use` 时工具已执行完，无法事后拦截。复查 `chenhg5/cc-connect` 后发现它启动 Claude Code 时传隐藏 `--permission-prompt-tool stdio`；补测同版本确认：加该 flag 后，`--print stream-json` 与**不带 `--print` 的长驻 stream-json** 两种形态均在 Bash/Edit 写文件前产出 `control_request{subtype:"can_use_tool"}`。agent-nexus 回 `control_response deny` 后副作用未发生且 result 汇总 `permission_denials`；回 `allow + updatedInput` 后副作用发生。另测 local `--sdk-url` 直接拒绝非 Anthropic approved endpoint，不能作为 agent-nexus 本地 transport。PreToolUse hook 仍已验证可执行前 deny，但定位从主强制点修正为 fallback / defense-in-depth。
 
 ## Options
 
@@ -86,7 +87,7 @@ superseded_by: null
 
 ### 决策点 5：工具隔离强制点
 
-`--print` 非交互主路径下 `--allowed-tools` / `--permission-mode` 实测不强制工具边界（关键事实 6），tool-boundary §白名单外拒绝 合约前提被证伪、observer 架构无法事后拦截。工具隔离的真正强制点何在：
+单靠 `--allowed-tools` / `--permission-mode` 实测不强制 agent-nexus 工具边界（关键事实 6），tool-boundary §白名单外拒绝 合约的 observer 实现前提被证伪、看到 `tool_use` 后无法事后拦截。工具隔离的真正强制点何在：
 
 - **Option 5A**：只靠 OS 级隔离（容器 / 沙箱 / 只读挂载），CLI flag 纯配置意图——硬边界但粒度粗（按进程能力非工具语义），与 ADR-0003 local-desktop 部署张力大
 - **Option 5B**：只靠 PreToolUse hook（实测可执行前 deny）——工具级粒度、不需容器，但单层无纵深、hook 配置被篡改即失效
@@ -106,7 +107,7 @@ superseded_by: null
 - **决策点 3**：选 **Option 3A**——Discord adapter `supportsEdit: true` + `supportsTypingIndicator: true` + 实现 `edit()` / `setTyping()` / `clearTyping()`；具体 UI 策略下放后续 issue；本 ADR 同时锁定 **PR-C 最小集成契约**（见下）
 - **决策点 4**：选 **Option 4A**——三层 watchdog；timeoutLayer 区分语义**必须进 protocol**（payload 字段或 TurnEndReason 枚举，二选一，不允许 daemon 内部状态）；阈值与具体实现机制选哪个 → spec/cost-and-limits.md + PR-A
 - **决策点 5**：选 **Option 5D**——锁三条工具隔离不变量：
-  - (5.1) 在本 ADR 目标运行形态（`--print` 非交互 stream-json 主路径）下，**不得**把 `--allowed-tools` / `--permission-mode` 当作安全边界——实测该形态下不强制（关键事实 6）；即便未来 CC 版本修复该形态，也只能作为附加约束，不能替代 5.2 / 5.3
+  - (5.1) 在本 ADR 目标运行形态（不带 `--print` 的长驻 stream-json 子进程）下，**不得**把 `--allowed-tools` / `--permission-mode` 当作安全边界——实测单靠这些 flag 不强制 agent-nexus 工具隔离（关键事实 6）；即便未来 CC 版本修复这些 flag 的行为，也只能作为附加约束，不能替代 5.2 / 5.3
   - (5.2) 工具隔离**必须有一个已验证 fail-closed 的 CC 进程内执行前强制点**：主路径选 stream-json control protocol `can_use_tool`，agent-nexus 启动 CC 时传 `--permission-prompt-tool stdio`，作为 control 对端据 `toolWhitelist` allow/deny；启动 probe 必须验证 deny 副作用未发生、allow 可放行、缺失 / 加载失败 / 规则解析失败一律 **fail closed**（禁止启动或禁用全部工具）。**PreToolUse hook** 保留为 fallback / defense-in-depth：control probe 不通过但仍要提供工具隔离时，才可切 hook 主强制点；hook 配置也必须位于被隔离对象（模型）**不可写的边界外**。control probe 与 hook probe 均不通过时，**禁止落地**该工具隔离实现，不允许对外宣称满足工具隔离承诺
   - (5.3) **必须叠加 OS 级 defense-in-depth**，最低语义：限制工作目录写入范围 + 敏感路径不可读 + 网络能力有明确策略（容器 / 沙箱 / 只读挂载 / 网络隔离等任一可行手段达成）；若目标平台无法提供任何 OS 级限制，**必须显式声明"不满足工具隔离强安全承诺"**、不得宣称满足 5.3——因为进程内强制点随 CC 被攻破或配置被篡改而失效
   - 该强制点**保留** tool-boundary §白名单外拒绝 的安全语义，**废弃**其"agent-nexus 事后不转发"的（observer 架构下无法落地的）实现路径，改由 stdio permission control 执行前强制点实现；hook 仅作 fallback / defense-in-depth。5.1 / 5.2 / 5.3 都成立
@@ -231,7 +232,7 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
 
 **第七轮（决策点 5 工具隔离强制点纳入，2026-05-22）**：
 
-- 起因：PR #88 对 CC 2.1.148 全量实测发现 `--print` 非交互主路径下 `--allowed-tools` / `--permission-mode` 不强制工具边界（关键事实 6），tool-boundary §白名单外拒绝 合约前提被证伪。初稿曾拟开独立 ADR-0014 承载；经权衡——工具隔离失效是本 ADR 切 `--print` 非交互主路径的**直接后果**、内聚性强于"独立维度"，且本 ADR 仍 Proposed 未合入、在可改窗口——合并为本 ADR 决策点 5，弃用 ADR-0014
+- 起因：PR #88 对 CC 2.1.148 全量实测发现 `--allowed-tools` / `--permission-mode` 不强制工具边界（关键事实 6），tool-boundary §白名单外拒绝 合约的 observer 实现前提被证伪。初稿曾拟开独立 ADR-0014 承载；经权衡——工具隔离失效是本 ADR 切 stream-json 观察/控制路径的**直接后果**、内聚性强于"独立维度"，且本 ADR 仍 Proposed 未合入、在可改窗口——合并为本 ADR 决策点 5，弃用 ADR-0014
 - 收敛口径：决策点 5 仅锁三条架构不变量（CLI flag 非边界 / 进程内执行前强制点 / OS 纵深），机制对比与 control vs hook 谁为主下沉为实现前置验证项 + spec，遵守异议 19 "ADR 仅保留架构不变量"的瘦身原则
 - 第七轮 GAN（2 轮收敛）verdict：R1 提 7 条（5 important + 2 nit），developer accept 6 / reject 1（I6 标题收敛 nit，体例既定，reviewer R2 复核后 withdrawn）；R2 全部 resolved/withdrawn、无新主 issue，verdict 接近最优。采纳要点——决策点 5 不变量不再排序未坐实的 control（偏好降为验证时优先候选）、5.2 补 fail-closed + 配置不可篡改边界、5.3 给 OS 纵深最低语义 + 无法满足须显式声明、关键事实 6 拆分「推断」与「确定事实」、5.1 限定到目标运行形态、"取代合约" 改为 "保留语义废弃 observer 实现路径"
 

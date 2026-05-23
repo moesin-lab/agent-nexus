@@ -29,7 +29,7 @@ contracts:
 |---|---|
 | CLI 命令名 | `claude` |
 | 最低支持版本 | **待实现前跑 `claude --version` 锁定**；建议 `>= 2.0.0`（占位，实现首 PR 内敲定） |
-| 已对账版本 | help 落盘 `2.1.119`；CLI 行为实测 `2.1.148`（§stdout 映射 / §中断 / §权限边界 / json 输出形态 等实测标注以 2.1.148 为准）；工具隔离前置验证实测 `2.1.149`（`can_use_tool` 裸 CLI 主路径证伪，PreToolUse hook 为 P4 主强制点） |
+| 已对账版本 | help 落盘 `2.1.119`；CLI 行为实测 `2.1.148`（§stdout 映射 / §中断 / §权限边界 / json 输出形态 等实测标注以 2.1.148 为准）；工具隔离前置验证实测 `2.1.149`（`can_use_tool` 裸 CLI 主路径证伪，PreToolUse hook 为主强制点） |
 | 运行时 | 用户本机（ADR-0003），由用户自行维护 CC 的安装与升级 |
 | 订阅 / API 支持 | 两类都支持；`usage.costUsd` 在订阅路径下可能缺失（见下文 UsageCompleteness） |
 

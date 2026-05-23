@@ -2,12 +2,14 @@
 title: Spec：Agent Runtime 接口
 type: spec
 status: active
-summary: Agent 后端适配层接口契约；SessionConfig、AgentEvent 流、CC CLI 子进程管理
-tags: [spec, agent-runtime, cc-cli, subprocess]
+summary: Agent 后端适配层接口契约；SessionConfig、AgentEvent 流、backend CLI 子进程管理
+tags: [spec, agent-runtime, cc-cli, codex, subprocess]
 related:
   - dev/adr/0002-agent-backend-claude-code-cli
+  - dev/adr/0014-agent-backend-codex-cli
   - dev/adr/0012-claudecode-stream-json-mainline
   - dev/spec/agent-backends/claude-code-cli
+  - dev/spec/agent-backends/codex-cli
   - dev/spec/message-protocol
   - dev/spec/security/README
   - dev/spec/infra/cost-and-limits
@@ -21,7 +23,7 @@ contracts:
 
 # Spec：Agent Runtime 接口
 
-定义 agent 后端适配层的接口契约。当前唯一实现是 `claudecode`（Claude Code CLI，见 ADR-0002）。接口保持**可扩展**，未来接其他后端（Codex / Gemini）时不应破坏本契约。
+定义 agent 后端适配层的接口契约。当前实现起点是 `claudecode`（Claude Code CLI，见 ADR-0002）；Codex CLI 作为第二后端按 ADR-0014 接入。接口保持**可扩展**，新增后端不得破坏本契约。
 
 > **package 归属**：`AgentRuntime` 接口与相关类型（`AgentSession` / `SessionConfig` / `AgentInput` / `AgentEvent`）定义在 `@agent-nexus/protocol` package；**具体后端实现** 住在 `@agent-nexus/agent-<name>` 独立 package（如 `@agent-nexus/agent-claudecode`）。详见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7。
 
@@ -57,12 +59,41 @@ interface AgentRuntime {
 
 interface AgentSession {
     key: SessionKey
-    backend: string                          // "claudecode"
+    backend: string                          // "claudecode" | "codex"
     state: Spawning | Ready | Busy | Idle | Errored | Stopped
     startedAt: timestamp
     pid: int?                                // 本机子进程 pid（如适用）
+    agentSessionId: string?                  // 后端会话 ID；如 Codex thread_id / CC session_id
 }
 ```
+
+### AgentCapabilitySet
+
+`AgentCapabilitySet` 必须描述 backend 已验证能力；未验证或不支持的能力必须填 `false`，不得为取悦上层流程硬填 `true`。
+
+```text
+AgentCapabilitySet {
+    supportsThinking: bool
+    supportsStreaming: bool
+    supportsToolCallEvents: bool
+    supportsInterrupt: bool
+    supportsStdinInterrupt: bool
+    supportsNativeToolWhitelist: bool
+}
+```
+
+字段语义：
+
+| 字段 | 含义 |
+|---|---|
+| `supportsThinking` | backend 能输出可归一化的 thinking 事件 |
+| `supportsStreaming` | backend 能输出文本增量；若只能输出完整消息则为 `false` |
+| `supportsToolCallEvents` | backend 能输出工具/命令开始与终态事件 |
+| `supportsInterrupt` | runtime 能终止 in-flight turn，并产出 terminal `turn_finished` |
+| `supportsStdinInterrupt` | backend 支持在长驻 stdin/stdout 会话内发送 interrupt 控制消息 |
+| `supportsNativeToolWhitelist` | backend 有已验证的执行前工具 allow/deny 强制点，能按 `SessionConfig.toolWhitelist` 拦截 |
+
+Codex P2 证明 `supportsNativeToolWhitelist=false`；实现 PR 必须同步更新 protocol 类型与 claudecode/codex 两端测试。
 
 ### `AgentSession` 与 `Session` 的区分
 
@@ -85,6 +116,7 @@ SessionConfig {
     timeoutMs: int                            // 单次输入的处理超时（对应 limits.perInputTimeoutMs）
     env: map[string]string                    // 注入的环境变量（过滤敏感字段）
     transcriptFile: path?                     // 落盘 transcript 的位置
+    resumeFromAgentSessionId: string?         // 后端会话 ID；如 Codex thread_id / CC session_id
     budget: BudgetConfig?                     // 可选；opt-in $ 预算层（见 ADR-0006）
 }
 
@@ -139,7 +171,7 @@ enum EventType {
 
 | EventType | payload 字段 |
 |---|---|
-| `session_started` | `{ pid?, workingDir, capabilities }` |
+| `session_started` | `{ agentSessionId?, pid?, workingDir, capabilities }` |
 | `thinking` | `{ text: string }` |
 | `text_delta` | `{ text: string }` |
 | `text_final` | `{ text: string }` |
@@ -187,7 +219,7 @@ enum EventType {
 | `wallclock_timeout` | **daemon 注入** | `perInputTimeoutMs` 命中 |
 | `budget_exceeded` | **daemon 注入** | opt-in $ 预算耗尽 |
 
-**daemon 注入**的 `turn_finished` 由 `daemon.toolguard` / `daemon.quota-enforcer` 主动构造并追加到事件流（见 `claude-code-cli-contract.md` §"stop_reason 映射"）。adapter 收到 daemon 中断信号后也必须产出一条对应 reason 的 `turn_finished`，避免事件流不完整。
+**daemon 注入**的 `turn_finished` 由 `daemon.toolguard` / `daemon.quota-enforcer` 主动构造并追加到事件流（见 `claude-code-cli.md` §"stop_reason 映射"）。adapter 收到 daemon 中断信号后也必须产出一条对应 reason 的 `turn_finished`，避免事件流不完整。
 
 ### UsageRecord（`usage` 事件 payload）
 
@@ -218,15 +250,33 @@ UsageRecord {
 - `tool_call_finished` 之后到达的同 callId `tool_result` 是 late event，runtime **必须丢弃 + debug log，不得重排到 finished 前**（与 ADR-0012 §interrupt 投递契约 late event 规则一致）
 - `turn_finished` 在一轮的最后一个 `text_final` / `tool_call_finished` 之后（`tool_result` 因 happens-before `tool_call_finished`，无需单独锚定）
 
-## CC CLI 专属说明（Claude Code 实现）
+## Backend selection 配置
+
+CLI 负责拼装 daemon + platform + agent，backend 选择由顶层配置表达：
+
+```text
+agent {
+    backend: "claudecode" | "codex"           // 缺省保持 "claudecode"
+}
+```
+
+约束：
+
+- `agent.backend` 只决定启用哪个 `@agent-nexus/agent-<name>` package；daemon 不读取该字段。
+- backend 自己的字段住各 owner 配置块：`claudeCode` 由 `@agent-nexus/agent-claudecode` 解析，`codex` 由 `@agent-nexus/agent-codex` 解析。
+- CLI 可以按 selector 调用对应 parser / probe / runtime factory，但不得实现 backend 业务逻辑或校验 owner 字段。
+
+## Backend 专属说明
+
+### CC CLI（Claude Code 实现）
 
 `agent/claudecode` 实现 CC CLI 后端，但**具体的外部契约**（命令模板、stream-json 协议、stdin/stdout/stderr 分工、退出码、stop_reason 映射、UsageCompleteness、兼容性自检）已独立锁定在：
 
-→ [`claude-code-cli-contract.md`](agent-backends/claude-code-cli.md)
+→ [`claude-code-cli.md`](agent-backends/claude-code-cli.md)
 
 本节仅概括 adapter 侧的实现职责：
 
-- **启动**：按 `claude-code-cli-contract.md` §"启动命令模板"组装参数；跑 CompatibilityProbe 失败则拒启 session
+- **启动**：按 `claude-code-cli.md` §"启动命令模板"组装参数；跑 CompatibilityProbe 失败则拒启 session
 - **输出解析**：维护行缓冲 + JSON 解析器，把 `ClaudeCodeStreamEvent` 翻译为 `AgentEvent`（映射表见 contract 文档）
 - **stop_reason 映射**：按 contract §"stop_reason 到 turn_finished.reason 的映射"
 - **中断**：首选 SIGINT，等 5s 未 `turn_finished` → SIGKILL
@@ -235,6 +285,23 @@ UsageRecord {
 - **UsageCompleteness**：按 [`cost-and-limits.md` §`UsageRecord.completeness` 语义](infra/cost-and-limits.md#usagerecordcompleteness-语义) 取值；CC backend 的 envelope → completeness 映射见 contract §UsageCompleteness
 
 contract 文档本身是 spec，任何映射或协议字段改动必须先改 contract 再改代码。
+
+### Codex CLI 实现
+
+`agent/codex` 实现 Codex CLI 后端，具体外部契约锁定在：
+
+→ [`codex-cli.md`](agent-backends/codex-cli.md)
+
+adapter 侧实现职责：
+
+- **启动**：按 `codex-cli.md` §启动命令模板组装 `codex exec --json` 或 `codex exec resume --json`；跑 CompatibilityProbe 失败则拒启 Codex backend。
+- **输出解析**：维护行缓冲 + JSON parser，把 `CodexJsonlEvent` 翻译为 `AgentEvent`（映射表见 contract 文档）。
+- **多轮**：保存 `thread.started.thread_id` 到 `AgentSession.agentSessionId`；下一轮用 `exec resume <thread_id>`。
+- **中断**：终止当前 in-flight Codex 子进程，并合成 `turn_finished { reason: "user_interrupt", source: "runtime-synthesized" }`。
+- **安全默认值**：默认 `read-only` sandbox、固定 `--ask-for-approval never`、忽略 user config/rules；不使用 dangerous bypass。
+- **能力声明**：不得声明 native tool whitelist；`supportsStreaming=false`，除非后续 probe 坐实 text delta。
+
+Codex 的 `exec-server` / `app-server` 未经 P1 验证，不属于当前 contract 主路径。
 
 ## 权限边界
 
@@ -260,7 +327,7 @@ transcript fixture 放在 `testdata/cc-cli/` 下（见 [`../testing/fixtures.md`
 
 ## 多后端扩展（未来）
 
-接入新 agent 后端（Codex、Gemini、其他）时：
+接入新 agent 后端（Gemini、其他）时：
 
 - 遵守本 spec 的接口与 AgentEvent 类型
 - 如后端无某个 EventType 概念，**不触发**对应事件（不要造假）

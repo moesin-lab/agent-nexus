@@ -54,7 +54,7 @@ contracts:
 | `created_at` | TEXT NOT NULL | RFC3339 |
 | `last_activity_at` | TEXT NOT NULL | RFC3339 |
 | `archived_at` | TEXT | |
-| `agent_backend` | TEXT NOT NULL | 当前仅 `"claudecode"` |
+| `agent_backend` | TEXT NOT NULL | `"claudecode"` \| `"codex"` |
 | `working_dir` | TEXT NOT NULL | |
 | `transcript_path` | TEXT NOT NULL | 相对 `~/.agent-nexus/`，按 session_id 归属 |
 | `turns_used` | INTEGER NOT NULL DEFAULT 0 | 一等计量 |

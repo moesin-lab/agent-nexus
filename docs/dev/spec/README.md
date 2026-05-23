@@ -46,6 +46,7 @@ spec 触发条件（什么改动需要 spec / 何时可跳过）见 [`../standar
 ### `agent-backends/` — Agent 后端专属契约
 
 - [`agent-backends/claude-code-cli.md`](agent-backends/claude-code-cli.md) — Claude Code CLI 的版本、命令模板、stream-json 协议、事件映射、UsageCompleteness、兼容性自检
+- [`agent-backends/codex-cli.md`](agent-backends/codex-cli.md) — Codex CLI 的命令模板、JSONL 协议、resume 多轮、中断、安全默认值、配置与兼容性自检
 
 ## Spec 与 Package 对应关系
 

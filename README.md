@@ -49,9 +49,10 @@ agent-nexus 让你在 IM（当前：Discord）里直接和本机 Claude Code 对
 
 ```bash
 pnpm install
-pnpm build         # tsc --build；产物 packages/*/dist/
+pnpm build         # tsc --build；CLI 入口会额外 bundle 成 npm bin
+pnpm pack:cli      # 产物 packages/cli/agent-nexus-cli-*.tgz
 pnpm test          # vitest 全量
-pnpm typecheck     # 等价 pnpm build
+pnpm typecheck     # 仅 tsc --build；不生成 npm bin bundle
 ```
 
 ### 3. 配置
@@ -112,7 +113,9 @@ pnpm dev
 
 ```bash
 pnpm build
-node packages/cli/dist/index.js
+pnpm pack:cli
+npm install -g packages/cli/agent-nexus-cli-*.tgz
+agent-nexus
 ```
 
 启动会先跑 CC CLI 兼容性 probe（`--version` + `--print` 探针），失败直接 `exit 1`；通过后连 Discord，看到 `discord_ready` 日志即可在频道里 `@bot ping`。

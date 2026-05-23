@@ -26,6 +26,21 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm typecheck
+      - run: pnpm build
 
       - run: pnpm test
+
+      - run: pnpm pack:cli
+
+      - name: Smoke test packed CLI
+        run: |
+          tmp="$(mktemp -d)"
+          npm install --prefix "$tmp" packages/cli/agent-nexus-cli-*.tgz
+
+          set +e
+          "$tmp/node_modules/.bin/agent-nexus" >"$tmp/agent-nexus.out" 2>&1
+          code=$?
+          set -e
+
+          test "$code" -eq 1
+          grep -q "agent-nexus 配置缺失" "$tmp/agent-nexus.out"

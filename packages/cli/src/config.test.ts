@@ -65,6 +65,9 @@ describe('config loader', () => {
     expect(token.mode & 0o777).toBe(0o600);
     expect(configText).toMatch(/allowedUserIds/);
     expect(configText).toMatch(/workingDir/);
+    expect(configText).toMatch(/permissionLevel/);
+    expect(configText).toMatch(/_permissionLevelComment/);
+    expect(configText).toMatch(/_levelComment/);
   });
 
   it('loadConfig 缺 discord.botUserId → ConfigError（含字段名）', async () => {
@@ -96,12 +99,100 @@ describe('config loader', () => {
     );
     const cfg = await loadConfig();
     expect(cfg.claudeCode.bin).toBe('claude');
+    expect(cfg.claudeCode.permissionLevel).toBe('default');
     expect(cfg.claudeCode.allowedTools).not.toContain('Bash');
     // spec 默认集 Read/Grep/Glob/Edit/Write
     expect(cfg.claudeCode.allowedTools).toEqual(
       expect.arrayContaining(['Read', 'Grep', 'Glob', 'Edit', 'Write']),
     );
     expect(cfg.log.level).toBe('info');
+  });
+
+  it('loadConfig 自动补齐缺失的默认字段到 config 文件', async () => {
+    const path = join(tmp, '.agent-nexus', 'config.json');
+    await writeFile(
+      path,
+      JSON.stringify({
+        discord: VALID_DISCORD,
+        claudeCode: { workingDir: '/x' },
+      }),
+    );
+
+    const cfg = await loadConfig();
+    const normalized = JSON.parse(await readFile(path, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+
+    expect(cfg.claudeCode.bin).toBe('claude');
+    expect(normalized).toMatchObject({
+      claudeCode: {
+        workingDir: '/x',
+        bin: 'claude',
+        _permissionLevelComment:
+          'allowed: default, acceptEdits, auto, bypassPermissions, dontAsk, plan',
+        permissionLevel: 'default',
+        allowedTools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
+      },
+      log: {
+        _levelComment: 'allowed: trace, debug, info, warn, error, fatal',
+        level: 'info',
+      },
+    });
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+  });
+
+  it('loadConfig 校验失败前也会补齐缺失的占位字段', async () => {
+    const path = join(tmp, '.agent-nexus', 'config.json');
+    await writeFile(
+      path,
+      JSON.stringify({
+        claudeCode: { workingDir: '/x' },
+      }),
+    );
+
+    await expect(loadConfig()).rejects.toThrow(/botUserId/);
+    const normalized = JSON.parse(await readFile(path, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(normalized).toMatchObject({
+      discord: {
+        botUserId: '',
+        allowedUserIds: [],
+      },
+      claudeCode: {
+        workingDir: '/x',
+        bin: 'claude',
+        _permissionLevelComment:
+          'allowed: default, acceptEdits, auto, bypassPermissions, dontAsk, plan',
+        permissionLevel: 'default',
+        allowedTools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
+      },
+      log: {
+        _levelComment: 'allowed: trace, debug, info, warn, error, fatal',
+        level: 'info',
+      },
+    });
+  });
+
+  it.each([
+    'acceptEdits',
+    'auto',
+    'bypassPermissions',
+    'default',
+    'dontAsk',
+    'plan',
+  ] as const)('loadConfig 用户显式 permissionLevel=%s → 保留', async (permissionLevel) => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify({
+        discord: VALID_DISCORD,
+        claudeCode: { workingDir: '/x', permissionLevel },
+      }),
+    );
+    const cfg = await loadConfig();
+    expect(cfg.claudeCode.permissionLevel).toBe(permissionLevel);
   });
 
   it('loadConfig 用户显式列出 Bash → 保留', async () => {

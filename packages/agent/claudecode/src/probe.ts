@@ -4,6 +4,10 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { execa } from 'execa';
 import type { Logger } from '@agent-nexus/daemon';
+import {
+  claudeCodePermissionModeError,
+  type ClaudeCodePermissionLevel,
+} from './config.js';
 
 /**
  * spawn / probe 失败时抛出。daemon 可据此识别 CC CLI 兼容性问题。
@@ -48,6 +52,7 @@ export interface CompatibilityProbeOptions {
   claudeBin: string;
   logger: Logger;
   workingDir?: string;
+  permissionLevel?: ClaudeCodePermissionLevel;
 }
 
 interface StreamJsonChild {
@@ -74,6 +79,7 @@ export async function runCompatibilityProbe(
   opts: CompatibilityProbeOptions,
 ): Promise<void> {
   const { claudeBin, logger, workingDir } = opts;
+  const permissionLevel = opts.permissionLevel ?? 'default';
 
   // step 1: --version
   let version: string;
@@ -169,7 +175,7 @@ export async function runCompatibilityProbe(
   }
 
   try {
-    await runPersistentStreamJsonProbe(claudeBin, workingDir);
+    await runPersistentStreamJsonProbe(claudeBin, permissionLevel, workingDir);
   } catch (err) {
     throw new AgentSpawnFailedError(
       `cc cli stream-json probe failed: ${(err as Error).message}`,
@@ -178,7 +184,14 @@ export async function runCompatibilityProbe(
   }
 
   try {
-    await runPermissionControlProbe(claudeBin, workingDir);
+    if (permissionLevel === 'default') {
+      await runPermissionControlProbe(claudeBin, workingDir);
+    } else {
+      logger.warn(
+        { permissionLevel },
+        'cc_permission_control_probe_skipped',
+      );
+    }
   } catch (err) {
     throw new AgentSpawnFailedError(
       `cc cli permission control probe failed: ${(err as Error).message}`,
@@ -187,7 +200,10 @@ export async function runCompatibilityProbe(
   }
 }
 
-function streamJsonArgs(allowedTools: string[]): string[] {
+function streamJsonArgs(
+  allowedTools: string[],
+  permissionLevel: ClaudeCodePermissionLevel,
+): string[] {
   return [
     '--input-format',
     'stream-json',
@@ -199,15 +215,18 @@ function streamJsonArgs(allowedTools: string[]): string[] {
     '--verbose',
     '--allowed-tools',
     allowedTools.join(','),
+    '--permission-mode',
+    permissionLevel,
   ];
 }
 
 function spawnStreamJsonProbe(
   claudeBin: string,
   allowedTools: string[],
+  permissionLevel: ClaudeCodePermissionLevel,
   cwd?: string,
 ): StreamJsonChild {
-  const child = execa(claudeBin, streamJsonArgs(allowedTools), {
+  const child = execa(claudeBin, streamJsonArgs(allowedTools, permissionLevel), {
     buffer: false,
     cwd,
     timeout: 30_000,
@@ -239,9 +258,10 @@ function writeJsonLine(child: StreamJsonChild, value: unknown): void {
 
 async function runPersistentStreamJsonProbe(
   claudeBin: string,
+  permissionLevel: ClaudeCodePermissionLevel,
   cwd?: string,
 ): Promise<void> {
-  const child = spawnStreamJsonProbe(claudeBin, ['Read'], cwd);
+  const child = spawnStreamJsonProbe(claudeBin, ['Read'], permissionLevel, cwd);
   let resultCount = 0;
   let sawAssistant = false;
   let sawInit = false;
@@ -250,6 +270,13 @@ async function runPersistentStreamJsonProbe(
     await waitForStreamJson(child, {
       onEvent(event, done) {
         if (event['type'] === 'system' && event['subtype'] === 'init') {
+          const permissionError = claudeCodePermissionModeError(
+            event['permissionMode'],
+            permissionLevel,
+          );
+          if (permissionError) {
+            throw new Error(permissionError);
+          }
           sawInit = true;
         } else if (event['type'] === 'assistant') {
           sawAssistant = true;
@@ -320,10 +347,10 @@ async function runPermissionScenario(
   cwd: string,
   scenario: PermissionScenario,
 ): Promise<void> {
-  const child = spawnStreamJsonProbe(claudeBin, ['Read'], cwd);
-  let sawCanUseTool = false;
+  const child = spawnStreamJsonProbe(claudeBin, ['Read'], 'default', cwd);
   const command = `printf ok > ${JSON.stringify(scenario.sentinelPath)}`;
   const prompt = `Use Bash to run exactly this command and no other command:\n${command}`;
+  let sawCanUseTool = false;
 
   try {
     await waitForStreamJson(child, {

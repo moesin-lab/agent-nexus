@@ -43,6 +43,8 @@ npm install -g packages/cli/agent-nexus-cli-*.tgz
 - `~/.agent-nexus/config.json` 模板，权限为 `0600`
 - `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` 空文件，权限为 `0600`
 
+后续启动会自动把模板中新增但本地缺失的字段补回 `config.json`；已有配置值不会被覆盖。必填字段如果没有真实默认值，只会补占位值并继续提示你填写。
+
 编辑 `~/.agent-nexus/config.json`：
 
 ```json
@@ -54,6 +56,7 @@ npm install -g packages/cli/agent-nexus-cli-*.tgz
   "claudeCode": {
     "workingDir": "/path/to/your/repo",
     "bin": "claude",
+    "permissionLevel": "default",
     "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"]
   },
   "log": {
@@ -75,6 +78,7 @@ chmod 600 ~/.agent-nexus/config.json
 | `discord.testGuildId` | 否 | 开发时把 `/reply-mode` 限定注册到一个 guild，避免全局 slash command 缓存延迟 |
 | `claudeCode.workingDir` | 是 | Claude Code 默认工作目录 |
 | `claudeCode.bin` | 否 | Claude Code CLI 路径；默认 `claude` |
+| `claudeCode.permissionLevel` | 否 | 默认 `default`；允许 `default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan`，会原样传给 `--permission-mode`。只有 `default` 自检工具权限控制；其他模式会跳过该 probe 并打 warn |
 | `claudeCode.allowedTools` | 否 | 默认 `Read/Grep/Glob/Edit/Write`；启用 `Bash` 需要显式加入 |
 | `log.level` | 否 | `trace` / `debug` / `info` / `warn` / `error` / `fatal`，默认 `info` |
 

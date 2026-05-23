@@ -1,9 +1,13 @@
 export {
+  claudeCodePermissionModeError,
   parseClaudeCodeConfig,
   type ClaudeCodeConfig,
+  type ClaudeCodePermissionLevel,
   ClaudeCodeConfigError,
   DEFAULT_ALLOWED_TOOLS,
   DEFAULT_BIN,
+  DEFAULT_PERMISSION_LEVEL,
+  PERMISSION_LEVELS,
 } from './config.js';
 
 import { EventEmitter } from 'node:events';
@@ -31,6 +35,10 @@ import {
   normalizeTotalCostUsd,
   type CcUsage,
 } from './usage-normalize.js';
+import {
+  claudeCodePermissionModeError,
+  type ClaudeCodePermissionLevel,
+} from './config.js';
 
 export { runCompatibilityProbe, AgentSpawnFailedError } from './probe.js';
 export {
@@ -87,6 +95,7 @@ interface RuntimeState {
 export interface ClaudeCodeRuntimeOptions {
   claudeBin: string;
   allowedTools: string[];
+  permissionLevel?: ClaudeCodePermissionLevel;
   defaultWorkingDir: string;
   logger: Logger;
   perInputTimeoutMs?: number;
@@ -303,14 +312,11 @@ function cleanupAfterRealResult(state: RuntimeState): void {
   state.cleanupBarrierResolve = undefined;
 }
 
-function unsafePermissionMode(value: unknown): boolean {
-  return value === 'bypassPermissions' || value === 'acceptEdits';
-}
-
 export function createClaudeCodeRuntime(
   opts: ClaudeCodeRuntimeOptions,
 ): AgentRuntime {
   const { claudeBin, allowedTools, defaultWorkingDir, logger } = opts;
+  const permissionLevel = opts.permissionLevel ?? 'default';
   const defaultTimeoutMs = opts.perInputTimeoutMs ?? 300_000;
   const syntheticDeliveryMs = opts.syntheticTurnFinishedDeliveryMs ?? 250;
   const gracefulInterruptMs = opts.gracefulInterruptMs ?? 5_000;
@@ -413,6 +419,8 @@ export function createClaudeCodeRuntime(
       '--verbose',
       '--allowed-tools',
       tools.join(','),
+      '--permission-mode',
+      permissionLevel,
     ];
     const resumeId = session.agentSessionId ?? config.resumeFromAgentSessionId;
     if (resumeId) args.push('--resume', resumeId);
@@ -488,13 +496,17 @@ export function createClaudeCodeRuntime(
     e: Record<string, unknown>,
   ): void {
     const traceId = state.currentTurn?.traceId ?? 'system';
-    if (unsafePermissionMode(e['permissionMode'])) {
+    const permissionError = claudeCodePermissionModeError(
+      e['permissionMode'],
+      permissionLevel,
+    );
+    if (permissionError) {
       stopWithError(
         session,
         state,
         traceId,
         'permission_mode_unsafe',
-        `unsafe Claude Code permissionMode: ${String(e['permissionMode'])}`,
+        permissionError,
       );
       return;
     }

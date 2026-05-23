@@ -164,6 +164,8 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
         '--verbose',
         '--allowed-tools',
         'Read,Bash',
+        '--permission-mode',
+        'default',
       ]),
     );
     expect(opts.cwd).toBe('/x');
@@ -528,7 +530,92 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     expect(err.payload.errorKind).toBe('permission_mode_unsafe');
   });
 
-  it('fails closed when init reports acceptEdits', async () => {
+  it.each([
+    'acceptEdits',
+    'auto',
+    'bypassPermissions',
+    'dontAsk',
+    'plan',
+  ] as const)(
+    'passes configured permissionLevel=%s through argv and accepts matching init',
+    async (permissionLevel) => {
+      const child = makeInteractiveSubproc();
+      mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+      const runtime = createClaudeCodeRuntime({
+        claudeBin: 'claude',
+        allowedTools: ['Read'],
+        permissionLevel,
+        defaultWorkingDir: '/x',
+        logger: fakeLogger,
+      });
+      const session = runtime.startSession(sessionKey, sessionConfig);
+      const events = await collectEvents(runtime, session);
+
+      const turn = runtime.sendInput(session, {
+        type: 'user_message',
+        text: 'hi',
+        traceId: `t-${permissionLevel}-configured`,
+      });
+      await nextTick();
+      const args = mockedExeca.mock.calls[0]![1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining(['--permission-mode', permissionLevel]),
+      );
+      child.emitJson({
+        type: 'system',
+        subtype: 'init',
+        session_id: `sid-${permissionLevel}-ok`,
+        cwd: '/x',
+        permissionMode: permissionLevel,
+      });
+      child.emitJson({ type: 'result', stop_reason: 'end_turn' });
+      await turn;
+
+      expect(child.kill).not.toHaveBeenCalled();
+      expect(events.map((event) => event.type)).toEqual([
+        'session_started',
+        'turn_finished',
+      ]);
+    },
+  );
+
+  it('fails closed when configured bypassPermissions but init reports a different mode', async () => {
+    const child = makeInteractiveSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Read'],
+      permissionLevel: 'bypassPermissions',
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'hi',
+      traceId: 't-bypass-mismatch',
+    });
+    await nextTick();
+    child.emitJson({
+      type: 'system',
+      subtype: 'init',
+      session_id: 'sid-bypass-mismatch',
+      cwd: '/x',
+      permissionMode: 'default',
+    });
+    await turn;
+
+    const err = events[0];
+    if (err?.type !== 'error') throw new Error('expected error');
+    expect(err.payload.errorKind).toBe('permission_mode_unsafe');
+    expect(err.payload.message).toMatch(/permissionMode mismatch/);
+  });
+
+  it('fails closed when default config init reports acceptEdits', async () => {
     const child = makeInteractiveSubproc();
     mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
 
@@ -559,6 +646,40 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     const err = events[0];
     if (err?.type !== 'error') throw new Error('expected error');
     expect(err.payload.errorKind).toBe('permission_mode_unsafe');
+    expect(err.payload.message).toMatch(/permissionMode mismatch/);
+  });
+
+  it('fails closed when init does not report permissionMode', async () => {
+    const child = makeInteractiveSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Read'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'hi',
+      traceId: 't-missing-permission-mode',
+    });
+    await nextTick();
+    child.emitJson({
+      type: 'system',
+      subtype: 'init',
+      session_id: 'sid-missing-permission-mode',
+      cwd: '/x',
+    });
+    await turn;
+
+    const err = events[0];
+    if (err?.type !== 'error') throw new Error('expected error');
+    expect(err.payload.errorKind).toBe('permission_mode_unsafe');
+    expect(err.payload.message).toMatch(/permissionMode missing or invalid/);
   });
 
   it('rejects unsupported tool subpatterns instead of degrading them to bare tool allow', async () => {

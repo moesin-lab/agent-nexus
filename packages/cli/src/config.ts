@@ -76,13 +76,52 @@ const DEFAULT_CONFIG_TEMPLATE = `\
   "claudeCode": {
     "workingDir": "",
     "bin": "claude",
+    "_permissionLevelComment": "allowed: default, acceptEdits, auto, bypassPermissions, dontAsk, plan",
+    "permissionLevel": "default",
     "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"]
   },
   "log": {
+    "_levelComment": "allowed: trace, debug, info, warn, error, fatal",
     "level": "info"
   }
 }
 `;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cloneJsonObject(value: unknown): unknown {
+  return JSON.parse(JSON.stringify(value)) as unknown;
+}
+
+function applyMissingFields(
+  target: Record<string, unknown>,
+  defaults: Record<string, unknown>,
+): boolean {
+  let changed = false;
+  for (const [key, defaultValue] of Object.entries(defaults)) {
+    if (!(key in target)) {
+      target[key] = cloneJsonObject(defaultValue);
+      changed = true;
+      continue;
+    }
+    if (isRecord(target[key]) && isRecord(defaultValue)) {
+      changed = applyMissingFields(target[key], defaultValue) || changed;
+    }
+  }
+  return changed;
+}
+
+async function writeNormalizedConfigIfNeeded(
+  path: string,
+  obj: Record<string, unknown>,
+): Promise<void> {
+  const defaults = JSON.parse(DEFAULT_CONFIG_TEMPLATE) as Record<string, unknown>;
+  if (!applyMissingFields(obj, defaults)) return;
+  await writeFile(path, `${JSON.stringify(obj, null, 2)}\n`, { mode: 0o600 });
+  await chmod(path, 0o600);
+}
 
 export async function ensureConfigDirs(): Promise<void> {
   const root = configRoot();
@@ -156,6 +195,11 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     throw new ConfigError(`${path} 顶层必须是对象`);
   }
   const obj = parsed as Record<string, unknown>;
+  try {
+    await writeNormalizedConfigIfNeeded(path, obj);
+  } catch (err) {
+    throw new ConfigError(`补齐 ${path} 缺失字段失败：${(err as Error).message}`);
+  }
 
   let discord: DiscordConfig;
   try {

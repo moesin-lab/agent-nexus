@@ -1,11 +1,23 @@
 // spec/security/tool-boundary.md：默认集 Read/Grep/Glob/Edit/Write；Bash 必须显式启用
 export const DEFAULT_ALLOWED_TOOLS = ['Read', 'Grep', 'Glob', 'Edit', 'Write'];
 export const DEFAULT_BIN = 'claude';
+export const DEFAULT_PERMISSION_LEVEL = 'default' as const;
+export const PERMISSION_LEVELS = [
+  'acceptEdits',
+  'auto',
+  'bypassPermissions',
+  'default',
+  'dontAsk',
+  'plan',
+] as const;
+
+export type ClaudeCodePermissionLevel = (typeof PERMISSION_LEVELS)[number];
 
 export interface ClaudeCodeConfig {
   bin: string;
   workingDir: string;
   allowedTools: string[];
+  permissionLevel: ClaudeCodePermissionLevel;
 }
 
 export class ClaudeCodeConfigError extends Error {
@@ -13,6 +25,22 @@ export class ClaudeCodeConfigError extends Error {
     super(message);
     this.name = 'ClaudeCodeConfigError';
   }
+}
+
+export function claudeCodePermissionModeError(
+  value: unknown,
+  expected: ClaudeCodePermissionLevel,
+): string | null {
+  if (typeof value !== 'string') {
+    return `Claude Code permissionMode missing or invalid: ${String(value)}`;
+  }
+  if (value === 'bypassPermissions' && expected !== 'bypassPermissions') {
+    return `unsafe Claude Code permissionMode: ${String(value)}`;
+  }
+  if (value !== expected) {
+    return `Claude Code permissionMode mismatch: configured ${expected}, got ${value}`;
+  }
+  return null;
 }
 
 export function parseClaudeCodeConfig(
@@ -48,5 +76,19 @@ export function parseClaudeCodeConfig(
     allowedTools = ctx.defaultAllowedTools ?? DEFAULT_ALLOWED_TOOLS;
   }
 
-  return { bin, workingDir, allowedTools };
+  const permissionLevelRaw =
+    cc['permissionLevel'] ?? cc['permission_level'];
+  if (
+    permissionLevelRaw !== undefined &&
+    !PERMISSION_LEVELS.includes(permissionLevelRaw as ClaudeCodePermissionLevel)
+  ) {
+    throw new ClaudeCodeConfigError(
+      `字段 claudeCode.permissionLevel 必须是 ${PERMISSION_LEVELS.map((v) => `"${v}"`).join(' / ')}`,
+    );
+  }
+  const permissionLevel =
+    (permissionLevelRaw as ClaudeCodePermissionLevel | undefined) ??
+    DEFAULT_PERMISSION_LEVEL;
+
+  return { bin, workingDir, allowedTools, permissionLevel };
 }

@@ -25,6 +25,7 @@ const fakeLogger = {
 
 function makeProbeChild(
   mode: 'two-turn' | 'permission' | 'permission-no-control',
+  permissionMode = 'default',
 ): ReturnType<typeof execa> & {
   stdout: PassThrough;
   stdin: PassThrough;
@@ -64,7 +65,12 @@ function makeProbeChild(
 
     if (event.type === 'user') {
       if (mode === 'two-turn') {
-        emitJson({ type: 'system', subtype: 'init', session_id: 'sid-probe' });
+        emitJson({
+          type: 'system',
+          subtype: 'init',
+          session_id: 'sid-probe',
+          permissionMode,
+        });
         emitJson({
           type: 'assistant',
           message: { content: [{ type: 'text', text: 'pong' }] },
@@ -126,6 +132,7 @@ function makeProbeChild(
 describe('runCompatibilityProbe', () => {
   beforeEach(() => {
     mockedExeca.mockReset();
+    vi.mocked(fakeLogger.warn).mockClear();
   });
 
   it('happy path: --version + --print + 长驻 stream-json + permission control 都成功', async () => {
@@ -177,6 +184,8 @@ describe('runCompatibilityProbe', () => {
           '--verbose',
           '--allowed-tools',
           'Read',
+          '--permission-mode',
+          'default',
         ]),
       );
       expect(opts.buffer).toBe(false);
@@ -232,6 +241,70 @@ describe('runCompatibilityProbe', () => {
         expect.objectContaining({ cwd: workingDir }),
       );
     }
+  });
+
+  it.each([
+    'acceptEdits',
+    'auto',
+    'bypassPermissions',
+    'dontAsk',
+    'plan',
+  ] as const)(
+    'permissionLevel=%s 时显式传参并跳过 permission control probe',
+    async (permissionLevel) => {
+      const longRunningChild = makeProbeChild('two-turn', permissionLevel);
+      mockedExeca
+        .mockResolvedValueOnce({
+          stdout: 'claude-code 2.5.0',
+        } as unknown as ReturnType<typeof execa>)
+        .mockResolvedValueOnce({
+          stdout: JSON.stringify({
+            result: { stop_reason: 'end_turn' },
+            message: { content: 'pong' },
+          }),
+        } as unknown as ReturnType<typeof execa>)
+        .mockReturnValueOnce(longRunningChild);
+
+      await expect(
+        runCompatibilityProbe({
+          claudeBin: 'claude',
+          logger: fakeLogger,
+          permissionLevel,
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(mockedExeca).toHaveBeenCalledTimes(3);
+      const args = mockedExeca.mock.calls[2]![1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining(['--permission-mode', permissionLevel]),
+      );
+      expect(fakeLogger.warn).toHaveBeenCalledWith(
+        { permissionLevel },
+        'cc_permission_control_probe_skipped',
+      );
+    },
+  );
+
+  it('stream-json init permissionMode 与配置不一致 → 抛 AgentSpawnFailedError', async () => {
+    mockedExeca
+      .mockResolvedValueOnce({
+        stdout: 'claude-code 2.5.0',
+      } as unknown as ReturnType<typeof execa>)
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          result: { stop_reason: 'end_turn' },
+          message: { content: 'pong' },
+        }),
+      } as unknown as ReturnType<typeof execa>)
+      .mockReturnValueOnce(makeProbeChild('two-turn', 'default'));
+
+    await expect(
+      runCompatibilityProbe({
+        claudeBin: 'claude',
+        logger: fakeLogger,
+        permissionLevel: 'plan',
+      }),
+    ).rejects.toBeInstanceOf(AgentSpawnFailedError);
   });
 
   it('--version 失败 → 抛 AgentSpawnFailedError', async () => {

@@ -147,7 +147,7 @@ enum EventType {
 | `tool_call_progress` | `{ callId, note }` |
 | `tool_result` | `{ callId, resultSequence: int, content: ToolResultContent, isError: bool }` |
 | `tool_call_finished` | `{ callId, toolName, status: "ok" | "error" | "cancelled", errorSummary? }` |
-| `turn_finished` | `{ reason: TurnEndReason, turnSequence: int }` |
+| `turn_finished` | `{ reason: TurnEndReason, turnSequence: int, source?: "runtime-synthesized" }` |
 | `usage` | `UsageRecord` — 见下方 |
 | `error` | `{ errorKind, code, message, cause? }` |
 | `session_stopped` | `{ reason: "idle_timeout" | "user_stop" | "error" | "budget_exceeded" | "turn_limit" | "wallclock_timeout" }` |

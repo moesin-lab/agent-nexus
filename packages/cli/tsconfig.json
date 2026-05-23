@@ -10,6 +10,7 @@
     { "path": "../protocol" },
     { "path": "../daemon" },
     { "path": "../agent/claudecode" },
+    { "path": "../agent/codex" },
     { "path": "../platform/discord" }
   ]
 }

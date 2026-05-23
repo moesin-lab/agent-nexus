@@ -44,6 +44,8 @@ jobs:
           set -e
 
           test "$code" -eq 1
-          grep -q "agent-nexus 配置缺失" "$tmp/agent-nexus.out"
+          grep -q "agent-nexus 配置模板已创建" "$tmp/agent-nexus.out"
           test "$(stat -c '%a' "$HOME/.agent-nexus")" = "700"
           test "$(stat -c '%a' "$HOME/.agent-nexus/secrets")" = "700"
+          test "$(stat -c '%a' "$HOME/.agent-nexus/config.json")" = "600"
+          test "$(stat -c '%a' "$HOME/.agent-nexus/secrets/DISCORD_BOT_TOKEN")" = "600"

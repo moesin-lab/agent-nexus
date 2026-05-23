@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, stat } from 'node:fs/promises';
+import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -55,22 +55,33 @@ export function defaultDiscordStatePath(): string {
 }
 
 const CONFIG_HINT = (path: string) => `\
-agent-nexus 配置缺失：${path}
-配置目录已自动创建。请创建：
-  cat > ${path} <<'JSON'
-  {
-    "discord": { "botUserId": "<your-bot-user-id>" },
-    "claudeCode": { "workingDir": "/path/to/working/dir" }
-  }
-  JSON
+agent-nexus 配置模板已创建：${path}
+请编辑其中的 botUserId、allowedUserIds 和 workingDir，然后确认权限：
   chmod 600 ${path}
 `;
 
 const TOKEN_HINT = (path: string) => `\
-DISCORD_BOT_TOKEN 缺失或权限不对：${path}
-secrets 目录已自动创建。请创建 token 文件（权限必须 0600）：
+DISCORD_BOT_TOKEN 文件已创建：${path}
+请写入 token（权限必须 0600）：
   echo -n '<your-token>' > ${path}
   chmod 600 ${path}
+`;
+
+const DEFAULT_CONFIG_TEMPLATE = `\
+{
+  "discord": {
+    "botUserId": "",
+    "allowedUserIds": []
+  },
+  "claudeCode": {
+    "workingDir": "",
+    "bin": "claude",
+    "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"]
+  },
+  "log": {
+    "level": "info"
+  }
+}
 `;
 
 export async function ensureConfigDirs(): Promise<void> {
@@ -81,11 +92,46 @@ export async function ensureConfigDirs(): Promise<void> {
   await chmod(secrets, 0o700);
 }
 
-export async function loadConfig(): Promise<AgentNexusConfig> {
+async function createFileIfMissing(
+  path: string,
+  content: string,
+  mode: number,
+): Promise<boolean> {
   try {
-    await ensureConfigDirs();
+    await writeFile(path, content, { mode, flag: 'wx' });
+    await chmod(path, mode);
+    return true;
   } catch (err) {
-    throw new ConfigError(`初始化配置目录失败：${(err as Error).message}`);
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      return false;
+    }
+    throw err;
+  }
+}
+
+export async function ensureConfigScaffold(): Promise<{
+  configCreated: boolean;
+  tokenCreated: boolean;
+}> {
+  await ensureConfigDirs();
+  const configCreated = await createFileIfMissing(
+    configPath(),
+    DEFAULT_CONFIG_TEMPLATE,
+    0o600,
+  );
+  const tokenCreated = await createFileIfMissing(discordTokenPath(), '', 0o600);
+  return { configCreated, tokenCreated };
+}
+
+export async function loadConfig(): Promise<AgentNexusConfig> {
+  let scaffold;
+  try {
+    scaffold = await ensureConfigScaffold();
+  } catch (err) {
+    throw new ConfigError(`初始化配置文件失败：${(err as Error).message}`);
+  }
+  if (scaffold.configCreated) {
+    throw new ConfigError(CONFIG_HINT(configPath()));
   }
 
   const path = configPath();
@@ -149,10 +195,14 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
 }
 
 export async function loadDiscordToken(): Promise<string> {
+  let scaffold;
   try {
-    await ensureConfigDirs();
+    scaffold = await ensureConfigScaffold();
   } catch (err) {
-    throw new SecretsPermissionError(`初始化 secrets 目录失败：${(err as Error).message}`);
+    throw new SecretsPermissionError(`初始化 secrets 文件失败：${(err as Error).message}`);
+  }
+  if (scaffold.tokenCreated) {
+    throw new SecretsPermissionError(TOKEN_HINT(discordTokenPath()));
   }
 
   const path = discordTokenPath();

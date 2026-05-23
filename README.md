@@ -57,14 +57,19 @@ pnpm typecheck     # 仅 tsc --build；不生成 npm bin bundle
 
 ### 3. 配置
 
-首次运行会自动创建配置目录 `~/.agent-nexus/` 和 `~/.agent-nexus/secrets/`，权限为 0700。
+首次运行会自动创建配置脚手架：
 
-写 `~/.agent-nexus/config.json`（至少含 `discord.botUserId` 和 `claudeCode.workingDir`）：
+- `~/.agent-nexus/` 和 `~/.agent-nexus/secrets/`，权限为 0700
+- `~/.agent-nexus/config.json` 模板，权限为 0600
+- `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` 空文件，权限为 0600
+
+编辑 `~/.agent-nexus/config.json`（至少填 `discord.botUserId`、`discord.allowedUserIds` 和 `claudeCode.workingDir`）：
 
 ```json
 {
   "discord": {
-    "botUserId": "1234567890123456789"
+    "botUserId": "1234567890123456789",
+    "allowedUserIds": ["2345678901234567890"]
   },
   "claudeCode": {
     "workingDir": "/path/to/your/repo",

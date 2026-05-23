@@ -1,4 +1,6 @@
-import { writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
@@ -197,6 +199,39 @@ describe('runCompatibilityProbe', () => {
           JSON.parse(line).response.response.behavior === 'allow',
       ),
     ).toBe(true);
+  });
+
+  it('把指定 workingDir 透传给长驻与 permission stream-json 子探针', async () => {
+    const workingDir = await mkdtemp(
+      path.join(tmpdir(), 'agent-nexus-probe-test-'),
+    );
+    mockedExeca
+      .mockResolvedValueOnce({
+        stdout: 'claude-code 2.5.0',
+      } as unknown as ReturnType<typeof execa>)
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          result: { stop_reason: 'end_turn' },
+          message: { content: 'pong' },
+        }),
+      } as unknown as ReturnType<typeof execa>)
+      .mockReturnValueOnce(makeProbeChild('two-turn'))
+      .mockReturnValueOnce(makeProbeChild('permission'))
+      .mockReturnValueOnce(makeProbeChild('permission'));
+
+    await expect(
+      runCompatibilityProbe({
+        claudeBin: 'claude',
+        logger: fakeLogger,
+        workingDir,
+      }),
+    ).resolves.toBeUndefined();
+
+    for (const callNo of [3, 4, 5] as const) {
+      expect(mockedExeca.mock.calls[callNo - 1]![2]).toEqual(
+        expect.objectContaining({ cwd: workingDir }),
+      );
+    }
   });
 
   it('--version 失败 → 抛 AgentSpawnFailedError', async () => {

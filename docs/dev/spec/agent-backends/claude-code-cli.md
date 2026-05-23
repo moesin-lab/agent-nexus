@@ -29,7 +29,7 @@ contracts:
 |---|---|
 | CLI 命令名 | `claude` |
 | 最低支持版本 | **待实现前跑 `claude --version` 锁定**；建议 `>= 2.0.0`（占位，实现首 PR 内敲定） |
-| 已对账版本 | help 落盘 `2.1.119`；CLI 行为实测 `2.1.148`（§stdout 映射 / §中断 / §权限边界 / json 输出形态 等实测标注以 2.1.148 为准）；工具隔离前置验证实测 `2.1.149`（含非 bypass 新目录 project settings 复测；`can_use_tool` 裸 CLI 主路径证伪，PreToolUse hook 为主强制点） |
+| 已对账版本 | help 落盘 `2.1.119`；CLI 行为实测 `2.1.148`（§stdout 映射 / §中断 / §权限边界 / json 输出形态 等实测标注以 2.1.148 为准）；工具隔离前置验证实测 `2.1.149`（含非 bypass 新目录 project settings 矩阵复测；`can_use_tool` / `permission_request` 裸 CLI 主路径证伪，PreToolUse hook 为主强制点） |
 | 运行时 | 用户本机（ADR-0003），由用户自行维护 CC 的安装与升级 |
 | 订阅 / API 支持 | 两类都支持；`usage.costUsd` 在订阅路径下可能缺失（见下文 UsageCompleteness） |
 
@@ -262,7 +262,7 @@ catch 路径若已收到 `result.usage`，仍 emit `usage` 事件，避免 daemo
 >
 > - `--disallowed-tools` 黑名单**实测有效**（黑名单工具不出现在模型工具列表），但黑名单**不能替代** allowlist 安全模型，只作 defense-in-depth / 临时禁危险工具
 >
-> CC 2.1.149 实测进一步确认：裸 CLI control `initialize` 可用，但允许工具执行时不触发 `can_use_tool`；project settings 显式 `deny` 某条 Bash 命令时，CLI 只回传 `user / tool_result is_error:true` 与 result `permission_denials`，也没有发 `control_request{subtype:"can_use_tool"}`。这些事实说明裸 CLI control 路径不能提供 agent-nexus 自定义白名单的执行前判定权。`--bare` 只减少 hook / memory / 插件注入面，**不修工具隔离**，不算隔离替代。
+> CC 2.1.149 实测进一步确认：裸 CLI control `initialize` 可用，但覆盖 Bash allow/deny、Edit 写权限待批准、`dontAsk`、`plan`、`acceptEdits`、`auto`、`PermissionRequest` hook 后，均未观察到可由 agent-nexus 响应的 `control_request{subtype:"can_use_tool"}` 或 stdout `permission_request`。project settings 显式 `deny` 某条 Bash 命令、Edit 写权限待批准或 `dontAsk` 拒绝时，CLI 只回传 `user / tool_result is_error:true` 与 result `permission_denials`（或 tool error），没有执行前 control request。这些事实说明裸 CLI control 路径不能提供 agent-nexus 自定义白名单的执行前判定权。另测 `--sdk-url` 在本地 probe 中拒绝非 Anthropic approved endpoint，不能作为 agent-nexus 本地 transport；`--bare` 只减少 hook / memory / 插件注入面，**不修工具隔离**，不算隔离替代。
 
 ### PreToolUse hook 主强制点
 

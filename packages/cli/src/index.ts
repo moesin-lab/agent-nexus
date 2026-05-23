@@ -91,6 +91,9 @@ async function main(): Promise<void> {
       toolWhitelist: config.claudeCode.allowedTools,
       timeoutMs: 300_000,
     },
+    toolMessages: {
+      mode: config.ui.toolMessages,
+    },
   });
 
   await engine.start();

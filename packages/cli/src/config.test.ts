@@ -68,6 +68,8 @@ describe('config loader', () => {
     expect(configText).toMatch(/permissionLevel/);
     expect(configText).toMatch(/_permissionLevelComment/);
     expect(configText).toMatch(/_levelComment/);
+    expect(configText).toMatch(/toolMessages/);
+    expect(configText).toMatch(/_toolMessagesComment/);
   });
 
   it('loadConfig 缺 discord.botUserId → ConfigError（含字段名）', async () => {
@@ -105,6 +107,7 @@ describe('config loader', () => {
     expect(cfg.claudeCode.allowedTools).toEqual(
       expect.arrayContaining(['Read', 'Grep', 'Glob', 'Edit', 'Write']),
     );
+    expect(cfg.ui.toolMessages).toBe('append');
     expect(cfg.log.level).toBe('info');
   });
 
@@ -137,6 +140,10 @@ describe('config loader', () => {
       log: {
         _levelComment: 'allowed: trace, debug, info, warn, error, fatal',
         level: 'info',
+      },
+      ui: {
+        _toolMessagesComment: 'allowed: append, compact',
+        toolMessages: 'append',
       },
     });
     expect((await stat(path)).mode & 0o777).toBe(0o600);
@@ -173,7 +180,37 @@ describe('config loader', () => {
         _levelComment: 'allowed: trace, debug, info, warn, error, fatal',
         level: 'info',
       },
+      ui: {
+        _toolMessagesComment: 'allowed: append, compact',
+        toolMessages: 'append',
+      },
     });
+  });
+
+  it.each(['append', 'compact'] as const)('loadConfig 用户显式 toolMessages=%s → 保留', async (toolMessages) => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify({
+        discord: VALID_DISCORD,
+        claudeCode: { workingDir: '/x' },
+        ui: { toolMessages },
+      }),
+    );
+    const cfg = await loadConfig();
+    expect(cfg.ui.toolMessages).toBe(toolMessages);
+  });
+
+  it('loadConfig ui.toolMessages 非允许值 → ConfigError', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify({
+        discord: VALID_DISCORD,
+        claudeCode: { workingDir: '/x' },
+        ui: { toolMessages: 'hidden' },
+      }),
+    );
+    await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
+    await expect(loadConfig()).rejects.toThrow(/ui\.toolMessages/);
   });
 
   it.each([

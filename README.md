@@ -84,6 +84,9 @@ pnpm typecheck     # 仅 tsc --build；不生成 npm bin bundle
     "permissionLevel": "default",
     "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"]
   },
+  "ui": {
+    "toolMessages": "append"
+  },
   "log": {
     "level": "info"
   }
@@ -103,6 +106,7 @@ chmod 600 ~/.agent-nexus/config.json
 - `claudeCode.bin`（可选，默认 `claude`）：CC CLI 可执行路径
 - `claudeCode.permissionLevel`（可选，默认 `default`）：原样传给 Claude Code 子进程的 `--permission-mode`，允许 `default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan`。只有 `default` 会启用并自检 stdio 工具权限控制；其他模式会跳过 `can_use_tool` probe、启动打 warn，并要求 `init.permissionMode` 与配置完全一致
 - `claudeCode.allowedTools`（可选）：默认 `Read/Grep/Glob/Edit/Write`。**`Bash` 不在默认集**——启用须显式列出，启动会打 warn（参见 [`docs/dev/spec/security/tool-boundary.md`](docs/dev/spec/security/tool-boundary.md)）
+- `ui.toolMessages`（可选，默认 `append`）：`append` 会把每个工具调用作为单独消息追加，并在结果到达时编辑该工具消息补结果摘要；`compact` 回到旧式紧凑显示，只把工具状态揉进当前回复消息
 - `log.level`（可选，默认 `info`）：`trace|debug|info|warn|error|fatal`
 
 写 Discord bot token 到 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN`（**权限必须 0600**，否则启动拒绝）：

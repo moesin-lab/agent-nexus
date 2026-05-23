@@ -185,6 +185,25 @@ Agent 输出是流式的（`text_delta`）。适配到 IM 的策略：
 
 ADR-0012 已把模式 B 纳入 stream-json 主路径；daemon 在 `supportsEdit=true` 时走分步编辑，不支持 edit 的平台降级到模式 A。节流数值由 [`infra/cost-and-limits.md`](infra/cost-and-limits.md) 拥有。
 
+### 工具消息展示
+
+daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `tool_call_started` 追加一条独立工具消息，消息正文包含工具名与目标摘要。`tool_result` 与 `tool_call_finished` 不再产生用户可见消息，也不编辑 start 消息；完整 result 细节只进入 trace 日志。后续 assistant 正文走自己的消息，不覆盖已发出的工具轨迹。
+
+同一 turn 内，daemon 对平台的用户可见输出（tool start、assistant 正文、final reply）必须按 AgentEvent 到达顺序串行执行：前一条 `send` / `edit` 完成前，不得启动后一条用户可见输出。否则慢平台请求会造成工具消息与 assistant 正文在 IM 侧错位。
+
+在 `append` 模式下，`tool_call_started` 是 assistant 消息分段边界：如果 tool 前已经发送或缓冲了 assistant 文本，daemon 必须先固定该段文本，再发送 tool start；tool 之后到达的 `text_delta` / `text_final` 必须创建新的 assistant 消息，不得回头编辑 tool 前的消息。用户可见顺序应保持为 `assistant before tool` → `tool start` → `assistant after tool`。
+
+工具目标摘要由 agent backend 归一化为 `tool_call_started.payload.inputSummary`，daemon 只负责展示，不重新解析 backend 原始 input。Claude Code backend 的摘要规则：
+
+- `Bash`：展示 `command`，且用户可见消息必须使用 fenced `bash` 代码块。
+- `Read` / `Edit` / `Write`：优先展示目标文件路径（如 `file_path`）。
+- `Grep` / `Glob`：优先展示搜索 pattern。
+- 其他工具：优先展示常见目标字段（如 `path` / `target_file` / `query`），否则展示截断后的 input 摘要。
+
+工具 result 内容默认不进入用户消息。文件内容、diff、搜索命中、Bash stdout/stderr 等富展示需另行定义代码块、行号剥离、脱敏和消息位置策略后再启用。
+
+`ui.toolMessages="compact"` 用于低噪声模式：工具状态合并进当前回复消息，后续 final reply 可覆盖这条状态消息。该模式不保证保留完整用户可见工具轨迹；结构化日志仍按 observability 事件记录。
+
 ## 控制语义
 
 `type: control` 的事件用于系统级操作，不是用户消息：

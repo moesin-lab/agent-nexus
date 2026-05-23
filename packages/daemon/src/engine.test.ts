@@ -99,6 +99,20 @@ function makePlatform(capOverrides: Partial<CapabilitySet> = {}): PlatformAdapte
   };
 }
 
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 /**
  * Mock agent：sendInput 触发"下一组"预排好的事件序列给当前 session 的 handler。
  *
@@ -689,7 +703,7 @@ describe('Engine', () => {
     expect((platform.edit.mock.calls[0]![1] as OutboundMessage).text).toBe('hello');
   });
 
-  it('tool event 在无文本时产生最小可见性，final edit 覆盖为最终回复', async () => {
+  it('默认 append：tool start 单独发送，tool_result 不编辑用户可见消息，final 追加新消息', async () => {
     const platform = makePlatform({ supportsEdit: true });
     const agent = makeAgent();
     const store = new SessionStore();
@@ -722,15 +736,191 @@ describe('Engine', () => {
 
     await dispatchHandler(makeEvent('run tests'));
 
+    expect(platform.send).toHaveBeenCalledTimes(2);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      'Bash:\n```bash\nnpm test\n```',
+    );
+    expect(platform.edit).not.toHaveBeenCalled();
+    expect((platform.send.mock.calls[1]![1] as OutboundMessage).text).toBe('done');
+  });
+
+  it('默认 append：同一 turn 的 tool start send 完成前不发送 final reply', async () => {
+    const platform = makePlatform({ supportsEdit: true });
+    const firstSend = deferred<MessageRef>();
+    const ref: MessageRef = {
+      platform: 'discord',
+      channelId: 'C1',
+      messageId: 'out-delayed',
+      sentAt: new Date(0),
+    };
+    platform.send.mockImplementationOnce(async () => firstSend.promise);
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('tool_call_started', {
+        callId: 'tool-1',
+        toolName: 'Bash',
+        inputSummary: 'npm test',
+      }),
+      ev('text_final', { text: 'done' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    const dispatchPromise = dispatchHandler(makeEvent('run tests'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
     expect(platform.send).toHaveBeenCalledTimes(1);
     expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
-      '[tool: Bash] started',
+      'Bash:\n```bash\nnpm test\n```',
+    );
+
+    firstSend.resolve(ref);
+    await dispatchPromise;
+
+    expect(platform.send).toHaveBeenCalledTimes(2);
+    expect((platform.send.mock.calls[1]![1] as OutboundMessage).text).toBe('done');
+  });
+
+  it('默认 append：tool 前已有 assistant 文本时，tool 后 final reply 追加新消息而不编辑旧消息', async () => {
+    const platform = makePlatform({ supportsEdit: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+      streaming: { streamEditThrottleMs: 1000 },
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('text_delta', { text: 'message' }),
+      ev('tool_call_started', {
+        callId: 'tool-1',
+        toolName: 'Bash',
+        inputSummary: 'npm test',
+      }),
+      ev('text_final', { text: 'message final' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('run tests'));
+
+    expect(platform.send).toHaveBeenCalledTimes(3);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      'message',
+    );
+    expect((platform.send.mock.calls[1]![1] as OutboundMessage).text).toBe(
+      'Bash:\n```bash\nnpm test\n```',
+    );
+    expect((platform.send.mock.calls[2]![1] as OutboundMessage).text).toBe(
+      'message final',
+    );
+    expect(platform.edit).not.toHaveBeenCalled();
+  });
+
+  it('compact：tool 状态沿用当前回复消息，final edit 覆盖为最终回复', async () => {
+    const platform = makePlatform({ supportsEdit: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+      toolMessages: { mode: 'compact' },
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('tool_call_started', {
+        callId: 'tool-1',
+        toolName: 'Read',
+        inputSummary: 'src/index.ts',
+      }),
+      ev('tool_result', {
+        callId: 'tool-1',
+        resultSequence: 1,
+        content: { kind: 'text', text: 'file content' },
+        isError: false,
+      }),
+      ev('text_final', { text: 'done' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('read file'));
+
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      'Read: src/index.ts',
     );
     expect(platform.edit).toHaveBeenCalledTimes(1);
     expect((platform.edit.mock.calls[0]![1] as OutboundMessage).text).toBe('done');
   });
 
-  it('supportsEdit=false：tool event 以单独状态消息满足可见性且不泄露 tool_result 内容', async () => {
+  it('默认 append：Read 等非 Bash 工具 result 不展示用户可见内容或状态', async () => {
+    const platform = makePlatform({ supportsEdit: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('tool_call_started', {
+        callId: 'tool-read',
+        toolName: 'Read',
+        inputSummary: 'src/index.ts',
+      }),
+      ev('tool_result', {
+        callId: 'tool-read',
+        resultSequence: 1,
+        content: {
+          kind: 'text',
+          text: '1    secret line\n2    more content',
+        },
+        isError: false,
+      }),
+      ev('text_final', { text: 'done' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('read file'));
+
+    expect(platform.send).toHaveBeenCalledTimes(2);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      'Read: src/index.ts',
+    );
+    expect(platform.edit).not.toHaveBeenCalled();
+    expect((platform.send.mock.calls[1]![1] as OutboundMessage).text).toBe('done');
+  });
+
+  it('supportsEdit=false：孤立 tool_result 不追加用户可见消息', async () => {
     const platform = makePlatform();
     const agent = makeAgent();
     const store = new SessionStore();
@@ -758,15 +948,91 @@ describe('Engine', () => {
 
     await dispatchHandler(makeEvent('run tool'));
 
-    expect(platform.send).toHaveBeenCalledTimes(2);
-    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
-      '[tool: tool-1] result',
-    );
-    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).not.toContain(
-      'secret result',
-    );
-    expect((platform.send.mock.calls[1]![1] as OutboundMessage).text).toBe('done');
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe('done');
     expect(platform.edit).not.toHaveBeenCalled();
+  });
+
+  it('tool event 写 lifecycle info 日志，input/result 只进 trace', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: mockLogger,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    const toolContent = { kind: 'text' as const, text: 'private output' };
+    agent.queueEvents([
+      ev('tool_call_started', {
+        callId: 'tool-1',
+        toolName: 'Bash',
+        inputSummary: 'npm test',
+      }),
+      ev('tool_result', {
+        callId: 'tool-1',
+        resultSequence: 0,
+        content: toolContent,
+        isError: false,
+      }),
+      ev('tool_call_finished', {
+        callId: 'tool-1',
+        toolName: 'Bash',
+        status: 'ok',
+      }),
+      ev('text_final', { text: 'done' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('run tests'));
+
+    const infoCalls = (mockLogger.info as ReturnType<typeof vi.fn>).mock.calls;
+    const startedInfo = infoCalls.find(([, msg]) => msg === 'tool_call_started');
+    expect(startedInfo).toBeDefined();
+    expect(startedInfo![0]).toMatchObject({
+      traceId: 't-1',
+      callId: 'tool-1',
+      toolName: 'Bash',
+    });
+    expect(startedInfo![0]).not.toHaveProperty('inputSummary');
+    expect(startedInfo![0]).not.toHaveProperty('content');
+
+    const finishedInfo = infoCalls.find(([, msg]) => msg === 'tool_call_finished');
+    expect(finishedInfo).toBeDefined();
+    expect(finishedInfo![0]).toMatchObject({
+      traceId: 't-1',
+      callId: 'tool-1',
+      toolName: 'Bash',
+      status: 'ok',
+    });
+    expect(finishedInfo![0]).toHaveProperty('latencyMs');
+    expect(finishedInfo![0]).not.toHaveProperty('content');
+
+    const traceCalls = (mockLogger.trace as ReturnType<typeof vi.fn>).mock.calls;
+    const inputTrace = traceCalls.find(([, msg]) => msg === 'tool_call_input');
+    expect(inputTrace).toBeDefined();
+    expect(inputTrace![0]).toMatchObject({
+      traceId: 't-1',
+      callId: 'tool-1',
+      toolName: 'Bash',
+      inputSummary: 'npm test',
+    });
+
+    const resultTrace = traceCalls.find(([, msg]) => msg === 'tool_result');
+    expect(resultTrace).toBeDefined();
+    expect(resultTrace![0]).toMatchObject({
+      traceId: 't-1',
+      callId: 'tool-1',
+      resultSequence: 0,
+      isError: false,
+      content: toolContent,
+    });
   });
 
   it('supportsTypingIndicator=true：turn start setTyping，周期续期，turn end clearTyping 并停 timer', async () => {
@@ -1039,6 +1305,7 @@ describe('Engine', () => {
 
     agent.queueEvents([
       ev('text_delta', { text: 'reply' }),
+      ev('text_final', { text: 'reply final' }),
       ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
     ]);
 

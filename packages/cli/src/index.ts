@@ -31,8 +31,8 @@ async function main(): Promise<void> {
     'secret_loaded',
   );
 
-  // CompatibilityProbe step 1+2（spec/agent-backends/claude-code-cli.md §兼容性自检）
-  // step 3 stream-json 验证留给后续 PR。
+  // CompatibilityProbe 覆盖 spec/agent-backends/claude-code-cli.md §兼容性自检：
+  // --version、--print JSON、长驻 stream-json、permission control。
   try {
     await runCompatibilityProbe({ claudeBin: config.claudeCode.bin, logger });
   } catch (err) {

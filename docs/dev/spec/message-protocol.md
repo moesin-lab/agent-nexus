@@ -171,19 +171,19 @@ Discord 单条消息上限 2000 字符。超过时：
 
 Agent 输出是流式的（`text_delta`）。适配到 IM 的策略：
 
-**模式 A：末次完整发送**（MVP 默认）
+**模式 A：末次完整发送**
 - 缓冲 `text_delta`，直到 `text_final` 才整段发送
 - 优点：简单、消息数少
 - 缺点：用户等待时间长、无实时反馈
 
-**模式 B：分步编辑**
+**模式 B：分步编辑**（Discord MVP 主路径）
 - 首个 delta 时 `send`（占位消息）
-- 后续 delta 节流（每 1s 或每 200 字符）`edit`
+- 后续 delta 按 [`infra/cost-and-limits.md`](infra/cost-and-limits.md) §流式集成数值 节流 `edit`
 - `text_final` 时最后一次 `edit`
 - 优点：实时反馈
 - 缺点：消息数不变但编辑次数多；Discord 对 edit 也有 rate limit
 
-MVP 优先实现模式 A；模式 B 的协议契约已由 [ADR-0012](../adr/0012-claudecode-stream-json-mainline.md)（stream-json 主路径切换）评审通过（取代原"独立 ADR 中评审"占位）。MVP 仍默认模式 A；模式 B 的平台 `edit()` capability 与最终节流数值随 ADR-0012 PR-C 及配套 spec 落地（上方 1s / 200 字符为示例量级、非最终契约）。
+ADR-0012 已把模式 B 纳入 stream-json 主路径；daemon 在 `supportsEdit=true` 时走分步编辑，不支持 edit 的平台降级到模式 A。节流数值由 [`infra/cost-and-limits.md`](infra/cost-and-limits.md) 拥有。
 
 ## 控制语义
 

@@ -64,6 +64,9 @@ describe('config loader', () => {
     expect(config.mode & 0o777).toBe(0o600);
     expect(token.mode & 0o777).toBe(0o600);
     expect(configText).toMatch(/allowedUserIds/);
+    expect(configText).toMatch(/"agent"/);
+    expect(configText).toMatch(/"backend": "claudecode"/);
+    expect(configText).toMatch(/"codex"/);
     expect(configText).toMatch(/workingDir/);
     expect(configText).toMatch(/permissionLevel/);
     expect(configText).toMatch(/_permissionLevelComment/);
@@ -100,6 +103,7 @@ describe('config loader', () => {
       }),
     );
     const cfg = await loadConfig();
+    expect(cfg.agent.backend).toBe('claudecode');
     expect(cfg.claudeCode.bin).toBe('claude');
     expect(cfg.claudeCode.permissionLevel).toBe('default');
     expect(cfg.claudeCode.allowedTools).not.toContain('Bash');
@@ -129,6 +133,10 @@ describe('config loader', () => {
 
     expect(cfg.claudeCode.bin).toBe('claude');
     expect(normalized).toMatchObject({
+      agent: {
+        _backendComment: 'allowed: claudecode, codex',
+        backend: 'claudecode',
+      },
       claudeCode: {
         workingDir: '/x',
         bin: 'claude',
@@ -136,6 +144,15 @@ describe('config loader', () => {
           'allowed: default, acceptEdits, auto, bypassPermissions, dontAsk, plan',
         permissionLevel: 'default',
         allowedTools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
+      },
+      codex: {
+        workingDir: '',
+        bin: 'codex',
+        _sandboxComment: 'allowed: read-only, workspace-write',
+        sandbox: 'read-only',
+        addDirs: [],
+        loadUserConfig: false,
+        loadRules: false,
       },
       log: {
         _levelComment: 'allowed: trace, debug, info, warn, error, fatal',
@@ -164,9 +181,22 @@ describe('config loader', () => {
       unknown
     >;
     expect(normalized).toMatchObject({
+      agent: {
+        _backendComment: 'allowed: claudecode, codex',
+        backend: 'claudecode',
+      },
       discord: {
         botUserId: '',
         allowedUserIds: [],
+      },
+      codex: {
+        workingDir: '',
+        bin: 'codex',
+        _sandboxComment: 'allowed: read-only, workspace-write',
+        sandbox: 'read-only',
+        addDirs: [],
+        loadUserConfig: false,
+        loadRules: false,
       },
       claudeCode: {
         workingDir: '/x',
@@ -256,6 +286,62 @@ describe('config loader', () => {
     );
     await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
     await expect(loadConfig()).rejects.toThrow(/allowedUserIds/);
+  });
+
+  it('loadConfig agent.backend=codex → 只要求 codex 配置并保留 Claude 配置块可选', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify({
+        agent: { backend: 'codex' },
+        discord: VALID_DISCORD,
+        codex: {
+          workingDir: '/codex',
+          model: 'gpt-5-codex',
+          sandbox: 'workspace-write',
+          addDirs: ['/extra'],
+          loadUserConfig: true,
+          loadRules: true,
+        },
+      }),
+    );
+    const cfg = await loadConfig();
+    expect(cfg.agent.backend).toBe('codex');
+    expect(cfg.codex).toMatchObject({
+      bin: 'codex',
+      workingDir: '/codex',
+      model: 'gpt-5-codex',
+      sandbox: 'workspace-write',
+      addDirs: ['/extra'],
+      loadUserConfig: true,
+      loadRules: true,
+    });
+    expect(cfg).not.toHaveProperty('claudeCode');
+  });
+
+  it('loadConfig agent.backend=codex 且缺 codex.workingDir → ConfigError', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify({
+        agent: { backend: 'codex' },
+        discord: VALID_DISCORD,
+        codex: {},
+      }),
+    );
+    await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
+    await expect(loadConfig()).rejects.toThrow(/codex\.workingDir/);
+  });
+
+  it('loadConfig agent.backend 非允许值 → ConfigError', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify({
+        agent: { backend: 'other' },
+        discord: VALID_DISCORD,
+        claudeCode: { workingDir: '/x' },
+      }),
+    );
+    await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
+    await expect(loadConfig()).rejects.toThrow(/agent\.backend/);
   });
 
   it('loadConfig discord.statePath 缺省 → 路由传递默认 ~/.agent-nexus/state/discord.json', async () => {

@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type {
   AgentEvent,
   AgentRuntime,
+  AgentSession,
+  MessageRef,
   NormalizedEvent,
   PlatformAdapter,
   SessionConfig,
@@ -20,6 +22,22 @@ export interface EngineDeps {
     SessionConfig,
     'resumeFromAgentSessionId' | 'sessionId'
   >;
+  streaming?: {
+    streamEditThrottleMs?: number;
+    typingRefreshMs?: number;
+  };
+}
+
+const DEFAULT_STREAM_EDIT_THROTTLE_MS = 1500;
+const DEFAULT_TYPING_REFRESH_MS = 8000;
+
+interface ActiveAgentSession {
+  session: AgentSession;
+  currentTurn?: {
+    eventId: string;
+    pending: Set<Promise<void>>;
+    handle(event: AgentEvent): Promise<void>;
+  };
 }
 
 /**
@@ -42,6 +60,9 @@ export class Engine {
     SessionConfig,
     'resumeFromAgentSessionId' | 'sessionId'
   >;
+  private readonly streamEditThrottleMs: number;
+  private readonly typingRefreshMs: number;
+  private readonly agentSessions = new Map<string, ActiveAgentSession>();
   /**
    * Per-SessionKey 串行队列：同 key 的 dispatch 必须按到达序排队执行，
    * 否则两条并发 inbound 会同时读到陈旧 prevAgentSessionId 各自启新 session、
@@ -64,6 +85,10 @@ export class Engine {
     this.logger = deps.logger;
     this.sessionStore = deps.sessionStore;
     this.defaultSessionConfig = deps.defaultSessionConfig;
+    this.streamEditThrottleMs =
+      deps.streaming?.streamEditThrottleMs ?? DEFAULT_STREAM_EDIT_THROTTLE_MS;
+    this.typingRefreshMs =
+      deps.streaming?.typingRefreshMs ?? DEFAULT_TYPING_REFRESH_MS;
   }
 
   async start(): Promise<void> {
@@ -72,8 +97,14 @@ export class Engine {
 
   async stop(): Promise<void> {
     await this.platform.stop();
-    // agent 是 stateless 句柄式实现；无 per-runtime 全局 teardown，
-    // 各 session 在 turn_finished 时已 stopSession。
+    for (const [sessionKey, active] of this.agentSessions) {
+      try {
+        this.agent.stopSession(active.session);
+      } catch (err) {
+        this.logger.error({ sessionKey, err }, 'agent_stop_session_failed');
+      }
+    }
+    this.agentSessions.clear();
     this.sessionStore.clearAll();
   }
 
@@ -138,6 +169,7 @@ export class Engine {
       const trimmed = rawText.trim();
       let prompt: string;
       if (trimmed === '/new' || trimmed.startsWith('/new ')) {
+        this.stopActiveSession(sessionKeyStr, event.traceId);
         this.sessionStore.delete(event.sessionKey);
         const remainder = trimmed === '/new' ? '' : trimmed.slice(5).trim();
         if (remainder.length === 0) {
@@ -160,19 +192,211 @@ export class Engine {
         prompt = rawText;
       }
 
-      const prevAgentSessionId = this.sessionStore.get(
-        event.sessionKey,
-      )?.agentSessionId;
-      const config: SessionConfig = {
-        ...this.defaultSessionConfig,
-        sessionId: randomUUID(),
-        resumeFromAgentSessionId: prevAgentSessionId,
+      const platformCaps = this.platform.capabilities();
+      let session: AgentSession | undefined;
+      let buf = '';
+      let sawDelta = false;
+      let errored = false;
+      let messageRef: MessageRef | undefined;
+      let creatingRef: Promise<MessageRef | undefined> | undefined;
+      let lastEditAt = 0;
+      let pendingEditTimer: ReturnType<typeof setTimeout> | undefined;
+      let typingInterval: ReturnType<typeof setInterval> | undefined;
+      let typingActive = false;
+      let toolStatus: string | undefined;
+
+      const safeSend = async (text: string): Promise<MessageRef | undefined> => {
+        try {
+          return await this.platform.send(event.sessionKey, {
+            text,
+            traceId: event.traceId,
+            sessionKey: event.sessionKey,
+          });
+        } catch (sendErr) {
+          this.logger.error(
+            {
+              traceId: event.traceId,
+              sessionKey: sessionKeyStr,
+              err: sendErr,
+            },
+            'platform_send_failed',
+          );
+          return undefined;
+        }
       };
 
-      const session = this.agent.startSession(event.sessionKey, config);
+      const safeEdit = async (
+        ref: MessageRef,
+        text: string,
+      ): Promise<void> => {
+        try {
+          await this.platform.edit(ref, {
+            text,
+            traceId: event.traceId,
+            sessionKey: event.sessionKey,
+          });
+        } catch (editErr) {
+          this.logger.error(
+            {
+              traceId: event.traceId,
+              sessionKey: sessionKeyStr,
+              err: editErr,
+            },
+            'platform_edit_failed',
+          );
+        }
+      };
 
-      let buf = '';
-      let errored = false;
+      const renderVisibleText = (): string => {
+        if (toolStatus && buf.length > 0) return `${buf}\n\n${toolStatus}`;
+        return buf.length > 0 ? buf : (toolStatus ?? '[working]');
+      };
+
+      const ensureMessageRef = (
+        text: string,
+      ): { promise: Promise<MessageRef | undefined>; createdHere: boolean } => {
+        if (messageRef) {
+          return { promise: Promise.resolve(messageRef), createdHere: false };
+        }
+        if (creatingRef) {
+          return { promise: creatingRef, createdHere: false };
+        }
+        creatingRef = safeSend(text)
+          .then((ref) => {
+            if (ref) messageRef = ref;
+            return ref;
+          })
+          .finally(() => {
+            creatingRef = undefined;
+          });
+        return { promise: creatingRef, createdHere: true };
+      };
+
+      const flushEdit = async (text = renderVisibleText()): Promise<void> => {
+        if (!platformCaps.supportsEdit) return;
+        const { promise, createdHere } = ensureMessageRef(text);
+        const ref = await promise;
+        if (!ref) return;
+        if (!createdHere) await safeEdit(ref, text);
+        lastEditAt = Date.now();
+      };
+
+      const cancelPendingEdit = (): void => {
+        if (!pendingEditTimer) return;
+        clearTimeout(pendingEditTimer);
+        pendingEditTimer = undefined;
+      };
+
+      const scheduleEdit = async (): Promise<void> => {
+        if (!platformCaps.supportsEdit) return;
+        if (!messageRef) {
+          if (!creatingRef) await flushEdit();
+          return;
+        }
+        const elapsed = Date.now() - lastEditAt;
+        if (elapsed >= this.streamEditThrottleMs) {
+          await flushEdit();
+          return;
+        }
+        if (pendingEditTimer) return;
+        pendingEditTimer = setTimeout(() => {
+          pendingEditTimer = undefined;
+          void flushEdit();
+        }, this.streamEditThrottleMs - elapsed);
+      };
+
+      const clearTyping = (): void => {
+        if (!typingActive) return;
+        typingActive = false;
+        if (typingInterval) {
+          clearInterval(typingInterval);
+          typingInterval = undefined;
+        }
+        Promise.resolve()
+          .then(() => this.platform.clearTyping(event.sessionKey))
+          .catch((typingErr) => {
+            this.logger.debug(
+              {
+                traceId: event.traceId,
+                sessionKey: sessionKeyStr,
+                err: typingErr,
+              },
+              'platform_typing_failed',
+            );
+          });
+      };
+
+      const setTyping = (): void => {
+        Promise.resolve()
+          .then(() => this.platform.setTyping(event.sessionKey))
+          .catch((typingErr) => {
+            this.logger.debug(
+              {
+                traceId: event.traceId,
+                sessionKey: sessionKeyStr,
+                err: typingErr,
+              },
+              'platform_typing_failed',
+            );
+          });
+      };
+
+      const startTyping = (): void => {
+        if (!platformCaps.supportsTypingIndicator || typingActive) return;
+        typingActive = true;
+        setTyping();
+        typingInterval = setInterval(setTyping, this.typingRefreshMs);
+      };
+
+      const finalizeReply = async (): Promise<void> => {
+        cancelPendingEdit();
+        const text = buf.length > 0 ? buf : '[empty response]';
+        if (platformCaps.supportsEdit) {
+          await flushEdit(text);
+        } else {
+          messageRef = await safeSend(text);
+        }
+        this.logger.info(
+          {
+            traceId: event.traceId,
+            sessionKey: sessionKeyStr,
+            length: text.length,
+          },
+          'outbound',
+        );
+        this.logger.debug(
+          {
+            traceId: event.traceId,
+            sessionKey: sessionKeyStr,
+            text,
+          },
+          'outbound',
+        );
+      };
+
+      const ensureToolVisible = async (status: string): Promise<void> => {
+        if (toolStatus) return;
+        toolStatus = status;
+        if (platformCaps.supportsEdit) {
+          await flushEdit();
+          return;
+        }
+        messageRef = await safeSend(toolStatus);
+      };
+
+      const closeSession = (): void => {
+        if (!session) return;
+        const current = this.agentSessions.get(sessionKeyStr);
+        if (current?.session === session) this.agentSessions.delete(sessionKeyStr);
+        try {
+          this.agent.stopSession(session);
+        } catch (stopErr) {
+          this.logger.error(
+            { traceId: event.traceId, sessionKey: sessionKeyStr, err: stopErr },
+            'agent_stop_session_failed',
+          );
+        }
+      };
 
       const handler = async (e: AgentEvent): Promise<void> => {
         try {
@@ -186,13 +410,44 @@ export class Engine {
             }
             return;
           }
-          if (e.type === 'text_final') {
-            // 期望只来一条；多条按到达顺序 concat
+          if (e.type === 'text_delta') {
+            sawDelta = true;
             buf += e.payload.text;
+            await scheduleEdit();
+            return;
+          }
+          if (e.type === 'text_final') {
+            if (sawDelta) {
+              buf = e.payload.text;
+            } else {
+              // 期望只来一条；多条按到达顺序 concat
+              buf += e.payload.text;
+            }
+            await scheduleEdit();
+            return;
+          }
+          if (e.type === 'tool_call_started') {
+            await ensureToolVisible(`[tool: ${e.payload.toolName}] started`);
+            return;
+          }
+          if (e.type === 'tool_call_progress') {
+            await ensureToolVisible(`[tool: ${e.payload.callId}] running`);
+            return;
+          }
+          if (e.type === 'tool_result') {
+            await ensureToolVisible(`[tool: ${e.payload.callId}] result`);
+            return;
+          }
+          if (e.type === 'tool_call_finished') {
+            await ensureToolVisible(
+              `[tool: ${e.payload.toolName}] ${e.payload.status}`,
+            );
             return;
           }
           if (e.type === 'error') {
             errored = true;
+            cancelPendingEdit();
+            clearTyping();
             this.logger.error(
               {
                 traceId: event.traceId,
@@ -204,20 +459,9 @@ export class Engine {
               'agent_error',
             );
             try {
-              await this.platform.send(event.sessionKey, {
-                text: `[agent error: ${e.payload.errorKind}] ${e.payload.message}`,
-                traceId: event.traceId,
-                sessionKey: event.sessionKey,
-              });
-            } catch (sendErr) {
-              this.logger.error(
-                {
-                  traceId: event.traceId,
-                  sessionKey: sessionKeyStr,
-                  err: sendErr,
-                },
-                'platform_send_failed',
-              );
+              await safeSend(`[agent error: ${e.payload.errorKind}] ${e.payload.message}`);
+            } finally {
+              closeSession();
             }
             this.logger.info(
               {
@@ -230,52 +474,23 @@ export class Engine {
             return;
           }
           if (e.type === 'turn_finished') {
+            clearTyping();
             if (!errored) {
-              const text = buf.length > 0 ? buf : '[empty response]';
-              try {
-                await this.platform.send(event.sessionKey, {
-                  text,
-                  traceId: event.traceId,
-                  sessionKey: event.sessionKey,
-                });
-              } catch (sendErr) {
-                this.logger.error(
-                  {
-                    traceId: event.traceId,
-                    sessionKey: sessionKeyStr,
-                    err: sendErr,
-                  },
-                  'platform_send_failed',
-                );
-              }
-              this.logger.info(
-                {
-                  traceId: event.traceId,
-                  sessionKey: sessionKeyStr,
-                  length: text.length,
-                },
-                'outbound',
-              );
-              this.logger.debug(
-                {
-                  traceId: event.traceId,
-                  sessionKey: sessionKeyStr,
-                  text,
-                },
-                'outbound',
-              );
-            }
-            try {
-              this.agent.stopSession(session);
-            } catch (stopErr) {
-              this.logger.error(
-                { traceId: event.traceId, sessionKey: sessionKeyStr, err: stopErr },
-                'agent_stop_session_failed',
-              );
+              await finalizeReply();
             }
             return;
           }
-          // usage / session_stopped: MVP 不处理
+          if (e.type === 'session_stopped') {
+            clearTyping();
+            if (
+              session &&
+              this.agentSessions.get(sessionKeyStr)?.session === session
+            ) {
+              this.agentSessions.delete(sessionKeyStr);
+            }
+            return;
+          }
+          // usage / thinking: MVP 不处理
         } catch (handlerErr) {
           this.logger.error(
             {
@@ -288,13 +503,36 @@ export class Engine {
         }
       };
 
-      this.agent.onEvent(session, handler);
+      const activeSession = this.getOrStartSession(event, sessionKeyStr);
+      session = activeSession.session;
+      activeSession.currentTurn = {
+        eventId: event.eventId,
+        pending: new Set(),
+        handle: handler,
+      };
+      const turnState = activeSession.currentTurn;
 
-      await this.agent.sendInput(session, {
-        type: 'user_message',
-        text: prompt,
-        traceId: event.traceId,
-      });
+      startTyping();
+      let sendInputErr: unknown;
+      try {
+        await this.agent.sendInput(session, {
+          type: 'user_message',
+          text: prompt,
+          traceId: event.traceId,
+        });
+      } catch (err) {
+        sendInputErr = err;
+      } finally {
+        while (turnState.pending.size > 0) {
+          await Promise.all([...turnState.pending]);
+        }
+        clearTyping();
+        cancelPendingEdit();
+        if (activeSession.currentTurn?.eventId === event.eventId) {
+          activeSession.currentTurn = undefined;
+        }
+      }
+      if (sendInputErr) throw sendInputErr;
     } catch (err) {
       this.logger.error(
         {
@@ -307,4 +545,93 @@ export class Engine {
     }
   }
 
+  private getOrStartSession(
+    event: NormalizedEvent,
+    sessionKeyStr: string,
+  ): ActiveAgentSession {
+    const active = this.agentSessions.get(sessionKeyStr);
+    if (active) {
+      try {
+        if (this.agent.isAlive(active.session)) return active;
+      } catch (err) {
+        this.logger.warn(
+          { traceId: event.traceId, sessionKey: sessionKeyStr, err },
+          'agent_is_alive_failed',
+        );
+      }
+      try {
+        this.agent.stopSession(active.session);
+      } catch (err) {
+        this.logger.error(
+          { traceId: event.traceId, sessionKey: sessionKeyStr, err },
+          'agent_stop_session_failed',
+        );
+      }
+      this.agentSessions.delete(sessionKeyStr);
+    }
+
+    const prevAgentSessionId = this.sessionStore.get(
+      event.sessionKey,
+    )?.agentSessionId;
+    const config: SessionConfig = {
+      ...this.defaultSessionConfig,
+      sessionId: randomUUID(),
+      resumeFromAgentSessionId: prevAgentSessionId,
+    };
+    const session = this.agent.startSession(event.sessionKey, config);
+    const activeSession: ActiveAgentSession = { session };
+    this.agentSessions.set(sessionKeyStr, activeSession);
+    this.agent.onEvent(session, async (agentEvent) => {
+      const current = this.agentSessions.get(sessionKeyStr);
+      if (current !== activeSession) return;
+      const turn = current.currentTurn;
+      if (!turn) {
+        if (agentEvent.type === 'session_stopped') {
+          this.agentSessions.delete(sessionKeyStr);
+          return;
+        }
+        this.logger.debug(
+          {
+            traceId: agentEvent.traceId,
+            sessionKey: sessionKeyStr,
+            eventType: agentEvent.type,
+          },
+          'agent_event_without_turn',
+        );
+        return;
+      }
+      const handled = turn
+        .handle(agentEvent)
+        .catch((err) => {
+          this.logger.error(
+            {
+              traceId: agentEvent.traceId,
+              sessionKey: sessionKeyStr,
+              err,
+            },
+            'agent_event_handler_failed',
+          );
+        });
+      const tracked = handled.finally(() => {
+        turn.pending.delete(tracked);
+      });
+      turn.pending.add(tracked);
+      await tracked;
+    });
+    return activeSession;
+  }
+
+  private stopActiveSession(sessionKeyStr: string, traceId: string): void {
+    const active = this.agentSessions.get(sessionKeyStr);
+    if (!active) return;
+    this.agentSessions.delete(sessionKeyStr);
+    try {
+      this.agent.stopSession(active.session);
+    } catch (err) {
+      this.logger.error(
+        { traceId, sessionKey: sessionKeyStr, err },
+        'agent_stop_session_failed',
+      );
+    }
+  }
 }

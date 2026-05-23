@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { createClaudeCodeRuntime, runCompatibilityProbe } from '@agent-nexus/agent-claudecode';
 import { Engine, SessionStore, createLogger } from '@agent-nexus/daemon';
 import { createDiscordPlatform } from '@agent-nexus/platform-discord';
+import { createSelectedAgent, type SelectedAgent } from './agent.js';
 import {
   ConfigError,
   SecretsPermissionError,
@@ -31,40 +31,22 @@ async function main(): Promise<void> {
     'secret_loaded',
   );
 
-  // CompatibilityProbe 覆盖 spec/agent-backends/claude-code-cli.md §兼容性自检：
-  // --version、--print JSON、长驻 stream-json、permission control。
+  let selectedAgent: SelectedAgent;
   try {
-    await runCompatibilityProbe({
-      claudeBin: config.claudeCode.bin,
-      logger,
-      permissionLevel: config.claudeCode.permissionLevel,
-    });
+    selectedAgent = await createSelectedAgent(config, logger);
   } catch (err) {
-    logger.error({ err }, 'cc_compat_probe_failed');
+    logger.error(
+      {
+        agentBackend: config.agent.backend,
+        errorKind: 'agent',
+        code: 'compat_probe_failed',
+        cause: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      },
+      'agent_compat_probe_failed',
+    );
     process.exit(1);
   }
-
-  if (config.claudeCode.allowedTools.includes('Bash')) {
-    // spec/security/tool-boundary.md：危险工具显式启用必须打 warn。
-    logger.warn(
-      { tools: config.claudeCode.allowedTools },
-      'tool_boundary_bash_enabled',
-    );
-  }
-  if (config.claudeCode.permissionLevel !== 'default') {
-    logger.warn(
-      { permissionLevel: config.claudeCode.permissionLevel },
-      'cc_permission_level_non_default',
-    );
-  }
-
-  const agent = createClaudeCodeRuntime({
-    claudeBin: config.claudeCode.bin,
-    allowedTools: config.claudeCode.allowedTools,
-    permissionLevel: config.claudeCode.permissionLevel,
-    defaultWorkingDir: config.claudeCode.workingDir,
-    logger,
-  });
 
   // state 目录与 secrets 目录同级，权限 0700 与 secrets 一致
   // → spec/platform-adapter.md §"运行时状态持久化"
@@ -83,14 +65,10 @@ async function main(): Promise<void> {
 
   const engine = new Engine({
     platform,
-    agent,
+    agent: selectedAgent.agent,
     logger,
     sessionStore,
-    defaultSessionConfig: {
-      workingDir: config.claudeCode.workingDir,
-      toolWhitelist: config.claudeCode.allowedTools,
-      timeoutMs: 300_000,
-    },
+    defaultSessionConfig: selectedAgent.defaultSessionConfig,
     toolMessages: {
       mode: config.ui.toolMessages,
     },

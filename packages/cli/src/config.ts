@@ -12,21 +12,44 @@ import {
   ClaudeCodeConfigError,
 } from '@agent-nexus/agent-claudecode';
 import {
+  parseCodexConfig,
+  type CodexConfig,
+  CodexConfigError,
+} from '@agent-nexus/agent-codex';
+import {
   parseDaemonConfig,
   type DaemonConfig,
   DaemonConfigError,
 } from '@agent-nexus/daemon';
 
-export type { DiscordConfig, ClaudeCodeConfig };
+export type { DiscordConfig, ClaudeCodeConfig, CodexConfig };
 
-export interface AgentNexusConfig {
+export type AgentBackend = 'claudecode' | 'codex';
+
+type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
+
+interface BaseAgentNexusConfig {
   discord: DiscordConfig;
-  claudeCode: ClaudeCodeConfig;
+  agent: {
+    backend: AgentBackend;
+  };
   ui: DaemonConfig;
   log: {
-    level: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
+    level: LogLevel;
   };
 }
+
+export type AgentNexusConfig =
+  | (BaseAgentNexusConfig & {
+      agent: { backend: 'claudecode' };
+      claudeCode: ClaudeCodeConfig;
+      codex?: CodexConfig;
+    })
+  | (BaseAgentNexusConfig & {
+      agent: { backend: 'codex' };
+      codex: CodexConfig;
+      claudeCode?: ClaudeCodeConfig;
+    });
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -43,6 +66,8 @@ export class SecretsPermissionError extends Error {
 }
 
 const DEFAULT_LOG_LEVEL = 'info' as const;
+const DEFAULT_BACKEND = 'claudecode' as const;
+const BACKENDS = ['claudecode', 'codex'] as const;
 
 export function configRoot(): string {
   return join(homedir(), '.agent-nexus');
@@ -75,6 +100,10 @@ DISCORD_BOT_TOKEN 文件已创建：${path}
 
 const DEFAULT_CONFIG_TEMPLATE = `\
 {
+  "agent": {
+    "_backendComment": "allowed: claudecode, codex",
+    "backend": "claudecode"
+  },
   "discord": {
     "botUserId": "",
     "allowedUserIds": []
@@ -85,6 +114,15 @@ const DEFAULT_CONFIG_TEMPLATE = `\
     "_permissionLevelComment": "allowed: default, acceptEdits, auto, bypassPermissions, dontAsk, plan",
     "permissionLevel": "default",
     "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"]
+  },
+  "codex": {
+    "workingDir": "",
+    "bin": "codex",
+    "_sandboxComment": "allowed: read-only, workspace-write",
+    "sandbox": "read-only",
+    "addDirs": [],
+    "loadUserConfig": false,
+    "loadRules": false
   },
   "log": {
     "_levelComment": "allowed: trace, debug, info, warn, error, fatal",
@@ -211,6 +249,18 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     throw new ConfigError(`补齐 ${path} 缺失字段失败：${(err as Error).message}`);
   }
 
+  const agentRaw = (obj['agent'] as Record<string, unknown> | undefined) ?? {};
+  const backendRaw = agentRaw['backend'];
+  if (
+    backendRaw !== undefined &&
+    !BACKENDS.includes(backendRaw as AgentBackend)
+  ) {
+    throw new ConfigError(
+      `${path} 字段 agent.backend 必须是 ${BACKENDS.map((v) => `"${v}"`).join(' / ')}`,
+    );
+  }
+  const backend = (backendRaw as AgentBackend | undefined) ?? DEFAULT_BACKEND;
+
   let discord: DiscordConfig;
   try {
     discord = parseDiscordConfig(obj['discord'], {
@@ -218,16 +268,6 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     });
   } catch (err) {
     if (err instanceof DiscordConfigError) {
-      throw new ConfigError(`${path} ${err.message}`);
-    }
-    throw err;
-  }
-
-  let claudeCode: ClaudeCodeConfig;
-  try {
-    claudeCode = parseClaudeCodeConfig(obj['claudeCode']);
-  } catch (err) {
-    if (err instanceof ClaudeCodeConfigError) {
       throw new ConfigError(`${path} ${err.message}`);
     }
     throw err;
@@ -245,17 +285,51 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
 
   const log = (obj['log'] as Record<string, unknown> | undefined) ?? {};
   const levelRaw = log['level'];
-  const level: AgentNexusConfig['log']['level'] =
+  const level: LogLevel =
     typeof levelRaw === 'string' &&
     ['trace', 'debug', 'info', 'warn', 'error', 'fatal'].includes(levelRaw)
-      ? (levelRaw as AgentNexusConfig['log']['level'])
+      ? (levelRaw as LogLevel)
       : DEFAULT_LOG_LEVEL;
 
-  return {
+  const base = {
     discord,
-    claudeCode,
+    agent: { backend },
     ui,
     log: { level },
+  };
+
+  if (backend === 'codex') {
+    let codex: CodexConfig;
+    try {
+      codex = parseCodexConfig(obj['codex']);
+    } catch (err) {
+      if (err instanceof CodexConfigError) {
+        throw new ConfigError(`${path} ${err.message}`);
+      }
+      throw err;
+    }
+
+    return {
+      ...base,
+      agent: { backend },
+      codex,
+    };
+  }
+
+  let claudeCode: ClaudeCodeConfig;
+  try {
+    claudeCode = parseClaudeCodeConfig(obj['claudeCode']);
+  } catch (err) {
+    if (err instanceof ClaudeCodeConfigError) {
+      throw new ConfigError(`${path} ${err.message}`);
+    }
+    throw err;
+  }
+
+  return {
+    ...base,
+    agent: { backend },
+    claudeCode,
   };
 }
 

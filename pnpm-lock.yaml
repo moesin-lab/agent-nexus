@@ -63,6 +63,9 @@ importers:
       '@agent-nexus/agent-claudecode':
         specifier: workspace:*
         version: link:../agent/claudecode
+      '@agent-nexus/agent-codex':
+        specifier: workspace:*
+        version: link:../agent/codex
       '@agent-nexus/daemon':
         specifier: workspace:*
         version: link:../daemon

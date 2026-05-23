@@ -1,4 +1,12 @@
-import { mkdtemp, rm, writeFile, chmod, mkdir } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -35,9 +43,28 @@ describe('config loader', () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  it('loadConfig 缺 config.json → ConfigError，hint 含 path', async () => {
+  it('loadConfig 首次运行自动创建 config 模板和 token 文件', async () => {
+    await rm(join(tmp, '.agent-nexus'), { recursive: true, force: true });
+
     await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
     await expect(loadConfig()).rejects.toThrow(/config\.json/);
+
+    const root = await stat(join(tmp, '.agent-nexus'));
+    const secrets = await stat(join(tmp, '.agent-nexus', 'secrets'));
+    const config = await stat(join(tmp, '.agent-nexus', 'config.json'));
+    const token = await stat(
+      join(tmp, '.agent-nexus', 'secrets', 'DISCORD_BOT_TOKEN'),
+    );
+    const configText = await readFile(join(tmp, '.agent-nexus', 'config.json'), 'utf8');
+
+    expect(root.isDirectory()).toBe(true);
+    expect(secrets.isDirectory()).toBe(true);
+    expect(root.mode & 0o777).toBe(0o700);
+    expect(secrets.mode & 0o777).toBe(0o700);
+    expect(config.mode & 0o777).toBe(0o600);
+    expect(token.mode & 0o777).toBe(0o600);
+    expect(configText).toMatch(/allowedUserIds/);
+    expect(configText).toMatch(/workingDir/);
   });
 
   it('loadConfig 缺 discord.botUserId → ConfigError（含字段名）', async () => {
@@ -121,6 +148,10 @@ describe('config loader', () => {
     await expect(loadDiscordToken()).rejects.toBeInstanceOf(
       SecretsPermissionError,
     );
+    const token = await stat(
+      join(tmp, '.agent-nexus', 'secrets', 'DISCORD_BOT_TOKEN'),
+    );
+    expect(token.mode & 0o777).toBe(0o600);
   });
 
   it('loadDiscordToken 权限非 0600 → SecretsPermissionError', async () => {

@@ -49,26 +49,27 @@ agent-nexus 让你在 IM（当前：Discord）里直接和本机 Claude Code 对
 
 ```bash
 pnpm install
-pnpm build         # tsc --build；产物 packages/*/dist/
+pnpm build         # tsc --build；CLI 入口会额外 bundle 成 npm bin
+pnpm pack:cli      # 产物 packages/cli/agent-nexus-cli-*.tgz
 pnpm test          # vitest 全量
-pnpm typecheck     # 等价 pnpm build
+pnpm typecheck     # 仅 tsc --build；不生成 npm bin bundle
 ```
 
 ### 3. 配置
 
-配置目录 `~/.agent-nexus/`（权限 0700）：
+首次运行会自动创建配置脚手架：
 
-```bash
-mkdir -p ~/.agent-nexus/secrets
-chmod 700 ~/.agent-nexus ~/.agent-nexus/secrets
-```
+- `~/.agent-nexus/` 和 `~/.agent-nexus/secrets/`，权限为 0700
+- `~/.agent-nexus/config.json` 模板，权限为 0600
+- `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` 空文件，权限为 0600
 
-写 `~/.agent-nexus/config.json`（至少含 `discord.botUserId` 和 `claudeCode.workingDir`）：
+编辑 `~/.agent-nexus/config.json`（至少填 `discord.botUserId`、`discord.allowedUserIds` 和 `claudeCode.workingDir`）：
 
 ```json
 {
   "discord": {
-    "botUserId": "1234567890123456789"
+    "botUserId": "1234567890123456789",
+    "allowedUserIds": ["2345678901234567890"]
   },
   "claudeCode": {
     "workingDir": "/path/to/your/repo",
@@ -112,7 +113,9 @@ pnpm dev
 
 ```bash
 pnpm build
-node packages/cli/dist/index.js
+pnpm pack:cli
+npm install -g packages/cli/agent-nexus-cli-*.tgz
+agent-nexus
 ```
 
 启动会先跑 CC CLI 兼容性 probe（`--version` + `--print` 探针），失败直接 `exit 1`；通过后连 Discord，看到 `discord_ready` 日志即可在频道里 `@bot ping`。

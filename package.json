@@ -8,8 +8,9 @@
   },
   "packageManager": "pnpm@10.33.2",
   "scripts": {
-    "dev": "pnpm --filter @agent-nexus/cli dev",
-    "build": "tsc --build",
+    "dev": "corepack pnpm --filter @agent-nexus/cli dev",
+    "build": "tsc --build && corepack pnpm --filter @agent-nexus/cli bundle",
+    "pack:cli": "corepack pnpm --dir packages/cli pack",
     "typecheck": "tsc --build",
     "test": "vitest run",
     "test:watch": "vitest"

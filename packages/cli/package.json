@@ -1,22 +1,38 @@
 {
   "name": "@agent-nexus/cli",
   "version": "0.0.0",
-  "private": true,
+  "private": false,
   "type": "module",
+  "license": "MIT",
   "bin": {
     "agent-nexus": "./dist/index.js"
   },
   "main": "./dist/index.js",
+  "files": [
+    "dist/index.js"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc --build",
+    "build": "tsc --build && npm run bundle",
+    "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --conditions=development --external:discord.js --external:execa --external:pino --external:pino-pretty --outfile=dist/index.js && node -e \"require('node:fs').chmodSync('dist/index.js', 0o755)\"",
     "typecheck": "tsc --build",
     "test": "vitest run",
-    "dev": "tsx watch --conditions=development src/index.ts"
+    "dev": "tsx watch --conditions=development src/index.ts",
+    "prepack": "npm run build"
   },
   "dependencies": {
+    "discord.js": "^14.16.0",
+    "execa": "^9.5.0",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0"
+  },
+  "devDependencies": {
     "@agent-nexus/agent-claudecode": "workspace:*",
     "@agent-nexus/daemon": "workspace:*",
     "@agent-nexus/platform-discord": "workspace:*",
-    "@agent-nexus/protocol": "workspace:*"
+    "@agent-nexus/protocol": "workspace:*",
+    "esbuild": "^0.27.7"
   }
 }

@@ -1,38 +1,52 @@
 ---
 title: 发版流程
 type: process
-status: placeholder
-summary: 发版流程占位；本阶段尚无可发版产物，等 MVP 与 ADR-0004 后填写
+status: active
+summary: npm CLI 二进制包的本地打包、验证与发布前检查流程；版本号和正式发布渠道仍需单独 ADR 决策
 tags: [release, process]
 related:
   - dev/process/commit-and-branch
   - dev/adr/0004-language-runtime
 ---
 
-# 发版流程（占位）
+# 发版流程
 
-> **状态**：占位。本阶段（文档与规范骨架）尚无可发版的产物。本文件在 MVP 具备可运行工件、且 ADR 0004 语言选型完成后填写。
+## 当前产物
 
-## 本阶段等同发版的事
+MVP 的可安装产物是 `@agent-nexus/cli` npm 包。该包提供 `agent-nexus` 二进制入口，并在打包时把 monorepo 内部 `@agent-nexus/*` package bundle 进 `dist/index.js`；运行时只依赖 npm 可安装的第三方包。
 
-在没有代码发版概念之前，以下事件需要在 `CHANGELOG.md` 的 `[Unreleased]` 下记录：
+本流程只定义本地 tarball 与 npm 包发布前检查。正式版本号策略、tag 策略、npm organization / channel 与 release announcement 仍需单独 ADR 或 owner 决策。
 
-- 新增 / 修改 / 删除 ADR
-- 新增 / 修改 / 删除 spec
-- 新增 / 修改重大流程规范（process/）
+## 本地打包
 
-## MVP 后需要补齐的内容
+```bash
+pnpm install
+pnpm build
+pnpm pack:cli
+```
 
-下列条目在第一次发版前至少需要有草案：
+`pnpm pack:cli` 产物位于 `packages/cli/agent-nexus-cli-*.tgz`。
 
-- 版本号策略（语义化版本 / 日期版本）
-- 发布 artifact 形态（二进制 / 包 / Docker 镜像 / 桌面安装包）
-- 发布渠道（GitHub Release / npm / crate / PyPI / Homebrew / 其他）
-- 发版检查清单（CHANGELOG 完整、ADR/spec 同步、测试全绿、security review、license 核对）
-- 版本回滚策略
-- 发版公告模板
+## 安装验证
 
-## 目前的约束
+每次改变 CLI 入口、package metadata、bundle 配置或运行时依赖时，PR 必须验证 tarball 安装后的二进制入口：
 
-- 任何对"发版"的讨论必须先进 ADR（例如"采用什么版本号策略"是 ADR 题目）。
-- 禁止在本文件完善前打任何 git tag。
+```bash
+tmp="$(mktemp -d)"
+npm install --prefix "$tmp" packages/cli/agent-nexus-cli-*.tgz
+"$tmp/node_modules/.bin/agent-nexus"
+```
+
+在没有真实 `~/.agent-nexus/config.json` 和 Discord token 的环境里，二进制可以以配置缺失错误退出；验收重点是 npm 安装成功、bin shim 能启动到应用自己的配置校验，而不是因 workspace 依赖或 shebang / 权限问题在 Node loader 阶段失败。
+
+## 发布前检查
+
+发布候选必须至少通过：
+
+- `pnpm build`
+- `pnpm test`
+- `pnpm pack:cli`
+- tarball 安装验证
+- `git diff --check`
+
+涉及 ADR、spec、process 或 security 文档的发布 PR 仍按对应 owner 文档要求补 review 证据；本流程不降低代码 review 与安全 review 要求。

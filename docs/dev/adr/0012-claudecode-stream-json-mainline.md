@@ -34,11 +34,12 @@ superseded_by: null
 - 2026-05-22：§interrupt 投递契约 §进程 cleanup 层 措辞收紧（非反转）——kill 路径从 POSIX `kill(-pid)` process group 抽象为平台等价子进程树终止语义，限定仅约束主动 kill 路径不反转 graceful interrupt 不变量（cline tree-kill 跨平台实现对照触发，详见 §异议 & 回应 第八轮）
 - 2026-05-23：工具隔离前置验证补充非 bypass 复测——早期 `permissionMode:"bypassPermissions"` 读数确认为本机 user settings 污染，不作为 `default` 固有语义依据；决策点 5.1 仍由 `--allowed-tools` 不强制与 observer 无法事后拦截支撑（详见 §异议 & 回应 第九轮）
 - 2026-05-23：复查 cc-connect 后补测隐藏 `--permission-prompt-tool stdio`——`can_use_tool` control 主路径坐实，决策点 5 主强制点从 PreToolUse hook 修正为 stdio permission control（hook 保留为 fallback / 纵深）
-- 2026-05-23：修正 spec/ADR 启动形态——agent-nexus 主路径为**不带 `--print` 的长驻 stream-json 子进程**；`--print` 只保留为一次性 probe / legacy fallback
+- 2026-05-23：修正 spec/ADR 启动形态——agent-nexus 主路径为**不带 `--print`、由 stdout/stdin pipe 触发 headless 的长驻 stream-json structured IO 子进程**；`--print` 只保留为一次性 probe / legacy fallback
+- 2026-05-23：对齐 `/workspace/claudecode-src` 入口扫描——stdin 输入形态以 `user` / `control_response` / 少量 `control_request` 为 MVP，stdout 权限请求为 `control_request{subtype:"can_use_tool"}`，没有独立 `permission_request` SDK 事件
 
 ## Context
 
-`docs/dev/spec/agent-backends/claude-code-cli.md` §交互式 session 现在把**不带 `--print` 的长驻 stream-json 子进程**标为 MVP 主路径：同一 Claude Code 进程通过 stdin 接收多 turn JSON，通过 stdout 持续输出 stream-json 事件。实现侧当前仍是 `--print` 单次调用——每次 `sendInput` spawn → 跑完 → 退出。这个 spec/impl gap 是 #45（IM 看不到工具调用）/ #28（partial output 丢失）/ #54（interrupt 只能整子进程）/ #30 / #55-B（Discord 长回复无流式 edit）的共同上游。把它们当独立 issue 修，大概率在 stream-json 切换时被全部重写。
+`docs/dev/spec/agent-backends/claude-code-cli.md` §Headless structured session 现在把**不带 `--print`、由 stdout/stdin pipe 触发 headless 的长驻 stream-json structured IO 子进程**标为 MVP 主路径：同一 Claude Code 进程通过 stdin 接收多 turn JSON，通过 stdout 持续输出 stream-json 事件。实现侧当前仍是 `--print` 单次调用——每次 `sendInput` spawn → 跑完 → 退出。这个 spec/impl gap 是 #45（IM 看不到工具调用）/ #28（partial output 丢失）/ #54（interrupt 只能整子进程）/ #30 / #55-B（Discord 长回复无流式 edit）的共同上游。把它们当独立 issue 修，大概率在 stream-json 切换时被全部重写。
 
 本 ADR 立 epic 协议层 + 实现层共识，**只锁不可逆的架构决策**——协议契约、interrupt 主路径、流式 timeout 分层、平台能力门槛、interrupt 投递契约、legacy fallback 保留、工具隔离强制点。具体 UX / UI 文案、协议字段表、阈值数值、平台实现细节由 spec 修订 + 后续 issue 演进。
 
@@ -52,7 +53,7 @@ superseded_by: null
    - `chenhg5/cc-connect`（Go IM-bridge，长驻 stream-json 子进程）实证 process group kill 必要（不 kill group → MCP 孙进程 100% CPU 孤儿）+ Discord edit + 周期 typing 节奏 viable
    - `banteg/takopi`（Python Telegram bridge）实证 CC `tool_result.content` 在生产环境至少存在 5 种变体（str / list / dict / None / 其他 + `is_error`）；并以 `-p --resume` 一次性模式作为持续子进程的对照存在
    - 两个项目均未实现三层 watchdog 仍能运行
-6. **工具隔离实测修正**（2026-05-22 CC 2.1.148；2026-05-23 CC 2.1.149 复测修正）：`--allowed-tools` 白名单 / `Bash(git *)` 子模式 / `--permission-mode default` 均**不能单独作为工具安全边界**——白名单只给 `Read` 时，模型用未列入的 `Bash` 仍可能执行成功，`permission_denials` 为空。早期 `init` 实报 `permissionMode:"bypassPermissions"` 后续确认为本机 user settings `defaultMode:"bypassPermissions"` 污染样本；隔离新目录 project settings 显式 `defaultMode:"default"` 时，`init.permissionMode` 实报 `default`，但 `--allowed-tools Read` / project `allow:["Read"]` 仍不阻止无副作用 Bash 命令。`security/tool-boundary.md` §白名单外拒绝 合约（"CC 调未在白名单的工具 → 不转发工具调用请求"）的 observer 实现前提因此被证伪：stream-json 架构下 agent-nexus 看到 `tool_use` 时工具已执行完，无法事后拦截。复查 `chenhg5/cc-connect` 后发现它启动 Claude Code 时传隐藏 `--permission-prompt-tool stdio`；补测同版本确认：加该 flag 后，`--print stream-json` 与**不带 `--print` 的长驻 stream-json** 两种形态均在 Bash/Edit 写文件前产出 `control_request{subtype:"can_use_tool"}`。agent-nexus 回 `control_response deny` 后副作用未发生且 result 汇总 `permission_denials`；回 `allow + updatedInput` 后副作用发生。另测 local `--sdk-url` 直接拒绝非 Anthropic approved endpoint，不能作为 agent-nexus 本地 transport。PreToolUse hook 仍已验证可执行前 deny，但定位从主强制点修正为 fallback / defense-in-depth。
+6. **工具隔离实测修正**（2026-05-22 CC 2.1.148；2026-05-23 CC 2.1.149 复测修正）：`--allowed-tools` 白名单 / `Bash(git *)` 子模式 / `--permission-mode default` 均**不能单独作为工具安全边界**——白名单只给 `Read` 时，模型用未列入的 `Bash` 仍可能执行成功，`permission_denials` 为空。早期 `init` 实报 `permissionMode:"bypassPermissions"` 后续确认为本机 user settings `defaultMode:"bypassPermissions"` 污染样本；隔离新目录 project settings 显式 `defaultMode:"default"` 时，`init.permissionMode` 实报 `default`，但 `--allowed-tools Read` / project `allow:["Read"]` 仍不阻止无副作用 Bash 命令。`security/tool-boundary.md` §白名单外拒绝 合约（"CC 调未在白名单的工具 → 不转发工具调用请求"）的 observer 实现前提因此被证伪：stream-json 架构下 agent-nexus 看到 `tool_use` 时工具已执行完，无法事后拦截。复查 `chenhg5/cc-connect` 后发现它启动 Claude Code 时传隐藏 `--permission-prompt-tool stdio`；补测同版本确认：加该 flag 后，`--print stream-json` 与**不带 `--print`、stdout/stdin pipe 触发 headless 的长驻 stream-json** 两种形态均在 Bash/Edit 写文件前产出 `control_request{subtype:"can_use_tool"}`。agent-nexus 回 `control_response deny` 后副作用未发生且 result 汇总 `permission_denials`；回 `allow + updatedInput` 后副作用发生。另测 local `--sdk-url` 直接拒绝非 Anthropic approved endpoint，不能作为 agent-nexus 本地 transport。源码复核确认 `PermissionRequest` 是本机 hook，不是 stdout SDK 的 `permission_request` 事件；PreToolUse hook 仍已验证可执行前 deny，但定位从主强制点修正为 fallback / defense-in-depth。
 
 ## Options
 
@@ -71,7 +72,7 @@ superseded_by: null
 
 ### 决策点 2：interrupt 主路径
 
-- **Option 2A**：保持 SIGINT 主路径；stdin `control/interrupt` 作为 capability flag 控制的备路径；反转走独立 ADR
+- **Option 2A**：保持 SIGINT 主路径；stdin `control_request/interrupt` 作为 capability flag 控制的备路径；反转走独立 ADR
 - **Option 2B**：直接反转为 stdin control 主路径
 
 ### 决策点 3：Discord 平台能力门槛
@@ -107,7 +108,7 @@ superseded_by: null
 - **决策点 3**：选 **Option 3A**——Discord adapter `supportsEdit: true` + `supportsTypingIndicator: true` + 实现 `edit()` / `setTyping()` / `clearTyping()`；具体 UI 策略下放后续 issue；本 ADR 同时锁定 **PR-C 最小集成契约**（见下）
 - **决策点 4**：选 **Option 4A**——三层 watchdog；timeoutLayer 区分语义**必须进 protocol**（payload 字段或 TurnEndReason 枚举，二选一，不允许 daemon 内部状态）；阈值与具体实现机制选哪个 → spec/cost-and-limits.md + PR-A
 - **决策点 5**：选 **Option 5D**——锁三条工具隔离不变量：
-  - (5.1) 在本 ADR 目标运行形态（不带 `--print` 的长驻 stream-json 子进程）下，**不得**把 `--allowed-tools` / `--permission-mode` 当作安全边界——实测单靠这些 flag 不强制 agent-nexus 工具隔离（关键事实 6）；即便未来 CC 版本修复这些 flag 的行为，也只能作为附加约束，不能替代 5.2 / 5.3
+  - (5.1) 在本 ADR 目标运行形态（不带 `--print`、由 stdout/stdin pipe 触发 headless 的长驻 stream-json 子进程）下，**不得**把 `--allowed-tools` / `--permission-mode` 当作安全边界——实测单靠这些 flag 不强制 agent-nexus 工具隔离（关键事实 6）；即便未来 CC 版本修复这些 flag 的行为，也只能作为附加约束，不能替代 5.2 / 5.3
   - (5.2) 工具隔离**必须有一个已验证 fail-closed 的 CC 进程内执行前强制点**：主路径选 stream-json control protocol `can_use_tool`，agent-nexus 启动 CC 时传 `--permission-prompt-tool stdio`，作为 control 对端据 `toolWhitelist` allow/deny；启动 probe 必须验证 deny 副作用未发生、allow 可放行、缺失 / 加载失败 / 规则解析失败一律 **fail closed**（禁止启动或禁用全部工具）。**PreToolUse hook** 保留为 fallback / defense-in-depth：control probe 不通过但仍要提供工具隔离时，才可切 hook 主强制点；hook 配置也必须位于被隔离对象（模型）**不可写的边界外**。control probe 与 hook probe 均不通过时，**禁止落地**该工具隔离实现，不允许对外宣称满足工具隔离承诺
   - (5.3) **必须叠加 OS 级 defense-in-depth**，最低语义：限制工作目录写入范围 + 敏感路径不可读 + 网络能力有明确策略（容器 / 沙箱 / 只读挂载 / 网络隔离等任一可行手段达成）；若目标平台无法提供任何 OS 级限制，**必须显式声明"不满足工具隔离强安全承诺"**、不得宣称满足 5.3——因为进程内强制点随 CC 被攻破或配置被篡改而失效
   - 该强制点**保留** tool-boundary §白名单外拒绝 的安全语义，**废弃**其"agent-nexus 事后不转发"的（observer 架构下无法落地的）实现路径，改由 stdio permission control 执行前强制点实现；hook 仅作 fallback / defense-in-depth。5.1 / 5.2 / 5.3 都成立
@@ -244,7 +245,7 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
 **第九轮（工具隔离前置验证非 bypass 复测，2026-05-23）**：
 
 - 起因：早期 CC 2.1.148/2.1.149 样本未排除本机 user settings `defaultMode:"bypassPermissions"`，把 `init.permissionMode=="bypassPermissions"` 误写成 `default` 固有语义；同版本 2.1.149 后续改用隔离目录重跑。新建隔离目录，project settings 显式 `defaultMode:"default"`，以 `--setting-sources project --permission-mode default` 复测，`init.permissionMode` 实报 `default`
-- 收敛口径：修正关键事实 6 与 spec 对账版本——不再用“default 退化 bypassPermissions”支撑决策点 5.1；5.1 仍由非 bypass 复测下 `--allowed-tools Read` 不阻止 Bash 执行、observer 无法事后拦截、未启用 stdio permission prompt 时裸 CLI 不触发 `can_use_tool` / `permission_request` 支撑。该轮曾临时把 PreToolUse hook 定为主强制点，后续第十轮被 `--permission-prompt-tool stdio` 证据修正
+- 收敛口径：修正关键事实 6 与 spec 对账版本——不再用“default 退化 bypassPermissions”支撑决策点 5.1；5.1 仍由非 bypass 复测下 `--allowed-tools Read` 不阻止 Bash 执行、observer 无法事后拦截、未启用 stdio permission prompt 时裸 CLI 不触发 `can_use_tool` / 独立 stdout `permission_request` 支撑。该轮曾临时把 PreToolUse hook 定为主强制点，后续第十轮被 `--permission-prompt-tool stdio` 证据修正
 
 **第十轮（cc-connect 权限请求路径复查，2026-05-23）**：
 
@@ -252,7 +253,12 @@ daemon engine 检测平台 capability 后必须实现最小调用路径，不允
 - 实测：用 CC 2.1.149、隔离新目录、project settings `defaultMode:"default"` 重跑。`--print stream-json + --permission-prompt-tool stdio` 与长驻 stream-json + 同 flag 均在 Bash/Edit 写文件前产出 `can_use_tool`；回 deny 后 sentinel 文件不存在且 result 有 `permission_denials`；回 allow + `updatedInput` 后文件成功创建
 - 收敛口径：修正第九轮结论的遗漏条件。`can_use_tool` 并非不可用，而是需要显式 `--permission-prompt-tool stdio`。决策点 5.2 主强制点改为 stdio permission control，PreToolUse hook 降为 fallback / defense-in-depth；由于该 flag 不在 help 中，CompatibilityProbe 必须验证 deny / allow 双向语义并 fail closed
 
-外部证据来源：`chenhg5/cc-connect`（process group kill 必要性 + Discord edit/typing 节奏 viable；`--permission-prompt-tool stdio` + `can_use_tool` / `control_response` 权限路径）+ `banteg/takopi`（tool_result 5 种 content 变体 + `-p --resume` 反证）+ PR #88 CC 2.1.148 实测（`--allowed-tools` 不强制 / PreToolUse hook 能 deny / control protocol 握手裸 CLI 可用）+ CC 2.1.149 非 bypass 新目录矩阵复测（`init.permissionMode=="default"` 下 `--allowed-tools Read` / project `allow:["Read"]` 仍不拦 Bash；project `deny`、Edit 写权限待批准、`dontAsk`、`PermissionRequest` hook 均不触发裸 CLI `can_use_tool` / `permission_request`；local `--sdk-url` 直接拒绝非 Anthropic approved endpoint）+ CC 2.1.149 stdio permission prompt 补测（`--permission-prompt-tool stdio` 下 `can_use_tool` deny / allow 均有效）+ `cline/cline`（`tree-kill` 跨平台子进程树终止实现对照 → 第八轮 cleanup 措辞收紧）
+**第十一轮（Claude Code 源码入口扫描，2026-05-23）**：
+
+- 起因：用户要求主要扫入口的输入形式，以及 agent-nexus 需要处理的可能输出。对 `/workspace/claudecode-src` 只读复核 `main.tsx` / `cli/print.ts` / `cli/structuredIO.ts`。
+- 收敛口径：不传 `--print` 仍可进入 headless 主路径，但前提是 stdout 为 pipe（`!process.stdout.isTTY`）；TTY 裸跑会进交互 REPL。stdin structured IO 源码接受 `user`、`control_response`、`control_request`、`assistant`、`system`、`keep_alive`、`update_environment_variables` 等，MVP 只发送 `user` / `control_response` / 少量会话控制。stdout 必须处理业务事件与权限 `control_request(can_use_tool)`，同时容忍 `isReplay` user ack、`control_response`、`control_cancel_request`、`keep_alive`、`session_state_changed`、`task_*`、`post_turn_summary`、`prompt_suggestion`、`streamlined_*` 等非业务事件。`PermissionRequest` 是本机 hook；源码未显示独立 stdout SDK `permission_request` 事件。
+
+外部证据来源：`chenhg5/cc-connect`（process group kill 必要性 + Discord edit/typing 节奏 viable；`--permission-prompt-tool stdio` + `can_use_tool` / `control_response` 权限路径）+ `banteg/takopi`（tool_result 5 种 content 变体 + `-p --resume` 反证）+ PR #88 CC 2.1.148 实测（`--allowed-tools` 不强制 / PreToolUse hook 能 deny / control protocol 握手裸 CLI 可用）+ CC 2.1.149 非 bypass 新目录矩阵复测（`init.permissionMode=="default"` 下 `--allowed-tools Read` / project `allow:["Read"]` 仍不拦 Bash；project `deny`、Edit 写权限待批准、`dontAsk`、`PermissionRequest` hook 均不触发裸 CLI `can_use_tool` / 独立 stdout `permission_request`；local `--sdk-url` 直接拒绝非 Anthropic approved endpoint）+ CC 2.1.149 stdio permission prompt 补测（`--permission-prompt-tool stdio` 下 `can_use_tool` deny / allow 均有效）+ `/workspace/claudecode-src` 源码入口扫描（headless 触发条件、StructuredIO 输入、stdout 控制 / 状态事件）+ `cline/cline`（`tree-kill` 跨平台子进程树终止实现对照 → 第八轮 cleanup 措辞收紧）
 
 ## 参考
 

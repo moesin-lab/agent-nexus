@@ -37,7 +37,7 @@ contracts:
 
 ## 启动命令模板
 
-### 交互式 session（MVP 主路径）
+### Headless structured session（MVP 主路径）
 
 ```
 claude \
@@ -53,7 +53,7 @@ claude \
     [--permission-mode default|plan]
 ```
 
-- **不传 `--print`**：MVP 主路径是长驻 Claude Code 子进程；同一进程 stdin 接收多 turn user JSON，stdout 持续输出 stream-json 事件。`--print` 只用于 §一次性查询 / legacy fallback
+- **不传 `--print`，但必须以 pipe 启动 stdout/stdin**：源码中非交互入口不只由 `--print` 触发，也会由 `!process.stdout.isTTY` 触发。agent-nexus 主路径是由父进程接管 stdin/stdout 的 headless 长驻 Claude Code 子进程；同一进程 stdin 接收多 turn user JSON，stdout 持续输出 stream-json 事件。不得在 TTY 里裸跑后期待进入该主路径；`--print` 只用于 §一次性查询 / legacy fallback
 - **`--input-format stream-json`**：stdin 按行读入 JSON 消息
 - **`--output-format stream-json`**：stdout 按行输出 JSON 事件
 - **`--permission-prompt-tool stdio`**：打开工具执行前 permission control 通道；工具执行前 stdout 产出 `control_request{subtype:"can_use_tool"}`，agent-nexus 通过 stdin 回 `control_response` allow / deny。该 flag 不在 `claude --help` 输出中，必须由 CompatibilityProbe 坐实后才能承诺工具隔离
@@ -83,13 +83,13 @@ claude --print "<single prompt>" --output-format json
 | Flag | CC CLI 实测语义（help 落盘 2.1.119；stream-json 行为以 2.1.148 / 2.1.149 实测为准） | 项目用法 | 引用 |
 |---|---|---|---|
 | `--print` / `-p` | 非交互模式，写完一次响应就退出；workspace trust 对话框被跳过 | **不用作主路径**；仅 probe / legacy fallback | §一次性查询、ADR-0012 legacy fallback |
-| `--input-format <text\|stream-json>` | stdin 输入格式；2.1.149 实测不带 `--print` 的长驻 stream-json 子进程可用 | **必传** `stream-json` | §交互式 session |
+| `--input-format <text\|stream-json>` | stdin 输入格式；2.1.149 实测不带 `--print`、以 pipe 触发 headless 的长驻 stream-json 子进程可用 | **必传** `stream-json` | §Headless structured session |
 | `--output-format <text\|json\|stream-json>` | 输出格式；`json` 在 `--print` 下返回单 object result envelope；`stream-json` 按行 JSON 流，2.1.149 实测不带 `--print` 的长驻子进程可用 | **必传**（probe 用 `json`、运行用 `stream-json`） | §一次性查询 / §stdout 事件格式 |
 | `--allowed-tools` / `--allowedTools` | 工具白名单（逗号或空格分隔；`Bash(git *)` 子模式语法被接受但 2.1.148 实测**不拦截**非匹配命令）；单靠该 flag **不强制**安全边界（见 §权限边界 ⚠️） | **必传**（表配置意图，非隔离保证） | §权限边界、`security/tool-boundary.md` |
 | `--permission-prompt-tool stdio` | 隐藏 flag（2.1.149 help 不展示）；打开 stdout `control_request{subtype:"can_use_tool"}` / stdin `control_response` 工具审批通道；`chenhg5/cc-connect` 同样以该 flag 接管权限请求 | **启用工具隔离时必传**；必须自检 | §权限边界、`security/tool-boundary.md` |
-| `--disallowed-tools` / `--disallowedTools` | 工具黑名单 | **不用**（当前只用白名单） | §交互式 session（保留为可选） |
-| `--model <id>` | 模型别名（`sonnet` / `opus`）或全名（`claude-sonnet-4-6`） | **用**（按 SessionConfig 注入） | §交互式 session |
-| `--resume [value]` / `-r` | 按 session id（UUID）续话；裸用打开 picker | **用**（持有 `agentSessionId` 时传） | §交互式 session、`agent-runtime.md` |
+| `--disallowed-tools` / `--disallowedTools` | 工具黑名单 | **不用**（当前只用白名单） | §Headless structured session（保留为可选） |
+| `--model <id>` | 模型别名（`sonnet` / `opus`）或全名（`claude-sonnet-4-6`） | **用**（按 SessionConfig 注入） | §Headless structured session |
+| `--resume [value]` / `-r` | 按 session id（UUID）续话；裸用打开 picker | **用**（持有 `agentSessionId` 时传） | §Headless structured session、`agent-runtime.md` |
 | `--permission-mode <…>` | 取值：`acceptEdits` / `auto` / `bypassPermissions` / `default` / `dontAsk` / `plan`；不提供 agent-nexus 工具隔离保证（见 §权限边界 ⚠️）；实际模式以 `init.permissionMode` 为准 | **用** `default` / `plan`；**禁用** `bypassPermissions` / `acceptEdits`；启动时校验未落入 `bypassPermissions` | §权限边界、`security/tool-boundary.md` |
 | `--dangerously-skip-permissions` | 等价于 `--permission-mode bypassPermissions` | **禁用** | `security/README.md` |
 | `--allow-dangerously-skip-permissions` | 让用户可以**选择**开启 bypass，但不默认开启 | **禁用** | `security/README.md` |
@@ -99,9 +99,9 @@ claude --print "<single prompt>" --output-format json
 | `--max-budget-usd <amount>` | 仅 `--print`；CC 自身 API 调用预算上限 | **不用**（项目自己做 `$ 预算`） | §UsageCompleteness |
 | `--fallback-model <id>` | 仅 `--print`；主模型过载时自动 fallback | **不用作主路径**；仅 legacy fallback 可评估 | — |
 | `--include-partial-messages` | help 标注仅 `--print + --output-format=stream-json`；长驻子进程是否支持需 PR-B probe | **不作当前契约**；PR-B 前验证后再决定是否启用 | `index.ts` §TODO |
-| `--replay-user-messages` | 仅 `--input-format=stream-json + --output-format=stream-json`；回显 user 消息做 ack（回显行带 `isReplay:true`，区分真实 tool_result user 消息）；长驻主路径是否接受由 CompatibilityProbe 验证 | **必传** | §交互式 session |
+| `--replay-user-messages` | 仅 `--input-format=stream-json + --output-format=stream-json`；回显 user 消息做 ack（回显行带 `isReplay:true`，区分真实 tool_result user 消息）；长驻主路径是否接受由 CompatibilityProbe 验证 | **必传** | §Headless structured session |
 | `--include-hook-events` | 仅 `--output-format=stream-json`；输出 hook 生命周期事件 | **不传**；但 2.1.148 实测**不传也会出现** SessionStart hook 事件，runtime 仍须防御性过滤 `hook_*`（不能依赖"不传"） | §hook 事件与未知 type 兜底 |
-| `--verbose` | 覆盖 verbose 配置；`--print --output-format=stream-json` 同用时缺失会直接报错（2.1.148 实测）；长驻模式是否强制由 CompatibilityProbe 验证 | **必传**（与已验证路径 / cc-connect 对齐） | §交互式 session、`packages/agent/claudecode/src/index.ts` |
+| `--verbose` | 覆盖 verbose 配置；`--print --output-format=stream-json` 同用时缺失会直接报错（2.1.148 实测）；长驻模式是否强制由 CompatibilityProbe 验证 | **必传**（与已验证路径 / cc-connect 对齐） | §Headless structured session、`packages/agent/claudecode/src/index.ts` |
 | `--bare` | 最小模式：跳过 hooks / LSP / 插件 / 自动 memory / 钥匙串读取 / CLAUDE.md 自动发现 | **计划用**（agent-nexus 子进程不需要这些副作用，未来切换） | — |
 | `--version` / `-v` | 输出版本号 | **必用**（probe step 1） | §兼容性自检 |
 | `--help` / `-h` | 输出 help | 工具用（对账依据） | 本节 reference |
@@ -128,11 +128,14 @@ claude --print "<single prompt>" --output-format json
 
 ## stdin 输入格式（agent-nexus → CC）
 
-MVP 只依赖三类输入：
+源码侧 `StructuredIO.processLine` 接受 NDJSON，agent-nexus MVP 只发送 / 依赖以下输入：
 
-- `user`：`{"type":"user","message":{"role":"user","content":"..."}}`
-- `control_response`：响应 CC 发来的 `control_request{subtype:"can_use_tool"}`；必须 echo 对应 `request_id`，allow 响应必须带 `updatedInput`，deny 响应必须带 `message`
-- `control/interrupt`：可选；MVP 默认仍优先走 SIGINT
+- `user`：`{"type":"user","message":{"role":"user","content":"..."}}`；每个 turn 一行，写入同一长驻子进程 stdin
+- `control_response`：响应 CC 发来的 `control_request{subtype:"can_use_tool"}`；必须 echo 对应 `request_id`。allow 响应必须带 `updatedInput`，deny 响应必须带 `message`
+- `control_request`：仅保留少量会话控制能力位；MVP 可发送 `initialize` / `interrupt` / `end_session`，其中 interrupt 默认仍优先走 SIGINT，stdin control 作为备路径
+- `keep_alive`：允许作为保活输入；CC 会忽略，不产生业务事件
+
+源码还接受 `assistant` / `system` 历史 replay、`update_environment_variables`、更多 `control_request.subtype`（如 `set_permission_mode` / `get_context_usage` / MCP 相关控制）。这些不是当前 MVP 契约：除非后续 spec 明确启用，agent-nexus 不发送；收到 replay 回显或兼容性 probe 暴露相关 stdout 时，只能按未知 / debug 兜底处理，不得把它们作为业务正确性的前提。尤其 `update_environment_variables` 会改子进程环境，MVP 禁止使用。
 
 ## stdout 事件格式（CC → agent-nexus）
 
@@ -150,11 +153,23 @@ MVP 只依赖三类输入：
 // 仅启用 --permission-prompt-tool stdio 时：工具执行前 permission control request。
 // runtime 必须在执行前返回 control_response allow / deny；deny 后工具副作用不得发生。
 {"type":"control_request","request_id":"...","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"..."},"tool_use_id":"toolu_123"}}
+// --replay-user-messages 下的 stdin ack；只能作为“已被 CC 读到”的回显，不是用户可见消息：
+{"type":"user","isReplay":true,"message":{"role":"user","content":"..."}}
+// control_response 可能因 replay / control 流程出现在 stdout；只作控制面 ack / debug：
+{"type":"control_response","response":{"subtype":"success","request_id":"...","response":{}}}
+{"type":"control_cancel_request","request_id":"..."}
+{"type":"keep_alive"}
 // tool_result.content 在本次实测样例中为 string；多形态（string/块数组/object/空/其他）由独立 tool_result 事件承载，见 agent-runtime.md §ToolResultContent
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_123","content":"...","is_error":false}]}}
 // PreToolUse hook deny：工具未执行，CC 回传错误 tool_result；result envelope 汇总 permission_denials
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_123","content":"Error: ...","is_error":true}]}}
 {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1779441000,"rateLimitType":"five_hour","overageStatus":"..."}}
+{"type":"system","subtype":"session_state_changed","state":"idle"}
+{"type":"system","subtype":"task_started","task":{"id":"..."}}
+{"type":"system","subtype":"task_progress","task":{"id":"..."}}
+{"type":"system","subtype":"task_notification","task":{"id":"..."}}
+{"type":"system","subtype":"post_turn_summary","summary":"..."}
+{"type":"prompt_suggestion","suggestion":"..."}
 {"type":"result","subtype":"success","stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50}}
 {"type":"system","subtype":"error","error":{"kind":"...","message":"..."}}
 ```
@@ -168,6 +183,10 @@ MVP 只依赖三类输入：
 | `stream_event`（`event.type:content_block_delta`，`delta.type:text_delta`；**仅 `--include-partial-messages` 下出现**，Anthropic SSE 包裹，不在 assistant content） | `text_delta`（默认模板无此事件，攒整段走 `text`→`text_final`） |
 | `assistant / tool_use` | `tool_call_started`（`callId` ← `tool_use.id`） |
 | `control_request / can_use_tool` | 不映射为 AgentEvent；runtime 立即据 `toolWhitelist` 写回 `control_response`。拒绝时该 tool 后续应产出 `user/tool_result is_error:true` 或 result `permission_denials`；安全断言以副作用未发生为准 |
+| `user / isReplay:true` | stdin ack；不映射 AgentEvent，不进入用户消息或 tool_result 流 |
+| `control_response` | control 面 ack / replay；不映射 AgentEvent |
+| `control_cancel_request` | 取消 pending control 请求或 debug 记录；不映射 AgentEvent |
+| `keep_alive` | 忽略 |
 | `user / tool_result` | `tool_result`（独立事件；`content` 按 [`agent-runtime.md`](../agent-runtime.md) ToolResultContent 判别优先级映射，`isError` ← `is_error`，`callId` ← `tool_use_id`，同 `tool_use_id` 多条按到达序 `resultSequence` 0+ 递增）¹ |
 | （工具块终结，无独立 CC 事件，runtime 合成） | `tool_call_finished`：runtime 在该 `tool_use_id` 结果流终结时合成；`callId` ← 对应 `tool_call_started.callId`、`toolName` ← 缓存的 `tool_use.name`；`status` 由工具块**终结态**决定（**不得仅凭某条中间 result 的 `is_error` 推导**）——0-result 异常终止、或该 `tool_use_id` 的终结性 result 为 error（执行失败 / backend error / timeout）→ `error`，中断 / 取消 → `cancelled`，否则 `ok`；`status != "ok"` 时 `errorSummary` 尽力填² |
 | `result / success` | `turn_finished { reason: stop_reason_to_enum(...) }` + `usage` 事件 |
@@ -175,6 +194,8 @@ MVP 只依赖三类输入：
 | `result / error_*`（其余错误态） | `turn_finished { reason: "error" }` + `error` 事件 |
 | `system / error` | `error` 事件 |
 | `system / hook_*`（SessionStart 等 hook 生命周期） | **过滤丢弃**，不进解析路径（见 §hook 事件与未知 type 兜底） |
+| `system / session_state_changed`、`task_*`、`post_turn_summary`、`bridge_state` | 暂不映射 AgentEvent；debug log + 忽略，除非后续 spec 引入任务 / 状态同步能力 |
+| `prompt_suggestion`、`streamlined_text`、`streamlined_tool_use_summary` | 暂不映射 AgentEvent；debug log + 忽略 |
 | `rate_limit_event` | 暂不映射 AgentEvent；限额信号是否接入 limits 由 [`cost-and-limits.md`](../infra/cost-and-limits.md) 决定（TODO） |
 | **未列出的 type / subtype** | **debug log + 忽略，不报错**（兜底，见下） |
 
@@ -260,8 +281,8 @@ catch 路径若已收到 `result.usage`，仍 emit `usage` 事件，避免 daemo
 
 1. `claude --version` → 解析版本号，比对最低支持版本；失败 → 启动失败 + 清晰错误
 2. `claude --print "ping" --output-format json` → 返回单 object envelope，校验**顶层** `stop_reason == "end_turn"` + **顶层** `result` 文本非空（`stop_reason` / `result` 均为 envelope 顶层字段，**不是** `result.stop_reason` 嵌套）；超时 30s
-3. 必跑一次长驻 stream-json probe：启动 `claude --input-format stream-json --output-format stream-json --permission-prompt-tool stdio --replay-user-messages --verbose --allowed-tools Read`（**不传 `--print`**，子进程 `cwd` 指向 `<testDir>`），stdin 写入第一条 user JSON，校验 stdout 至少包含 `system/init`、assistant 消息、`result`；随后**不重启进程**，向同一 stdin 写入第二条 user JSON，并校验同一 PID 的 stdout 再次产出该 turn 的 `system/init` 或 assistant/result。该 probe 验证主路径是长驻子进程，不得用 `--print` 单次调用替代
-4. 启用工具隔离时，跑一次 stdio permission probe：启动参数必须包含 `--permission-prompt-tool stdio` 且不得包含 `--print`，向 CC 发起白名单外工具调用请求，断言 stdout 出现 `control_request{subtype:"can_use_tool"}`，runtime 回 `deny` 后副作用未发生；再跑一次白名单内 allow 样本，回 `allow + updatedInput` 后副作用发生，证明回包可放行。若该 probe 不通过，实现不得宣称 control 强制点可用；需要切 PreToolUse hook fallback 时，另跑 hook deny probe，断言副作用未发生、对应 `user / tool_result` 的 `is_error:true`、`permission_denials` 非空，且 probe 目录不得含会拦同一哨兵工具的 project/user settings deny，避免把 CC 原生 deny 误判成 hook deny。若 `toolWhitelist` 缺失或规则解析失败，必须断言工具隔离实现进入 fail-closed 状态（禁止启动或禁用全部工具），不允许静默 fallback 至放行。control 与 hook fallback 均不可用时，禁止落地工具隔离实现
+3. 必跑一次长驻 stream-json probe：启动 `claude --input-format stream-json --output-format stream-json --permission-prompt-tool stdio --replay-user-messages --verbose --allowed-tools Read`（**不传 `--print`**，子进程 `cwd` 指向 `<testDir>`，stdout/stdin 必须为 pipe 而不是继承 TTY），stdin 写入第一条 user JSON，校验 stdout 至少包含 `system/init`、assistant 消息、`result`；随后**不重启进程**，向同一 stdin 写入第二条 user JSON，并校验同一 PID 的 stdout 再次产出该 turn 的 `system/init` 或 assistant/result。该 probe 验证主路径是 pipe 触发 headless 的长驻子进程，不得用 `--print` 单次调用替代
+4. 启用工具隔离时，跑一次 stdio permission probe：启动参数必须包含 `--permission-prompt-tool stdio` 且不得包含 `--print`，stdout/stdin 必须为 pipe；向 CC 发起白名单外工具调用请求，断言 stdout 出现 `control_request{subtype:"can_use_tool"}`，runtime 回 `deny` 后副作用未发生；再跑一次白名单内 allow 样本，回 `allow + updatedInput` 后副作用发生，证明回包可放行。若该 probe 不通过，实现不得宣称 control 强制点可用；需要切 PreToolUse hook fallback 时，另跑 hook deny probe，断言副作用未发生、对应 `user / tool_result` 的 `is_error:true`、`permission_denials` 非空，且 probe 目录不得含会拦同一哨兵工具的 project/user settings deny，避免把 CC 原生 deny 误判成 hook deny。若 `toolWhitelist` 缺失或规则解析失败，必须断言工具隔离实现进入 fail-closed 状态（禁止启动或禁用全部工具），不允许静默 fallback 至放行。control 与 hook fallback 均不可用时，禁止落地工具隔离实现
 5. 失败则：打 `agent_spawn_failed` 日志（见 observability.md），拒绝启动 Discord gateway
 
 ## 权限边界（与 security.md 对齐）
@@ -273,9 +294,9 @@ catch 路径若已收到 `result.usage`，仍 emit `usage` 事件，避免 daemo
 >
 > - `--disallowed-tools` 黑名单**实测有效**（黑名单工具不出现在模型工具列表），但黑名单**不能替代** allowlist 安全模型，只作 defense-in-depth / 临时禁危险工具
 >
-> CC 2.1.149 实测进一步确认：未传 `--permission-prompt-tool stdio` 时，裸 CLI control `initialize` 可用，但覆盖 Bash allow/deny、Edit 写权限待批准、`dontAsk`、`plan`、`acceptEdits`、`auto`、`PermissionRequest` hook 后，均未观察到可由 agent-nexus 响应的 `control_request{subtype:"can_use_tool"}` 或 stdout `permission_request`。project settings 显式 `deny` 某条 Bash 命令、Edit 写权限待批准或 `dontAsk` 拒绝时，CLI 只回传 `user / tool_result is_error:true` 与 result `permission_denials`（或 tool error），没有执行前 control request。
+> CC 2.1.149 实测进一步确认：未传 `--permission-prompt-tool stdio` 时，裸 CLI control `initialize` 可用，但覆盖 Bash allow/deny、Edit 写权限待批准、`dontAsk`、`plan`、`acceptEdits`、`auto`、`PermissionRequest` hook 后，均未观察到可由 agent-nexus 响应的 `control_request{subtype:"can_use_tool"}`；stdout SDK 事件里也没有独立的 `permission_request` type/subtype。project settings 显式 `deny` 某条 Bash 命令、Edit 写权限待批准或 `dontAsk` 拒绝时，CLI 只回传 `user / tool_result is_error:true` 与 result `permission_denials`（或 tool error），没有执行前 control request。
 >
-> 复查 `chenhg5/cc-connect` 后补测同版本隐藏 flag：加 `--permission-prompt-tool stdio` 后，`--print stream-json` 与长驻 stream-json 两种形态均会在 Bash/Edit 写文件前产出 `control_request{subtype:"can_use_tool"}`。回 `control_response deny` 后文件未创建且 `permission_denials` 记录对应工具；回 `control_response allow` 且 `updatedInput` 原样返回后文件创建成功。因此 agent-nexus 的进程内主强制点应为 stdio permission control protocol，而不是 PreToolUse hook。另测 `--sdk-url` 在本地 probe 中拒绝非 Anthropic approved endpoint，不能作为 agent-nexus 本地 transport；`--bare` 只减少 hook / memory / 插件注入面，**不修工具隔离**，不算隔离替代。
+> 复查 `chenhg5/cc-connect` 后补测同版本隐藏 flag：加 `--permission-prompt-tool stdio` 后，`--print stream-json` 与 stdout/stdin pipe 触发 headless 的长驻 stream-json 两种形态均会在 Bash/Edit 写文件前产出 `control_request{subtype:"can_use_tool"}`。回 `control_response deny` 后文件未创建且 `permission_denials` 记录对应工具；回 `control_response allow` 且 `updatedInput` 原样返回后文件创建成功。因此 agent-nexus 的进程内主强制点应为 stdio permission control protocol，而不是 PreToolUse hook。另测 `--sdk-url` 在本地 probe 中拒绝非 Anthropic approved endpoint，不能作为 agent-nexus 本地 transport；`--bare` 只减少 hook / memory / 插件注入面，**不修工具隔离**，不算隔离替代。
 
 ### stdio permission control 主强制点
 
@@ -284,7 +305,7 @@ agent-nexus 启用工具隔离时，必须启动 CC 时传 `--permission-prompt-
 - allow：`{"type":"control_response","response":{"subtype":"success","request_id":"<request_id>","response":{"behavior":"allow","updatedInput":<原 input 或审计后 input>}}}`
 - deny：`{"type":"control_response","response":{"subtype":"success","request_id":"<request_id>","response":{"behavior":"deny","message":"<原因>"}}}`
 
-该 flag 未出现在 help 中，CompatibilityProbe 必须在启动前验证 deny / allow 双向语义。probe 失败时必须 fail closed，或显式切到 PreToolUse hook fallback 并通过 hook deny probe。hook deny 的 stdout 信号为 `user / tool_result` `is_error:true` + result envelope `permission_denials` 非空。安全合约（fail-closed 条件、测试最低断言、实现约束）由 [`tool-boundary.md` §工具隔离强制点](../security/tool-boundary.md#工具隔离强制点) 拥有。
+该 flag 未出现在 help 中，CompatibilityProbe 必须在启动前验证 deny / allow 双向语义。probe 失败时必须 fail closed，或显式切到 PreToolUse hook fallback 并通过 hook deny probe。`PermissionRequest` 是 CC 本机 hook 事件，可和 stdio prompt 并行竞争；它不是 stdout SDK 的 `permission_request` 事件。hook deny 的 stdout 信号为 `user / tool_result` `is_error:true` + result envelope `permission_denials` 非空。安全合约（fail-closed 条件、测试最低断言、实现约束）由 [`tool-boundary.md` §工具隔离强制点](../security/tool-boundary.md#工具隔离强制点) 拥有。
 
 - 工作目录：通过子进程 `cwd` 选项传入（CC CLI 没有 `--cwd` flag），**不继承** agent-nexus 进程的 cwd
 - 工具白名单：**必须**显式传 `--allowed-tools`，不依赖 CC 默认集

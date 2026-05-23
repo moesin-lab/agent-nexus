@@ -9,16 +9,13 @@
 
 <为什么要做；对应的 issue / ADR / spec，或 N/A + 理由>
 
-## Required answers
-
 - [ ] ADR: <链接或 N/A + 理由>
 - [ ] Spec: <链接或 N/A + 理由>
-- [ ] Tests: <测试文件 / 断言 / 未跑原因>
 
 ## Test plan
 
+- [ ] Tests: <测试文件 / 断言 / 未跑原因>
 - [ ] `<命令>` — <结果>
-- [ ] <新增/修改的测试文件与断言；若无测试，写明原因>
 
 ## Review notes
 

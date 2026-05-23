@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from 'discord.js';
 import {
   buildBotMentionRegex,
@@ -9,6 +9,28 @@ import {
   SLICE_SIZE,
   type ParsedInbound,
 } from './index.js';
+
+const discordMock = vi.hoisted(() => ({
+  channelsFetch: vi.fn(),
+  clientDestroy: vi.fn(async () => undefined),
+  clientLogin: vi.fn(async () => 'logged-in'),
+  clientOn: vi.fn(),
+}));
+
+vi.mock('discord.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('discord.js')>();
+  return {
+    ...actual,
+    Client: vi.fn(() => ({
+      channels: { fetch: discordMock.channelsFetch },
+      destroy: discordMock.clientDestroy,
+      login: discordMock.clientLogin,
+      on: discordMock.clientOn,
+      application: { commands: undefined },
+      user: { id: '900000000000000001', tag: 'bot#0000' },
+    })),
+  };
+});
 
 /** 解包 `kind: 'event'`；otherwise 抛——让断言失败时直接看到 drop reason。 */
 function expectEvent(r: ParsedInbound) {
@@ -25,6 +47,10 @@ const OTHER_ID = '900000000000000002';
 // 让既有测试聚焦于"非 allowlist 维度"（mention / bot guard / self / system）；
 // allowlist 自身的 fail-closed 行为在末尾的独立 describe 块里测。
 const ALLOWED: readonly string[] = [OTHER_ID, 'U7', 'U-init', 'U_X'];
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 function makeLogger() {
   return {
@@ -69,6 +95,35 @@ function makeMsg(overrides: {
       bot: authorBot,
     },
   } as unknown as Message;
+}
+
+function makePlatform() {
+  return createDiscordPlatform({
+    token: 'test-token',
+    botUserId: BOT_ID,
+    logger: makeLogger(),
+    statePath: '/tmp/agent-nexus-discord-state-test.json',
+    allowedUserIds: ALLOWED,
+  });
+}
+
+function makeTextChannel(overrides: {
+  edit?: ReturnType<typeof vi.fn>;
+  delete?: ReturnType<typeof vi.fn>;
+  send?: ReturnType<typeof vi.fn>;
+  sendTyping?: ReturnType<typeof vi.fn>;
+  sendable?: boolean;
+} = {}) {
+  return {
+    isTextBased: () => true,
+    isSendable: () => overrides.sendable ?? true,
+    messages: {
+      edit: overrides.edit ?? vi.fn(async (id: string) => ({ id })),
+      delete: overrides.delete ?? vi.fn(async () => undefined),
+    },
+    send: overrides.send ?? vi.fn(async () => ({ id: 'new-1' })),
+    sendTyping: overrides.sendTyping ?? vi.fn(async () => undefined),
+  };
 }
 
 describe('buildSlices', () => {
@@ -213,22 +268,279 @@ describe('PartialSendError', () => {
   });
 });
 
-describe('typing no-op contract', () => {
-  it('supportsTypingIndicator=false 时 setTyping / clearTyping 幂等不抛', async () => {
+describe('edit / typing capabilities', () => {
+  it('声明 supportsEdit=true 和 supportsTypingIndicator=true', () => {
+    const platform = makePlatform();
+
+    expect(platform.capabilities()).toMatchObject({
+      supportsEdit: true,
+      supportsTypingIndicator: true,
+    });
+  });
+
+  it('edit 单片消息：用 MessageManager.edit 更新已有 message id', async () => {
+    const edit = vi.fn(async (id: string) => ({ id }));
+    discordMock.channelsFetch.mockResolvedValueOnce(makeTextChannel({ edit }));
+    const platform = makePlatform();
+    const ref = {
+      platform: 'discord',
+      channelId: 'C1',
+      messageId: 'm-1',
+      messageIds: ['m-1'],
+      sentAt: new Date(0),
+    };
+
+    await platform.edit(ref, {
+      text: 'updated',
+      traceId: 't-1',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    });
+
+    expect(edit).toHaveBeenCalledWith('m-1', 'updated');
+    expect(ref.messageIds).toEqual(['m-1']);
+    expect(ref.messageId).toBe('m-1');
+  });
+
+  it('edit 增长到多片：追加发送新 slice 并回写 MessageRef', async () => {
+    const edit = vi.fn(async (id: string) => ({ id }));
+    const send = vi.fn(async () => ({ id: 'm-2' }));
+    discordMock.channelsFetch.mockResolvedValueOnce(makeTextChannel({ edit, send }));
+    const platform = makePlatform();
+    const ref = {
+      platform: 'discord',
+      channelId: 'C1',
+      messageId: 'm-1',
+      messageIds: ['m-1'],
+      sentAt: new Date(0),
+    };
+    const text = 'x'.repeat(SLICE_SIZE + 1);
+
+    await platform.edit(ref, {
+      text,
+      traceId: 't-1',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    });
+
+    expect(edit).toHaveBeenCalledWith('m-1', 'x'.repeat(SLICE_SIZE));
+    expect(send).toHaveBeenCalledWith('x');
+    expect(ref.messageIds).toEqual(['m-1', 'm-2']);
+    expect(ref.messageId).toBe('m-2');
+  });
+
+  it('edit 收缩到更少片：删除多余旧片并回写 MessageRef', async () => {
+    const edit = vi.fn(async (id: string) => ({ id }));
+    const deleteMessage = vi.fn(async () => undefined);
+    discordMock.channelsFetch.mockResolvedValueOnce(makeTextChannel({ edit, delete: deleteMessage }));
+    const platform = makePlatform();
+    const ref = {
+      platform: 'discord',
+      channelId: 'C1',
+      messageId: 'm-2',
+      messageIds: ['m-1', 'm-2'],
+      sentAt: new Date(0),
+    };
+
+    await platform.edit(ref, {
+      text: 'short',
+      traceId: 't-1',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    });
+
+    expect(edit).toHaveBeenCalledWith('m-1', 'short');
+    expect(deleteMessage).toHaveBeenCalledWith('m-2');
+    expect(ref.messageIds).toEqual(['m-1']);
+    expect(ref.messageId).toBe('m-1');
+  });
+
+  it('edit 增长中途 send 失败：保留已发送新片 id，下一次从断点继续', async () => {
+    const edit = vi.fn(async (id: string) => ({ id }));
+    const sendErr = new Error('send extra failed');
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'm-2' })
+      .mockRejectedValueOnce(sendErr)
+      .mockResolvedValueOnce({ id: 'm-3' });
+    discordMock.channelsFetch.mockResolvedValue(makeTextChannel({ edit, send }));
+    const platform = makePlatform();
+    const ref = {
+      platform: 'discord',
+      channelId: 'C1',
+      messageId: 'm-1',
+      messageIds: ['m-1'],
+      sentAt: new Date(0),
+    };
+    const text = 'x'.repeat(SLICE_SIZE * 2 + 1);
+
+    await expect(platform.edit(ref, {
+      text,
+      traceId: 't-1',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    })).rejects.toBe(sendErr);
+    expect(ref.messageIds).toEqual(['m-1', 'm-2']);
+    expect(ref.messageId).toBe('m-2');
+
+    await platform.edit(ref, {
+      text,
+      traceId: 't-2',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    });
+
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(ref.messageIds).toEqual(['m-1', 'm-2', 'm-3']);
+    expect(ref.messageId).toBe('m-3');
+  });
+
+  it('edit 收缩中途 delete 失败：已删除 id 先从 ref 移除，下一次从断点继续', async () => {
+    const edit = vi.fn(async (id: string) => ({ id }));
+    const deleteErr = new Error('delete failed');
+    const deleteMessage = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(deleteErr)
+      .mockResolvedValueOnce(undefined);
+    discordMock.channelsFetch.mockResolvedValue(makeTextChannel({ edit, delete: deleteMessage }));
+    const platform = makePlatform();
+    const ref = {
+      platform: 'discord',
+      channelId: 'C1',
+      messageId: 'm-3',
+      messageIds: ['m-1', 'm-2', 'm-3'],
+      sentAt: new Date(0),
+    };
+
+    await expect(platform.edit(ref, {
+      text: 'short',
+      traceId: 't-1',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    })).rejects.toBe(deleteErr);
+    expect(ref.messageIds).toEqual(['m-1', 'm-3']);
+    expect(ref.messageId).toBe('m-3');
+
+    await platform.edit(ref, {
+      text: 'short',
+      traceId: 't-2',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    });
+
+    expect(deleteMessage).toHaveBeenNthCalledWith(1, 'm-2');
+    expect(deleteMessage).toHaveBeenNthCalledWith(2, 'm-3');
+    expect(deleteMessage).toHaveBeenNthCalledWith(3, 'm-3');
+    expect(ref.messageIds).toEqual(['m-1']);
+    expect(ref.messageId).toBe('m-1');
+  });
+
+  it('同一 MessageRef 的并发 edit 串行化，增长片只发送一次', async () => {
+    let releaseFirstEdit: (() => void) | undefined;
+    const firstEditStarted = new Promise<void>((resolve) => {
+      const edit = vi.fn(async (id: string) => {
+        if (id === 'm-1' && edit.mock.calls.length === 1) {
+          resolve();
+          await new Promise<void>((release) => {
+            releaseFirstEdit = release;
+          });
+        }
+        return { id };
+      });
+      const send = vi.fn(async () => ({ id: 'm-2' }));
+      discordMock.channelsFetch.mockResolvedValue(makeTextChannel({ edit, send }));
+    });
+    const platform = makePlatform();
+    const ref = {
+      platform: 'discord',
+      channelId: 'C1',
+      messageId: 'm-1',
+      messageIds: ['m-1'],
+      sentAt: new Date(0),
+    };
+    const text = 'x'.repeat(SLICE_SIZE + 1);
+
+    const p1 = platform.edit(ref, {
+      text,
+      traceId: 't-1',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    });
+    await firstEditStarted;
+    const p2 = platform.edit(ref, {
+      text,
+      traceId: 't-2',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    });
+
+    releaseFirstEdit?.();
+    await Promise.all([p1, p2]);
+
+    const channel = await discordMock.channelsFetch.mock.results[0]!.value;
+    expect(channel.send).toHaveBeenCalledTimes(1);
+    expect(ref.messageIds).toEqual(['m-1', 'm-2']);
+  });
+
+  it('setTyping 调用 Discord sendTyping', async () => {
+    const sendTyping = vi.fn(async () => undefined);
+    discordMock.channelsFetch.mockResolvedValueOnce(makeTextChannel({ sendTyping }));
+    const platform = makePlatform();
+
+    await platform.setTyping({
+      platform: 'discord',
+      channelId: 'C1',
+      initiatorUserId: OTHER_ID,
+    });
+
+    expect(sendTyping).toHaveBeenCalledTimes(1);
+  });
+
+  it('setTyping 在 fetch 或 sendTyping 失败时吞错并写 debug', async () => {
+    const logger = makeLogger();
     const platform = createDiscordPlatform({
       token: 'test-token',
       botUserId: BOT_ID,
-      logger: makeLogger(),
+      logger,
       statePath: '/tmp/agent-nexus-discord-state-test.json',
       allowedUserIds: ALLOWED,
     });
+    const fetchErr = new Error('fetch failed');
+    discordMock.channelsFetch.mockRejectedValueOnce(fetchErr);
 
-    expect(platform.capabilities().supportsTypingIndicator).toBe(false);
     await expect(platform.setTyping({
       platform: 'discord',
       channelId: 'C1',
       initiatorUserId: OTHER_ID,
     })).resolves.toBeUndefined();
+
+    expect(logger.debug).toHaveBeenCalledWith(
+      { err: fetchErr, channelId: 'C1' },
+      'discord_typing_failed',
+    );
+  });
+
+  it('setTyping 在 sendTyping 失败时也吞错并写 debug', async () => {
+    const logger = makeLogger();
+    const typingErr = new Error('typing failed');
+    discordMock.channelsFetch.mockResolvedValueOnce(
+      makeTextChannel({ sendTyping: vi.fn(async () => Promise.reject(typingErr)) }),
+    );
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger,
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+    });
+
+    await expect(platform.setTyping({
+      platform: 'discord',
+      channelId: 'C1',
+      initiatorUserId: OTHER_ID,
+    })).resolves.toBeUndefined();
+
+    expect(logger.debug).toHaveBeenCalledWith(
+      { err: typingErr, channelId: 'C1' },
+      'discord_typing_failed',
+    );
+  });
+
+  it('clearTyping 幂等不抛', async () => {
+    const platform = makePlatform();
+
     await expect(platform.clearTyping({
       platform: 'discord',
       channelId: 'C1',

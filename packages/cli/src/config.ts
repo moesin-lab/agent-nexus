@@ -11,12 +11,18 @@ import {
   type ClaudeCodeConfig,
   ClaudeCodeConfigError,
 } from '@agent-nexus/agent-claudecode';
+import {
+  parseDaemonConfig,
+  type DaemonConfig,
+  DaemonConfigError,
+} from '@agent-nexus/daemon';
 
 export type { DiscordConfig, ClaudeCodeConfig };
 
 export interface AgentNexusConfig {
   discord: DiscordConfig;
   claudeCode: ClaudeCodeConfig;
+  ui: DaemonConfig;
   log: {
     level: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
   };
@@ -83,6 +89,10 @@ const DEFAULT_CONFIG_TEMPLATE = `\
   "log": {
     "_levelComment": "allowed: trace, debug, info, warn, error, fatal",
     "level": "info"
+  },
+  "ui": {
+    "_toolMessagesComment": "allowed: append, compact",
+    "toolMessages": "append"
   }
 }
 `;
@@ -223,6 +233,16 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     throw err;
   }
 
+  let ui: DaemonConfig;
+  try {
+    ui = parseDaemonConfig(obj['ui']);
+  } catch (err) {
+    if (err instanceof DaemonConfigError) {
+      throw new ConfigError(`${path} ${err.message}`);
+    }
+    throw err;
+  }
+
   const log = (obj['log'] as Record<string, unknown> | undefined) ?? {};
   const levelRaw = log['level'];
   const level: AgentNexusConfig['log']['level'] =
@@ -234,6 +254,7 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
   return {
     discord,
     claudeCode,
+    ui,
     log: { level },
   };
 }

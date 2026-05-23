@@ -191,7 +191,32 @@ function normalizeToolResultContent(raw: unknown): ToolResultContent {
   return { kind: 'unknown', raw: truncateRaw(raw) };
 }
 
-function inputSummary(input: unknown): string {
+function inputTarget(input: Record<string, unknown>): string | undefined {
+  const keys = [
+    'file_path',
+    'path',
+    'target_file',
+    'old_string',
+    'pattern',
+    'glob',
+    'query',
+  ];
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+function inputSummary(toolName: string, input: unknown): string {
+  if (isPlainObject(input)) {
+    if (toolName === 'Bash') {
+      const command = input['command'];
+      if (typeof command === 'string' && command.length > 0) return command;
+    }
+    const target = inputTarget(input);
+    if (target) return target;
+  }
   const raw = truncateRaw(input);
   return raw.length > 240 ? `${raw.slice(0, 240)}...` : raw;
 }
@@ -549,7 +574,7 @@ export function createClaudeCodeRuntime(
         emitEvent(state, 'tool_call_started', turn.traceId, {
           callId: id,
           toolName: name,
-          inputSummary: inputSummary(item['input']),
+          inputSummary: inputSummary(name, item['input']),
         });
       }
     }

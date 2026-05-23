@@ -59,6 +59,9 @@ npm install -g packages/cli/agent-nexus-cli-*.tgz
     "permissionLevel": "default",
     "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"]
   },
+  "ui": {
+    "toolMessages": "append"
+  },
   "log": {
     "level": "info"
   }
@@ -80,6 +83,7 @@ chmod 600 ~/.agent-nexus/config.json
 | `claudeCode.bin` | 否 | Claude Code CLI 路径；默认 `claude` |
 | `claudeCode.permissionLevel` | 否 | 默认 `default`；允许 `default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan`，会原样传给 `--permission-mode`。只有 `default` 自检工具权限控制；其他模式会跳过该 probe 并打 warn |
 | `claudeCode.allowedTools` | 否 | 默认 `Read/Grep/Glob/Edit/Write`；启用 `Bash` 需要显式加入 |
+| `ui.toolMessages` | 否 | 默认 `append`；工具调用追加为独立消息并在结果到达时编辑该工具消息。设为 `compact` 可回到旧式紧凑显示 |
 | `log.level` | 否 | `trace` / `debug` / `info` / `warn` / `error` / `fatal`，默认 `info` |
 
 写 Discord token：

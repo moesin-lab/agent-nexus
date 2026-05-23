@@ -37,6 +37,7 @@ Spec: <链接或 N/A + 理由>
 
 - [ ] Tests: <测试文件 / 断言 / 未跑原因>
 - [ ] `<命令>` — <结果>
+- [ ] Manual: <真实平台 / 真实 CLI / 真实用户路径验证；未跑写原因>
 
 ## Review notes
 
@@ -48,7 +49,9 @@ Spec: <链接或 N/A + 理由>
 - <本 PR 明确不做的事>
 ```
 
-`Why` 解释背景和动机，并承载 ADR / spec 两问；`Test plan` 承载 tests 一问与本次命令验证；`Review notes` 承载独立 review 与深度 review 留痕。`Summary` 不能替代三问。
+`Why` 解释背景和动机，并承载 ADR / spec 两问；`Test plan` 承载 tests 一问、本次命令验证与真实情境下的手动验证；`Review notes` 承载独立 review 与深度 review 留痕。`Summary` 不能替代三问。
+
+手动验证不是每个 PR 都必须实际执行，但只要改动影响真实用户路径、外部平台、CLI 子进程、打包二进制、IM 展示/交互、权限/配置启动链路，就必须在 Test plan 里列出真实情境验证项。未执行时保留 unchecked checkbox，并写清未跑原因；不要用单测 / mock / typecheck 冒充真实平台或真实 CLI 验证。
 
 ## 自查清单合格条件
 

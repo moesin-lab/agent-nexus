@@ -285,6 +285,11 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
       'usage',
       'turn_finished',
     ]);
+    const started = events[0];
+    if (started?.type !== 'tool_call_started') {
+      throw new Error('expected tool_call_started');
+    }
+    expect(started.payload.inputSummary).toBe('a.txt');
     const result = events[1];
     if (result?.type !== 'tool_result') throw new Error('expected tool_result');
     expect(result.payload.content).toEqual({
@@ -294,6 +299,110 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     const finished = events[2];
     if (finished?.type !== 'tool_call_finished') throw new Error('expected finished');
     expect(finished.payload.status).toBe('ok');
+  });
+
+  it('summarizes Bash tool input as command text', async () => {
+    const child = makeInteractiveSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Bash'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, {
+      ...sessionConfig,
+      toolWhitelist: ['Bash'],
+    });
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'run tests',
+      traceId: 't-bash',
+    });
+    await nextTick();
+    child.emitJson({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu-bash',
+            name: 'Bash',
+            input: { command: 'npm test' },
+          },
+        ],
+      },
+    });
+    child.emitJson({
+      type: 'result',
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 1 },
+    });
+    await turn;
+
+    const started = events.find((event) => event.type === 'tool_call_started');
+    if (started?.type !== 'tool_call_started') {
+      throw new Error('expected tool_call_started');
+    }
+    expect(started.payload.inputSummary).toBe('npm test');
+  });
+
+  it('summarizes file and search tools by target fields', async () => {
+    const child = makeInteractiveSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Read', 'Edit', 'Write', 'Grep', 'Glob'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, {
+      ...sessionConfig,
+      toolWhitelist: ['Read', 'Edit', 'Write', 'Grep', 'Glob'],
+    });
+    const events = await collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'inspect',
+      traceId: 't-targets',
+    });
+    await nextTick();
+    child.emitJson({
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'tool_use', id: 'toolu-read', name: 'Read', input: { file_path: 'src/a.ts' } },
+          { type: 'tool_use', id: 'toolu-edit', name: 'Edit', input: { file_path: 'src/b.ts', old_string: 'x' } },
+          { type: 'tool_use', id: 'toolu-write', name: 'Write', input: { file_path: 'src/c.ts', content: 'x' } },
+          { type: 'tool_use', id: 'toolu-grep', name: 'Grep', input: { pattern: 'TODO' } },
+          { type: 'tool_use', id: 'toolu-glob', name: 'Glob', input: { pattern: '**/*.ts' } },
+        ],
+      },
+    });
+    child.emitJson({
+      type: 'result',
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 1 },
+    });
+    await turn;
+
+    const summaries = events
+      .filter((event): event is Extract<AgentEvent, { type: 'tool_call_started' }> =>
+        event.type === 'tool_call_started',
+      )
+      .map((event) => [event.payload.toolName, event.payload.inputSummary]);
+    expect(summaries).toEqual([
+      ['Read', 'src/a.ts'],
+      ['Edit', 'src/b.ts'],
+      ['Write', 'src/c.ts'],
+      ['Grep', 'TODO'],
+      ['Glob', '**/*.ts'],
+    ]);
   });
 
   it('normalizes tool_result content shapes', async () => {

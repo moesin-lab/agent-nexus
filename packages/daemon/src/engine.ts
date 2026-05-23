@@ -9,6 +9,7 @@ import type {
   SessionConfig,
 } from '@agent-nexus/protocol';
 import { serializeSessionKey } from '@agent-nexus/protocol';
+import type { ToolMessageMode } from './config.js';
 import type { Logger } from './logger.js';
 import type { SessionStore } from './session-store.js';
 
@@ -26,6 +27,9 @@ export interface EngineDeps {
     streamEditThrottleMs?: number;
     typingRefreshMs?: number;
   };
+  toolMessages?: {
+    mode?: ToolMessageMode;
+  };
 }
 
 const DEFAULT_STREAM_EDIT_THROTTLE_MS = 1500;
@@ -36,8 +40,29 @@ interface ActiveAgentSession {
   currentTurn?: {
     eventId: string;
     pending: Set<Promise<void>>;
+    tail: Promise<void>;
     handle(event: AgentEvent): Promise<void>;
   };
+}
+
+interface ToolMessageState {
+  ref?: MessageRef;
+  pendingRef?: Promise<MessageRef | undefined>;
+  toolName?: string;
+  startText: string;
+}
+
+function codeBlock(lang: string, text: string): string {
+  const fence = text.includes('```') ? '````' : '```';
+  return `${fence}${lang}\n${text}\n${fence}`;
+}
+
+function renderToolStart(toolName: string, inputSummary: string): string {
+  const summary = inputSummary.length > 0 ? inputSummary : '(no input)';
+  if (toolName === 'Bash') {
+    return `Bash:\n${codeBlock('bash', summary)}`;
+  }
+  return `${toolName}: ${summary}`;
 }
 
 /**
@@ -62,6 +87,7 @@ export class Engine {
   >;
   private readonly streamEditThrottleMs: number;
   private readonly typingRefreshMs: number;
+  private readonly toolMessageMode: ToolMessageMode;
   private readonly agentSessions = new Map<string, ActiveAgentSession>();
   /**
    * Per-SessionKey 串行队列：同 key 的 dispatch 必须按到达序排队执行，
@@ -89,6 +115,7 @@ export class Engine {
       deps.streaming?.streamEditThrottleMs ?? DEFAULT_STREAM_EDIT_THROTTLE_MS;
     this.typingRefreshMs =
       deps.streaming?.typingRefreshMs ?? DEFAULT_TYPING_REFRESH_MS;
+    this.toolMessageMode = deps.toolMessages?.mode ?? 'append';
   }
 
   async start(): Promise<void> {
@@ -199,11 +226,14 @@ export class Engine {
       let errored = false;
       let messageRef: MessageRef | undefined;
       let creatingRef: Promise<MessageRef | undefined> | undefined;
+      let currentRenderedText: string | undefined;
       let lastEditAt = 0;
       let pendingEditTimer: ReturnType<typeof setTimeout> | undefined;
       let typingInterval: ReturnType<typeof setInterval> | undefined;
       let typingActive = false;
       let toolStatus: string | undefined;
+      const toolCallStartedAt = new Map<string, number>();
+      const toolMessages = new Map<string, ToolMessageState>();
 
       const safeSend = async (text: string): Promise<MessageRef | undefined> => {
         try {
@@ -277,7 +307,10 @@ export class Engine {
         const { promise, createdHere } = ensureMessageRef(text);
         const ref = await promise;
         if (!ref) return;
-        if (!createdHere) await safeEdit(ref, text);
+        if (!createdHere && currentRenderedText !== text) {
+          await safeEdit(ref, text);
+        }
+        currentRenderedText = text;
         lastEditAt = Date.now();
       };
 
@@ -350,6 +383,13 @@ export class Engine {
 
       const finalizeReply = async (): Promise<void> => {
         cancelPendingEdit();
+        if (
+          this.toolMessageMode === 'append' &&
+          toolMessages.size > 0 &&
+          buf.length === 0
+        ) {
+          return;
+        }
         const text = buf.length > 0 ? buf : '[empty response]';
         if (platformCaps.supportsEdit) {
           await flushEdit(text);
@@ -382,6 +422,67 @@ export class Engine {
           return;
         }
         messageRef = await safeSend(toolStatus);
+      };
+
+      const upsertToolMessage = async (
+        callId: string,
+        text: string,
+        toolName?: string,
+      ): Promise<void> => {
+        let state = toolMessages.get(callId);
+        if (!state) {
+          state = {
+            toolName,
+            startText: text,
+          };
+          toolMessages.set(callId, state);
+        } else {
+          state.toolName = toolName ?? state.toolName;
+        }
+
+        if (state.ref && platformCaps.supportsEdit) {
+          await safeEdit(state.ref, text);
+          state.startText = text;
+          return;
+        }
+
+        if (state.pendingRef) {
+          const ref = await state.pendingRef;
+          if (ref && platformCaps.supportsEdit) {
+            state.ref = ref;
+            await safeEdit(ref, text);
+          } else if (!ref || !platformCaps.supportsEdit) {
+            state.ref = await safeSend(text);
+          }
+          state.startText = text;
+          return;
+        }
+
+        state.startText = text;
+        state.pendingRef = safeSend(text)
+          .then((ref) => {
+            state.ref = ref;
+            return ref;
+          })
+          .finally(() => {
+            state.pendingRef = undefined;
+          });
+        await state.pendingRef;
+      };
+
+      const splitAssistantMessageBeforeTool = async (): Promise<void> => {
+        cancelPendingEdit();
+        if (creatingRef) await creatingRef;
+        if (!platformCaps.supportsEdit && buf.length > 0) {
+          await safeSend(buf);
+        }
+        messageRef = undefined;
+        creatingRef = undefined;
+        currentRenderedText = undefined;
+        lastEditAt = 0;
+        buf = '';
+        sawDelta = false;
+        toolStatus = undefined;
       };
 
       const closeSession = (): void => {
@@ -427,21 +528,84 @@ export class Engine {
             return;
           }
           if (e.type === 'tool_call_started') {
-            await ensureToolVisible(`[tool: ${e.payload.toolName}] started`);
+            toolCallStartedAt.set(e.payload.callId, Date.now());
+            this.logger.info(
+              {
+                traceId: event.traceId,
+                sessionKey: sessionKeyStr,
+                callId: e.payload.callId,
+                toolName: e.payload.toolName,
+              },
+              'tool_call_started',
+            );
+            this.logger.trace(
+              {
+                traceId: event.traceId,
+                sessionKey: sessionKeyStr,
+                callId: e.payload.callId,
+                toolName: e.payload.toolName,
+                inputSummary: e.payload.inputSummary,
+              },
+              'tool_call_input',
+            );
+            const startText = renderToolStart(
+              e.payload.toolName,
+              e.payload.inputSummary,
+            );
+            if (this.toolMessageMode === 'append') {
+              await splitAssistantMessageBeforeTool();
+              await upsertToolMessage(
+                e.payload.callId,
+                startText,
+                e.payload.toolName,
+              );
+            } else {
+              await ensureToolVisible(startText);
+            }
             return;
           }
           if (e.type === 'tool_call_progress') {
-            await ensureToolVisible(`[tool: ${e.payload.callId}] running`);
+            if (this.toolMessageMode === 'compact') {
+              await ensureToolVisible(`[tool: ${e.payload.callId}] running`);
+            }
             return;
           }
           if (e.type === 'tool_result') {
-            await ensureToolVisible(`[tool: ${e.payload.callId}] result`);
+            this.logger.trace(
+              {
+                traceId: event.traceId,
+                sessionKey: sessionKeyStr,
+                callId: e.payload.callId,
+                resultSequence: e.payload.resultSequence,
+                isError: e.payload.isError,
+                content: e.payload.content,
+              },
+              'tool_result',
+            );
+            if (this.toolMessageMode === 'compact') {
+              await ensureToolVisible(`[tool: ${e.payload.callId}] result`);
+            }
             return;
           }
           if (e.type === 'tool_call_finished') {
-            await ensureToolVisible(
-              `[tool: ${e.payload.toolName}] ${e.payload.status}`,
+            const startedAt = toolCallStartedAt.get(e.payload.callId) ?? Date.now();
+            toolCallStartedAt.delete(e.payload.callId);
+            this.logger.info(
+              {
+                traceId: event.traceId,
+                sessionKey: sessionKeyStr,
+                callId: e.payload.callId,
+                toolName: e.payload.toolName,
+                status: e.payload.status,
+                latencyMs: Math.max(0, Date.now() - startedAt),
+              },
+              'tool_call_finished',
             );
+            if (this.toolMessageMode === 'compact') {
+              await ensureToolVisible(
+                `[tool: ${e.payload.toolName}] ${e.payload.status}`,
+              );
+            }
             return;
           }
           if (e.type === 'error') {
@@ -508,6 +672,7 @@ export class Engine {
       activeSession.currentTurn = {
         eventId: event.eventId,
         pending: new Set(),
+        tail: Promise.resolve(),
         handle: handler,
       };
       const turnState = activeSession.currentTurn;
@@ -600,8 +765,10 @@ export class Engine {
         );
         return;
       }
-      const handled = turn
-        .handle(agentEvent)
+      turn.tail = turn.tail
+        .catch(() => {})
+        .then(() => turn.handle(agentEvent));
+      const handled = turn.tail
         .catch((err) => {
           this.logger.error(
             {

@@ -140,6 +140,31 @@ describe('Codex compatibility probe', () => {
     expect(resumeArgs).toEqual(expect.arrayContaining(['exec', 'resume', 'thread-probe']));
   });
 
+  it('配置 timeoutMs 时传给每次 Codex 子进程调用', async () => {
+    execaMock
+      .mockResolvedValueOnce({ stdout: 'codex-cli 0.133.0' })
+      .mockResolvedValueOnce({
+        stdout: 'Usage: codex\nexec\n--sandbox --ask-for-approval --cd --add-dir',
+      })
+      .mockResolvedValueOnce({
+        stdout: 'Usage: codex exec\nresume --json --ignore-user-config --ignore-rules',
+      })
+      .mockResolvedValueOnce({ stdout: execPingStdout })
+      .mockResolvedValueOnce({ stdout: resumeStdout })
+      .mockResolvedValueOnce({ stdout: toolStdout });
+
+    await expect(
+      runCompatibilityProbe({
+        config: baseConfig,
+        logger: logger(),
+        timeoutMs: 12_345,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(execaMock.mock.calls.every((call) => call[2]?.timeout === 12_345))
+      .toBe(true);
+  });
+
   it('version 输出为空时 fail closed', async () => {
     execaMock.mockResolvedValueOnce({ stdout: '' });
 

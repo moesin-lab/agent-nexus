@@ -10,6 +10,8 @@ import type { Logger } from '@agent-nexus/daemon';
 import type { AgentRuntime, SessionConfig } from '@agent-nexus/protocol';
 import type { AgentNexusConfig } from './config.js';
 
+const DEFAULT_SESSION_TIMEOUT_MS = 300_000;
+
 export interface SelectedAgent {
   agent: AgentRuntime;
   defaultSessionConfig: Omit<
@@ -26,13 +28,17 @@ export async function createSelectedAgent(
     const codex = config.codex;
     if (!codex) throw new Error('agent.backend=codex 需要 codex 配置');
 
-    await runCodexCompatibilityProbe({ config: codex, logger });
+    await runCodexCompatibilityProbe({
+      config: codex,
+      logger,
+      timeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
+    });
     return {
       agent: createCodexRuntime({ config: codex, logger }),
       defaultSessionConfig: {
         workingDir: codex.workingDir,
         toolWhitelist: [],
-        timeoutMs: 300_000,
+        timeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
       },
     };
   }
@@ -73,7 +79,7 @@ export async function createSelectedAgent(
     defaultSessionConfig: {
       workingDir: claudeCode.workingDir,
       toolWhitelist: claudeCode.allowedTools,
-      timeoutMs: 300_000,
+      timeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
     },
   };
 }

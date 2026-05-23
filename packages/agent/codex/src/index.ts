@@ -88,7 +88,6 @@ interface RuntimeState {
 export interface CodexRuntimeOptions {
   config: CodexConfig;
   logger: Logger;
-  syntheticTurnFinishedDeliveryMs?: number;
   gracefulInterruptMs?: number;
   sigtermGraceMs?: number;
 }
@@ -218,7 +217,6 @@ function usageRecordFromCodex(
 
 export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
   const { config: runtimeConfig, logger } = opts;
-  const syntheticDeliveryMs = opts.syntheticTurnFinishedDeliveryMs ?? 250;
   const gracefulInterruptMs = opts.gracefulInterruptMs ?? 5_000;
   const sigtermGraceMs = opts.sigtermGraceMs ?? 5_000;
 
@@ -531,7 +529,10 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
 
       let proc: ChildProcess;
       try {
-        proc = execa(runtimeConfig.bin, args, { buffer: false }) as ChildProcess;
+        proc = execa(runtimeConfig.bin, args, {
+          buffer: false,
+          stdin: 'ignore',
+        }) as ChildProcess;
       } catch (err) {
         emitEvent(state, 'error', traceId, {
           errorKind: 'agent',
@@ -719,13 +720,8 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
       }
       const signaled = proc.kill('SIGINT');
       if (!signaled) return;
-      setTimeout(() => {
-        if (!state.currentTurn || state.currentTurn !== turn || turn.terminalEmitted) {
-          return;
-        }
-        finishTurn(state, 'user_interrupt', 'runtime-synthesized');
-        beginCleanupTimers(session, state, proc);
-      }, syntheticDeliveryMs);
+      finishTurn(state, 'user_interrupt', 'runtime-synthesized');
+      beginCleanupTimers(session, state, proc);
     },
   };
 }

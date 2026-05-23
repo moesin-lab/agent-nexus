@@ -17,6 +17,7 @@ export class CodexCompatibilityProbeError extends Error {
 export interface CodexCompatibilityProbeOptions {
   config: CodexConfig;
   logger: Logger;
+  timeoutMs?: number;
 }
 
 interface JsonlProbeFacts {
@@ -156,7 +157,19 @@ function assertNoDangerousArgs(args: string[]): void {
   }
 }
 
-async function verifyWorkspaceWrite(config: CodexConfig): Promise<void> {
+function runCodex(
+  bin: string,
+  args: string[],
+  timeoutMs: number | undefined,
+): ReturnType<typeof execa> {
+  if (timeoutMs === undefined) return execa(bin, args);
+  return execa(bin, args, { timeout: timeoutMs });
+}
+
+async function verifyWorkspaceWrite(
+  config: CodexConfig,
+  timeoutMs: number | undefined,
+): Promise<void> {
   const sentinelName = `.codex-agent-probe-${process.pid}-${Date.now()}.txt`;
   const sentinelPath = join(config.workingDir, sentinelName);
   const args = buildCodexExecArgs(
@@ -165,7 +178,7 @@ async function verifyWorkspaceWrite(config: CodexConfig): Promise<void> {
   );
   assertNoDangerousArgs(args);
   try {
-    const probe = await execa(config.bin, args);
+    const probe = await runCodex(config.bin, args, timeoutMs);
     const facts = collectFacts((probe.stdout ?? '').toString());
     if (!facts.sawCommandStarted || !facts.sawCommandCompleted) {
       throw new Error('workspace-write probe did not emit command_execution events');
@@ -182,17 +195,17 @@ async function verifyWorkspaceWrite(config: CodexConfig): Promise<void> {
 export async function runCompatibilityProbe(
   opts: CodexCompatibilityProbeOptions,
 ): Promise<void> {
-  const { config, logger } = opts;
+  const { config, logger, timeoutMs } = opts;
   try {
-    const version = await execa(config.bin, ['--version']);
+    const version = await runCodex(config.bin, ['--version'], timeoutMs);
     const versionText = (version.stdout ?? '').toString().trim();
     if (!versionText) {
       throw new Error('empty stdout from --version');
     }
     logger.info({ version: versionText }, 'codex_cli_version');
 
-    const topHelp = await execa(config.bin, ['--help']);
-    const execHelp = await execa(config.bin, ['exec', '--help']);
+    const topHelp = await runCodex(config.bin, ['--help'], timeoutMs);
+    const execHelp = await runCodex(config.bin, ['exec', '--help'], timeoutMs);
     const combinedHelp = `${topHelp.stdout}\n${execHelp.stdout}`;
     for (const flag of [
       'exec',
@@ -213,7 +226,7 @@ export async function runCompatibilityProbe(
 
     const execArgs = buildCodexExecArgs(config, 'Reply exactly: CODEX_PROBE_OK');
     assertNoDangerousArgs(execArgs);
-    const execProbe = await execa(config.bin, execArgs);
+    const execProbe = await runCodex(config.bin, execArgs, timeoutMs);
     const execFacts = collectFacts((execProbe.stdout ?? '').toString());
     requireBaseTurnFacts(execFacts, 'exec');
 
@@ -223,7 +236,7 @@ export async function runCompatibilityProbe(
       'Reply exactly: CODEX_PROBE_RESUME_OK',
     );
     assertNoDangerousArgs(resumeArgs);
-    const resumeProbe = await execa(config.bin, resumeArgs);
+    const resumeProbe = await runCodex(config.bin, resumeArgs, timeoutMs);
     const resumeFacts = collectFacts((resumeProbe.stdout ?? '').toString());
     requireBaseTurnFacts(resumeFacts, 'resume');
     if (resumeFacts.threadId !== execFacts.threadId) {
@@ -235,7 +248,7 @@ export async function runCompatibilityProbe(
       'Use the shell to run: printf CODEX_TOOL_OK',
     );
     assertNoDangerousArgs(toolArgs);
-    const toolProbe = await execa(config.bin, toolArgs);
+    const toolProbe = await runCodex(config.bin, toolArgs, timeoutMs);
     const toolFacts = collectFacts((toolProbe.stdout ?? '').toString());
     if (!toolFacts.sawCommandStarted) {
       throw new Error('missing command_execution item.started in tool probe');
@@ -244,7 +257,7 @@ export async function runCompatibilityProbe(
       throw new Error('missing command_execution item.completed in tool probe');
     }
     if (config.sandbox === 'workspace-write') {
-      await verifyWorkspaceWrite(config);
+      await verifyWorkspaceWrite(config, timeoutMs);
     }
   } catch (err) {
     throw new CodexCompatibilityProbeError(

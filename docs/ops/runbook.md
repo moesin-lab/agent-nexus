@@ -1,8 +1,8 @@
 ---
 title: 运维手册
 type: ops
-status: placeholder
-summary: 部署、监控、排障、数据管理、安全检查手册；等 MVP 有部署产物后填写
+status: active
+summary: 本机运行 agent-nexus 的启动、停止、日志、状态、升级与排障步骤
 tags: [ops, runbook]
 related:
   - dev/architecture/overview
@@ -12,63 +12,85 @@ related:
   - dev/spec/security/README
 ---
 
-# 运维手册（占位）
+# 运维手册
 
-> **状态**：占位。等 MVP 有可部署产物后填写。
+本手册面向在本机长期运行 agent-nexus 的操作者。使用者入口见 [`../product/user-guide.md`](../product/user-guide.md)；内部契约见 [`../dev/`](../dev/)。
 
-## 将包含的章节（规划）
+## 启动前检查
 
-### 部署
+- `node --version` 为 20 或更高版本。
+- `pnpm --version` 可运行。
+- `claude --version` 可运行。
+- 首次运行会自动创建 `~/.agent-nexus/config.json` 与 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN`；编辑后确认两者权限为 `0600`。
+- Discord bot 已开启 `MESSAGE CONTENT INTENT`，并在目标 server / channel 有读写消息权限。
 
-- 安装包位置与校验
-- 首次启动步骤
-- 自启动配置（launchd / systemd / tray）
-- 升级流程
+## 手动启动
 
-### 监控
+开发模式：
 
-- 日志位置：`~/.agent-nexus/logs/<date>.jsonl`
-- 关键事件（见 [`../dev/spec/observability.md`](../dev/spec/infra/observability.md)）
-- 健康检查端点（如有）
+```bash
+pnpm dev
+```
 
-### 排障
+构建并安装本地 npm bin 后运行：
 
-- 常见错误与解决
-  - `gateway_disconnected` 频繁 → 网络
-  - `auth_denied` 异常多 → 是否 allowlist 配错
-  - `budget_threshold_crossed` → 调整预算或查 agent 是否失控
-  - `circuit_opened` → 查最近 3 次 agent 错误
-- 如何拿到特定 traceId 的完整日志：`jq`/`rg` 示例
-- 如何查某 session 的 transcript
+```bash
+pnpm build
+pnpm pack:cli
+npm install -g packages/cli/agent-nexus-cli-*.tgz
+agent-nexus
+```
 
-### 数据管理
+启动成功的关键信号：
 
-- SQLite 备份：`~/.agent-nexus/state.db` + transcripts
-- 日志轮转与清理
-- 幂等表 GC 异常的应急清理
+- `secret_loaded`
+- `cc_cli_version`
+- `discord_ready`
+- `engine_started`
 
-### 安全检查
+## 停止
 
-- Token 是否在 OS keychain（优先）
-- 文件权限：`~/.agent-nexus/` 应是 `0700`，`secrets/*` 应是 `0600`
-- allowlist 是否含误入的公共 user id
+前台运行时按 `Ctrl-C`。进程收到 `SIGINT` / `SIGTERM` 后会尝试停止 engine、断开 Discord gateway，并退出。
 
-### 性能
+## 配置与状态文件
 
-- CC 子进程数量与资源占用
-- SQLite 索引使用情况
-- 消息队列长度监控
+| 路径 | 用途 | 权限 |
+|---|---|---|
+| `~/.agent-nexus/config.json` | 主配置 | `0600` |
+| `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` | Discord bot token | `0600` |
+| `~/.agent-nexus/state/discord.json` | Discord reply mode 状态 | 目录 `0700` |
 
-## 为什么现在不写
+首次运行会创建前两个文件的模板 / 空文件，但不会替你填真实 bot id、allowlist、working directory 或 token。
 
-没有部署产物、没有真实运行数据、没有真实故障场景——现在写就是拍脑袋。
+`config.json` 变更后需要重启进程。`discord.json` 由 `/reply-mode` 写入，通常不手动改。
 
-## 参考规范
+## 常见故障
 
-本手册在填写时必须与以下对齐：
+| 现象 | 检查 |
+|---|---|
+| 启动提示配置模板已创建 | 编辑 `~/.agent-nexus/config.json`，至少填 `discord.botUserId`、`discord.allowedUserIds`、`claudeCode.workingDir` |
+| 启动提示 token 文件已创建 / token 为空 | 写入 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` 并保持 `0600` |
+| 启动报 token 权限 | `chmod 600 ~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` |
+| `cc_compat_probe_failed` | 先跑 `claude --version`；确认 Claude Code 已登录，且当前版本支持长驻 `stream-json` 与工具权限检查 |
+| Discord 里无响应 | 确认 `allowedUserIds` 包含发送者 user id；默认模式下确认消息显式 @bot |
+| `/reply-mode` 不出现 | 开发时配置 `discord.testGuildId`，避免全局 slash command 缓存延迟 |
+| bot 回复自己或循环 | 检查 `discord.botUserId` 是否等于实际 bot user id；启动日志中不应出现 `discord_bot_user_id_mismatch` |
 
-- [`../dev/architecture/overview.md`](../dev/architecture/overview.md)
-- [`../dev/spec/observability.md`](../dev/spec/infra/observability.md)
-- [`../dev/spec/persistence.md`](../dev/spec/infra/persistence.md)
-- [`../dev/spec/cost-and-limits.md`](../dev/spec/infra/cost-and-limits.md)
-- [`../dev/spec/security.md`](../dev/spec/security/README.md)
+## 升级
+
+```bash
+git pull --ff-only
+pnpm install
+pnpm build
+pnpm test
+pnpm pack:cli
+npm install -g packages/cli/agent-nexus-cli-*.tgz
+```
+
+升级后重启进程。若升级涉及配置字段，按 `README.md` 与 [`../product/user-guide.md`](../product/user-guide.md) 更新 `~/.agent-nexus/config.json`。
+
+## 备份与清理
+
+- 备份 `~/.agent-nexus/config.json` 时不要把 token 一起提交到仓库。
+- 轮换 token 时，在 Discord Developer Portal 重新生成 token，覆盖 `DISCORD_BOT_TOKEN`，再重启进程。
+- 删除 `~/.agent-nexus/state/discord.json` 会让 reply mode 回到默认 `mention`。

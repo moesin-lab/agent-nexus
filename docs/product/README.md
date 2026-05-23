@@ -2,7 +2,7 @@
 title: 产品文档中心
 type: index
 status: active
-summary: 面向使用者的文档中心；已补齐 Discord 起步文档，其他章节继续完善
+summary: 面向使用者的文档中心；覆盖本机安装、Discord 配置、启动与基础使用
 tags: [product, navigation]
 related:
   - root/README
@@ -13,22 +13,22 @@ related:
 
 # 产品文档中心
 
-> **状态**：部分可用。当前先补齐 Discord 申请与使用起步文档，其他章节继续分批完善。
+> **状态**：可用于本机 Discord MVP。高级部署、预算视图与多平台内容仍按实际需求补齐。
 
 ## 本中心的定位
 
 面向**使用者**（非开发者）。回答：
 
-- 怎么安装？
-- 怎么配置 Discord bot / Anthropic API key？
+- 怎么安装和启动？
+- 怎么配置 Discord bot？
 - 在 Discord 里怎么用？支持哪些命令？
 - 出问题怎么查？
 
-## 为什么暂不全写
+## 范围
 
-- 仍有部分使用流程和命令集合未冻结
-- 先把已经稳定的入口、配置和申请步骤写清楚，避免散落在代码注释和 README 里
-- 其余内容按实际反馈补齐，避免一次性写出过时文档
+- 本中心只写使用者能直接执行的步骤。
+- 内部接口、架构决策、测试策略放在 [`../dev/`](../dev/)。
+- 本机长期运行、日志、停机与排障放在 [`../ops/runbook.md`](../ops/runbook.md)。
 
 ## 本中心 vs `dev/` vs `ops/`
 
@@ -40,19 +40,19 @@ related:
 
 ## 文档清单
 
-- [`user-guide.md`](user-guide.md) — 入门与使用指南（仍在补充）
-- [`platforms/discord.md`](platforms/discord.md) — Discord 专属使用手册（已补齐申请步骤）
-- [`faq.md`](faq.md) — 常见问题（仍在补充）
+- [`user-guide.md`](user-guide.md) — 安装、配置、启动与基础使用
+- [`platforms/discord.md`](platforms/discord.md) — Discord bot 申请、邀请、权限与验证
+- [`faq.md`](faq.md) — 常见问题
 
 ## 继续补齐的触发条件
 
-本中心在下列里程碑后开始填写：
+下列内容出现稳定需求后再补：
 
-1. 可执行二进制/包产出（ADR-0004 语言定、首版编译通过）
-2. Slash command 集合冻结
-3. 配置项清单冻结
-4. 有外部测试用户（哪怕 1 位）给出初版反馈
+1. 多平台安装包或二进制分发
+2. 长期运行方式从手动命令升级到 service / launch agent
+3. 预算与成本的用户可见界面
+4. 外部测试用户反馈出的高频问题
 
 ## 语言
 
-本中心填写时同时提供中英双语（写给全球使用者）。开发文档只写中文。
+当前只写中文。双语翻译等产品入口稳定后统一处理。

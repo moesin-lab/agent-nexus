@@ -1,8 +1,8 @@
 ---
 title: 常见问题（FAQ）
 type: product
-status: placeholder
-summary: 用户常见问题；等积累反馈后从 Issue 汇聚
+status: active
+summary: 使用 agent-nexus 时最常见的安装、配置、权限和运行问题
 tags: [product, faq]
 related:
   - product/README
@@ -10,25 +10,50 @@ related:
   - dev/adr/0003-deployment-local-desktop
 ---
 
-# 常见问题（占位）
+# 常见问题
 
-> **状态**：占位。等积累到一定用户反馈后填写。
+## 关机后 bot 还会响应吗？
 
-## 预计会包含的问题（从 `dev/` 推测）
+不会。agent-nexus 是本机进程，不是云服务。电脑关机、进程退出或网络断开后，Discord bot 不会继续处理消息。
 
-- **关机后 bot 还响应吗？** 不，见 [`../dev/adr/0003-deployment-local-desktop.md`](../dev/adr/0003-deployment-local-desktop.md)。
-- **多个用户能共用一个 bot 吗？** 按 allowlist 可以让多人使用，但每人是独立 session；不支持共享同一个 CC 会话。
-- **为什么不支持 Feishu / Slack？** MVP 只支持 Discord，见 [`../dev/adr/0001-im-platform-discord.md`](../dev/adr/0001-im-platform-discord.md)。未来可能增加。
-- **为什么 Bash 默认禁用？** 安全考量，见 [`../../dev/spec/security.md`](../dev/spec/security/README.md)。
-- **费用怎么算？** 预算机制见 [`../../dev/spec/cost-and-limits.md`](../dev/spec/infra/cost-and-limits.md)。
-- **数据在哪？能备份吗？** 本地 `~/.agent-nexus/`，见 [`../../dev/spec/persistence.md`](../dev/spec/infra/persistence.md)。
+## 为什么 bot 不响应我的消息？
 
-## 为什么现在不写
+按顺序检查：
 
-FAQ 的价值来自真实用户问题聚合。凭空猜的 FAQ 多半命中不了用户的疑惑。
+1. Discord Developer Portal 是否开启 `MESSAGE CONTENT INTENT`。
+2. 你是否在 `discord.allowedUserIds` 里。
+3. 默认 `mention` 模式下，消息是否显式 @ 了 bot。
+4. 启动日志是否出现 `discord_ready` 和 `engine_started`。
+5. bot 是否在目标 server / channel 有读写消息权限。
 
-## 填写流程
+## 多个用户能共用一个 bot 吗？
 
-- 每次用户报问题 → 开 Issue
-- 同类问题出现 ≥3 次 → 本 FAQ 添加条目
-- 条目过时 → 删除或标注 outdated
+可以把多个 Discord user id 写进 `discord.allowedUserIds`。会话按 `(channelId, userId)` 隔离，不同用户不会共享同一个 Claude Code session。
+
+## 为什么 `allowedUserIds` 必填？
+
+agent-nexus 能驱动本机 Claude Code 读写文件。漏配用户白名单时直接拒绝启动，比“默认所有人都能用”安全。
+
+## 为什么 `Bash` 默认禁用？
+
+`Bash` 可以执行任意 shell 命令，风险比读文件和编辑文件更高。需要时可以显式加入 `claudeCode.allowedTools`，启动日志会提醒这个风险。
+
+## `/reply-mode all` 会让所有人都能用吗？
+
+不会。`all` 只表示“不必 @bot 也触发”，仍然先检查 `allowedUserIds`。
+
+## 数据和密钥放在哪里？
+
+- 配置：`~/.agent-nexus/config.json`
+- Discord token：`~/.agent-nexus/secrets/DISCORD_BOT_TOKEN`
+- Discord 运行状态：默认 `~/.agent-nexus/state/discord.json`
+
+不要把 token 写进仓库、Issue、PR 或聊天截图。
+
+## 支持 Slack / Feishu / Telegram 吗？
+
+不支持。当前唯一平台是 Discord。
+
+## 长回复怎么显示？
+
+Discord 单条消息有长度限制。agent-nexus 会尽量通过 edit 更新当前回复；超过平台限制时会按切片发送或编辑多条消息。

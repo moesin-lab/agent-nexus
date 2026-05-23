@@ -33,11 +33,17 @@ pnpm pack:cli
 
 ```bash
 tmp="$(mktemp -d)"
-npm install --prefix "$tmp" packages/cli/agent-nexus-cli-*.tgz
-"$tmp/node_modules/.bin/agent-nexus"
+export HOME="$tmp/home"
+npm install --prefix "$tmp/install" packages/cli/agent-nexus-cli-*.tgz
+"$tmp/install/node_modules/.bin/agent-nexus"
 ```
 
-在没有真实 `~/.agent-nexus/config.json` 和 Discord token 的环境里，二进制可以以配置缺失错误退出；验收重点是 npm 安装成功、bin shim 能启动到应用自己的配置校验，而不是因 workspace 依赖或 shebang / 权限问题在 Node loader 阶段失败。
+在没有真实配置的环境里，二进制可以以配置模板创建提示退出；验收重点是：
+
+- npm 安装成功
+- bin shim 能启动到应用自己的配置校验，而不是因 workspace 依赖或 shebang / 权限问题在 Node loader 阶段失败
+- `~/.agent-nexus/` 与 `~/.agent-nexus/secrets/` 被创建为 `0700`
+- `~/.agent-nexus/config.json` 与 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` 被创建为 `0600`
 
 ## 发布前检查
 

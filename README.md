@@ -2,7 +2,7 @@
 title: agent-nexus
 type: root
 status: active
-summary: 把本机 Claude Code CLI 接入 IM 平台的桥；MVP 目标 Discord + 本机桌面形态
+summary: 把本机 Claude Code CLI 接入 Discord 的本机桥；MVP 已支持长驻 stream-json、工具可见性与流式 edit
 tags: [project, discord, cc-cli]
 related:
   - root/AGENTS
@@ -22,11 +22,16 @@ agent-nexus 让你在 IM（当前：Discord）里直接和本机 Claude Code 对
 
 这是一个参考 [cc-connect](https://github.com/chenhg5/cc-connect) 但刻意规避其已知教训的重新实现：**文档先行、契约先行、测试先行**。
 
-## 当前阶段
+## 当前能力
 
-**MVP walking skeleton**：Discord `@mention` → daemon `Engine` → CC CLI one-shot → Discord 回复，可端到端跑通。多轮对话靠 CC `--resume <ccSessionID>` 续话；`/new` 文本前缀重置内存 sessionStore。
+**Discord + 本机 Claude Code CLI MVP** 已可端到端运行：
 
-横切能力（idempotency / ratelimit / redact / auth / persistence / streaming edit）全部留 TODO 锚点 + 链 spec，按 spec 顺序逐 PR 接入。
+- Discord `@mention` → daemon `Engine` → 长驻 Claude Code `stream-json` 子进程 → Discord 回复。
+- 同一 `(channelId, userId)` 复用活跃 session；`/new` 文本前缀重置该会话。
+- IM 侧可看到工具调用状态、流式文本、typing 指示与原地 edit。
+- 白名单外工具会在执行前被拒绝；机制见 [`docs/dev/spec/security/tool-boundary.md`](docs/dev/spec/security/tool-boundary.md)。`Bash` 不在默认允许集。
+
+仍处在本机桌面形态：Discord 是当前唯一平台，部署与密钥由本机用户维护。
 
 ## 已锁定的前置决策
 
@@ -89,6 +94,8 @@ chmod 600 ~/.agent-nexus/config.json
 字段说明：
 
 - `discord.botUserId`（必填）：bot 的 Discord user ID
+- `discord.allowedUserIds`（必填）：允许使用 bot 的 Discord user ID 列表；缺失或空数组会启动失败
+- `discord.testGuildId`（可选）：把 `/reply-mode` slash command 限定注册到某个测试 guild，开发时更快生效
 - `claudeCode.workingDir`（必填）：CC 默认工作目录，per-session 可覆盖
 - `claudeCode.bin`（可选，默认 `claude`）：CC CLI 可执行路径
 - `claudeCode.allowedTools`（可选）：默认 `Read/Grep/Glob/Edit/Write`。**`Bash` 不在默认集**——启用须显式列出，启动会打 warn（参见 [`docs/dev/spec/security/tool-boundary.md`](docs/dev/spec/security/tool-boundary.md)）
@@ -118,24 +125,26 @@ npm install -g packages/cli/agent-nexus-cli-*.tgz
 agent-nexus
 ```
 
-启动会先跑 CC CLI 兼容性 probe（`--version` + `--print` 探针），失败直接 `exit 1`；通过后连 Discord，看到 `discord_ready` 日志即可在频道里 `@bot ping`。
+启动会先跑 CC CLI 兼容性 probe（版本、`--print` JSON、长驻 `stream-json`、工具权限检查），失败直接 `exit 1`；通过后连 Discord，看到 `discord_ready` / `engine_started` 日志即可在频道里 `@bot ping`。
 
 ### 5. 使用
 
-- `@bot <prompt>`：发起一轮 CC 对话；同 `(channelId, userId)` 后续 `@bot` 自动 `--resume` 上一轮 ccSessionID
+- `@bot <prompt>`：发起一轮 CC 对话；同 `(channelId, userId)` 后续消息复用活跃 session
 - `@bot /new`：清当前 (channel, user) 的内存 session，回复 `[new session ready]`
 - `@bot /new <prompt>`：清 + 立即用 `<prompt>` 起新一轮
+- `/reply-mode mode:<mention|all>`：在 allowlist 内切换 Discord 消息触发模式
 
 约束：
 
-- 仅响应**显式 @ 本机器人**的消息；只剥本 bot 的 mention，其他 `@<user>` 保留给 CC 看到原文
-- DM、threads、interactions 暂未支持（MVP 跳过）
-- 长回复按 1900 chars 切片为多条消息发出（保 Discord 2000 上限的余量）；编辑 / 流式 edit 是后续 PR
+- 默认只响应**显式 @ 本机器人**的消息；切到 `all` 后仍只响应 `allowedUserIds` 内用户
+- 只剥本 bot 的 mention，其他 `@<user>` 保留给 CC 看到原文
+- threads、附件、按钮、reaction、delete 暂未支持；长回复会按切片发送 / edit
 
 ## 文档入口
 
 - **开发者**：先读 [`AGENTS.md`](AGENTS.md) 和 [`docs/dev/README.md`](docs/dev/README.md)
-- **使用者**：[`docs/product/README.md`](docs/product/README.md)（MVP 后续会补）
+- **使用者**：[`docs/product/README.md`](docs/product/README.md)
+- **运维者**：[`docs/ops/runbook.md`](docs/ops/runbook.md)
 - **所有文档导航**：[`docs/README.md`](docs/README.md)
 
 ## 协作

@@ -1,5 +1,14 @@
 import type { SessionKey } from './session-key.js';
 
+/** docs/dev/spec/agent-runtime.md §AgentCapabilitySet */
+export interface AgentCapabilitySet {
+  supportsThinking: boolean;
+  supportsStreaming: boolean;
+  supportsToolCallEvents: boolean;
+  supportsInterrupt: boolean;
+  supportsStdinInterrupt: boolean;
+}
+
 /** docs/dev/spec/agent-runtime.md §AgentInput */
 export interface AgentInput {
   type: 'user_message' | 'tool_result' | 'interrupt_ack';
@@ -43,11 +52,20 @@ export interface UsageRecord {
   completeness: 'complete' | 'partial' | 'missing';
 }
 
+/** docs/dev/spec/agent-runtime.md §ToolResultContent */
+export type ContentBlock = { type: string; [key: string]: unknown };
+
+export type ToolResultContent =
+  | { kind: 'empty' }
+  | { kind: 'text'; text: string }
+  | { kind: 'blocks'; blocks: ContentBlock[] }
+  | { kind: 'object'; object: Record<string, unknown> }
+  | { kind: 'unknown'; raw: string };
+
+export type ToolCallStatus = 'ok' | 'error' | 'cancelled';
+
 /**
  * docs/dev/spec/agent-runtime.md §AgentEvent
- *
- * MVP 子集：仅 session_started / text_final / turn_finished / usage / error / session_stopped。
- * thinking / text_delta / tool_call_* 留给 stream-json 升级 PR。
  */
 export type AgentEvent =
   | {
@@ -57,8 +75,24 @@ export type AgentEvent =
       sequence: number;
       payload: {
         agentSessionId?: string;
-        workingDir?: string;
+        pid?: number;
+        workingDir: string;
+        capabilities: AgentCapabilitySet;
       };
+    }
+  | {
+      type: 'thinking';
+      traceId: string;
+      timestamp: Date;
+      sequence: number;
+      payload: { text: string };
+    }
+  | {
+      type: 'text_delta';
+      traceId: string;
+      timestamp: Date;
+      sequence: number;
+      payload: { text: string };
     }
   | {
       type: 'text_final';
@@ -66,6 +100,44 @@ export type AgentEvent =
       timestamp: Date;
       sequence: number;
       payload: { text: string };
+    }
+  | {
+      type: 'tool_call_started';
+      traceId: string;
+      timestamp: Date;
+      sequence: number;
+      payload: { callId: string; toolName: string; inputSummary: string };
+    }
+  | {
+      type: 'tool_call_progress';
+      traceId: string;
+      timestamp: Date;
+      sequence: number;
+      payload: { callId: string; note: string };
+    }
+  | {
+      type: 'tool_result';
+      traceId: string;
+      timestamp: Date;
+      sequence: number;
+      payload: {
+        callId: string;
+        resultSequence: number;
+        content: ToolResultContent;
+        isError: boolean;
+      };
+    }
+  | {
+      type: 'tool_call_finished';
+      traceId: string;
+      timestamp: Date;
+      sequence: number;
+      payload: {
+        callId: string;
+        toolName: string;
+        status: ToolCallStatus;
+        errorSummary?: string;
+      };
     }
   | {
       type: 'usage';

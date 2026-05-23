@@ -137,6 +137,7 @@ export function createClaudeCodeRuntime(
     supportsStreaming: false,
     supportsToolCallEvents: false,
     supportsInterrupt: true,
+    supportsStdinInterrupt: false,
   };
 
   const runtime: AgentRuntime = {
@@ -376,7 +377,8 @@ export function createClaudeCodeRuntime(
                 sequence: sequence++,
                 payload: {
                   agentSessionId: typeof sid === 'string' ? sid : undefined,
-                  workingDir: typeof reportedCwd === 'string' ? reportedCwd : undefined,
+                  workingDir: typeof reportedCwd === 'string' ? reportedCwd : cwd,
+                  capabilities,
                 },
               });
               continue;

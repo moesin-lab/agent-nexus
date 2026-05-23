@@ -3,7 +3,7 @@ export { parseDiscordConfig, type DiscordConfig, DiscordConfigError } from './co
 // TODO MVP 跳过：
 // - DM 消息（intents 没开 DirectMessages）
 // - 长文本切片保留代码块边界 → docs/dev/spec/message-protocol.md §文本切片
-// - edit / delete / react / typing → spec/platform-adapter.md 各对应段
+// - delete / react → spec/platform-adapter.md 各对应段
 // - threads → 同上
 
 import { randomUUID } from 'node:crypto';
@@ -242,6 +242,23 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
   let stopped = false;
   // 启动时从 state 文件读，缺省 'mention'。运行时由 /reply-mode 切换更新。
   let replyMode: ReplyMode = 'mention';
+  const editLocks = new WeakMap<MessageRef, Promise<void>>();
+
+  const runSerializedEdit = async (
+    ref: MessageRef,
+    task: () => Promise<void>,
+  ): Promise<void> => {
+    const prev = editLocks.get(ref) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(task);
+    editLocks.set(ref, next);
+    try {
+      await next;
+    } finally {
+      if (editLocks.get(ref) === next) {
+        editLocks.delete(ref);
+      }
+    }
+  };
 
   return {
     name() {
@@ -251,7 +268,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
     capabilities(): CapabilitySet {
       return {
         maxTextLength: 2000,
-        supportsEdit: false,
+        supportsEdit: true,
         supportsDelete: false,
         supportsReactions: false,
         supportsEmbeds: false,
@@ -260,7 +277,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
         supportsEphemeral: false,
         supportsAttachments: false,
         maxAttachmentsPerMessage: 0,
-        supportsTypingIndicator: false,
+        supportsTypingIndicator: true,
       };
     },
 
@@ -403,8 +420,49 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
       };
     },
 
-    async edit(): Promise<void> {
-      throw new Error('platform-discord MVP: edit not supported');
+    async edit(ref: MessageRef, message: OutboundMessage): Promise<void> {
+      await runSerializedEdit(ref, async () => {
+        const channel = await client.channels.fetch(ref.channelId);
+        if (!channel || !channel.isTextBased()) {
+          throw new Error(
+            `platform-discord: channel ${ref.channelId} is not text-based or not found`,
+          );
+        }
+
+        const slices = buildSlices(message.text);
+        const existingIds = [...ref.messageIds];
+
+        for (let i = 0; i < Math.min(slices.length, existingIds.length); i++) {
+          await channel.messages.edit(existingIds[i]!, slices[i]!);
+        }
+
+        if (slices.length > existingIds.length) {
+          if (!channel.isSendable()) {
+            throw new Error(
+              `platform-discord: channel ${ref.channelId} cannot send extra edit slices`,
+            );
+          }
+          for (const slice of slices.slice(existingIds.length)) {
+            const sent = await channel.send(slice);
+            ref.messageIds.push(sent.id);
+            ref.messageId = sent.id;
+          }
+        }
+
+        if (existingIds.length > slices.length) {
+          for (const id of existingIds.slice(slices.length)) {
+            await channel.messages.delete(id);
+            const index = ref.messageIds.indexOf(id);
+            if (index >= 0) ref.messageIds.splice(index, 1);
+          }
+        }
+
+        const lastId = ref.messageIds[ref.messageIds.length - 1];
+        if (lastId === undefined) {
+          throw new Error('platform-discord: edit produced no message refs');
+        }
+        ref.messageId = lastId;
+      });
     },
 
     async delete(): Promise<void> {
@@ -415,12 +473,34 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
       throw new Error('platform-discord MVP: react not supported');
     },
 
-    async setTyping(): Promise<void> {
-      // P6 will enable supportsTypingIndicator and wire the Discord typing API.
+    async setTyping(sessionKey: SessionKey): Promise<void> {
+      try {
+        const channel = await client.channels.fetch(sessionKey.channelId);
+        if (!channel || !channel.isTextBased()) {
+          logger.debug(
+            { channelId: sessionKey.channelId },
+            'discord_typing_channel_unavailable',
+          );
+          return;
+        }
+        if (!('sendTyping' in channel) || typeof channel.sendTyping !== 'function') {
+          logger.debug(
+            { channelId: sessionKey.channelId },
+            'discord_typing_channel_unavailable',
+          );
+          return;
+        }
+        await channel.sendTyping();
+      } catch (err) {
+        logger.debug(
+          { err, channelId: sessionKey.channelId },
+          'discord_typing_failed',
+        );
+      }
     },
 
     async clearTyping(): Promise<void> {
-      // No-op while supportsTypingIndicator=false.
+      // Discord has no explicit clear API; typing expires automatically.
     },
   };
 }

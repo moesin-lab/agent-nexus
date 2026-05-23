@@ -33,7 +33,7 @@ main
  ├── 从 main checkout 新分支（命名见 standards/commit-style.md §分支命名）
  ├── 开发 + commit（粒度见 standards/commit-style.md §Commit 粒度）
  ├── push + 开 PR
- ├── 跑 CI + codex review
+ ├── 跑 CI + 独立 agent review
  ├── 通过后 squash merge 回 main
  └── 分支删除
 ```

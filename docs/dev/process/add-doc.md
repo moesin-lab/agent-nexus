@@ -20,7 +20,7 @@ related:
    - spec → 形态见 [`../standards/spec.md`](../standards/spec.md)，目录位置见 [`../spec/README.md`](../spec/README.md)
    - ADR → 形态见 [`../standards/adr.md`](../standards/adr.md)，模板见 [`../adr/template.md`](../adr/template.md)
    - 其他 owner → 文档形态语言见 [`../standards/docs-style.md`](../standards/docs-style.md)，落 owner 见 [`../standards/doc-ownership.md`](../standards/doc-ownership.md)
-3. **走 PR review**：分支 / PR / codex review 走 [`workflow.md`](workflow.md) 主路径，review 合格条件见 [`code-review.md`](code-review.md) + [`../standards/code-review.md`](../standards/code-review.md)。ADR PR 特有的禁止条款（未经 review 直接合入 / 改 Accepted）见 [`../standards/adr.md` §评审约束](../standards/adr.md#评审约束)。
+3. **走 PR review**：分支 / PR / 独立 agent review 走 [`workflow.md`](workflow.md) 主路径，review 合格条件见 [`code-review.md`](code-review.md) + [`../standards/code-review.md`](../standards/code-review.md)。ADR PR 特有的禁止条款（未经 review 直接合入 / 改 Accepted）见 [`../standards/adr.md` §评审约束](../standards/adr.md#评审约束)。
 4. **合入**：squash merge 后进入下游引用 / 落地。仅 ADR：被取代的形态变更（git mv 到 deprecated/、frontmatter 字段、索引同步）见 [`../standards/adr.md` §Superseded 形态变更](../standards/adr.md#superseded-形态变更)；通用作废文档归档与防污染规则见 [`docs-read.md`](docs-read.md)。
 
 ## 跳过判定

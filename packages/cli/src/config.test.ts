@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, chmod, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, chmod, mkdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -38,6 +38,19 @@ describe('config loader', () => {
   it('loadConfig 缺 config.json → ConfigError，hint 含 path', async () => {
     await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
     await expect(loadConfig()).rejects.toThrow(/config\.json/);
+  });
+
+  it('loadConfig 首次运行自动创建 config root 和 secrets 目录', async () => {
+    await rm(join(tmp, '.agent-nexus'), { recursive: true, force: true });
+
+    await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
+
+    const root = await stat(join(tmp, '.agent-nexus'));
+    const secrets = await stat(join(tmp, '.agent-nexus', 'secrets'));
+    expect(root.isDirectory()).toBe(true);
+    expect(secrets.isDirectory()).toBe(true);
+    expect(root.mode & 0o777).toBe(0o700);
+    expect(secrets.mode & 0o777).toBe(0o700);
   });
 
   it('loadConfig 缺 discord.botUserId → ConfigError（含字段名）', async () => {

@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { chmod, mkdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -56,9 +56,7 @@ export function defaultDiscordStatePath(): string {
 
 const CONFIG_HINT = (path: string) => `\
 agent-nexus 配置缺失：${path}
-请创建：
-  mkdir -p ${join(configRoot(), 'secrets')}
-  chmod 700 ${configRoot()} ${join(configRoot(), 'secrets')}
+配置目录已自动创建。请创建：
   cat > ${path} <<'JSON'
   {
     "discord": { "botUserId": "<your-bot-user-id>" },
@@ -70,12 +68,26 @@ agent-nexus 配置缺失：${path}
 
 const TOKEN_HINT = (path: string) => `\
 DISCORD_BOT_TOKEN 缺失或权限不对：${path}
-请创建（权限必须 0600）：
+secrets 目录已自动创建。请创建 token 文件（权限必须 0600）：
   echo -n '<your-token>' > ${path}
   chmod 600 ${path}
 `;
 
+export async function ensureConfigDirs(): Promise<void> {
+  const root = configRoot();
+  const secrets = join(root, 'secrets');
+  await mkdir(secrets, { recursive: true, mode: 0o700 });
+  await chmod(root, 0o700);
+  await chmod(secrets, 0o700);
+}
+
 export async function loadConfig(): Promise<AgentNexusConfig> {
+  try {
+    await ensureConfigDirs();
+  } catch (err) {
+    throw new ConfigError(`初始化配置目录失败：${(err as Error).message}`);
+  }
+
   const path = configPath();
   let raw: string;
   try {
@@ -137,6 +149,12 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
 }
 
 export async function loadDiscordToken(): Promise<string> {
+  try {
+    await ensureConfigDirs();
+  } catch (err) {
+    throw new SecretsPermissionError(`初始化 secrets 目录失败：${(err as Error).message}`);
+  }
+
   const path = discordTokenPath();
   let st;
   try {

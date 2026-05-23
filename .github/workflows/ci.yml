@@ -35,12 +35,15 @@ jobs:
       - name: Smoke test packed CLI
         run: |
           tmp="$(mktemp -d)"
-          npm install --prefix "$tmp" packages/cli/agent-nexus-cli-*.tgz
+          export HOME="$tmp/home"
+          npm install --prefix "$tmp/install" packages/cli/agent-nexus-cli-*.tgz
 
           set +e
-          "$tmp/node_modules/.bin/agent-nexus" >"$tmp/agent-nexus.out" 2>&1
+          "$tmp/install/node_modules/.bin/agent-nexus" >"$tmp/agent-nexus.out" 2>&1
           code=$?
           set -e
 
           test "$code" -eq 1
           grep -q "agent-nexus 配置缺失" "$tmp/agent-nexus.out"
+          test "$(stat -c '%a' "$HOME/.agent-nexus")" = "700"
+          test "$(stat -c '%a' "$HOME/.agent-nexus/secrets")" = "700"

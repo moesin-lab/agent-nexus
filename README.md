@@ -57,12 +57,7 @@ pnpm typecheck     # 仅 tsc --build；不生成 npm bin bundle
 
 ### 3. 配置
 
-配置目录 `~/.agent-nexus/`（权限 0700）：
-
-```bash
-mkdir -p ~/.agent-nexus/secrets
-chmod 700 ~/.agent-nexus ~/.agent-nexus/secrets
-```
+首次运行会自动创建配置目录 `~/.agent-nexus/` 和 `~/.agent-nexus/secrets/`，权限为 0700。
 
 写 `~/.agent-nexus/config.json`（至少含 `discord.botUserId` 和 `claudeCode.workingDir`）：
 

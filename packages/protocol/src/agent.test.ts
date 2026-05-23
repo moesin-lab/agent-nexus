@@ -104,7 +104,6 @@ const events = [
       callId: 'toolu-1',
       toolName: 'Read',
       status: toolStatus[0]!,
-      errorSummary: undefined,
     },
   },
   {

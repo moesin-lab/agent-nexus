@@ -178,7 +178,7 @@ type SessionStartedPayload = Extract<
 function ev<T extends AgentEvent['type']>(
   type: T,
   payload: T extends 'session_started'
-    ? Partial<SessionStartedPayload> & Pick<SessionStartedPayload, 'agentSessionId'>
+    ? Partial<SessionStartedPayload>
     : Extract<AgentEvent, { type: T }>['payload'],
   sequence = 0,
 ): AgentEvent {

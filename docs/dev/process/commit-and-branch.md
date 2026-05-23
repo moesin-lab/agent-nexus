@@ -41,7 +41,8 @@ main
 ## 合并策略
 
 - **squash merge**：默认。把分支上的多个提交压成一个，进入 main 的历史干净
-- 保留分支内的原子 commit 信息：在 PR 描述里附上关键 commit 列表
+- PR 分支允许多个普通 commit；修 review / 补文档 / 补测试时追加 commit 后普通 push，最终由 squash merge 压成一个 main commit
+- 保留分支内的关键 commit 信息：必要时在 PR 描述里附上关键 commit 列表
 - 禁止 merge commit 混入 main（设置 repo 默认为 squash）
 - 禁止 force push 到 main
 
@@ -53,7 +54,8 @@ main
 ## 禁止事项（行为）
 
 - 禁止 `git commit --amend` 改已 push 到共享分支的 commit
-- 禁止 `git push --force` 到 main（个人分支可以 `--force-with-lease`）
+- 禁止把已开 PR 的常规修订通过 `git push --force` / `git push --force-with-lease` 改写远端历史；本仓库走 squash merge，常规修订用追加 commit + 普通 push
+- `--force-with-lease` 只允许在维护者明确要求，或需要修复错误推送 / 泄露风险 / rebase 后同步历史且已确认不会覆盖他人工作时使用；禁止使用裸 `--force`
 - 禁止跳过 hook：`--no-verify` 只有在 hook 本身出 bug 且得到维护者同意时才用
 - 禁止在 `main` 上直接 commit / push 未经 PR 的改动
 

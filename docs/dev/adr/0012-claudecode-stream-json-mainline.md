@@ -36,7 +36,7 @@ superseded_by: null
 - 2026-05-23：复查 cc-connect 后补测隐藏 `--permission-prompt-tool stdio`——`can_use_tool` control 主路径坐实，决策点 5 主强制点从 PreToolUse hook 修正为 stdio permission control（hook 保留为 fallback / 纵深）
 - 2026-05-23：修正 spec/ADR 启动形态——agent-nexus 主路径为**不带 `--print`、由 stdout/stdin pipe 触发 headless 的长驻 stream-json structured IO 子进程**；`--print` 只保留为一次性 probe / legacy fallback
 - 2026-05-23：对齐 `/workspace/claudecode-src` 入口扫描——stdin 输入形态以 `user` / `control_response` / 少量 `control_request` 为 MVP，stdout 权限请求为 `control_request{subtype:"can_use_tool"}`，没有独立 `permission_request` SDK 事件
-- 2026-05-23：Accepted（epic 全部 PR 合入并 P8 验证通过后，maintainer 复核签字，见本 PR）
+- 2026-05-23：Accepted（maintainer 复盘签字，见 PR #99）
 
 ## Context
 

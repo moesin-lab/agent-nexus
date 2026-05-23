@@ -21,7 +21,7 @@ related:
 - `node --version` 为 20 或更高版本。
 - `pnpm --version` 可运行。
 - `claude --version` 可运行。
-- 首次运行会自动创建 `~/.agent-nexus/config.json` 与 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN`；编辑后确认两者权限为 `0600`。
+- 首次运行会自动创建 `~/.agent-nexus/config.json` 与 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN`；后续启动会把模板新增但本地缺失的配置字段补回 `config.json`。编辑后确认两者权限为 `0600`。
 - Discord bot 已开启 `MESSAGE CONTENT INTENT`，并在目标 server / channel 有读写消息权限。
 
 ## 手动启动

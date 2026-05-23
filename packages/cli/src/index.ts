@@ -34,7 +34,11 @@ async function main(): Promise<void> {
   // CompatibilityProbe 覆盖 spec/agent-backends/claude-code-cli.md §兼容性自检：
   // --version、--print JSON、长驻 stream-json、permission control。
   try {
-    await runCompatibilityProbe({ claudeBin: config.claudeCode.bin, logger });
+    await runCompatibilityProbe({
+      claudeBin: config.claudeCode.bin,
+      logger,
+      permissionLevel: config.claudeCode.permissionLevel,
+    });
   } catch (err) {
     logger.error({ err }, 'cc_compat_probe_failed');
     process.exit(1);
@@ -47,10 +51,17 @@ async function main(): Promise<void> {
       'tool_boundary_bash_enabled',
     );
   }
+  if (config.claudeCode.permissionLevel !== 'default') {
+    logger.warn(
+      { permissionLevel: config.claudeCode.permissionLevel },
+      'cc_permission_level_non_default',
+    );
+  }
 
   const agent = createClaudeCodeRuntime({
     claudeBin: config.claudeCode.bin,
     allowedTools: config.claudeCode.allowedTools,
+    permissionLevel: config.claudeCode.permissionLevel,
     defaultWorkingDir: config.claudeCode.workingDir,
     logger,
   });

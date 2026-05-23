@@ -68,6 +68,8 @@ pnpm typecheck     # 仅 tsc --build；不生成 npm bin bundle
 - `~/.agent-nexus/config.json` 模板，权限为 0600
 - `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` 空文件，权限为 0600
 
+之后每次启动都会检查 `config.json`，把模板中新增但本地缺失的字段自动补齐到文件中；已有字段不会被覆盖。没有安全默认值的必填字段只会补占位值，仍需手动填写。
+
 编辑 `~/.agent-nexus/config.json`（至少填 `discord.botUserId`、`discord.allowedUserIds` 和 `claudeCode.workingDir`）：
 
 ```json
@@ -79,6 +81,7 @@ pnpm typecheck     # 仅 tsc --build；不生成 npm bin bundle
   "claudeCode": {
     "workingDir": "/path/to/your/repo",
     "bin": "claude",
+    "permissionLevel": "default",
     "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"]
   },
   "log": {
@@ -98,6 +101,7 @@ chmod 600 ~/.agent-nexus/config.json
 - `discord.testGuildId`（可选）：把 `/reply-mode` slash command 限定注册到某个测试 guild，开发时更快生效
 - `claudeCode.workingDir`（必填）：CC 默认工作目录，per-session 可覆盖
 - `claudeCode.bin`（可选，默认 `claude`）：CC CLI 可执行路径
+- `claudeCode.permissionLevel`（可选，默认 `default`）：原样传给 Claude Code 子进程的 `--permission-mode`，允许 `default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan`。只有 `default` 会启用并自检 stdio 工具权限控制；其他模式会跳过 `can_use_tool` probe、启动打 warn，并要求 `init.permissionMode` 与配置完全一致
 - `claudeCode.allowedTools`（可选）：默认 `Read/Grep/Glob/Edit/Write`。**`Bash` 不在默认集**——启用须显式列出，启动会打 warn（参见 [`docs/dev/spec/security/tool-boundary.md`](docs/dev/spec/security/tool-boundary.md)）
 - `log.level`（可选，默认 `info`）：`trace|debug|info|warn|error|fatal`
 

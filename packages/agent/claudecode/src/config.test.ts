@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { parseClaudeCodeConfig, ClaudeCodeConfigError, DEFAULT_ALLOWED_TOOLS, DEFAULT_BIN } from './config.js';
+import {
+  parseClaudeCodeConfig,
+  ClaudeCodeConfigError,
+  DEFAULT_ALLOWED_TOOLS,
+  DEFAULT_BIN,
+  DEFAULT_PERMISSION_LEVEL,
+} from './config.js';
 
 describe('parseClaudeCodeConfig', () => {
   it('缺 workingDir → ClaudeCodeConfigError', () => {
@@ -19,6 +25,7 @@ describe('parseClaudeCodeConfig', () => {
     // spec/security/tool-boundary.md：Bash 必须默认禁用，启用须显式列入 allowedTools。
     const result = parseClaudeCodeConfig({ workingDir: '/x' });
     expect(result.bin).toBe(DEFAULT_BIN);
+    expect(result.permissionLevel).toBe(DEFAULT_PERMISSION_LEVEL);
     expect(result.allowedTools).not.toContain('Bash');
     expect(result.allowedTools).toEqual(
       expect.arrayContaining(['Read', 'Grep', 'Glob', 'Edit', 'Write']),
@@ -45,6 +52,38 @@ describe('parseClaudeCodeConfig', () => {
       allowedTools: ['Read', 'Bash'],
     });
     expect(result.allowedTools).toEqual(['Read', 'Bash']);
+  });
+
+  it.each([
+    'acceptEdits',
+    'auto',
+    'bypassPermissions',
+    'default',
+    'dontAsk',
+    'plan',
+  ] as const)('显式 permissionLevel=%s → 保留', (permissionLevel) => {
+    const result = parseClaudeCodeConfig({
+      workingDir: '/x',
+      permissionLevel,
+    });
+    expect(result.permissionLevel).toBe(permissionLevel);
+  });
+
+  it('兼容 snake_case permission_level', () => {
+    const result = parseClaudeCodeConfig({
+      workingDir: '/x',
+      permission_level: 'bypassPermissions',
+    });
+    expect(result.permissionLevel).toBe('bypassPermissions');
+  });
+
+  it('permissionLevel 非允许值 → ClaudeCodeConfigError', () => {
+    expect(() =>
+      parseClaudeCodeConfig({ workingDir: '/x', permissionLevel: 'bubble' }),
+    ).toThrow(ClaudeCodeConfigError);
+    expect(() =>
+      parseClaudeCodeConfig({ workingDir: '/x', permissionLevel: 'bubble' }),
+    ).toThrow(/permissionLevel/);
   });
 
   it('ctx.defaultBin 覆盖内置默认值', () => {

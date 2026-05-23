@@ -224,6 +224,7 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
       supportsToolCallEvents: true,
       supportsInterrupt: true,
       supportsStdinInterrupt: false,
+      supportsNativeToolWhitelist: true,
     });
     expect(events.filter((event) => event.type === 'text_final')).toHaveLength(2);
     expect(events.filter((event) => event.type === 'turn_finished')).toHaveLength(2);

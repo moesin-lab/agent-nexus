@@ -125,7 +125,6 @@ function makeRuntime() {
   return createCodexRuntime({
     config: codexConfig,
     logger: fakeLogger,
-    syntheticTurnFinishedDeliveryMs: 10,
     gracefulInterruptMs: 20,
     sigtermGraceMs: 30,
   });
@@ -196,7 +195,7 @@ describe('createCodexRuntime', () => {
         '--ignore-rules',
         'hello',
       ],
-      { buffer: false },
+      { buffer: false, stdin: 'ignore' },
     );
 
     child.emitFixture(fixture('baseline-text'));
@@ -484,6 +483,7 @@ describe('createCodexRuntime', () => {
         },
       }),
     );
+    await nextTick();
 
     runtime.interrupt(session);
     expect(child.kill).toHaveBeenCalledWith('SIGINT');
@@ -511,6 +511,59 @@ describe('createCodexRuntime', () => {
       throw new Error('expected tool_call_finished');
     }
     expect(toolFinished.payload.status).toBe('cancelled');
+  });
+
+  it('interrupt 后子进程立刻退出也保持 user_interrupt terminal', async () => {
+    const child = makeExecSubproc();
+    child.kill.mockImplementation((signal?: NodeJS.Signals | number) => {
+      if (signal === 'SIGINT') {
+        child.reject(Object.assign(new Error('interrupted'), { signal: 'SIGINT' }));
+        return true;
+      }
+      return true;
+    });
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+    const runtime = makeRuntime();
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'long',
+      traceId: 'trace-int-fast-exit',
+    });
+    await nextTick();
+    child.emitLine(
+      JSON.stringify({ type: 'thread.started', thread_id: 'thread-int-fast' }),
+    );
+    child.emitLine(
+      JSON.stringify({
+        type: 'item.started',
+        item: {
+          id: 'item_0',
+          type: 'command_execution',
+          command: "/bin/zsh -lc 'sleep 60'",
+          aggregated_output: '',
+          exit_code: null,
+          status: 'in_progress',
+        },
+      }),
+    );
+    await nextTick();
+
+    runtime.interrupt(session);
+    await turn;
+
+    const terminals = events.filter((event) => event.type === 'turn_finished');
+    expect(terminals).toHaveLength(1);
+    const terminal = terminals[0];
+    if (terminal?.type !== 'turn_finished') throw new Error('expected terminal');
+    expect(terminal.payload).toEqual({
+      reason: 'user_interrupt',
+      turnSequence: 1,
+      source: 'runtime-synthesized',
+    });
+    expect(events.some((event) => event.type === 'error')).toBe(false);
   });
 
   it('interrupt 后下一轮等待旧进程清理完成再 resume', async () => {

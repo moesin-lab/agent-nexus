@@ -38,7 +38,7 @@ agent-nexus 让你在 IM（当前：Discord）里直接和本机 Claude Code 对
 | 维度 | 决策 | ADR |
 |---|---|---|
 | IM 平台（MVP） | Discord | [0001](docs/dev/adr/0001-im-platform-discord.md) |
-| Agent 后端 | Claude Code CLI | [0002](docs/dev/adr/0002-agent-backend-claude-code-cli.md) |
+| Agent 后端 | Claude Code CLI（默认）/ Codex CLI（显式配置） | [0002](docs/dev/adr/0002-agent-backend-claude-code-cli.md), [0014](docs/dev/adr/0014-agent-backend-codex-cli.md) |
 | 部署形态 | 本机桌面 | [0003](docs/dev/adr/0003-deployment-local-desktop.md) |
 | 实现语言 | TypeScript / Node + pnpm monorepo | [0004](docs/dev/adr/0004-language-runtime.md) |
 
@@ -48,6 +48,7 @@ agent-nexus 让你在 IM（当前：Discord）里直接和本机 Claude Code 对
 
 - Node ≥ 20、pnpm ≥ 10（`packageManager` 已锁 `pnpm@10.33.2`）
 - 本机已装 Claude Code CLI（`claude --version` 能跑）；如不在 `PATH` 里，配置项 `claudeCode.bin` 给绝对路径
+- 如要启用 Codex backend，本机还需安装并登录 Codex CLI（`codex --version` 能跑）；如不在 `PATH` 里，配置项 `codex.bin` 给绝对路径
 - Discord bot：在 [Discord Developer Portal](https://discord.com/developers/applications) 建 application + bot，记下 bot user ID 和 token；intents 至少打开 `MESSAGE CONTENT INTENT`
 
 ### 2. 安装与构建
@@ -70,10 +71,13 @@ pnpm typecheck     # 仅 tsc --build；不生成 npm bin bundle
 
 之后每次启动都会检查 `config.json`，把模板中新增但本地缺失的字段自动补齐到文件中；已有字段不会被覆盖。没有安全默认值的必填字段只会补占位值，仍需手动填写。
 
-编辑 `~/.agent-nexus/config.json`（至少填 `discord.botUserId`、`discord.allowedUserIds` 和 `claudeCode.workingDir`）：
+编辑 `~/.agent-nexus/config.json`（至少填 `discord.botUserId`、`discord.allowedUserIds`；默认 backend 还要填 `claudeCode.workingDir`）：
 
 ```json
 {
+  "agent": {
+    "backend": "claudecode"
+  },
   "discord": {
     "botUserId": "1234567890123456789",
     "allowedUserIds": ["2345678901234567890"]
@@ -83,6 +87,14 @@ pnpm typecheck     # 仅 tsc --build；不生成 npm bin bundle
     "bin": "claude",
     "permissionLevel": "default",
     "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"]
+  },
+  "codex": {
+    "workingDir": "/path/to/your/repo",
+    "bin": "codex",
+    "sandbox": "read-only",
+    "addDirs": [],
+    "loadUserConfig": false,
+    "loadRules": false
   },
   "ui": {
     "toolMessages": "append"
@@ -102,10 +114,17 @@ chmod 600 ~/.agent-nexus/config.json
 - `discord.botUserId`（必填）：bot 的 Discord user ID
 - `discord.allowedUserIds`（必填）：允许使用 bot 的 Discord user ID 列表；缺失或空数组会启动失败
 - `discord.testGuildId`（可选）：把 `/reply-mode` slash command 限定注册到某个测试 guild，开发时更快生效
-- `claudeCode.workingDir`（必填）：CC 默认工作目录，per-session 可覆盖
+- `agent.backend`（可选，默认 `claudecode`）：选择 `claudecode` 或 `codex`
+- `claudeCode.workingDir`（`agent.backend=claudecode` 时必填）：CC 默认工作目录，per-session 可覆盖
 - `claudeCode.bin`（可选，默认 `claude`）：CC CLI 可执行路径
 - `claudeCode.permissionLevel`（可选，默认 `default`）：原样传给 Claude Code 子进程的 `--permission-mode`，允许 `default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan`。只有 `default` 会启用并自检 stdio 工具权限控制；其他模式会跳过 `can_use_tool` probe、启动打 warn，并要求 `init.permissionMode` 与配置完全一致
 - `claudeCode.allowedTools`（可选）：默认 `Read/Grep/Glob/Edit/Write`。**`Bash` 不在默认集**——启用须显式列出，启动会打 warn（参见 [`docs/dev/spec/security/tool-boundary.md`](docs/dev/spec/security/tool-boundary.md)）
+- `codex.workingDir`（`agent.backend=codex` 时必填）：Codex 默认工作目录，传给 `--cd`
+- `codex.bin`（可选，默认 `codex`）：Codex CLI 可执行路径
+- `codex.model`（可选）：传给 Codex CLI 的 `--model`
+- `codex.sandbox`（可选，默认 `read-only`）：允许 `read-only` / `workspace-write`
+- `codex.addDirs`（可选，默认 `[]`）：逐个传给 `--add-dir`
+- `codex.loadUserConfig` / `codex.loadRules`（可选，默认 `false`）：默认传 `--ignore-user-config` / `--ignore-rules`，避免继承未审计的本机 Codex 配置或 rules
 - `ui.toolMessages`（可选，默认 `append`）：`append` 会把每个工具调用作为单独消息追加，并在结果到达时编辑该工具消息补结果摘要；`compact` 回到旧式紧凑显示，只把工具状态揉进当前回复消息
 - `log.level`（可选，默认 `info`）：`trace|debug|info|warn|error|fatal`
 

@@ -105,7 +105,11 @@ describe('createSelectedAgent', () => {
       logger,
     );
 
-    expect(runCodexProbeMock).toHaveBeenCalledWith({ config: codex, logger });
+    expect(runCodexProbeMock).toHaveBeenCalledWith({
+      config: codex,
+      logger,
+      timeoutMs: 300_000,
+    });
     expect(createCodexRuntimeMock).toHaveBeenCalledWith({ config: codex, logger });
     expect(runClaudeProbeMock).not.toHaveBeenCalled();
     expect(createClaudeCodeRuntimeMock).not.toHaveBeenCalled();

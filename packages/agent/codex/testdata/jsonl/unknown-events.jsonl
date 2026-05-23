@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"thread-unknown"}
+{"type":"turn.started"}
+{"type":"mystery.event","safe":"summary"}
+{"type":"item.completed","item":{"id":"item_x","type":"mystery_item","value":1}}
+{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0}}

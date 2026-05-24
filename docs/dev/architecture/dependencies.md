@@ -85,7 +85,7 @@ cli 里可以写一些 glue 代码，但禁止写业务逻辑。
 | daemon | `packages/daemon/` | `@agent-nexus/daemon` | 规划中 |
 | platform-discord | `packages/platform/discord/` | `@agent-nexus/platform-discord` | 规划中 |
 | agent-claudecode | `packages/agent/claudecode/` | `@agent-nexus/agent-claudecode` | 规划中 |
-| agent-codex | `packages/agent/codex/` | `@agent-nexus/agent-codex` | 已实现；通过 CLI `agent.backend=codex` 显式启用 |
+| agent-codex | `packages/agent/codex/` | `@agent-nexus/agent-codex` | 已实现；通过 CLI `agents[].backend="codex"` 显式启用 |
 | vscode | `packages/vscode/` | `@agent-nexus/vscode` | 规划中 |
 | web | `packages/web/` | `@agent-nexus/web` | 规划中 |
 | cli | `packages/cli/` | `@agent-nexus/cli` | 规划中 |

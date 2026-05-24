@@ -60,8 +60,8 @@ codex {
 归属规则：
 
 - `parseCodexConfig` / `CodexConfigError` / 默认值住 `@agent-nexus/agent-codex`，符合 [`config-ownership.md`](../../standards/config-ownership.md)。
-- CLI 只读取 `agent.backend` 并调用对应 backend package 的 config parser / probe / runtime factory；不得在 `packages/cli` 里校验 Codex 字段语义。
-- `claudeCode` 与 `codex` 配置块可以同时存在；只启用 `agent.backend` 选中的 backend。
+- CLI 只读取 `agents[].backend` 并调用对应 backend package 的 config parser / probe / runtime factory；不得在 `packages/cli` 里校验 Codex 字段语义。
+- `claudeCode` 与 `codex` 配置块按 `agents[].backend` 互斥；只启用该 agent 项选中的 backend owner 配置块。
 
 安全默认值：
 

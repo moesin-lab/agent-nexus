@@ -170,7 +170,7 @@ CLI loader 的职责：
 1. 校验顶层结构、`name` 唯一性、`type` / `backend` 枚举、binding 引用存在。
 2. 按 `platform.type` 调用对应 platform parser 校验 platform 字段与 binding match 条件。
 3. 调用 daemon.auth parser 校验每个 `platforms[].auth`。
-4. 按 `agent.backend` 调用对应 agent parser 校验 backend 私有字段。
+4. 按 `agents[].backend` 调用对应 agent parser 校验 backend 私有字段。
 5. 组装 platform adapter、agent runtime 与 routing table。
 
 CLI loader 不得：

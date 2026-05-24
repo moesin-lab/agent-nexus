@@ -32,7 +32,7 @@ contracts:
 - MCP server：单独配置 `config.security.mcpServers`，默认全禁
 - **`--allowed-tools` / `--permission-mode` 是配置意图声明，不是安全边界**：ADR-0012 决策点 5.1 实测（CC 2.1.148 / 2.1.149）二者不单独强制工具边界；工具隔离的强制点见 §工具隔离强制点
 - `claudeCode.permissionLevel` 默认必须为 `default`，agent-nexus 启动 CC 子进程时必须显式传 `--permission-mode <permissionLevel>`，避免继承用户全局 `settings.permissions.defaultMode`。允许值与 CC CLI 对齐：`default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan`；非 `default` 只允许用户显式配置，且必须打 warn、跳过 `can_use_tool` probe，并标注为不满足工具隔离强安全承诺
-- Codex CLI P2 基线没有 native tool whitelist / allowlist / denylist / 执行前 control request。Codex backend 必须声明 native tool whitelist 不支持，并用 `--sandbox`、`--ask-for-approval never`、`--cd`、`--add-dir`、`--ignore-user-config`、`--ignore-rules` 表达 process-level 边界；详见 [`codex-cli.md`](../agent-backends/codex-cli.md)。
+- Codex CLI 当前没有 native tool whitelist / allowlist / denylist / 执行前 control request。Codex backend 必须声明 native tool whitelist 不支持，并用 `--sandbox`、`--ask-for-approval never`、`--cd`、`--add-dir`、`--ignore-user-config`、`--ignore-rules` 表达 process-level 边界；详见 [`codex-cli.md`](../agent-backends/codex-cli.md)。
 
 ## 启用危险工具的要求
 

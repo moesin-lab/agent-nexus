@@ -22,16 +22,16 @@ contracts:
 
 任何 Codex CLI 行为偏离本契约 → compatibility probe fail closed，拒绝启动 Codex backend，而不是静默降级。
 
-## 支持版本（P2 基线）
+## 支持版本与主路径
 
 | 维度 | 取值 |
 |---|---|
 | CLI 命令名 | `codex` |
-| 已对账版本 | `codex-cli 0.133.0`（P1 本机实测） |
+| 已对账版本 | `codex-cli 0.133.0`（已验证） |
 | 最低支持版本 | 不靠静态版本号放行；启动时必须通过 CompatibilityProbe |
 | 主路径 | `codex exec --json`；后续 turn 用 `codex exec resume <thread_id> --json` |
 | 运行时 | 用户本机，由用户自行维护 Codex CLI 安装与认证 |
-| native tool whitelist | P1 未发现；必须声明不支持 |
+| native tool whitelist | 当前未发现；必须声明不支持 |
 
 ## 配置契约
 
@@ -66,10 +66,10 @@ codex {
 安全默认值：
 
 - 默认 `sandbox = "read-only"`；写文件能力必须由用户显式改为 `workspace-write`。
-- 固定传 `--ask-for-approval never`，原因是 `codex exec` 是非交互路径；需要批准的动作应由 sandbox 失败返回给模型，不等待人类 prompt。P2 不提供 approval policy 配置字段。
+- 固定传 `--ask-for-approval never`，原因是 `codex exec` 是非交互路径；需要批准的动作应由 sandbox 失败返回给模型，不等待人类 prompt。当前不提供 approval policy 配置字段。
 - 默认 `loadUserConfig = false` 与 `loadRules = false`，避免继承用户全局 Codex 配置 / rules 带来的未审计工具或策略；认证仍通过 `CODEX_HOME`。
 - 禁止 runtime 默认使用 `--dangerously-bypass-approvals-and-sandbox`。config parser 不提供该字段。
-- `danger-full-access` 不进入 P2 配置枚举；若未来要支持，必须单独 ADR/spec 修订并声明安全边界。
+- `danger-full-access` 不进入当前配置枚举；若未来要支持，必须单独 ADR/spec 修订并声明安全边界。
 
 ## 启动命令模板
 
@@ -110,14 +110,14 @@ codex \
 
 命令构造不变量：
 
-- `--sandbox`、`--ask-for-approval`、`--cd` 是顶层 flag，必须放在 `exec` 前；P1 实测 `codex exec --ask-for-approval never` 会被拒绝。
+- `--sandbox`、`--ask-for-approval`、`--cd` 是顶层 flag，必须放在 `exec` 前；已验证 `codex exec --ask-for-approval never` 会被拒绝。
 - `--json`、`--skip-git-repo-check`、`--ignore-user-config`、`--ignore-rules` 是 `exec` / `resume` 路径 flag，放在子命令后。
 - runtime 每个 user turn spawn 一个 Codex 子进程；同一个 `AgentSession` 通过保存 `thread_id` 维持多轮语义。
 - `AgentSession.pid` 表示当前 in-flight turn 的 Codex 子进程 pid；turn 空闲时可以为空。
 
 ## JSONL 事件格式
 
-P1 实测 stdout 为每行一个 JSON object：
+已验证 stdout 为每行一个 JSON object：
 
 ```jsonc
 {"type":"thread.started","thread_id":"019e561a-5ac8-7872-8b24-5eaaee9157dc"}
@@ -146,7 +146,7 @@ P1 实测 stdout 为每行一个 JSON object：
 
 文本流语义：
 
-- P1 未观察到文本 delta；Codex runtime 不得伪造 `text_delta`。
+- 当前未观察到文本 delta；Codex runtime 不得伪造 `text_delta`。
 - `capabilities().supportsStreaming` 必须为 `false`，直到 probe 验证稳定 delta 事件。
 
 工具事件语义：
@@ -189,11 +189,11 @@ Usage 映射：
 - 新 session 第一轮必须从 `thread.started.thread_id` 取得后端会话 ID。
 - 后续 `sendInput` 必须用 `codex exec resume <thread_id> <prompt>`。
 - 若 `SessionConfig.resumeFromAgentSessionId` 非空，第一轮也用该 ID resume，并要求 stdout 返回同一个 `thread_id`；不一致 fail closed。
-- `exec-server` / `app-server` 属 experimental 路径，P1 未验证 wire protocol；P2/P3/P4 默认不得依赖。
+- `exec-server` / `app-server` 属 experimental 路径，当前 contract 未验证 wire protocol；默认不得依赖。
 
 ## 中断与超时
 
-Codex P1 实测：在 in-flight `sleep` 命令期间发送 SIGINT / SIGTERM / SIGKILL，stdout 只停在 `item.started command_execution`，没有 `turn.completed` 或 `turn.failed`。被中断的 `thread_id` 后续仍能 `exec resume`。
+已验证 Codex 在 in-flight `sleep` 命令期间收到 SIGINT / SIGTERM / SIGKILL 时，stdout 只停在 `item.started command_execution`，没有 `turn.completed` 或 `turn.failed`。被中断的 `thread_id` 后续仍能 `exec resume`。
 
 runtime 契约：
 
@@ -204,9 +204,9 @@ runtime 契约：
 
 ## 权限边界
 
-Codex backend 不满足 Claude Code backend 的 native tool whitelist 强安全承诺。P1 未发现 `toolWhitelist`、allowlist、denylist 或执行前 control request flag。
+Codex backend 不满足 Claude Code backend 的 native tool whitelist 强安全承诺。当前未发现 `toolWhitelist`、allowlist、denylist 或执行前 control request flag。
 
-Codex P2 安全边界：
+Codex 安全边界：
 
 - process-level sandbox：`--sandbox read-only|workspace-write`
 - approval policy：`--ask-for-approval never`
@@ -218,12 +218,12 @@ Codex P2 安全边界：
 
 | Capability | Codex 0.133.0 取值 | 依据 |
 |---|---:|---|
-| `supportsThinking` | `false` | P1 未观察到 thinking event |
-| `supportsStreaming` | `false` | P1 未观察到 text delta |
+| `supportsThinking` | `false` | 当前未观察到 thinking event |
+| `supportsStreaming` | `false` | 当前未观察到 text delta |
 | `supportsToolCallEvents` | `true` | `command_execution` start/completed |
 | `supportsInterrupt` | `true` | runtime 可终止 in-flight process 并合成 terminal |
 | `supportsStdinInterrupt` | `false` | `exec` 非长驻 stdin 会话 |
-| `supportsNativeToolWhitelist` | `false` | P1 help 未发现 tool allow/deny/control flag |
+| `supportsNativeToolWhitelist` | `false` | help 未发现 tool allow/deny/control flag |
 
 若当前 `AgentCapabilitySet` 代码尚无 `supportsNativeToolWhitelist`，Codex 实现 PR 必须先扩展 protocol 类型与 claudecode/codex 两端测试；不得用 `supportsToolCallEvents` 代替工具隔离能力。
 

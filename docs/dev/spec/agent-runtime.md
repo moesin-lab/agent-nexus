@@ -93,7 +93,7 @@ AgentCapabilitySet {
 | `supportsStdinInterrupt` | backend 支持在长驻 stdin/stdout 会话内发送 interrupt 控制消息 |
 | `supportsNativeToolWhitelist` | backend 有已验证的执行前工具 allow/deny 强制点，能按 `SessionConfig.toolWhitelist` 拦截 |
 
-Codex P2 证明 `supportsNativeToolWhitelist=false`；实现 PR 必须同步更新 protocol 类型与 claudecode/codex 两端测试。
+Codex contract 要求 `supportsNativeToolWhitelist=false`；实现 PR 必须同步更新 protocol 类型与 claudecode/codex 两端测试。
 
 ### `AgentSession` 与 `Session` 的区分
 
@@ -301,7 +301,7 @@ adapter 侧实现职责：
 - **安全默认值**：默认 `read-only` sandbox、固定 `--ask-for-approval never`、忽略 user config/rules；不使用 dangerous bypass。
 - **能力声明**：不得声明 native tool whitelist；`supportsStreaming=false`，除非后续 probe 坐实 text delta。
 
-Codex 的 `exec-server` / `app-server` 未经 P1 验证，不属于当前 contract 主路径。
+Codex 的 `exec-server` / `app-server` 未经当前 contract 验证，不属于主路径。
 
 ## 权限边界
 

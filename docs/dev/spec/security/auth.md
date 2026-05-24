@@ -52,7 +52,7 @@ platform instance 下沉到 `platforms[].auth.allowlist`，字段语义不变；
 - 唯一路由命中后，用命中的 `platforms[].auth.allowlist` 做 auth；auth 通过后，再执行 idempotency checkAndSet，再限流/预算（见 [`idempotency.md`](../infra/idempotency.md) §流程）
 - 拒绝时：打 `auth_denied` 日志（字段含 `guildId` / `channelId` / `userId` / `reason`）+ 可选 DM 通知
 
-P11 runtime 执行的 allowlist 维度：
+runtime 执行的 allowlist 维度：
 
 - `userIds` 与 `roleIds` 是身份 allowlist；任一命中即可通过身份检查。
 - `allowedGuildIds` 非空时，guild 消息必须来自其中一个 guild；DM 不走 guild 匹配。

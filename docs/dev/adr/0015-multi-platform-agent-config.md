@@ -30,7 +30,7 @@ superseded_by: null
 
 ## Context
 
-agent-nexus 已经有两个 agent backend：Claude Code CLI 默认后端与 Codex CLI 显式后端。当前配置仍是单实例形态：顶层 `discord` 表示唯一 Discord bot，顶层 `agent.backend` 在 `claudeCode` 与 `codex` 之间选择唯一 agent runtime。这个形态无法表达同一进程里同时运行多个 Discord bot，也无法把不同 channel 或用户条件路由到不同 agent 配置。
+agent-nexus 已有 Claude Code CLI 后端，并已新增 Codex CLI 后端。多平台配置重构前的单实例形态使用顶层 `discord` 表示唯一 Discord bot，并用顶层 `agent.backend` 在 `claudeCode` 与 `codex` 之间选择唯一 agent runtime。这个形态无法表达同一进程里同时运行多个 Discord bot，也无法把不同 channel 或用户条件路由到不同 agent 配置。
 
 多 bot / 多 agent 不能靠隐式默认规则扩展。若未命中 binding 时自动落到默认 agent，或多个 binding 同时命中时任取一个，会把跨 channel、跨 bot、跨安全边界的输入送到错误后端。配置契约必须让每个平台实例和每个 agent 实例有稳定名称，并让路由关系显式、可审计、fail-closed。
 
@@ -79,7 +79,7 @@ legacy 单实例配置不自动迁移。loader 必须清晰报错并提示改为
 
 ### 负向
 
-- 现有 `config.json` 单实例形态不能静默半兼容；loader 会清晰报错，用户需要按文档迁移。
+- legacy `config.json` 单实例形态不能静默半兼容；loader 会清晰报错，用户需要按文档迁移。
 - `SessionKey` / routing context 需要包含 platform instance identity，避免两个 Discord bot 的同 channel/user 发生会话串线。
 - CLI 需要维护 platform registry 与 agent registry，先解析 owner 字段，再组装 routing table。
 
@@ -92,7 +92,7 @@ legacy 单实例配置不自动迁移。loader 必须清晰报错并提示改为
 
 ## Out of scope
 
-- 不新增第二个 IM 平台；当前只定义多 platform 实例机制，落地平台仍是 Discord。
+- 不新增第二个 IM 平台；本 ADR 只定义多 platform 实例机制，落地平台仍是 Discord。
 - 不改变 Claude Code 或 Codex backend 的安全默认值；backend 专属字段仍由各自 package parser 拥有。
 - 不定义 UI 管理配置的形态；当前配置源仍是本地 JSON 与 secret file/ref。
 - 不改变目标分支治理或发布分支策略。

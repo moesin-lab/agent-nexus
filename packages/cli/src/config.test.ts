@@ -22,13 +22,54 @@ import {
   SecretsPermissionError,
   loadConfig,
   loadDiscordToken,
+  loadSecret,
 } from './config.js';
 
-// 最小合法 discord 段——allowedUserIds 必填，下游测试统一用同一个 fixture。
-const VALID_DISCORD = {
-  botUserId: '12345',
-  allowedUserIds: ['U1'],
+const VALID_AUTH = {
+  allowlist: {
+    userIds: ['U1'],
+    allowedGuildIds: ['G1'],
+  },
 };
+
+const VALID_PLATFORM = {
+  name: 'discord-main',
+  type: 'discord',
+  botUserId: '12345',
+  tokenRef: 'DISCORD_BOT_TOKEN',
+  auth: VALID_AUTH,
+  bindings: [{ agentName: 'codex-dev', channelIds: ['C1'] }],
+};
+
+const VALID_CODEX_AGENT = {
+  name: 'codex-dev',
+  backend: 'codex',
+  codex: {
+    workingDir: '/codex',
+    sandbox: 'workspace-write',
+    addDirs: ['/extra'],
+    loadUserConfig: true,
+    loadRules: true,
+  },
+};
+
+const VALID_CLAUDE_AGENT = {
+  name: 'claude-prod',
+  backend: 'claudecode',
+  claudeCode: {
+    workingDir: '/claude',
+    allowedTools: ['Read', 'Bash'],
+    permissionLevel: 'default',
+  },
+};
+
+function validConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    platforms: [VALID_PLATFORM],
+    agents: [VALID_CODEX_AGENT, VALID_CLAUDE_AGENT],
+    ...overrides,
+  };
+}
 
 describe('config loader', () => {
   let tmp: string;
@@ -43,11 +84,11 @@ describe('config loader', () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  it('loadConfig 首次运行自动创建 config 模板和 token 文件', async () => {
+  it('loadConfig 首次运行自动创建新结构 config 模板和 tokenRef 对应 secret 文件', async () => {
     await rm(join(tmp, '.agent-nexus'), { recursive: true, force: true });
 
-    await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
-    await expect(loadConfig()).rejects.toThrow(/config\.json/);
+    await expect(loadConfig()).rejects.toThrow(ConfigError);
+    await expect(loadConfig()).rejects.toThrow(/config\.json|workingDir/);
 
     const root = await stat(join(tmp, '.agent-nexus'));
     const secrets = await stat(join(tmp, '.agent-nexus', 'secrets'));
@@ -63,323 +104,266 @@ describe('config loader', () => {
     expect(secrets.mode & 0o777).toBe(0o700);
     expect(config.mode & 0o777).toBe(0o600);
     expect(token.mode & 0o777).toBe(0o600);
-    expect(configText).toMatch(/allowedUserIds/);
-    expect(configText).toMatch(/"agent"/);
-    expect(configText).toMatch(/"backend": "claudecode"/);
-    expect(configText).toMatch(/"codex"/);
-    expect(configText).toMatch(/workingDir/);
-    expect(configText).toMatch(/permissionLevel/);
-    expect(configText).toMatch(/_permissionLevelComment/);
-    expect(configText).toMatch(/_levelComment/);
-    expect(configText).toMatch(/toolMessages/);
-    expect(configText).toMatch(/_toolMessagesComment/);
+    expect(configText).toMatch(/"platforms"/);
+    expect(configText).toMatch(/"agents"/);
+    expect(configText).toMatch(/"tokenRef": "DISCORD_BOT_TOKEN"/);
+    expect(configText).toMatch(/"bindings"/);
+    expect(configText).toMatch(/"channelIds"/);
+    expect(configText).toMatch(/"auth"/);
+    expect(configText).toMatch(/"allowlist"/);
+    expect(configText).not.toMatch(/"agent"\s*:/);
+    expect(configText).not.toMatch(/"discord"\s*:/);
   });
 
-  it('loadConfig 缺 discord.botUserId → ConfigError（含字段名）', async () => {
+  it('loadConfig 解析 platforms[] / agents[] 新结构并应用 owner parser 默认值', async () => {
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({ claudeCode: { workingDir: '/x' } }),
-    );
-    await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
-    await expect(loadConfig()).rejects.toThrow(/botUserId/);
-  });
-
-  it('loadConfig 缺 claudeCode.workingDir → ConfigError（含字段名）', async () => {
-    await writeFile(
-      join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({ discord: VALID_DISCORD }),
-    );
-    await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
-    await expect(loadConfig()).rejects.toThrow(/workingDir/);
-  });
-
-  it('loadConfig 默认值兜底（bin / allowedTools / log.level）：Bash 默认禁用', async () => {
-    // spec/security/tool-boundary.md：Bash 必须默认禁用，启用须显式列入 allowedTools。
-    await writeFile(
-      join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        discord: VALID_DISCORD,
-        claudeCode: { workingDir: '/x' },
-      }),
-    );
-    const cfg = await loadConfig();
-    expect(cfg.agent.backend).toBe('claudecode');
-    expect(cfg.claudeCode.bin).toBe('claude');
-    expect(cfg.claudeCode.permissionLevel).toBe('default');
-    expect(cfg.claudeCode.allowedTools).not.toContain('Bash');
-    // spec 默认集 Read/Grep/Glob/Edit/Write
-    expect(cfg.claudeCode.allowedTools).toEqual(
-      expect.arrayContaining(['Read', 'Grep', 'Glob', 'Edit', 'Write']),
-    );
-    expect(cfg.ui.toolMessages).toBe('append');
-    expect(cfg.log.level).toBe('info');
-  });
-
-  it('loadConfig 自动补齐缺失的默认字段到 config 文件', async () => {
-    const path = join(tmp, '.agent-nexus', 'config.json');
-    await writeFile(
-      path,
-      JSON.stringify({
-        discord: VALID_DISCORD,
-        claudeCode: { workingDir: '/x' },
-      }),
+      JSON.stringify(validConfig({ ui: { toolMessages: 'compact' }, log: { level: 'debug' } })),
     );
 
     const cfg = await loadConfig();
-    const normalized = JSON.parse(await readFile(path, 'utf8')) as Record<
-      string,
-      unknown
-    >;
 
-    expect(cfg.claudeCode.bin).toBe('claude');
-    expect(normalized).toMatchObject({
-      agent: {
-        _backendComment: 'allowed: claudecode, codex',
-        backend: 'claudecode',
-      },
-      claudeCode: {
-        workingDir: '/x',
-        bin: 'claude',
-        _permissionLevelComment:
-          'allowed: default, acceptEdits, auto, bypassPermissions, dontAsk, plan',
-        permissionLevel: 'default',
-        allowedTools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
-      },
-      codex: {
-        workingDir: '',
-        bin: 'codex',
-        _sandboxComment: 'allowed: read-only, workspace-write',
-        sandbox: 'read-only',
-        addDirs: [],
-        loadUserConfig: false,
-        loadRules: false,
-      },
-      log: {
-        _levelComment: 'allowed: trace, debug, info, warn, error, fatal',
-        level: 'info',
-      },
-      ui: {
-        _toolMessagesComment: 'allowed: append, compact',
-        toolMessages: 'append',
-      },
-    });
-    expect((await stat(path)).mode & 0o777).toBe(0o600);
-  });
-
-  it('loadConfig 校验失败前也会补齐缺失的占位字段', async () => {
-    const path = join(tmp, '.agent-nexus', 'config.json');
-    await writeFile(
-      path,
-      JSON.stringify({
-        claudeCode: { workingDir: '/x' },
-      }),
-    );
-
-    await expect(loadConfig()).rejects.toThrow(/botUserId/);
-    const normalized = JSON.parse(await readFile(path, 'utf8')) as Record<
-      string,
-      unknown
-    >;
-    expect(normalized).toMatchObject({
-      agent: {
-        _backendComment: 'allowed: claudecode, codex',
-        backend: 'claudecode',
-      },
-      discord: {
-        botUserId: '',
-        allowedUserIds: [],
-      },
-      codex: {
-        workingDir: '',
-        bin: 'codex',
-        _sandboxComment: 'allowed: read-only, workspace-write',
-        sandbox: 'read-only',
-        addDirs: [],
-        loadUserConfig: false,
-        loadRules: false,
-      },
-      claudeCode: {
-        workingDir: '/x',
-        bin: 'claude',
-        _permissionLevelComment:
-          'allowed: default, acceptEdits, auto, bypassPermissions, dontAsk, plan',
-        permissionLevel: 'default',
-        allowedTools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
-      },
-      log: {
-        _levelComment: 'allowed: trace, debug, info, warn, error, fatal',
-        level: 'info',
-      },
-      ui: {
-        _toolMessagesComment: 'allowed: append, compact',
-        toolMessages: 'append',
-      },
-    });
-  });
-
-  it.each(['append', 'compact'] as const)('loadConfig 用户显式 toolMessages=%s → 保留', async (toolMessages) => {
-    await writeFile(
-      join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        discord: VALID_DISCORD,
-        claudeCode: { workingDir: '/x' },
-        ui: { toolMessages },
-      }),
-    );
-    const cfg = await loadConfig();
-    expect(cfg.ui.toolMessages).toBe(toolMessages);
-  });
-
-  it('loadConfig ui.toolMessages 非允许值 → ConfigError', async () => {
-    await writeFile(
-      join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        discord: VALID_DISCORD,
-        claudeCode: { workingDir: '/x' },
-        ui: { toolMessages: 'hidden' },
-      }),
-    );
-    await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
-    await expect(loadConfig()).rejects.toThrow(/ui\.toolMessages/);
-  });
-
-  it.each([
-    'acceptEdits',
-    'auto',
-    'bypassPermissions',
-    'default',
-    'dontAsk',
-    'plan',
-  ] as const)('loadConfig 用户显式 permissionLevel=%s → 保留', async (permissionLevel) => {
-    await writeFile(
-      join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        discord: VALID_DISCORD,
-        claudeCode: { workingDir: '/x', permissionLevel },
-      }),
-    );
-    const cfg = await loadConfig();
-    expect(cfg.claudeCode.permissionLevel).toBe(permissionLevel);
-  });
-
-  it('loadConfig 用户显式列出 Bash → 保留', async () => {
-    await writeFile(
-      join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        discord: VALID_DISCORD,
-        claudeCode: { workingDir: '/x', allowedTools: ['Read', 'Bash'] },
-      }),
-    );
-    const cfg = await loadConfig();
-    expect(cfg.claudeCode.allowedTools).toEqual(['Read', 'Bash']);
-  });
-
-  it('loadConfig 缺 discord.allowedUserIds → ConfigError（fail-closed）', async () => {
-    // PR #50 把 discord 解析下沉到 platform-discord，但 allowedUserIds 必填判定
-    // 仍属 cli loader 路由层的可观察契约（错误经包装回 ConfigError 抛出）。
-    await writeFile(
-      join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        discord: { botUserId: '12345' },
-        claudeCode: { workingDir: '/x' },
-      }),
-    );
-    await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
-    await expect(loadConfig()).rejects.toThrow(/allowedUserIds/);
-  });
-
-  it('loadConfig agent.backend=codex → 只要求 codex 配置并保留 Claude 配置块可选', async () => {
-    await writeFile(
-      join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        agent: { backend: 'codex' },
-        discord: VALID_DISCORD,
-        codex: {
-          workingDir: '/codex',
-          model: 'gpt-5-codex',
-          sandbox: 'workspace-write',
-          addDirs: ['/extra'],
-          loadUserConfig: true,
-          loadRules: true,
+    expect(cfg.platforms).toHaveLength(1);
+    expect(cfg.platforms[0]).toMatchObject({
+      name: 'discord-main',
+      type: 'discord',
+      tokenRef: 'DISCORD_BOT_TOKEN',
+      botUserId: '12345',
+      publicChannelMode: 'thread',
+      auth: {
+        allowlist: {
+          userIds: ['U1'],
+          roleIds: [],
+          allowedGuildIds: ['G1'],
+          allowedChannelIds: [],
+          allowDM: true,
+          requireMentionOrSlash: true,
         },
-      }),
-    );
-    const cfg = await loadConfig();
-    expect(cfg.agent.backend).toBe('codex');
-    expect(cfg.codex).toMatchObject({
-      bin: 'codex',
-      workingDir: '/codex',
-      model: 'gpt-5-codex',
-      sandbox: 'workspace-write',
-      addDirs: ['/extra'],
-      loadUserConfig: true,
-      loadRules: true,
+      },
+      bindings: [{ agentName: 'codex-dev', channelIds: ['C1'] }],
     });
-    expect(cfg).not.toHaveProperty('claudeCode');
+    expect(cfg.platforms[0].statePath).toBe(
+      join(tmp, '.agent-nexus', 'state', 'discord-discord-main.json'),
+    );
+    expect(cfg.agents).toHaveLength(2);
+    expect(cfg.agents[0]).toMatchObject({
+      name: 'codex-dev',
+      backend: 'codex',
+      codex: { bin: 'codex', workingDir: '/codex' },
+    });
+    expect(cfg.agents[1]).toMatchObject({
+      name: 'claude-prod',
+      backend: 'claudecode',
+      claudeCode: { bin: 'claude', workingDir: '/claude' },
+    });
+    expect(cfg.ui.toolMessages).toBe('compact');
+    expect(cfg.log.level).toBe('debug');
   });
 
-  it('loadConfig agent.backend=codex 且缺 codex.workingDir → ConfigError', async () => {
+  it('legacy 顶层字段被清晰拒绝，不做自动迁移', async () => {
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
       JSON.stringify({
         agent: { backend: 'codex' },
-        discord: VALID_DISCORD,
-        codex: {},
+        discord: { botUserId: '12345', allowedUserIds: ['U1'] },
+        codex: { workingDir: '/codex' },
       }),
     );
-    await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
-    await expect(loadConfig()).rejects.toThrow(/codex\.workingDir/);
+
+    await expect(loadConfig()).rejects.toThrow(/legacy|platforms\[\]|agents\[\]/);
   });
 
-  it('loadConfig agent.backend 非允许值 → ConfigError', async () => {
+  it('platforms[] / agents[] 缺失或空数组 → ConfigError（含字段路径）', async () => {
+    await writeFile(join(tmp, '.agent-nexus', 'config.json'), JSON.stringify({ agents: [] }));
+    await expect(loadConfig()).rejects.toThrow(/platforms/);
+
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        agent: { backend: 'other' },
-        discord: VALID_DISCORD,
-        claudeCode: { workingDir: '/x' },
-      }),
+      JSON.stringify({ platforms: [VALID_PLATFORM], agents: [] }),
     );
-    await expect(loadConfig()).rejects.toBeInstanceOf(ConfigError);
-    await expect(loadConfig()).rejects.toThrow(/agent\.backend/);
+    await expect(loadConfig()).rejects.toThrow(/agents/);
   });
 
-  it('loadConfig discord.statePath 缺省 → 路由传递默认 ~/.agent-nexus/state/discord.json', async () => {
+  it('重复 platform name / agent name → ConfigError（列出重复 name）', async () => {
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
-      JSON.stringify({
-        discord: VALID_DISCORD,
-        claudeCode: { workingDir: '/x' },
-      }),
+      JSON.stringify(
+        validConfig({
+          platforms: [VALID_PLATFORM, { ...VALID_PLATFORM, botUserId: '67890' }],
+        }),
+      ),
     );
-    const cfg = await loadConfig();
-    expect(cfg.discord.statePath).toBe(
-      join(tmp, '.agent-nexus', 'state', 'discord.json'),
+    await expect(loadConfig()).rejects.toThrow(/platforms\[\]\.name.*discord-main/);
+
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          agents: [VALID_CODEX_AGENT, { ...VALID_CLAUDE_AGENT, name: 'codex-dev' }],
+        }),
+      ),
+    );
+    await expect(loadConfig()).rejects.toThrow(/agents\[\]\.name.*codex-dev/);
+  });
+
+  it('P9 在 session 隔离完成前拒绝多个同 type platform 实例', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          platforms: [
+            VALID_PLATFORM,
+            { ...VALID_PLATFORM, name: 'discord-alt', botUserId: '67890' },
+          ],
+        }),
+      ),
+    );
+
+    await expect(loadConfig()).rejects.toThrow(/platforms\[\]\.type.*P10|session/);
+  });
+
+  it('未知 platform type / backend → ConfigError', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          platforms: [{ ...VALID_PLATFORM, type: 'slack' }],
+        }),
+      ),
+    );
+    await expect(loadConfig()).rejects.toThrow(/platforms\[0\]\.type/);
+
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          agents: [{ ...VALID_CODEX_AGENT, backend: 'other' }],
+        }),
+      ),
+    );
+    await expect(loadConfig()).rejects.toThrow(/agents\[0\]\.backend/);
+  });
+
+  it('未知顶层字段和 agent 顶层字段 fail-closed', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(validConfig({ routes: [] })),
+    );
+    await expect(loadConfig()).rejects.toThrow(/config\.json\.routes/);
+
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          agents: [{ ...VALID_CODEX_AGENT, default: true }],
+        }),
+      ),
+    );
+    await expect(loadConfig()).rejects.toThrow(/agents\[0\]\.default/);
+  });
+
+  it('binding 引用不存在 agent → ConfigError（含 binding 字段路径）', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          platforms: [
+            {
+              ...VALID_PLATFORM,
+              bindings: [{ agentName: 'missing-agent', channelIds: ['C1'] }],
+            },
+          ],
+        }),
+      ),
+    );
+
+    await expect(loadConfig()).rejects.toThrow(/platforms\[0\]\.bindings\[0\]\.agentName/);
+  });
+
+  it('platform auth 和 Discord binding owner parser 错误经 ConfigError 包装并保留字段路径', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          platforms: [
+            {
+              ...VALID_PLATFORM,
+              auth: { allowlist: { userIds: [], allowedGuildIds: [] } },
+            },
+          ],
+        }),
+      ),
+    );
+    await expect(loadConfig()).rejects.toThrow(
+      /platforms\[0\]\.auth\.allowlist.*至少/,
+    );
+
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          platforms: [
+            {
+              ...VALID_PLATFORM,
+              bindings: [{ agentName: 'codex-dev', channelIds: [] }],
+            },
+          ],
+        }),
+      ),
+    );
+    await expect(loadConfig()).rejects.toThrow(
+      /platforms\[0\]\.bindings\[0\]\.channelIds/,
     );
   });
 
-  it('loadDiscordToken 缺 token 文件 → SecretsPermissionError', async () => {
-    await expect(loadDiscordToken()).rejects.toBeInstanceOf(
+  it('tokenRef 非 secret ref 名称 → ConfigError（parse 期覆盖所有 platform）', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          platforms: [{ ...VALID_PLATFORM, tokenRef: '../DISCORD_BOT_TOKEN' }],
+        }),
+      ),
+    );
+
+    await expect(loadConfig()).rejects.toThrow(/platforms\[0\]\.tokenRef/);
+  });
+
+  it('agent backend 私有字段缺失或 inactive backend 块存在 → ConfigError', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(validConfig({ agents: [{ name: 'codex-dev', backend: 'codex' }] })),
+    );
+    await expect(loadConfig()).rejects.toThrow(/agents\[0\]\.codex/);
+
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          agents: [
+            {
+              ...VALID_CODEX_AGENT,
+              claudeCode: { workingDir: '/stale' },
+            },
+          ],
+        }),
+      ),
+    );
+    await expect(loadConfig()).rejects.toThrow(/agents\[0\]\.claudeCode/);
+  });
+
+  it('loadSecret 按 tokenRef 读取 ~/.agent-nexus/secrets/<name>，权限和值都 fail-closed', async () => {
+    await expect(loadSecret('DISCORD_BOT_TOKEN')).rejects.toBeInstanceOf(
       SecretsPermissionError,
     );
-    const token = await stat(
-      join(tmp, '.agent-nexus', 'secrets', 'DISCORD_BOT_TOKEN'),
-    );
-    expect(token.mode & 0o777).toBe(0o600);
-  });
 
-  it('loadDiscordToken 权限非 0600 → SecretsPermissionError', async () => {
-    const path = join(tmp, '.agent-nexus', 'secrets', 'DISCORD_BOT_TOKEN');
-    await writeFile(path, 'token-abc');
-    await chmod(path, 0o644);
-    await expect(loadDiscordToken()).rejects.toThrow(/0600/);
-  });
-
-  it('loadDiscordToken 0600 + 非空 → 返回 trim 后的 token', async () => {
     const path = join(tmp, '.agent-nexus', 'secrets', 'DISCORD_BOT_TOKEN');
     await writeFile(path, '  token-abc\n');
+    await chmod(path, 0o644);
+    await expect(loadSecret('DISCORD_BOT_TOKEN')).rejects.toThrow(/0600/);
+
     await chmod(path, 0o600);
-    const t = await loadDiscordToken();
-    expect(t).toBe('token-abc');
+    await expect(loadSecret('DISCORD_BOT_TOKEN')).resolves.toBe('token-abc');
+    await expect(loadDiscordToken()).resolves.toBe('token-abc');
   });
 });

@@ -1,7 +1,7 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import type { AgentRuntime } from '@agent-nexus/protocol';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Logger } from '@agent-nexus/daemon';
-import type { AgentNexusConfig } from './config.js';
+import type { AgentRuntime } from '@agent-nexus/protocol';
+import type { AgentConfig, AgentNexusConfig } from './config.js';
 
 const claudeRuntime = { name: () => 'claudecode' } as AgentRuntime;
 const codexRuntime = { name: () => 'codex' } as AgentRuntime;
@@ -21,26 +21,43 @@ vi.mock('@agent-nexus/agent-codex', () => ({
   runCompatibilityProbe: runCodexProbeMock,
 }));
 
-import { createSelectedAgent } from './agent.js';
+import { createAgentRuntime, createSelectedAgent } from './agent.js';
 
 const logger = {
   warn: vi.fn(),
   error: vi.fn(),
 } as unknown as Logger;
 
-function baseConfig(): Omit<AgentNexusConfig, 'agent' | 'claudeCode' | 'codex'> {
+function baseConfig(agentName: string, agents: AgentConfig[]): AgentNexusConfig {
   return {
-    discord: {
-      botUserId: 'bot',
-      allowedUserIds: ['U1'],
-      statePath: '/state/discord.json',
-    },
+    platforms: [
+      {
+        name: 'discord-main',
+        type: 'discord',
+        botUserId: 'bot',
+        tokenRef: 'DISCORD_BOT_TOKEN',
+        statePath: '/state/discord.json',
+        publicChannelMode: 'thread',
+        auth: {
+          allowlist: {
+            userIds: ['U1'],
+            roleIds: [],
+            allowedGuildIds: ['G1'],
+            allowedChannelIds: [],
+            allowDM: true,
+            requireMentionOrSlash: true,
+          },
+        },
+        bindings: [{ agentName, channelIds: ['C1'] }],
+      },
+    ],
+    agents,
     ui: { toolMessages: 'append' },
     log: { level: 'info' },
   };
 }
 
-describe('createSelectedAgent', () => {
+describe('createAgentRuntime', () => {
   beforeEach(() => {
     createClaudeCodeRuntimeMock.mockClear();
     runClaudeProbeMock.mockClear();
@@ -50,10 +67,10 @@ describe('createSelectedAgent', () => {
   });
 
   it('claudecode backend 跑 Claude probe 并注入 Claude runtime，保持默认 session config', async () => {
-    const selected = await createSelectedAgent(
+    const selected = await createAgentRuntime(
       {
-        ...baseConfig(),
-        agent: { backend: 'claudecode' },
+        name: 'claude-prod',
+        backend: 'claudecode',
         claudeCode: {
           bin: 'claude',
           workingDir: '/work',
@@ -96,12 +113,8 @@ describe('createSelectedAgent', () => {
       loadRules: false,
     } as const;
 
-    const selected = await createSelectedAgent(
-      {
-        ...baseConfig(),
-        agent: { backend: 'codex' },
-        codex,
-      },
+    const selected = await createAgentRuntime(
+      { name: 'codex-dev', backend: 'codex', codex },
       logger,
     );
 
@@ -119,5 +132,49 @@ describe('createSelectedAgent', () => {
       toolWhitelist: [],
       timeoutMs: 300_000,
     });
+  });
+});
+
+describe('createSelectedAgent', () => {
+  it('P9 启动路径从唯一 binding 选择目标 agent', async () => {
+    const selected = await createSelectedAgent(
+      baseConfig('codex-dev', [
+        {
+          name: 'codex-dev',
+          backend: 'codex',
+          codex: {
+            bin: 'codex',
+            workingDir: '/codex',
+            sandbox: 'read-only',
+            addDirs: [],
+            loadUserConfig: false,
+            loadRules: false,
+          },
+        },
+      ]),
+      logger,
+    );
+
+    expect(selected.agent).toBe(codexRuntime);
+  });
+
+  it('P9 启动路径遇到多个 binding 时拒绝，避免假装完成 P10 路由', async () => {
+    const config = baseConfig('codex-dev', [
+      {
+        name: 'codex-dev',
+        backend: 'codex',
+        codex: {
+          bin: 'codex',
+          workingDir: '/codex',
+          sandbox: 'read-only',
+          addDirs: [],
+          loadUserConfig: false,
+          loadRules: false,
+        },
+      },
+    ]);
+    config.platforms[0].bindings.push({ agentName: 'codex-dev', channelIds: ['C2'] });
+
+    await expect(createSelectedAgent(config, logger)).rejects.toThrow(/P10/);
   });
 });

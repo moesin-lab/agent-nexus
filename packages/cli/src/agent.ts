@@ -8,7 +8,7 @@ import {
 } from '@agent-nexus/agent-codex';
 import type { Logger } from '@agent-nexus/daemon';
 import type { AgentRuntime, SessionConfig } from '@agent-nexus/protocol';
-import type { AgentNexusConfig } from './config.js';
+import { ConfigError, type AgentConfig, type AgentNexusConfig } from './config.js';
 
 const DEFAULT_SESSION_TIMEOUT_MS = 300_000;
 
@@ -20,14 +20,12 @@ export interface SelectedAgent {
   >;
 }
 
-export async function createSelectedAgent(
-  config: AgentNexusConfig,
+export async function createAgentRuntime(
+  agentConfig: AgentConfig,
   logger: Logger,
 ): Promise<SelectedAgent> {
-  if (config.agent.backend === 'codex') {
-    const codex = config.codex;
-    if (!codex) throw new Error('agent.backend=codex 需要 codex 配置');
-
+  if (agentConfig.backend === 'codex') {
+    const codex = agentConfig.codex;
     await runCodexCompatibilityProbe({
       config: codex,
       logger,
@@ -43,11 +41,7 @@ export async function createSelectedAgent(
     };
   }
 
-  const claudeCode = config.claudeCode;
-  if (!claudeCode) {
-    throw new Error('agent.backend=claudecode 需要 claudeCode 配置');
-  }
-
+  const claudeCode = agentConfig.claudeCode;
   await runClaudeCodeCompatibilityProbe({
     claudeBin: claudeCode.bin,
     logger,
@@ -82,4 +76,31 @@ export async function createSelectedAgent(
       timeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
     },
   };
+}
+
+export async function createSelectedAgent(
+  config: AgentNexusConfig,
+  logger: Logger,
+): Promise<SelectedAgent> {
+  if (config.platforms.length !== 1) {
+    throw new ConfigError('P9 CLI 启动暂只支持一个 platform；P10 会接入多 platform 路由');
+  }
+  const platform = config.platforms[0];
+  if (!platform) {
+    throw new ConfigError('P9 CLI 启动需要一个 platform');
+  }
+  if (platform.bindings.length !== 1) {
+    throw new ConfigError('P9 CLI 启动暂只支持一个 binding；P10 会接入多 agent 路由');
+  }
+  const binding = platform.bindings[0];
+  if (!binding) {
+    throw new ConfigError('P9 CLI 启动需要一个 binding');
+  }
+  const agentConfig = config.agents.find(
+    (agent) => agent.name === binding.agentName,
+  );
+  if (!agentConfig) {
+    throw new ConfigError(`binding 引用了不存在的 agent：${binding.agentName}`);
+  }
+  return createAgentRuntime(agentConfig, logger);
 }

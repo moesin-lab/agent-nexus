@@ -11,6 +11,7 @@ related:
   - dev/spec/platform-adapter
   - dev/spec/agent-runtime
   - dev/spec/message-protocol
+  - dev/spec/command-registry
 ---
 
 # Spec（接口契约）
@@ -27,6 +28,7 @@ spec 触发条件（什么改动需要 spec / 何时可跳过）见 [`../standar
 - [`agent-runtime.md`](agent-runtime.md) — Agent 后端适配层接口
 - [`message-protocol.md`](message-protocol.md) — 归一化消息与事件类型定义
 - [`config-routing.md`](config-routing.md) — `platforms[]` / `agents[]` / bindings 配置与路由契约
+- [`command-registry.md`](command-registry.md) — Slash command descriptor、命名、注册计划与 dispatch 契约
 
 ### `infra/` — 横切基础设施
 
@@ -59,6 +61,7 @@ spec 触发条件（什么改动需要 spec / 何时可跳过）见 [`../standar
 | `agent-runtime.md` | `@agent-nexus/protocol`（`AgentRuntime` 接口） | `@agent-nexus/agent-<name>`（如 `agent-claudecode`） |
 | `message-protocol.md` | `@agent-nexus/protocol`（`NormalizedEvent` / `AgentEvent` / `OutboundMessage` 等类型） | N/A（纯类型契约） |
 | `config-routing.md` | N/A（配置与路由契约） | `@agent-nexus/cli`（loader / 组装）+ `@agent-nexus/daemon`（routing dispatch） |
+| `command-registry.md` | `@agent-nexus/protocol`（`CommandDescriptor` 类型） | `@agent-nexus/daemon`（planner / active map / dispatch）+ 各 owner package（descriptor / native mapping） |
 | `agent-backends/*.md` | N/A（外部契约） | 各 `@agent-nexus/agent-<name>` 必须遵守 |
 | `infra/*.md` | N/A | `@agent-nexus/daemon`（核心引擎 + 横切） |
 | `security/*.md` | N/A | `@agent-nexus/daemon`（横切） |

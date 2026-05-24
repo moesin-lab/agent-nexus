@@ -8,12 +8,14 @@ related:
   - dev/spec/platform-adapter
   - dev/spec/config-routing
   - dev/spec/agent-runtime
+  - dev/spec/command-registry
   - dev/architecture/session-model
 contracts:
   - NormalizedEvent
   - SessionKey
   - Attachment
   - CommandPayload
+  - CommandRegistrationScope
   - InteractionPayload
   - ReactionPayload
 ---
@@ -123,9 +125,15 @@ Attachment {
 
 ```text
 CommandPayload {
-    name: string                  // 例 "reset" / "end" / "budget"
+    name: string                  // 平台可见 command name，例 "codex-new" / "reply-mode"
     args: map[string]value        // 键值；slash command 的 options
     rawText: string?              // 整条命令原文（调试）
+    registrationScope: CommandRegistrationScope
+}
+
+CommandRegistrationScope {
+    kind: "global" | "guild"
+    guildId: string?              // kind == "guild" 时必填
 }
 
 InteractionPayload {
@@ -140,6 +148,8 @@ ReactionPayload {
     targetMessageId: string
 }
 ```
+
+`CommandPayload.name` 不承载 canonical id。daemon 必须按 [`command-registry.md`](command-registry.md) 的 active reverse map 从平台可见 name 解析到 canonical command；不得从 `name` 字符串拆 owner 或 handler。
 
 ## 幂等
 

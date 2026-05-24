@@ -246,6 +246,17 @@ const DEFAULT_CFG = {
   timeoutMs: 60_000,
 };
 
+const PLATFORM_AUTH_ALLOW_U1 = {
+  allowlist: {
+    userIds: ['U1'],
+    roleIds: [],
+    allowedGuildIds: [],
+    allowedChannelIds: [],
+    allowDM: true,
+    requireMentionOrSlash: true,
+  },
+};
+
 // ----- tests -----
 
 describe('Engine', () => {
@@ -679,6 +690,7 @@ describe('Engine', () => {
         },
       ],
       routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
       logger: mockLogger,
       sessionStore: store,
     });
@@ -728,6 +740,7 @@ describe('Engine', () => {
         },
       ],
       routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
       logger: mockLogger,
       sessionStore: store,
     });
@@ -742,6 +755,221 @@ describe('Engine', () => {
     expect(routeLog).toBeDefined();
     expect(routeLog![0]).toMatchObject({
       bindingNames: ['discord-main-codex-a', 'discord-main-codex-b'],
+    });
+  });
+
+  it('routingTable 缺 platformAuth 时启动前失败，避免多平台路径静默跳过鉴权', () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+
+    expect(
+      () =>
+        new Engine({
+          platform,
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agents: [
+            {
+              agentName: 'codex-dev',
+              agent: codex.runtime,
+              defaultSessionConfig: DEFAULT_CFG,
+            },
+          ],
+          routingTable,
+          logger: SILENT_LOGGER,
+          sessionStore: new SessionStore(),
+        }),
+    ).toThrow(/requires platformAuth/);
+  });
+
+  it('routing 命中后 user 不在 platform auth allowlist 时 auth_denied 且不调用 agent / 不创建 session', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      platformAuth: {
+        allowlist: {
+          userIds: ['U-allowed'],
+          roleIds: [],
+          allowedGuildIds: [],
+          allowedChannelIds: [],
+          allowDM: true,
+          requireMentionOrSlash: true,
+        },
+      },
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello', {
+      initiator: { userId: 'U-denied', displayName: 'denied', isBot: false },
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'C1',
+        initiatorUserId: 'U-denied',
+      },
+    }));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(codex.sendInput).not.toHaveBeenCalled();
+    expect(store.size).toBe(0);
+    const infoCalls = (mockLogger.info as ReturnType<typeof vi.fn>).mock.calls;
+    const authLog = infoCalls.find(([, msg]) => msg === 'auth_denied');
+    expect(authLog).toBeDefined();
+    expect(authLog![0]).toMatchObject({
+      platformName: 'discord-main',
+      channelId: 'C1',
+      userId: 'U-denied',
+      reason: 'user_not_allowed',
+    });
+  });
+
+  it('routing 命中后 guild 不在 platform auth allowlist 时 auth_denied 且不调用 agent / 不创建 session', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      platformAuth: {
+        allowlist: {
+          userIds: ['U1'],
+          roleIds: [],
+          allowedGuildIds: ['G-allowed'],
+          allowedChannelIds: [],
+          allowDM: true,
+          requireMentionOrSlash: true,
+        },
+      },
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello', { guildId: 'G-denied' }));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(codex.sendInput).not.toHaveBeenCalled();
+    expect(store.size).toBe(0);
+    const infoCalls = (mockLogger.info as ReturnType<typeof vi.fn>).mock.calls;
+    const authLog = infoCalls.find(([, msg]) => msg === 'auth_denied');
+    expect(authLog).toBeDefined();
+    expect(authLog![0]).toMatchObject({
+      platformName: 'discord-main',
+      guildId: 'G-denied',
+      channelId: 'C1',
+      userId: 'U1',
+      reason: 'guild_not_allowed',
+    });
+  });
+
+  it('routing 命中后 channel 不在 platform auth allowlist 时 auth_denied 且不调用 agent / 不创建 session', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      platformAuth: {
+        allowlist: {
+          userIds: ['U1'],
+          roleIds: [],
+          allowedGuildIds: [],
+          allowedChannelIds: ['C-allowed'],
+          allowDM: true,
+          requireMentionOrSlash: true,
+        },
+      },
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(codex.sendInput).not.toHaveBeenCalled();
+    expect(store.size).toBe(0);
+    const infoCalls = (mockLogger.info as ReturnType<typeof vi.fn>).mock.calls;
+    const authLog = infoCalls.find(([, msg]) => msg === 'auth_denied');
+    expect(authLog).toBeDefined();
+    expect(authLog![0]).toMatchObject({
+      platformName: 'discord-main',
+      channelId: 'C1',
+      userId: 'U1',
+      reason: 'channel_not_allowed',
     });
   });
 
@@ -783,6 +1011,7 @@ describe('Engine', () => {
         },
       ],
       routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
       logger: SILENT_LOGGER,
       sessionStore: store,
     });
@@ -853,6 +1082,7 @@ describe('Engine', () => {
       platformType: 'discord',
       agents,
       routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
       logger: SILENT_LOGGER,
       sessionStore: store,
     });
@@ -862,6 +1092,7 @@ describe('Engine', () => {
       platformType: 'discord',
       agents,
       routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
       logger: SILENT_LOGGER,
       sessionStore: store,
     });

@@ -55,6 +55,8 @@ NormalizedEvent {
     // 时间
     receivedAt: timestamp                    // adapter 收到的时间
     platformTimestamp: timestamp?            // 平台时间戳（如 Discord snowflake 解出的时间）
+    guildId: string?                         // guild 事件所属 guild；DM 缺省
+    initiatorRoleIds: string[]?              // guild 内发起者角色 ID；DM 缺省/空
 
     // 用户信息
     initiator: {

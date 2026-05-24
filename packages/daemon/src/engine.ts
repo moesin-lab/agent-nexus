@@ -10,7 +10,8 @@ import type {
   SessionKey,
 } from '@agent-nexus/protocol';
 import { serializeSessionKey, withPlatformName } from '@agent-nexus/protocol';
-import type { ToolMessageMode } from './config.js';
+import { checkPlatformAuth } from './auth.js';
+import type { PlatformAuthConfig, ToolMessageMode } from './config.js';
 import type { Logger } from './logger.js';
 import { RouteError, selectRoute, type RoutingEntry } from './router.js';
 import type { SessionStore } from './session-store.js';
@@ -31,6 +32,7 @@ export interface EngineDeps {
   agent?: AgentRuntime;
   agents?: readonly EngineAgent[];
   routingTable?: readonly RoutingEntry[];
+  platformAuth?: PlatformAuthConfig;
   logger: Logger;
   sessionStore: SessionStore;
   /** 每轮 sessionId 由 Engine 生成；resumeFromAgentSessionId 由 store 决定 */
@@ -89,7 +91,6 @@ function renderToolStart(toolName: string, inputSummary: string): string {
  * - 持久化幂等 / auth ordering → docs/dev/spec/infra/idempotency.md
  *   （进程内 eventId LRU 已落，详见 seenEventIds 字段）
  * - 限流 / 预算 → docs/dev/spec/infra/cost-and-limits.md
- * - allowlist 鉴权 → docs/dev/spec/security/auth.md
  * - 出口脱敏 → docs/dev/spec/security/redaction.md
  * - sessionStore 持久化 + 状态机 → docs/dev/architecture/session-model.md
  */
@@ -97,6 +98,7 @@ export class Engine {
   private readonly platform: PlatformAdapter;
   private readonly platformName: string;
   private readonly platformType: 'discord';
+  private readonly platformAuth?: PlatformAuthConfig;
   private readonly agents: Map<string, EngineAgent>;
   private readonly routingTable?: readonly RoutingEntry[];
   private readonly logger: Logger;
@@ -125,6 +127,10 @@ export class Engine {
     this.platform = deps.platform;
     this.platformName = deps.platformName ?? deps.platform.name();
     this.platformType = deps.platformType ?? 'discord';
+    if (deps.routingTable && !deps.platformAuth) {
+      throw new Error('Engine with routingTable requires platformAuth');
+    }
+    this.platformAuth = deps.platformAuth;
     this.routingTable = deps.routingTable;
     this.agents = new Map();
     if (deps.agents) {
@@ -169,6 +175,23 @@ export class Engine {
   private dispatch(event: NormalizedEvent): Promise<void> {
     const route = this.route(event);
     if (!route) return Promise.resolve();
+    if (this.platformAuth) {
+      const decision = checkPlatformAuth(this.platformAuth, event);
+      if (!decision.allowed) {
+        this.logger.info(
+          {
+            traceId: event.traceId,
+            platformName: this.platformName,
+            guildId: event.guildId,
+            channelId: event.sessionKey.channelId,
+            userId: event.initiator.userId,
+            reason: decision.reason,
+          },
+          'auth_denied',
+        );
+        return Promise.resolve();
+      }
+    }
     const routedSessionKey = withPlatformName(
       event.sessionKey,
       this.platformName,

@@ -8,6 +8,7 @@ related:
   - dev/adr/0002-agent-backend-claude-code-cli
   - dev/adr/0014-agent-backend-codex-cli
   - dev/adr/0012-claudecode-stream-json-mainline
+  - dev/spec/config-routing
   - dev/spec/agent-backends/claude-code-cli
   - dev/spec/agent-backends/codex-cli
   - dev/spec/message-protocol
@@ -245,9 +246,9 @@ UsageRecord {
 - `tool_call_finished` 之后到达的同 callId `tool_result` 是 late event，runtime **必须丢弃 + debug log，不得重排到 finished 前**（与 ADR-0012 §interrupt 投递契约 late event 规则一致）
 - `turn_finished` 在一轮的最后一个 `text_final` / `tool_call_finished` 之后（`tool_result` 因 happens-before `tool_call_finished`，无需单独锚定）
 
-## Backend selection 配置
+## Backend selection 配置（legacy 单实例）
 
-CLI 负责拼装 daemon + platform + agent，backend 选择由顶层配置表达：
+旧版单实例配置中，CLI 负责拼装 daemon + platform + agent，backend 选择由顶层配置表达：
 
 ```text
 agent {
@@ -260,6 +261,8 @@ agent {
 - `agent.backend` 只决定启用哪个 `@agent-nexus/agent-<name>` package；daemon 不读取该字段。
 - backend 自己的字段住各 owner 配置块：`claudeCode` 由 `@agent-nexus/agent-claudecode` 解析，`codex` 由 `@agent-nexus/agent-codex` 解析。
 - CLI 可以按 selector 调用对应 parser / probe / runtime factory，但不得实现 backend 业务逻辑或校验 owner 字段。
+
+多平台多 Agent 配置改用命名 `agents[]`，每个 agent 项携带自己的 `backend` 与 owner 配置块；binding 与路由语义见 [`config-routing.md`](config-routing.md)。实现新 loader 后不得把 legacy `agent.backend` 静默混入新结构。
 
 ## Backend 专属说明
 

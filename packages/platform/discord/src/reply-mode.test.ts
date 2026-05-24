@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   assertBotUserIdMatch,
+  discordReplyModeCommandDescriptor,
   handleReplyModeInteraction,
   replyModeCommandDefinition,
   type ReplyModeContext,
@@ -38,6 +39,23 @@ function makeInteraction(overrides: {
 }
 
 describe('replyModeCommandDefinition', () => {
+  it('暴露 platform:discord:reply-mode descriptor，含 stable command 所需字段与 legacy alias', () => {
+    expect(discordReplyModeCommandDescriptor).toMatchObject({
+      canonicalId: 'platform:discord:reply-mode',
+      owner: { type: 'platform', platformType: 'discord' },
+      localName: 'reply-mode',
+      handlerKey: 'reply-mode',
+      applicability: {
+        platformTypes: ['discord'],
+        requiredCapabilities: [
+          'slash-command-registration',
+          'ephemeral-response',
+        ],
+      },
+      legacyNames: [{ name: 'reply-mode', reason: 'historical-compatibility' }],
+    });
+  });
+
   it('暴露 name=reply-mode + 一个可选的 mode 选项（choices: mention/all）', () => {
     const def = replyModeCommandDefinition();
     expect(def.name).toBe('reply-mode');
@@ -47,6 +65,12 @@ describe('replyModeCommandDefinition', () => {
     expect(opt.required).toBe(false);
     const choiceValues = opt.choices?.map((c) => c.value).sort();
     expect(choiceValues).toEqual(['all', 'mention']);
+  });
+
+  it('允许生成 stable name=discord-reply-mode 的注册 payload', () => {
+    const def = replyModeCommandDefinition('discord-reply-mode');
+    expect(def.name).toBe('discord-reply-mode');
+    expect(def.options).toHaveLength(1);
   });
 });
 

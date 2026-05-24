@@ -1,4 +1,7 @@
 export {
+  claudeCodeCommandDescriptors,
+} from './command-descriptors.js';
+export {
   claudeCodePermissionModeError,
   parseClaudeCodeConfig,
   type ClaudeCodeConfig,

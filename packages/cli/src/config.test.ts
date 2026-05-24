@@ -38,7 +38,13 @@ const VALID_PLATFORM = {
   botUserId: '12345',
   tokenRef: 'DISCORD_BOT_TOKEN',
   auth: VALID_AUTH,
-  bindings: [{ agentName: 'codex-dev', channelIds: ['C1'] }],
+};
+
+const VALID_BINDING = {
+  name: 'discord-main-codex-dev',
+  platformName: 'discord-main',
+  agentName: 'codex-dev',
+  match: { discord: { channelIds: ['C1'] } },
 };
 
 const VALID_CODEX_AGENT = {
@@ -67,6 +73,7 @@ function validConfig(overrides: Record<string, unknown> = {}): Record<string, un
   return {
     platforms: [VALID_PLATFORM],
     agents: [VALID_CODEX_AGENT, VALID_CLAUDE_AGENT],
+    bindings: [VALID_BINDING],
     ...overrides,
   };
 }
@@ -108,14 +115,18 @@ describe('config loader', () => {
     expect(configText).toMatch(/"agents"/);
     expect(configText).toMatch(/"tokenRef": "DISCORD_BOT_TOKEN"/);
     expect(configText).toMatch(/"bindings"/);
+    expect(configText).toMatch(/"platformName": "discord-main"/);
+    expect(configText).toMatch(/"match"/);
     expect(configText).toMatch(/"channelIds"/);
     expect(configText).toMatch(/"auth"/);
     expect(configText).toMatch(/"allowlist"/);
     expect(configText).not.toMatch(/"agent"\s*:/);
-    expect(configText).not.toMatch(/"discord"\s*:/);
+    expect(
+      Object.prototype.hasOwnProperty.call(JSON.parse(configText), 'discord'),
+    ).toBe(false);
   });
 
-  it('loadConfig 解析 platforms[] / agents[] 新结构并应用 owner parser 默认值', async () => {
+  it('loadConfig 解析 platforms[] / agents[] / bindings[] 新结构并应用 owner parser 默认值', async () => {
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
       JSON.stringify(validConfig({ ui: { toolMessages: 'compact' }, log: { level: 'debug' } })),
@@ -140,7 +151,6 @@ describe('config loader', () => {
           requireMentionOrSlash: true,
         },
       },
-      bindings: [{ agentName: 'codex-dev', channelIds: ['C1'] }],
     });
     expect(cfg.platforms[0].statePath).toBe(
       join(tmp, '.agent-nexus', 'state', 'discord-discord-main.json'),
@@ -156,6 +166,14 @@ describe('config loader', () => {
       backend: 'claudecode',
       claudeCode: { bin: 'claude', workingDir: '/claude' },
     });
+    expect(cfg.bindings).toEqual([
+      {
+        name: 'discord-main-codex-dev',
+        platformName: 'discord-main',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ]);
     expect(cfg.ui.toolMessages).toBe('compact');
     expect(cfg.log.level).toBe('debug');
   });
@@ -182,6 +200,12 @@ describe('config loader', () => {
       JSON.stringify({ platforms: [VALID_PLATFORM], agents: [] }),
     );
     await expect(loadConfig()).rejects.toThrow(/agents/);
+
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify({ platforms: [VALID_PLATFORM], agents: [VALID_CODEX_AGENT], bindings: [] }),
+    );
+    await expect(loadConfig()).rejects.toThrow(/bindings/);
   });
 
   it('重复 platform name / agent name → ConfigError（列出重复 name）', async () => {
@@ -204,6 +228,16 @@ describe('config loader', () => {
       ),
     );
     await expect(loadConfig()).rejects.toThrow(/agents\[\]\.name.*codex-dev/);
+
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          bindings: [VALID_BINDING, { ...VALID_BINDING, agentName: 'claude-prod' }],
+        }),
+      ),
+    );
+    await expect(loadConfig()).rejects.toThrow(/bindings\[\]\.name.*discord-main-codex-dev/);
   });
 
   it('P9 在 session 隔离完成前拒绝多个同 type platform 实例', async () => {
@@ -262,22 +296,26 @@ describe('config loader', () => {
     await expect(loadConfig()).rejects.toThrow(/agents\[0\]\.default/);
   });
 
-  it('binding 引用不存在 agent → ConfigError（含 binding 字段路径）', async () => {
+  it('binding 引用不存在 platform / agent → ConfigError（含 binding 字段路径）', async () => {
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
       JSON.stringify(
         validConfig({
-          platforms: [
-            {
-              ...VALID_PLATFORM,
-              bindings: [{ agentName: 'missing-agent', channelIds: ['C1'] }],
-            },
-          ],
+          bindings: [{ ...VALID_BINDING, platformName: 'missing-platform' }],
         }),
       ),
     );
+    await expect(loadConfig()).rejects.toThrow(/bindings\[0\]\.platformName/);
 
-    await expect(loadConfig()).rejects.toThrow(/platforms\[0\]\.bindings\[0\]\.agentName/);
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          bindings: [{ ...VALID_BINDING, agentName: 'missing-agent' }],
+        }),
+      ),
+    );
+    await expect(loadConfig()).rejects.toThrow(/bindings\[0\]\.agentName/);
   });
 
   it('platform auth 和 Discord binding owner parser 错误经 ConfigError 包装并保留字段路径', async () => {
@@ -302,17 +340,29 @@ describe('config loader', () => {
       join(tmp, '.agent-nexus', 'config.json'),
       JSON.stringify(
         validConfig({
-          platforms: [
+          bindings: [
             {
-              ...VALID_PLATFORM,
-              bindings: [{ agentName: 'codex-dev', channelIds: [] }],
+              ...VALID_BINDING,
+              match: { discord: { channelIds: [] } },
             },
           ],
         }),
       ),
     );
     await expect(loadConfig()).rejects.toThrow(
-      /platforms\[0\]\.bindings\[0\]\.channelIds/,
+      /bindings\[0\]\.match\.discord\.channelIds/,
+    );
+
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          platforms: [{ ...VALID_PLATFORM, bindings: [{ agentName: 'codex-dev' }] }],
+        }),
+      ),
+    );
+    await expect(loadConfig()).rejects.toThrow(
+      /platforms\[0\]\.bindings.*顶层 bindings\[\]/,
     );
   });
 

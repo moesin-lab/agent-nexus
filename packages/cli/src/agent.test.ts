@@ -48,10 +48,17 @@ function baseConfig(agentName: string, agents: AgentConfig[]): AgentNexusConfig 
             requireMentionOrSlash: true,
           },
         },
-        bindings: [{ agentName, channelIds: ['C1'] }],
       },
     ],
     agents,
+    bindings: [
+      {
+        name: 'discord-main-binding',
+        platformName: 'discord-main',
+        agentName,
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ],
     ui: { toolMessages: 'append' },
     log: { level: 'info' },
   };
@@ -173,7 +180,12 @@ describe('createSelectedAgent', () => {
         },
       },
     ]);
-    config.platforms[0].bindings.push({ agentName: 'codex-dev', channelIds: ['C2'] });
+    config.bindings.push({
+      name: 'discord-main-binding-2',
+      platformName: 'discord-main',
+      agentName: 'codex-dev',
+      match: { discord: { channelIds: ['C2'] } },
+    });
 
     await expect(createSelectedAgent(config, logger)).rejects.toThrow(/P10/);
   });

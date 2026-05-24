@@ -2,7 +2,9 @@ import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
+  parseDiscordBindingMatchConfig,
   parseDiscordPlatformConfig,
+  type DiscordBindingMatchConfig,
   type DiscordPlatformConfig,
   DiscordConfigError,
 } from '@agent-nexus/platform-discord';
@@ -28,6 +30,7 @@ export type {
   ClaudeCodeConfig,
   CodexConfig,
   DiscordPlatformConfig,
+  DiscordBindingMatchConfig,
   PlatformAuthConfig,
 };
 
@@ -54,9 +57,19 @@ export type AgentConfig =
 export interface AgentNexusConfig {
   platforms: PlatformConfig[];
   agents: AgentConfig[];
+  bindings: BindingConfig[];
   ui: DaemonConfig;
   log: {
     level: LogLevel;
+  };
+}
+
+export interface BindingConfig {
+  name: string;
+  platformName: string;
+  agentName: string;
+  match: {
+    discord: DiscordBindingMatchConfig;
   };
 }
 
@@ -101,7 +114,7 @@ export function defaultDiscordStatePath(name: string): string {
 
 const CONFIG_HINT = (path: string) => `\
 agent-nexus 配置模板已创建：${path}
-请编辑其中的 platforms[].botUserId、platforms[].auth.allowlist、platforms[].bindings[].channelIds 和 agents[].workingDir，然后确认权限：
+请编辑其中的 platforms[].botUserId、platforms[].auth.allowlist、bindings[].match.discord.channelIds 和 agents[].workingDir，然后确认权限：
   chmod 600 ${path}
 `;
 
@@ -130,13 +143,7 @@ const DEFAULT_CONFIG_TEMPLATE = `\
           "allowDM": true,
           "requireMentionOrSlash": true
         }
-      },
-      "bindings": [
-        {
-          "agentName": "codex-dev",
-          "channelIds": []
-        }
-      ]
+      }
     }
   ],
   "agents": [
@@ -162,6 +169,18 @@ const DEFAULT_CONFIG_TEMPLATE = `\
         "_permissionLevelComment": "allowed: default, acceptEdits, auto, bypassPermissions, dontAsk, plan",
         "permissionLevel": "default",
         "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"]
+      }
+    }
+  ],
+  "bindings": [
+    {
+      "name": "discord-main-codex-dev",
+      "platformName": "discord-main",
+      "agentName": "codex-dev",
+      "match": {
+        "discord": {
+          "channelIds": []
+        }
       }
     }
   ],
@@ -269,7 +288,7 @@ function rejectLegacyTopLevel(path: string, obj: Record<string, unknown>): void 
   if (legacyKeys.length === 0) return;
   throw new ConfigError(
     `${path} 是 legacy 配置形态（顶层 ${legacyKeys.join(', ')}）。` +
-      '请迁移为 platforms[] / agents[]：platforms[].name/type/auth/bindings/tokenRef，' +
+      '请迁移为 platforms[] / agents[] / bindings[]：platforms[].name/type/auth/tokenRef，' +
       'agents[].name/backend/(claudeCode|codex)。loader 不做自动迁移。',
   );
 }
@@ -322,6 +341,66 @@ function parseAgent(raw: unknown, index: number): AgentConfig {
   }
 }
 
+function rejectEmbeddedPlatformBindings(platformsRaw: unknown[]): void {
+  for (const [index, raw] of platformsRaw.entries()) {
+    if (isRecord(raw) && 'bindings' in raw) {
+      throw new ConfigError(
+        `字段 platforms[${index}].bindings 已迁移到顶层 bindings[]；` +
+          '请把每条 binding 提升为 { name, platformName, agentName, match }',
+      );
+    }
+  }
+}
+
+function parseBinding(
+  raw: unknown,
+  index: number,
+  platformsByName: ReadonlyMap<string, PlatformConfig>,
+): BindingConfig {
+  const path = `bindings[${index}]`;
+  if (!isRecord(raw)) {
+    throw new ConfigError(`字段 ${path} 必须是对象`);
+  }
+  assertNoUnknownKeys(raw, ['name', 'platformName', 'agentName', 'match'], path);
+
+  const name = requireNonEmptyString(raw, 'name', path);
+  const platformName = requireNonEmptyString(raw, 'platformName', path);
+  const agentName = requireNonEmptyString(raw, 'agentName', path);
+  const platform = platformsByName.get(platformName);
+  if (!platform) {
+    throw new ConfigError(`字段 ${path}.platformName 引用了不存在的 platform "${platformName}"`);
+  }
+  if (!isRecord(raw['match'])) {
+    throw new ConfigError(`字段 ${path}.match 必须是对象`);
+  }
+
+  if (platform.type === 'discord') {
+    assertNoUnknownKeys(raw['match'], ['discord'], `${path}.match`);
+    if (!('discord' in raw['match'])) {
+      throw new ConfigError(`缺字段 ${path}.match.discord`);
+    }
+    try {
+      return {
+        name,
+        platformName,
+        agentName,
+        match: {
+          discord: parseDiscordBindingMatchConfig(raw['match']['discord'], {
+            path: `${path}.match.discord`,
+          }),
+        },
+      };
+    } catch (err) {
+      if (err instanceof DiscordConfigError) {
+        throw new ConfigError(`${configPath()} ${err.message}`);
+      }
+      throw err;
+    }
+  }
+
+  throw new ConfigError(`字段 ${path}.platformName 引用了暂不支持的 platform type "${platform.type}"`);
+}
+
 function parsePlatform(raw: unknown, index: number): PlatformConfig {
   const path = `platforms[${index}]`;
   if (!isRecord(raw)) {
@@ -372,19 +451,16 @@ function assertSinglePlatformTypeUntilP10(platforms: PlatformConfig[]): void {
   }
 }
 
-function assertBindingReferences(
-  platforms: PlatformConfig[],
+function assertAgentReferences(
+  bindings: BindingConfig[],
   agents: AgentConfig[],
 ): void {
   const agentNames = new Set(agents.map((agent) => agent.name));
-  for (const [platformIndex, platform] of platforms.entries()) {
-    for (const [bindingIndex, binding] of platform.bindings.entries()) {
-      if (!agentNames.has(binding.agentName)) {
-        throw new ConfigError(
-          `字段 platforms[${platformIndex}].bindings[${bindingIndex}].agentName ` +
-            `引用了不存在的 agent "${binding.agentName}"`,
-        );
-      }
+  for (const [bindingIndex, binding] of bindings.entries()) {
+    if (!agentNames.has(binding.agentName)) {
+      throw new ConfigError(
+        `字段 bindings[${bindingIndex}].agentName 引用了不存在的 agent "${binding.agentName}"`,
+      );
     }
   }
 }
@@ -438,10 +514,12 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     throw new ConfigError(`${path} 顶层必须是对象`);
   }
   rejectLegacyTopLevel(path, parsed);
-  assertNoUnknownKeys(parsed, ['platforms', 'agents', 'log', 'ui'], path);
+  assertNoUnknownKeys(parsed, ['platforms', 'agents', 'bindings', 'log', 'ui'], path);
 
   const platformsRaw = assertArray(parsed, 'platforms', path);
   const agentsRaw = assertArray(parsed, 'agents', path);
+  const bindingsRaw = assertArray(parsed, 'bindings', path);
+  rejectEmbeddedPlatformBindings(platformsRaw);
 
   const agents = agentsRaw.map((agent, index) => parseAgent(agent, index));
   const duplicateAgentNames = duplicateNames(agents.map((agent) => agent.name));
@@ -461,7 +539,22 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     );
   }
   assertSinglePlatformTypeUntilP10(platforms);
-  assertBindingReferences(platforms, agents);
+  const platformsByName = new Map(
+    platforms.map((platform) => [platform.name, platform]),
+  );
+
+  const bindings = bindingsRaw.map((binding, index) =>
+    parseBinding(binding, index, platformsByName),
+  );
+  const duplicateBindingNames = duplicateNames(
+    bindings.map((binding) => binding.name),
+  );
+  if (duplicateBindingNames.length > 0) {
+    throw new ConfigError(
+      `bindings[].name 重复：${duplicateBindingNames.join(', ')}`,
+    );
+  }
+  assertAgentReferences(bindings, agents);
 
   let ui: DaemonConfig;
   try {
@@ -476,6 +569,7 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
   return {
     platforms,
     agents,
+    bindings,
     ui,
     log: parseLog(parsed['log']),
   };

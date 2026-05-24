@@ -2,7 +2,7 @@
 title: ADR-0015：多平台多 Agent 命名配置
 type: adr
 status: active
-summary: 用 platforms[] 与 agents[] 命名集合替代单 Discord bot + 单 agent selector，并通过平台侧 bindings 显式路由到 agent
+summary: 用 platforms[]、agents[] 与顶层 bindings[] 命名集合替代单 Discord bot + 单 agent selector，并通过独立 binding 实体显式路由到 agent
 tags: [adr, decision, config, routing, multi-agent]
 related:
   - dev/adr/0014-agent-backend-codex-cli
@@ -51,19 +51,19 @@ agent-nexus 已经有两个 agent backend：Claude Code CLI 默认后端与 Code
   - Discord 可以同时配置多个 bot，每个 bot 有独立 tokenRef、statePath、auth allowlist 与 channel binding。
   - Claude Code 与 Codex 可以各有多套配置，同一 backend 的不同工作目录或安全策略不需要复制顶层 selector。
   - 未命中、重复命中、缺失引用、名称重复都能在 loader / router 层 fail-closed。
-- **缺点**：需要一次配置迁移，CLI 组装逻辑要从单 platform / 单 agent 升级为集合。
+- **缺点**：路由关系嵌在 platform 内，不适合作为独立可审计实体引用、命名或跨视图展示。
 - **主要风险**：如果 CLI 直接理解所有平台与 backend 私有字段，会破坏 owner parser 边界；缓解见 `config-routing.md` 的 owner 校验规则。
 
-### Option C：把 binding 放在独立顶层 `routes[]`
+### Option C：把 binding 放在独立顶层 `bindings[]`
 
-- **是什么**：`platforms[]` 与 `agents[]` 仍为命名集合，但路由放在顶层 `routes[]`，每条 route 同时引用 `platformName` 与 `agentName`。
-- **优点**：路由集中展示，跨平台通用字段可统一。
-- **缺点**：平台侧条件会被迫住进顶层 route schema，CLI 必须理解 Discord 的 channel/user 条件；新增平台时 route schema 继续膨胀。
-- **主要风险**：违反 platform package owner parser 校验平台专属字段的边界。
+- **是什么**：`platforms[]` 与 `agents[]` 仍为命名集合，路由关系放在顶层 `bindings[]`。每条 binding 是一个命名边，显式引用 `platformName` 与 `agentName`，并在 `match.<platformType>` 下携带平台侧匹配条件，例如 `match.discord.channelIds`。
+- **优点**：platform、agent、binding 三类实体边界清楚；binding 可独立命名、审计、测试和生成 routing table；平台侧 match 字段仍可按 `platformName` 指向的 type 委托给 platform package parser 校验。
+- **缺点**：配置比 Option B 多一层顶层数组；loader 需要先解析 platform registry，再按 binding 引用选择 owner parser。
+- **主要风险**：如果 `match` 被做成无类型大杂烩，仍会破坏 owner parser 边界；缓解方式是只允许 `match.<platformType>`，并由对应 platform parser 校验该对象。
 
 ## Decision
 
-选 **Option B：顶层 `platforms[]` 与 `agents[]`，binding 住在 platform 实例**。
+选 **Option C：顶层 `platforms[]`、`agents[]` 与独立 `bindings[]` 关系实体**。
 
 legacy 单实例配置不自动迁移。P9 loader 必须清晰报错并提示改为新结构；迁移示例可以放到 P12 文档或后续命令，但启动路径不得把 legacy 配置在内存里静默当作新结构运行。
 
@@ -71,8 +71,8 @@ legacy 单实例配置不自动迁移。P9 loader 必须清晰报错并提示改
 
 ### 正向
 
-- 配置能同时表达多个平台 bot 与多套 agent runtime，路由关系通过名称引用可审计。
-- Discord channel bind 是 platform-discord 的字段语义，CLI 只做组合校验和引用校验。
+- 配置能同时表达多个平台 bot、多套 agent runtime 与多条命名 binding，路由关系通过名称引用可审计。
+- Discord channel bind 住在 `bindings[].match.discord`，字段语义仍由 platform-discord parser 拥有；CLI 只按 `platformName` 选择 owner parser 并做组合 / 引用校验。
 - 用户、角色、guild、DM 与公开 channel 授权归 `daemon.auth`，router 不承担用户授权，避免 `route_not_found` 掩盖 `auth_denied`。
 - daemon 可以继续不读取 backend / platform 私有配置，只接收 CLI 组装好的 platform adapter、agent runtime 与 routing table。
 - 安全默认值明确：未命中 binding、多个 binding 命中、引用不存在、名称重复、平台条件非法都拒绝启动或拒绝 dispatch，不选择隐式默认 agent。
@@ -85,7 +85,7 @@ legacy 单实例配置不自动迁移。P9 loader 必须清晰报错并提示改
 
 ### 需要后续跟进的事
 
-- P9 实现新 config loader：解析 `platforms[]`、`agents[]`、binding；校验唯一性、引用、backend/type、空 binding、Discord 条件。
+- P9 实现新 config loader：解析 `platforms[]`、`agents[]`、`bindings[]`；校验唯一性、引用、backend/type、空 binding、Discord 条件。
 - P10 升级 runtime 组装与 routing：创建多个 platform adapter 与 agent runtime，按 platform instance + binding 条件选择 agent。
 - P11 收口 Discord channel bind 与多 bot 会话隔离测试。
 - P12 更新 README、product user guide、ops runbook 与端到端示例。

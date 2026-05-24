@@ -18,8 +18,7 @@ export interface DiscordConfig {
 
 export type DiscordPublicChannelMode = 'disabled' | 'thread' | 'public';
 
-export interface DiscordBindingConfig {
-  agentName: string;
+export interface DiscordBindingMatchConfig {
   channelIds: string[];
 }
 
@@ -28,7 +27,6 @@ export interface DiscordPlatformConfig {
   type: 'discord';
   botUserId: string;
   tokenRef: string;
-  bindings: DiscordBindingConfig[];
   statePath: string;
   testGuildId?: string;
   publicChannelMode: DiscordPublicChannelMode;
@@ -84,13 +82,16 @@ function assertValidSecretRef(value: string, path: string): void {
   }
 }
 
-function parseBinding(raw: unknown, path: string): DiscordBindingConfig {
+export function parseDiscordBindingMatchConfig(
+  raw: unknown,
+  ctx: { path: string },
+): DiscordBindingMatchConfig {
+  const path = ctx.path;
   if (!isRecord(raw)) {
     throw new DiscordConfigError(`字段 ${path} 必须是对象`);
   }
-  assertNoUnknownKeys(raw, ['agentName', 'channelIds'], path);
+  assertNoUnknownKeys(raw, ['channelIds'], path);
 
-  const agentName = requireString(raw, 'agentName', path);
   const channelIdsRaw = raw['channelIds'];
   if (!Array.isArray(channelIdsRaw)) {
     throw new DiscordConfigError(`字段 ${path}.channelIds 必须是非空字符串数组`);
@@ -104,7 +105,7 @@ function parseBinding(raw: unknown, path: string): DiscordBindingConfig {
     }
   }
 
-  return { agentName, channelIds: [...channelIdsRaw] };
+  return { channelIds: [...channelIdsRaw] };
 }
 
 export function parseDiscordPlatformConfig(
@@ -121,7 +122,6 @@ export function parseDiscordPlatformConfig(
       'type',
       'botUserId',
       'tokenRef',
-      'bindings',
       'auth',
       'statePath',
       'testGuildId',
@@ -138,17 +138,6 @@ export function parseDiscordPlatformConfig(
   const botUserId = requireString(raw, 'botUserId', ctx.path);
   const tokenRef = requireString(raw, 'tokenRef', ctx.path);
   assertValidSecretRef(tokenRef, `${ctx.path}.tokenRef`);
-
-  const bindingsRaw = raw['bindings'];
-  if (!Array.isArray(bindingsRaw)) {
-    throw new DiscordConfigError(`字段 ${ctx.path}.bindings 必须是非空数组`);
-  }
-  if (bindingsRaw.length === 0) {
-    throw new DiscordConfigError(`字段 ${ctx.path}.bindings 不能是空数组`);
-  }
-  const bindings = bindingsRaw.map((binding, index) =>
-    parseBinding(binding, `${ctx.path}.bindings[${index}]`),
-  );
 
   const statePath = optionalString(raw, 'statePath', ctx.path) ?? ctx.defaultStatePath;
   const testGuildId = optionalString(raw, 'testGuildId', ctx.path);
@@ -171,7 +160,6 @@ export function parseDiscordPlatformConfig(
     type: 'discord',
     botUserId,
     tokenRef,
-    bindings,
     statePath,
     ...(testGuildId === undefined ? {} : { testGuildId }),
     publicChannelMode,

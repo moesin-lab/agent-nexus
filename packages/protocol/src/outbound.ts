@@ -39,4 +39,5 @@ export interface CapabilitySet {
   supportsAttachments: boolean;
   maxAttachmentsPerMessage: number;
   supportsTypingIndicator: boolean;
+  supportsSlashCommands: boolean;
 }

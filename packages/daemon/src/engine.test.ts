@@ -37,6 +37,7 @@ const platformCaps: CapabilitySet = {
   supportsAttachments: false,
   maxAttachmentsPerMessage: 0,
   supportsTypingIndicator: false,
+  supportsSlashCommands: false,
 };
 
 const agentCaps: AgentCapabilitySet = {

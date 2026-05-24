@@ -19,6 +19,28 @@ export type {
 } from './outbound.js';
 
 export type {
+  ActiveCommandMap,
+  CommandAliasKind,
+  CommandApplicability,
+  CommandArgValue,
+  CommandCanonicalId,
+  CommandChoice,
+  CommandDescriptor,
+  CommandOption,
+  CommandOptionType,
+  CommandOwner,
+  CommandPayload,
+  CommandRegistrationPlan,
+  CommandRegistrationScope,
+  CommandRequiredCapability,
+  CommandReverseMap,
+  CommandRoute,
+  LegacyCommandName,
+  NativeCommandScope,
+  PlannedCommand,
+} from './command.js';
+
+export type {
   AgentEvent,
   AgentCapabilitySet,
   AgentInput,

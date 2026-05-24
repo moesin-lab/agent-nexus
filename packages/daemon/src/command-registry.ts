@@ -4,7 +4,9 @@ import type {
   CommandAliasKind,
   CommandDescriptor,
   CommandOwner,
+  CommandRegistrationPort,
   CommandRegistrationPlan,
+  CommandRegistrationResult,
   CommandRegistrationScope,
   CommandRequiredCapability,
   CommandRoute,
@@ -48,6 +50,16 @@ export interface BuildCommandRegistrationPlanInput {
   policy: CommandNamePolicy;
   agentOwnersInScope: readonly string[];
   generation: string;
+}
+
+export interface CommandRegistryLogger {
+  error(obj: Record<string, unknown>, msg: string): void;
+}
+
+export interface ApplyRegistrationPlanOptions {
+  port: CommandRegistrationPort;
+  activatedAt: Date;
+  logger?: CommandRegistryLogger;
 }
 
 interface ParsedCanonicalId {
@@ -414,6 +426,15 @@ function scopeKey(scope: CommandRegistrationScope): string {
   return `${scope.platformName}:${scope.platformType}:${native}`;
 }
 
+function safeRegistrationError(
+  error: CommandRegistrationResult & { status: 'failed' },
+): { code: string; message: string } {
+  return {
+    code: error.error.code,
+    message: error.error.message,
+  };
+}
+
 export class ActiveCommandRegistry {
   private readonly activeMaps = new Map<string, ActiveCommandMap>();
 
@@ -424,6 +445,63 @@ export class ActiveCommandRegistry {
       generation: plan.generation,
       activatedAt,
     });
+  }
+
+  async applyRegistrationPlan(
+    plan: CommandRegistrationPlan,
+    options: ApplyRegistrationPlanOptions,
+  ): Promise<CommandRegistrationResult> {
+    // Caller owns the per-scope single-in-flight guarantee from the spec.
+    // This method validates the returned generation for the one plan it applied.
+    let result: CommandRegistrationResult;
+    try {
+      result = await options.port.applyCommandPlan(plan);
+    } catch (err) {
+      result = {
+        status: 'failed',
+        error: {
+          code: 'command_registration_failed',
+          message: 'command registration port threw',
+          cause: err,
+        },
+      };
+    }
+
+    if (result.status === 'failed') {
+      options.logger?.error(
+        {
+          platformName: plan.scope.platformName,
+          scope: plan.scope.nativeScope,
+          generation: plan.generation,
+          error: safeRegistrationError(result),
+        },
+        'command_registration_failed',
+      );
+      return result;
+    }
+
+    if (result.generation !== plan.generation) {
+      const failed: CommandRegistrationResult = {
+        status: 'failed',
+        error: {
+          code: 'command_activation_generation_mismatch',
+          message: 'registration result generation does not match plan',
+        },
+      };
+      options.logger?.error(
+        {
+          platformName: plan.scope.platformName,
+          scope: plan.scope.nativeScope,
+          expectedGeneration: plan.generation,
+          resultGeneration: result.generation,
+        },
+        'command_activation_generation_mismatch',
+      );
+      return failed;
+    }
+
+    this.activate(plan, options.activatedAt);
+    return { status: 'applied', generation: result.generation };
   }
 
   resolve(scope: CommandRegistrationScope, commandName: string): CommandRoute {

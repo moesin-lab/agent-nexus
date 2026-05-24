@@ -111,7 +111,43 @@ describe('Codex compatibility probe', () => {
     '{"type":"turn.completed","usage":{"input_tokens":3,"cached_input_tokens":1,"output_tokens":1}}',
   ].join('\n');
 
-  it('校验 version、help、exec/resume JSONL 与 tool 事件 schema', async () => {
+  it('默认 startup 模式只校验本地 version/help，避免启动时跑真实模型 turn', async () => {
+    const fakeLogger = logger();
+    execaMock
+      .mockResolvedValueOnce({ stdout: 'codex-cli 0.133.0' })
+      .mockResolvedValueOnce({
+        stdout: 'Usage: codex\nexec\n--sandbox --ask-for-approval --cd --add-dir',
+      })
+      .mockResolvedValueOnce({
+        stdout: 'Usage: codex exec\nresume --json --ignore-user-config --ignore-rules',
+      });
+
+    await expect(
+      runCompatibilityProbe({
+        config: baseConfig,
+        logger: fakeLogger,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(execaMock).toHaveBeenCalledTimes(3);
+    expect(execaMock).toHaveBeenNthCalledWith(1, 'codex', ['--version']);
+    expect(execaMock).toHaveBeenNthCalledWith(2, 'codex', ['--help']);
+    expect(execaMock).toHaveBeenNthCalledWith(3, 'codex', ['exec', '--help']);
+    expect(fakeLogger.info).toHaveBeenCalledWith(
+      { step: 'version' },
+      'codex_compat_probe_step_start',
+    );
+    expect(fakeLogger.info).toHaveBeenCalledWith(
+      { step: 'help' },
+      'codex_compat_probe_step_ok',
+    );
+    expect(fakeLogger.info).toHaveBeenCalledWith(
+      { probeMode: 'startup' },
+      'codex_compat_probe_complete',
+    );
+  });
+
+  it('full 模式校验 version、help、exec/resume JSONL 与 tool 事件 schema', async () => {
     execaMock
       .mockResolvedValueOnce({ stdout: 'codex-cli 0.133.0' })
       .mockResolvedValueOnce({
@@ -128,6 +164,7 @@ describe('Codex compatibility probe', () => {
       runCompatibilityProbe({
         config: { ...baseConfig, model: 'gpt-5-codex' },
         logger: logger(),
+        mode: 'full',
       }),
     ).resolves.toBeUndefined();
     expect(execaMock).toHaveBeenNthCalledWith(1, 'codex', ['--version']);
@@ -158,6 +195,7 @@ describe('Codex compatibility probe', () => {
         config: baseConfig,
         logger: logger(),
         timeoutMs: 12_345,
+        mode: 'full',
       }),
     ).resolves.toBeUndefined();
 
@@ -205,7 +243,7 @@ describe('Codex compatibility probe', () => {
       });
 
     await expect(
-      runCompatibilityProbe({ config: baseConfig, logger: logger() }),
+      runCompatibilityProbe({ config: baseConfig, logger: logger(), mode: 'full' }),
     ).rejects.toThrow('missing thread.started in exec probe');
   });
 
@@ -243,6 +281,7 @@ describe('Codex compatibility probe', () => {
         runCompatibilityProbe({
           config: { ...baseConfig, sandbox: 'workspace-write', workingDir },
           logger: logger(),
+          mode: 'full',
         }),
       ).resolves.toBeUndefined();
       expect(execaMock).toHaveBeenCalledTimes(7);

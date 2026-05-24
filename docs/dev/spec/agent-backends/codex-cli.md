@@ -229,16 +229,25 @@ Codex P2 安全边界：
 
 ## 兼容性自检（CompatibilityProbe）
 
-`runCompatibilityProbe` 至少验证：
+`runCompatibilityProbe` 分两档：
+
+- `startup`（默认）：只做本地 CLI 形态检查，不发起真实模型 turn，避免 Discord bot 启动被
+  `codex exec --json` 网络 / 模型耗时拖慢。
+- `full`：测试与人工诊断使用，跑真实 `exec` / `resume` / tool / workspace-write 样本。
+
+`startup` 至少验证：
 
 1. `<bin> --version` 可执行，版本字符串可记录。
 2. `<bin> --help` 和 `<bin> exec --help` 暴露 `exec`、`exec resume`、`--json`、`--sandbox`、`--ask-for-approval`、`--cd`、`--add-dir`、`--ignore-user-config`、`--ignore-rules`；配置了 `model` 时还必须验证 `--model` / `-m` 可用。
 3. 构造命令时危险 bypass flag 不出现。
-4. 用配置的 sandbox 跑一次 `exec --json` ping，校验 `thread.started`、`turn.started`、`item.completed agent_message`、`turn.completed usage`。当 `sandbox=workspace-write` 时，probe 还必须用哨兵文件验证工作目录可写并清理。
-5. 用返回的 `thread_id` 跑 `exec resume --json`，校验同一 `thread_id` 且能引用上一轮上下文。
-6. 跑一次只读 shell 样本，校验 `command_execution` start/completed；失败则 `supportsToolCallEvents=false` 且相关测试必须覆盖降级。
-7. 跑一次 interrupt 样本或在测试环境中覆盖等价 fake child process，证明 runtime 合成 `user_interrupt` terminal 且不双发。
-8. no-auth / invalid-model 形态由 fixture 或真实 probe 覆盖，错误消息必须可诊断。
+
+`full` 额外验证：
+
+1. 用配置的 sandbox 跑一次 `exec --json` ping，校验 `thread.started`、`turn.started`、`item.completed agent_message`、`turn.completed usage`。当 `sandbox=workspace-write` 时，probe 还必须用哨兵文件验证工作目录可写并清理。
+2. 用返回的 `thread_id` 跑 `exec resume --json`，校验同一 `thread_id` 且能引用上一轮上下文。
+3. 跑一次只读 shell 样本，校验 `command_execution` start/completed；失败则 `supportsToolCallEvents=false` 且相关测试必须覆盖降级。
+4. 跑一次 interrupt 样本或在测试环境中覆盖等价 fake child process，证明 runtime 合成 `user_interrupt` terminal 且不双发。
+5. no-auth / invalid-model 形态由 fixture 或真实 probe 覆盖，错误消息必须可诊断。
 
 任何必需步骤失败 → Codex backend 启动失败；不得回退到 claudecode，也不得假装能力存在。
 
@@ -261,6 +270,10 @@ Codex P2 安全边界：
 
 | 事件名 | level | 字段 |
 |---|---|---|
+| `codex_compat_probe_start` | info | `{ probeMode, sandbox }` |
+| `codex_compat_probe_step_start` | info | `{ step }` |
+| `codex_compat_probe_step_ok` | info | `{ step }` |
+| `codex_compat_probe_complete` | info | `{ probeMode }` |
 | `codex_compat_probe_failed` | error | `{ step, cause }` |
 | `codex_subproc_error` | warn/error | `{ code, exitCode?, signal?, stderrSummary? }` |
 | `codex_interrupt_synthesized` | debug | `{ threadId?, pid?, signal }` |

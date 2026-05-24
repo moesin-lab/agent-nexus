@@ -35,15 +35,9 @@ contracts:
 
 ## 配置契约
 
-CLI 顶层配置用 selector 表达当前 agent backend：
+本节只定义 Codex backend 拥有的 `CodexConfig` 字段。它如何嵌入顶层 `AgentNexusConfig`、如何与其他 agent/backend 选择关系组合，由当前配置 schema owner 定义；Codex contract 不定义顶层 selector 或路由模型。
 
-```text
-agent {
-    backend: "claudecode" | "codex"        // 缺省保持 "claudecode"
-}
-```
-
-Codex owner 配置块：
+Codex owner 配置：
 
 ```text
 codex {
@@ -60,8 +54,8 @@ codex {
 归属规则：
 
 - `parseCodexConfig` / `CodexConfigError` / 默认值住 `@agent-nexus/agent-codex`，符合 [`config-ownership.md`](../../standards/config-ownership.md)。
-- CLI 只读取 `agent.backend` 并调用对应 backend package 的 config parser / probe / runtime factory；不得在 `packages/cli` 里校验 Codex 字段语义。
-- `claudeCode` 与 `codex` 配置块可以同时存在；只启用 `agent.backend` 选中的 backend。
+- CLI 只能根据当前配置 schema 选择 backend package，然后调用对应 package 的 config parser / probe / runtime factory；不得在 `packages/cli` 里校验 Codex 字段语义。
+- `codex` 配置只在所属 agent/backend 选择为 `codex` 时生效；是否允许 inactive backend 配置块存在由当前配置 schema 决定。
 
 安全默认值：
 

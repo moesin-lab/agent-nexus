@@ -81,13 +81,13 @@ cli 里可以写一些 glue 代码，但禁止写业务逻辑。
 
 | package | 物理路径 | npm name | 状态 |
 |---|---|---|---|
-| protocol | `packages/protocol/` | `@agent-nexus/protocol` | 规划中（spec 先行） |
-| daemon | `packages/daemon/` | `@agent-nexus/daemon` | 规划中 |
-| platform-discord | `packages/platform/discord/` | `@agent-nexus/platform-discord` | 规划中 |
-| agent-claudecode | `packages/agent/claudecode/` | `@agent-nexus/agent-claudecode` | 规划中 |
+| protocol | `packages/protocol/` | `@agent-nexus/protocol` | 已实现 |
+| daemon | `packages/daemon/` | `@agent-nexus/daemon` | 已实现 |
+| platform-discord | `packages/platform/discord/` | `@agent-nexus/platform-discord` | 已实现 |
+| agent-claudecode | `packages/agent/claudecode/` | `@agent-nexus/agent-claudecode` | 已实现 |
 | agent-codex | `packages/agent/codex/` | `@agent-nexus/agent-codex` | 已实现；通过 CLI `agent.backend=codex` 显式启用 |
 | vscode | `packages/vscode/` | `@agent-nexus/vscode` | 规划中 |
 | web | `packages/web/` | `@agent-nexus/web` | 规划中 |
-| cli | `packages/cli/` | `@agent-nexus/cli` | 规划中 |
+| cli | `packages/cli/` | `@agent-nexus/cli` | 已实现 |
 
-（代码目录在 ADR-0004 语言选型完成后建立；详见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7。）
+（package 切分来源见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7。）

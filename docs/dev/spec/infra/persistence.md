@@ -48,7 +48,7 @@ contracts:
 | 列 | 类型 | 约束 |
 |---|---|---|
 | `session_id` | TEXT PRIMARY KEY | ulid / uuidv7；单调递增 |
-| `session_key` | TEXT NOT NULL | `<platform>:<channelId>:<userId>` |
+| `session_key` | TEXT NOT NULL | `<platformName>:<platform>:<channelId>:<userId>` |
 | `generation` | INTEGER NOT NULL | 同 session_key 下的代数，从 1 起 |
 | `state` | TEXT NOT NULL | `Created|Active|Idle|Archived|Errored|Interrupted` |
 | `created_at` | TEXT NOT NULL | RFC3339 |

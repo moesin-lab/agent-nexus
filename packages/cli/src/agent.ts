@@ -8,7 +8,8 @@ import {
 } from '@agent-nexus/agent-codex';
 import type { Logger } from '@agent-nexus/daemon';
 import type { AgentRuntime, SessionConfig } from '@agent-nexus/protocol';
-import { ConfigError, type AgentConfig, type AgentNexusConfig } from './config.js';
+import type { EngineAgent } from '@agent-nexus/daemon';
+import type { AgentConfig, AgentNexusConfig } from './config.js';
 
 const DEFAULT_SESSION_TIMEOUT_MS = 300_000;
 
@@ -78,29 +79,18 @@ export async function createAgentRuntime(
   };
 }
 
-export async function createSelectedAgent(
+export async function createAgentRegistry(
   config: AgentNexusConfig,
   logger: Logger,
-): Promise<SelectedAgent> {
-  if (config.platforms.length !== 1) {
-    throw new ConfigError('P9 CLI 启动暂只支持一个 platform；P10 会接入多 platform 路由');
+): Promise<EngineAgent[]> {
+  const registry: EngineAgent[] = [];
+  for (const agentConfig of config.agents) {
+    const selected = await createAgentRuntime(agentConfig, logger);
+    registry.push({
+      agentName: agentConfig.name,
+      agent: selected.agent,
+      defaultSessionConfig: selected.defaultSessionConfig,
+    });
   }
-  const platform = config.platforms[0];
-  if (!platform) {
-    throw new ConfigError('P9 CLI 启动需要一个 platform');
-  }
-  if (config.bindings.length !== 1) {
-    throw new ConfigError('P9 CLI 启动暂只支持一个 binding；P10 会接入多 agent 路由');
-  }
-  const binding = config.bindings[0];
-  if (!binding) {
-    throw new ConfigError('P9 CLI 启动需要一个 binding');
-  }
-  const agentConfig = config.agents.find(
-    (agent) => agent.name === binding.agentName,
-  );
-  if (!agentConfig) {
-    throw new ConfigError(`binding 引用了不存在的 agent：${binding.agentName}`);
-  }
-  return createAgentRuntime(agentConfig, logger);
+  return registry;
 }

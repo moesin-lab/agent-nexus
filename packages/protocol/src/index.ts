@@ -1,5 +1,9 @@
-export type { SessionKey } from './session-key.js';
-export { serializeSessionKey } from './session-key.js';
+export type { PlatformSessionKey, SessionKey } from './session-key.js';
+export {
+  serializePlatformSessionKey,
+  serializeSessionKey,
+  withPlatformName,
+} from './session-key.js';
 
 export type {
   Attachment,

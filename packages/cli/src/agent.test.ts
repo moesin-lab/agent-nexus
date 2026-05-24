@@ -21,7 +21,7 @@ vi.mock('@agent-nexus/agent-codex', () => ({
   runCompatibilityProbe: runCodexProbeMock,
 }));
 
-import { createAgentRuntime, createSelectedAgent } from './agent.js';
+import { createAgentRegistry, createAgentRuntime } from './agent.js';
 
 const logger = {
   warn: vi.fn(),
@@ -142,9 +142,9 @@ describe('createAgentRuntime', () => {
   });
 });
 
-describe('createSelectedAgent', () => {
-  it('P9 启动路径从唯一 binding 选择目标 agent', async () => {
-    const selected = await createSelectedAgent(
+describe('createAgentRegistry', () => {
+  it('为每个命名 agent 创建 runtime，binding 选择交给 daemon router', async () => {
+    const registry = await createAgentRegistry(
       baseConfig('codex-dev', [
         {
           name: 'codex-dev',
@@ -158,14 +158,32 @@ describe('createSelectedAgent', () => {
             loadRules: false,
           },
         },
+        {
+          name: 'claude-prod',
+          backend: 'claudecode',
+          claudeCode: {
+            bin: 'claude',
+            workingDir: '/claude',
+            allowedTools: ['Read'],
+            permissionLevel: 'default',
+          },
+        },
       ]),
       logger,
     );
 
-    expect(selected.agent).toBe(codexRuntime);
+    expect(registry).toHaveLength(2);
+    expect(registry[0]).toMatchObject({
+      agentName: 'codex-dev',
+      agent: codexRuntime,
+    });
+    expect(registry[1]).toMatchObject({
+      agentName: 'claude-prod',
+      agent: claudeRuntime,
+    });
   });
 
-  it('P9 启动路径遇到多个 binding 时拒绝，避免假装完成 P10 路由', async () => {
+  it('多个 binding 不再阻止 agent registry 创建', async () => {
     const config = baseConfig('codex-dev', [
       {
         name: 'codex-dev',
@@ -187,6 +205,6 @@ describe('createSelectedAgent', () => {
       match: { discord: { channelIds: ['C2'] } },
     });
 
-    await expect(createSelectedAgent(config, logger)).rejects.toThrow(/P10/);
+    await expect(createAgentRegistry(config, logger)).resolves.toHaveLength(1);
   });
 });

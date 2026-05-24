@@ -240,7 +240,7 @@ describe('config loader', () => {
     await expect(loadConfig()).rejects.toThrow(/bindings\[\]\.name.*discord-main-codex-dev/);
   });
 
-  it('P9 在 session 隔离完成前拒绝多个同 type platform 实例', async () => {
+  it('允许多个同 type platform 实例，并按 platform name 派生独立 statePath', async () => {
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),
       JSON.stringify(
@@ -253,7 +253,33 @@ describe('config loader', () => {
       ),
     );
 
-    await expect(loadConfig()).rejects.toThrow(/platforms\[\]\.type.*P10|session/);
+    const cfg = await loadConfig();
+    expect(cfg.platforms).toHaveLength(2);
+    expect(cfg.platforms.map((platform) => platform.statePath)).toEqual([
+      join(tmp, '.agent-nexus', 'state', 'discord-discord-main.json'),
+      join(tmp, '.agent-nexus', 'state', 'discord-discord-alt.json'),
+    ]);
+  });
+
+  it('多个 platform 实例显式复用同一 statePath 时 fail-closed', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          platforms: [
+            { ...VALID_PLATFORM, statePath: '/shared/state.json' },
+            {
+              ...VALID_PLATFORM,
+              name: 'discord-alt',
+              botUserId: '67890',
+              statePath: '/shared/state.json',
+            },
+          ],
+        }),
+      ),
+    );
+
+    await expect(loadConfig()).rejects.toThrow(/platforms\[\]\.statePath.*重复/);
   });
 
   it('未知 platform type / backend → ConfigError', async () => {

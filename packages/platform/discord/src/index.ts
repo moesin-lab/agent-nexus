@@ -28,6 +28,7 @@ import type {
   MessageRef,
   NormalizedEvent,
   OutboundMessage,
+  PlatformSessionKey,
   PlatformAdapter,
   SessionKey,
 } from '@agent-nexus/protocol';
@@ -210,7 +211,7 @@ export function parseInbound(
 
   const text = msg.content.replace(buildBotMentionRegex(botUserId), '').trim();
 
-  const sessionKey: SessionKey = {
+  const sessionKey: PlatformSessionKey = {
     platform: 'discord',
     channelId: msg.channelId,
     initiatorUserId: msg.author.id,

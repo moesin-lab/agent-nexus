@@ -258,8 +258,8 @@ agent {
 
 约束：
 
-- `agent.backend` 只决定启用哪个 `@agent-nexus/agent-<name>` package；daemon 不读取该字段。
-- backend 自己的字段住各 owner 配置块：`claudeCode` 由 `@agent-nexus/agent-claudecode` 解析，`codex` 由 `@agent-nexus/agent-codex` 解析。
+- `agents[].backend` 只决定该命名 agent 启用哪个 `@agent-nexus/agent-<name>` package；daemon 不读取该字段。
+- backend 自己的字段住各 owner 配置块：`agents[].claudeCode` 由 `@agent-nexus/agent-claudecode` 解析，`agents[].codex` 由 `@agent-nexus/agent-codex` 解析。
 - CLI 可以按 selector 调用对应 parser / probe / runtime factory，但不得实现 backend 业务逻辑或校验 owner 字段。
 
 多平台多 Agent 配置改用命名 `agents[]`，每个 agent 项携带自己的 `backend` 与 owner 配置块；binding 与路由语义见 [`config-routing.md`](config-routing.md)。实现新 loader 后不得把 legacy `agent.backend` 静默混入新结构。

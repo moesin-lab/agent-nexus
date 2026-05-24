@@ -25,7 +25,7 @@ related:
 | 主题 | Spec | 对应模块 |
 |---|---|---|
 | 谁能触发 agent | [`auth.md`](auth.md) | `daemon.auth` |
-| 能做什么操作 | [`tool-boundary.md`](tool-boundary.md) | `daemon.toolguard` |
+| 能做什么操作 | [`tool-boundary.md`](tool-boundary.md) | `agent-claudecode` permission control / backend sandbox |
 | 密钥怎么放 | [`secrets.md`](secrets.md) | `daemon.secrets` |
 | 出口脱敏 | [`redaction.md`](redaction.md) | `daemon.redact` |
 | 去重防重放 | [`idempotency.md`](../infra/idempotency.md) | `daemon.idempotency` |

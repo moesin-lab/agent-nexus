@@ -78,7 +78,6 @@ AgentCapabilitySet {
     supportsToolCallEvents: bool
     supportsInterrupt: bool
     supportsStdinInterrupt: bool
-    supportsNativeToolWhitelist: bool
 }
 ```
 
@@ -91,9 +90,6 @@ AgentCapabilitySet {
 | `supportsToolCallEvents` | backend 能输出工具/命令开始与终态事件 |
 | `supportsInterrupt` | runtime 能终止 in-flight turn，并产出 terminal `turn_finished` |
 | `supportsStdinInterrupt` | backend 支持在长驻 stdin/stdout 会话内发送 interrupt 控制消息 |
-| `supportsNativeToolWhitelist` | backend 有已验证的执行前工具 allow/deny 强制点，能按 `SessionConfig.toolWhitelist` 拦截 |
-
-Codex contract 要求 `supportsNativeToolWhitelist=false`；实现 PR 必须同步更新 protocol 类型与 claudecode/codex 两端测试。
 
 ### `AgentSession` 与 `Session` 的区分
 
@@ -110,8 +106,7 @@ daemon 启动 agent session 时传入的配置。
 ```text
 SessionConfig {
     sessionId: string                         // 持久化主键（见 session-model.md）
-    workingDir: path                          // CC 运行的工作目录
-    toolWhitelist: string[]                   // 允许使用的工具（见 tool-boundary.md）
+    workingDir: path                          // agent 后端运行的工作目录
     maxTokensPerTurn: int
     timeoutMs: int                            // 单次输入的处理超时（对应 limits.perInputTimeoutMs）
     env: map[string]string                    // 注入的环境变量（过滤敏感字段）
@@ -219,7 +214,7 @@ enum EventType {
 | `wallclock_timeout` | **daemon 注入** | `perInputTimeoutMs` 命中 |
 | `budget_exceeded` | **daemon 注入** | opt-in $ 预算耗尽 |
 
-**daemon 注入**的 `turn_finished` 由 `daemon.toolguard` / `daemon.quota-enforcer` 主动构造并追加到事件流（见 `claude-code-cli.md` §"stop_reason 映射"）。adapter 收到 daemon 中断信号后也必须产出一条对应 reason 的 `turn_finished`，避免事件流不完整。
+**daemon 注入**的 `turn_finished` 由 `daemon.quota-enforcer` 等横切模块主动构造并追加到事件流（见 `claude-code-cli.md` §"stop_reason 映射"）。adapter 收到 daemon 中断信号后也必须产出一条对应 reason 的 `turn_finished`，避免事件流不完整。
 
 ### UsageRecord（`usage` 事件 payload）
 
@@ -299,7 +294,7 @@ adapter 侧实现职责：
 - **多轮**：保存 `thread.started.thread_id` 到 `AgentSession.agentSessionId`；下一轮用 `exec resume <thread_id>`。
 - **中断**：终止当前 in-flight Codex 子进程，并合成 `turn_finished { reason: "user_interrupt", source: "runtime-synthesized" }`。
 - **安全默认值**：默认 `read-only` sandbox、固定 `--ask-for-approval never`、忽略 user config/rules；不使用 dangerous bypass。
-- **能力声明**：不得声明 native tool whitelist；`supportsStreaming=false`，除非后续 probe 坐实 text delta。
+- **能力声明**：`supportsStreaming=false`，除非后续 probe 坐实 text delta。
 
 Codex 的 `exec-server` / `app-server` 未经当前 contract 验证，不属于主路径。
 

@@ -31,7 +31,7 @@ contracts:
 | 最低支持版本 | 不靠静态版本号放行；启动时必须通过 CompatibilityProbe |
 | 主路径 | `codex exec --json`；后续 turn 用 `codex exec resume <thread_id> --json` |
 | 运行时 | 用户本机，由用户自行维护 Codex CLI 安装与认证 |
-| native tool whitelist | 当前未发现；必须声明不支持 |
+| 执行前工具审批 | 当前未发现；不得宣称支持 Claude Code 的工具级白名单语义 |
 
 ## 配置契约
 
@@ -149,7 +149,7 @@ codex \
 - `tool_call_started.inputSummary` 从 `command_execution.command` 生成短摘要，必须截断并经 redactor；不得把完整 command 原样送到 IM。
 - `exit_code === 0` → `tool_call_finished.status = "ok"`。
 - `exit_code !== 0` 或 `status` 非 completed → `tool_call_finished.status = "error"`，`errorSummary` 填 exit code / status。
-- Codex 没有独立 tool whitelist 事件；`tool_call_started` 只是事实观测，不代表执行前可拦截。
+- Codex 没有独立执行前工具审批事件；`tool_call_started` 只是事实观测，不代表执行前可拦截。
 
 Usage 映射：
 
@@ -198,7 +198,7 @@ runtime 契约：
 
 ## 权限边界
 
-Codex backend 不满足 Claude Code backend 的 native tool whitelist 强安全承诺。当前未发现 `toolWhitelist`、allowlist、denylist 或执行前 control request flag。
+Codex backend 不满足 Claude Code backend 的执行前工具白名单强安全承诺。当前未发现 allowlist、denylist 或执行前 control request flag。
 
 Codex 安全边界：
 
@@ -217,9 +217,6 @@ Codex 安全边界：
 | `supportsToolCallEvents` | `true` | `command_execution` start/completed |
 | `supportsInterrupt` | `true` | runtime 可终止 in-flight process 并合成 terminal |
 | `supportsStdinInterrupt` | `false` | `exec` 非长驻 stdin 会话 |
-| `supportsNativeToolWhitelist` | `false` | help 未发现 tool allow/deny/control flag |
-
-若当前 `AgentCapabilitySet` 代码尚无 `supportsNativeToolWhitelist`，Codex 实现 PR 必须先扩展 protocol 类型与 claudecode/codex 两端测试；不得用 `supportsToolCallEvents` 代替工具隔离能力。
 
 ## 兼容性自检（CompatibilityProbe）
 
@@ -281,5 +278,5 @@ Codex 安全边界：
 - Codex `exec-server` / `app-server` 协议。
 - Codex Cloud。
 - Codex 内部配置文件格式。
-- native tool whitelist；当前明确不支持。
+- 执行前工具审批 / 工具级白名单；当前明确不支持。
 - 将 Codex 设为默认后端。

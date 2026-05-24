@@ -41,7 +41,6 @@ const agentCaps: AgentCapabilitySet = {
   supportsToolCallEvents: false,
   supportsInterrupt: false,
   supportsStdinInterrupt: false,
-  supportsNativeToolWhitelist: false,
 };
 
 const SESSION_KEY: SessionKey = {
@@ -237,7 +236,6 @@ const SILENT_LOGGER = createLogger({ level: 'fatal', pretty: false });
 
 const DEFAULT_CFG = {
   workingDir: '/tmp',
-  toolWhitelist: [],
   timeoutMs: 60_000,
 };
 

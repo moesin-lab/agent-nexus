@@ -44,7 +44,6 @@ const sessionKey: SessionKey = {
 const sessionConfig: SessionConfig = {
   sessionId: 'sess-1',
   workingDir: '/workspace/project',
-  toolWhitelist: [],
   timeoutMs: 300_000,
 };
 
@@ -161,7 +160,6 @@ describe('createCodexRuntime', () => {
       supportsToolCallEvents: true,
       supportsInterrupt: true,
       supportsStdinInterrupt: false,
-      supportsNativeToolWhitelist: false,
     });
   });
 

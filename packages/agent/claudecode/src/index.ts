@@ -228,10 +228,10 @@ function toolErrorSummary(content: ToolResultContent): string | undefined {
   return undefined;
 }
 
-function validateToolWhitelist(tools: string[]): string | null {
-  if (tools.length === 0) return 'toolWhitelist is empty';
+function validateAllowedTools(tools: string[]): string | null {
+  if (tools.length === 0) return 'allowedTools is empty';
   const unsupported = tools.find((tool) => /[()]/.test(tool));
-  if (unsupported) return `unsupported tool whitelist pattern: ${unsupported}`;
+  if (unsupported) return `unsupported allowedTools pattern: ${unsupported}`;
   return null;
 }
 
@@ -353,7 +353,6 @@ export function createClaudeCodeRuntime(
     supportsToolCallEvents: true,
     supportsInterrupt: true,
     supportsStdinInterrupt: false,
-    supportsNativeToolWhitelist: true,
   };
 
   function getState(session: AgentSession): RuntimeState {
@@ -433,7 +432,7 @@ export function createClaudeCodeRuntime(
     if (state.proc) return;
     const config = state.config;
     const cwd = config.workingDir ?? defaultWorkingDir;
-    const tools = config.toolWhitelist ?? allowedTools;
+    const tools = allowedTools;
     const args = [
       '--input-format',
       'stream-json',
@@ -628,7 +627,7 @@ export function createClaudeCodeRuntime(
     const requestId = e['request_id'];
     if (typeof requestId !== 'string') return;
     const toolName = request['tool_name'];
-    const tools = state.config.toolWhitelist ?? allowedTools;
+    const tools = allowedTools;
     const allowed =
       typeof toolName === 'string' && tools.includes(toolName);
     const response = allowed
@@ -638,7 +637,7 @@ export function createClaudeCodeRuntime(
         }
       : {
           behavior: 'deny',
-          message: `Tool ${String(toolName)} is not in toolWhitelist`,
+          message: `Tool ${String(toolName)} is not in allowedTools`,
         };
     try {
       writeJsonLine(proc, {
@@ -740,10 +739,10 @@ export function createClaudeCodeRuntime(
     state: RuntimeState,
     input: AgentInput,
   ): Promise<void> {
-    const tools = state.config.toolWhitelist ?? allowedTools;
-    const invalidTools = validateToolWhitelist(tools);
+    const tools = allowedTools;
+    const invalidTools = validateAllowedTools(tools);
     if (invalidTools) {
-      emitErrorTurn(state, input.traceId, 'tool_whitelist_invalid', invalidTools);
+      emitErrorTurn(state, input.traceId, 'allowed_tools_invalid', invalidTools);
       return;
     }
     if (state.cleanupBarrier) await state.cleanupBarrier;

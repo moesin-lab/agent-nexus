@@ -37,7 +37,6 @@ export async function createSelectedAgent(
       agent: createCodexRuntime({ config: codex, logger }),
       defaultSessionConfig: {
         workingDir: codex.workingDir,
-        toolWhitelist: [],
         timeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
       },
     };
@@ -78,7 +77,6 @@ export async function createSelectedAgent(
     }),
     defaultSessionConfig: {
       workingDir: claudeCode.workingDir,
-      toolWhitelist: claudeCode.allowedTools,
       timeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
     },
   };

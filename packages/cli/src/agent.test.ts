@@ -81,12 +81,11 @@ describe('createSelectedAgent', () => {
     expect(selected.agent).toBe(claudeRuntime);
     expect(selected.defaultSessionConfig).toEqual({
       workingDir: '/work',
-      toolWhitelist: ['Read', 'Bash'],
       timeoutMs: 300_000,
     });
   });
 
-  it('codex backend 跑 Codex probe 并注入 Codex runtime，不把 toolWhitelist 翻译成 Codex allowlist', async () => {
+  it('codex backend 跑 Codex probe 并注入 Codex runtime', async () => {
     const codex = {
       bin: 'codex',
       workingDir: '/codex',
@@ -116,7 +115,6 @@ describe('createSelectedAgent', () => {
     expect(selected.agent).toBe(codexRuntime);
     expect(selected.defaultSessionConfig).toEqual({
       workingDir: '/codex',
-      toolWhitelist: [],
       timeoutMs: 300_000,
     });
   });

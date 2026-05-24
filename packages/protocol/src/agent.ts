@@ -7,7 +7,6 @@ export interface AgentCapabilitySet {
   supportsToolCallEvents: boolean;
   supportsInterrupt: boolean;
   supportsStdinInterrupt: boolean;
-  supportsNativeToolWhitelist: boolean;
 }
 
 /** docs/dev/spec/agent-runtime.md §AgentInput */
@@ -190,7 +189,6 @@ export type AgentEvent =
 export interface SessionConfig {
   sessionId: string;
   workingDir: string;
-  toolWhitelist: string[];
   timeoutMs: number;
   /** 若非空 → agent 启动时透传给后端做 multi-turn 续话（如恢复某条已知 agent 会话） */
   resumeFromAgentSessionId?: string;

@@ -41,7 +41,6 @@ const capabilities: AgentCapabilitySet = {
   supportsToolCallEvents: true,
   supportsInterrupt: true,
   supportsStdinInterrupt: false,
-  supportsNativeToolWhitelist: false,
 };
 
 type ChildProcess = ReturnType<typeof execa> & {

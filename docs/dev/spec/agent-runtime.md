@@ -8,6 +8,7 @@ related:
   - dev/adr/0002-agent-backend-claude-code-cli
   - dev/adr/0014-agent-backend-codex-cli
   - dev/adr/0012-claudecode-stream-json-mainline
+  - dev/spec/config-routing
   - dev/spec/agent-backends/claude-code-cli
   - dev/spec/agent-backends/codex-cli
   - dev/spec/message-protocol
@@ -247,19 +248,12 @@ UsageRecord {
 
 ## Backend selection 配置
 
-CLI 负责拼装 daemon + platform + agent，backend 选择由顶层配置表达：
+backend 选择属于配置 / 路由层，不属于 `AgentRuntime` 接口。当前配置契约见 [`config-routing.md`](config-routing.md)：
 
-```text
-agent {
-    backend: "claudecode" | "codex"           // 缺省保持 "claudecode"
-}
-```
-
-约束：
-
-- `agent.backend` 只决定启用哪个 `@agent-nexus/agent-<name>` package；daemon 不读取该字段。
-- backend 自己的字段住各 owner 配置块：`claudeCode` 由 `@agent-nexus/agent-claudecode` 解析，`codex` 由 `@agent-nexus/agent-codex` 解析。
-- CLI 可以按 selector 调用对应 parser / probe / runtime factory，但不得实现 backend 业务逻辑或校验 owner 字段。
+- `agents[].backend` 只决定该命名 agent 启用哪个 `@agent-nexus/agent-<name>` package；daemon 不读取该字段。
+- backend 自己的字段住各 owner 配置块：`agents[].claudeCode` 由 `@agent-nexus/agent-claudecode` 解析，`agents[].codex` 由 `@agent-nexus/agent-codex` 解析。
+- CLI 可以按当前配置 schema 调用对应 parser / probe / runtime factory，但不得实现 backend 业务逻辑或校验 owner 字段。
+- legacy 单实例配置中的顶层 `agent.backend` 只能作为迁移错误处理对象，不得静默混入新结构。
 
 ## Backend 专属说明
 

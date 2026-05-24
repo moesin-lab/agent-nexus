@@ -70,6 +70,8 @@ function makeMsg(overrides: {
   authorBot?: boolean;
   authorUsername?: string;
   channelId?: string;
+  guildId?: string | null;
+  roleIds?: string[];
   id?: string;
   system?: boolean;
 }): Message {
@@ -79,6 +81,8 @@ function makeMsg(overrides: {
     authorBot = false,
     authorUsername = 'alice',
     channelId = 'C1',
+    guildId,
+    roleIds = [],
     id = 'm-1',
     system = false,
   } = overrides;
@@ -87,12 +91,18 @@ function makeMsg(overrides: {
     id,
     content,
     channelId,
+    guildId,
     createdAt: new Date(0),
     system,
     author: {
       id: authorId,
       username: authorUsername,
       bot: authorBot,
+    },
+    member: {
+      roles: {
+        cache: new Map(roleIds.map((roleId) => [roleId, { id: roleId }])),
+      },
     },
   } as unknown as Message;
 }
@@ -716,6 +726,17 @@ describe('parseInbound', () => {
       isBot: false,
     });
   });
+
+  it('guildId 与 initiatorRoleIds 从 Discord message 上下文取', () => {
+    const msg = makeMsg({
+      content: `<@${BOT_ID}> hi`,
+      guildId: 'G1',
+      roleIds: ['R1', 'R2'],
+    });
+    const ev = expectEvent(parseInbound(msg, BOT_ID, ALLOWED));
+    expect(ev.guildId).toBe('G1');
+    expect(ev.initiatorRoleIds).toEqual(['R1', 'R2']);
+  });
 });
 
 describe('parseInbound: replyMode="all"', () => {
@@ -791,6 +812,16 @@ describe('parseInbound: 用户白名单（fail-closed）', () => {
   it('all 模式 + author 不在 allowlist → drop:unauthorized（公开面靠这道 guard 兜住）', () => {
     const msg = makeMsg({ content: 'hi from rando', authorId: 'NOT_ALLOWED' });
     expect(parseInbound(msg, BOT_ID, [OTHER_ID], 'all')).toEqual({ kind: 'drop', reason: 'unauthorized' });
+  });
+
+  it('allowedUserIds=null → chat 路径跳过 adapter user guard，留给 daemon platform auth', () => {
+    const msg = makeMsg({ content: `<@${BOT_ID}> hello`, authorId: 'NOT_ALLOWED' });
+    expect(parseInbound(msg, BOT_ID, null).kind).toBe('event');
+  });
+
+  it('allowedUserIds=null + all 模式 → 未列入旧白名单的用户仍可进入 daemon auth', () => {
+    const msg = makeMsg({ content: 'hi from role-authorized user', authorId: 'NOT_ALLOWED' });
+    expect(parseInbound(msg, BOT_ID, null, 'all').kind).toBe('event');
   });
 
   it('空 allowlist → 任何用户都被拒（mention 模式）', () => {

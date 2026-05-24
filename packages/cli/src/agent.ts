@@ -8,7 +8,8 @@ import {
 } from '@agent-nexus/agent-codex';
 import type { Logger } from '@agent-nexus/daemon';
 import type { AgentRuntime, SessionConfig } from '@agent-nexus/protocol';
-import type { AgentNexusConfig } from './config.js';
+import type { EngineAgent } from '@agent-nexus/daemon';
+import type { AgentConfig, AgentNexusConfig } from './config.js';
 
 const DEFAULT_SESSION_TIMEOUT_MS = 300_000;
 
@@ -20,14 +21,12 @@ export interface SelectedAgent {
   >;
 }
 
-export async function createSelectedAgent(
-  config: AgentNexusConfig,
+export async function createAgentRuntime(
+  agentConfig: AgentConfig,
   logger: Logger,
 ): Promise<SelectedAgent> {
-  if (config.agent.backend === 'codex') {
-    const codex = config.codex;
-    if (!codex) throw new Error('agent.backend=codex 需要 codex 配置');
-
+  if (agentConfig.backend === 'codex') {
+    const codex = agentConfig.codex;
     await runCodexCompatibilityProbe({
       config: codex,
       logger,
@@ -42,11 +41,7 @@ export async function createSelectedAgent(
     };
   }
 
-  const claudeCode = config.claudeCode;
-  if (!claudeCode) {
-    throw new Error('agent.backend=claudecode 需要 claudeCode 配置');
-  }
-
+  const claudeCode = agentConfig.claudeCode;
   await runClaudeCodeCompatibilityProbe({
     claudeBin: claudeCode.bin,
     logger,
@@ -80,4 +75,20 @@ export async function createSelectedAgent(
       timeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
     },
   };
+}
+
+export async function createAgentRegistry(
+  config: AgentNexusConfig,
+  logger: Logger,
+): Promise<EngineAgent[]> {
+  const registry: EngineAgent[] = [];
+  for (const agentConfig of config.agents) {
+    const selected = await createAgentRuntime(agentConfig, logger);
+    registry.push({
+      agentName: agentConfig.name,
+      agent: selected.agent,
+      defaultSessionConfig: selected.defaultSessionConfig,
+    });
+  }
+  return registry;
 }

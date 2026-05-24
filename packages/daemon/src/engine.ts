@@ -7,19 +7,36 @@ import type {
   NormalizedEvent,
   PlatformAdapter,
   SessionConfig,
+  SessionKey,
 } from '@agent-nexus/protocol';
-import { serializeSessionKey } from '@agent-nexus/protocol';
-import type { ToolMessageMode } from './config.js';
+import { serializeSessionKey, withPlatformName } from '@agent-nexus/protocol';
+import { checkPlatformAuth } from './auth.js';
+import type { PlatformAuthConfig, ToolMessageMode } from './config.js';
 import type { Logger } from './logger.js';
+import { RouteError, selectRoute, type RoutingEntry } from './router.js';
 import type { SessionStore } from './session-store.js';
+
+export interface EngineAgent {
+  agent: AgentRuntime;
+  agentName: string;
+  defaultSessionConfig: Omit<
+    SessionConfig,
+    'resumeFromAgentSessionId' | 'sessionId'
+  >;
+}
 
 export interface EngineDeps {
   platform: PlatformAdapter;
-  agent: AgentRuntime;
+  platformName?: string;
+  platformType?: 'discord';
+  agent?: AgentRuntime;
+  agents?: readonly EngineAgent[];
+  routingTable?: readonly RoutingEntry[];
+  platformAuth?: PlatformAuthConfig;
   logger: Logger;
   sessionStore: SessionStore;
   /** 每轮 sessionId 由 Engine 生成；resumeFromAgentSessionId 由 store 决定 */
-  defaultSessionConfig: Omit<
+  defaultSessionConfig?: Omit<
     SessionConfig,
     'resumeFromAgentSessionId' | 'sessionId'
   >;
@@ -36,6 +53,8 @@ const DEFAULT_STREAM_EDIT_THROTTLE_MS = 1500;
 const DEFAULT_TYPING_REFRESH_MS = 8000;
 
 interface ActiveAgentSession {
+  agent: AgentRuntime;
+  agentName: string;
   session: AgentSession;
   currentTurn?: {
     eventId: string;
@@ -72,19 +91,18 @@ function renderToolStart(toolName: string, inputSummary: string): string {
  * - 持久化幂等 / auth ordering → docs/dev/spec/infra/idempotency.md
  *   （进程内 eventId LRU 已落，详见 seenEventIds 字段）
  * - 限流 / 预算 → docs/dev/spec/infra/cost-and-limits.md
- * - allowlist 鉴权 → docs/dev/spec/security/auth.md
  * - 出口脱敏 → docs/dev/spec/security/redaction.md
  * - sessionStore 持久化 + 状态机 → docs/dev/architecture/session-model.md
  */
 export class Engine {
   private readonly platform: PlatformAdapter;
-  private readonly agent: AgentRuntime;
+  private readonly platformName: string;
+  private readonly platformType: 'discord';
+  private readonly platformAuth?: PlatformAuthConfig;
+  private readonly agents: Map<string, EngineAgent>;
+  private readonly routingTable?: readonly RoutingEntry[];
   private readonly logger: Logger;
   private readonly sessionStore: SessionStore;
-  private readonly defaultSessionConfig: Omit<
-    SessionConfig,
-    'resumeFromAgentSessionId' | 'sessionId'
-  >;
   private readonly streamEditThrottleMs: number;
   private readonly typingRefreshMs: number;
   private readonly toolMessageMode: ToolMessageMode;
@@ -107,10 +125,29 @@ export class Engine {
 
   constructor(deps: EngineDeps) {
     this.platform = deps.platform;
-    this.agent = deps.agent;
+    this.platformName = deps.platformName ?? deps.platform.name();
+    this.platformType = deps.platformType ?? 'discord';
+    if (deps.routingTable && !deps.platformAuth) {
+      throw new Error('Engine with routingTable requires platformAuth');
+    }
+    this.platformAuth = deps.platformAuth;
+    this.routingTable = deps.routingTable;
+    this.agents = new Map();
+    if (deps.agents) {
+      for (const agent of deps.agents) {
+        this.agents.set(agent.agentName, agent);
+      }
+    } else if (deps.agent && deps.defaultSessionConfig) {
+      this.agents.set(deps.agent.name(), {
+        agent: deps.agent,
+        agentName: deps.agent.name(),
+        defaultSessionConfig: deps.defaultSessionConfig,
+      });
+    } else {
+      throw new Error('Engine requires either agents[] or legacy agent/defaultSessionConfig');
+    }
     this.logger = deps.logger;
     this.sessionStore = deps.sessionStore;
-    this.defaultSessionConfig = deps.defaultSessionConfig;
     this.streamEditThrottleMs =
       deps.streaming?.streamEditThrottleMs ?? DEFAULT_STREAM_EDIT_THROTTLE_MS;
     this.typingRefreshMs =
@@ -126,7 +163,7 @@ export class Engine {
     await this.platform.stop();
     for (const [sessionKey, active] of this.agentSessions) {
       try {
-        this.agent.stopSession(active.session);
+        active.agent.stopSession(active.session);
       } catch (err) {
         this.logger.error({ sessionKey, err }, 'agent_stop_session_failed');
       }
@@ -136,14 +173,51 @@ export class Engine {
   }
 
   private dispatch(event: NormalizedEvent): Promise<void> {
-    const keyStr = serializeSessionKey(event.sessionKey);
+    const route = this.route(event);
+    if (!route) return Promise.resolve();
+    if (this.platformAuth) {
+      const decision = checkPlatformAuth(this.platformAuth, event);
+      if (!decision.allowed) {
+        this.logger.info(
+          {
+            traceId: event.traceId,
+            platformName: this.platformName,
+            guildId: event.guildId,
+            channelId: event.sessionKey.channelId,
+            userId: event.initiator.userId,
+            reason: decision.reason,
+          },
+          'auth_denied',
+        );
+        return Promise.resolve();
+      }
+    }
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    const routedEvent = { ...event, sessionKey: routedSessionKey };
+    const agentSlot = this.agents.get(route.agentName);
+    if (!agentSlot) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          agentName: route.agentName,
+          bindingName: route.bindingName,
+        },
+        'route_agent_missing',
+      );
+      return Promise.resolve();
+    }
+    const keyStr = serializeSessionKey(routedSessionKey);
     const prev = this.inflight.get(keyStr) ?? Promise.resolve();
     // 链式 await：上一条 settle 后再跑当前这条。前一条若 reject 不影响后续——
     // dispatchImpl 内部已 try/catch + 日志化错误，外层只用 catch swallow 防止
     // 链上某条 throw 把整条链 poison 掉。
     const next = prev
       .catch(() => {})
-      .then(() => this.dispatchImpl(event));
+      .then(() => this.dispatchImpl(routedEvent, agentSlot));
     this.inflight.set(keyStr, next);
     // 链尾 cleanup：当前这条就是最末时清掉 map 项，避免长期累积空 promise。
     void next.finally(() => {
@@ -154,7 +228,48 @@ export class Engine {
     return next;
   }
 
-  private async dispatchImpl(event: NormalizedEvent): Promise<void> {
+  private route(event: NormalizedEvent):
+    | { bindingName: string; agentName: string }
+    | undefined {
+    if (!this.routingTable) {
+      const onlyAgent = [...this.agents.values()][0];
+      if (!onlyAgent) {
+        this.logger.error(
+          { traceId: event.traceId, platformName: this.platformName },
+          'route_agent_missing',
+        );
+        return undefined;
+      }
+      return { bindingName: 'legacy', agentName: onlyAgent.agentName };
+    }
+    try {
+      return selectRoute(this.routingTable, {
+        platformName: this.platformName,
+        platformType: this.platformType,
+        event,
+      });
+    } catch (err) {
+      if (err instanceof RouteError) {
+        this.logger.warn(
+          {
+            traceId: event.traceId,
+            platformName: err.details.platformName,
+            platformType: err.details.platformType,
+            channelId: err.details.channelId,
+            bindingNames: err.details.bindingNames,
+          },
+          err.code,
+        );
+        return undefined;
+      }
+      throw err;
+    }
+  }
+
+  private async dispatchImpl(
+    event: NormalizedEvent & { sessionKey: SessionKey },
+    agentSlot: EngineAgent,
+  ): Promise<void> {
     const sessionKeyStr = serializeSessionKey(event.sessionKey);
     if (this.seenEventIds.has(event.eventId)) {
       this.logger.info(
@@ -490,7 +605,7 @@ export class Engine {
         const current = this.agentSessions.get(sessionKeyStr);
         if (current?.session === session) this.agentSessions.delete(sessionKeyStr);
         try {
-          this.agent.stopSession(session);
+          agentSlot.agent.stopSession(session);
         } catch (stopErr) {
           this.logger.error(
             { traceId: event.traceId, sessionKey: sessionKeyStr, err: stopErr },
@@ -667,7 +782,11 @@ export class Engine {
         }
       };
 
-      const activeSession = this.getOrStartSession(event, sessionKeyStr);
+      const activeSession = this.getOrStartSession(
+        event,
+        sessionKeyStr,
+        agentSlot,
+      );
       session = activeSession.session;
       activeSession.currentTurn = {
         eventId: event.eventId,
@@ -680,7 +799,7 @@ export class Engine {
       startTyping();
       let sendInputErr: unknown;
       try {
-        await this.agent.sendInput(session, {
+        await activeSession.agent.sendInput(session, {
           type: 'user_message',
           text: prompt,
           traceId: event.traceId,
@@ -711,13 +830,14 @@ export class Engine {
   }
 
   private getOrStartSession(
-    event: NormalizedEvent,
+    event: NormalizedEvent & { sessionKey: SessionKey },
     sessionKeyStr: string,
+    agentSlot: EngineAgent,
   ): ActiveAgentSession {
     const active = this.agentSessions.get(sessionKeyStr);
-    if (active) {
+    if (active && active.agentName === agentSlot.agentName) {
       try {
-        if (this.agent.isAlive(active.session)) return active;
+        if (active.agent.isAlive(active.session)) return active;
       } catch (err) {
         this.logger.warn(
           { traceId: event.traceId, sessionKey: sessionKeyStr, err },
@@ -725,7 +845,17 @@ export class Engine {
         );
       }
       try {
-        this.agent.stopSession(active.session);
+        active.agent.stopSession(active.session);
+      } catch (err) {
+        this.logger.error(
+          { traceId: event.traceId, sessionKey: sessionKeyStr, err },
+          'agent_stop_session_failed',
+        );
+      }
+      this.agentSessions.delete(sessionKeyStr);
+    } else if (active) {
+      try {
+        active.agent.stopSession(active.session);
       } catch (err) {
         this.logger.error(
           { traceId: event.traceId, sessionKey: sessionKeyStr, err },
@@ -739,14 +869,18 @@ export class Engine {
       event.sessionKey,
     )?.agentSessionId;
     const config: SessionConfig = {
-      ...this.defaultSessionConfig,
+      ...agentSlot.defaultSessionConfig,
       sessionId: randomUUID(),
       resumeFromAgentSessionId: prevAgentSessionId,
     };
-    const session = this.agent.startSession(event.sessionKey, config);
-    const activeSession: ActiveAgentSession = { session };
+    const session = agentSlot.agent.startSession(event.sessionKey, config);
+    const activeSession: ActiveAgentSession = {
+      agent: agentSlot.agent,
+      agentName: agentSlot.agentName,
+      session,
+    };
     this.agentSessions.set(sessionKeyStr, activeSession);
-    this.agent.onEvent(session, async (agentEvent) => {
+    agentSlot.agent.onEvent(session, async (agentEvent) => {
       const current = this.agentSessions.get(sessionKeyStr);
       if (current !== activeSession) return;
       const turn = current.currentTurn;
@@ -793,7 +927,7 @@ export class Engine {
     if (!active) return;
     this.agentSessions.delete(sessionKeyStr);
     try {
-      this.agent.stopSession(active.session);
+      active.agent.stopSession(active.session);
     } catch (err) {
       this.logger.error(
         { traceId, sessionKey: sessionKeyStr, err },

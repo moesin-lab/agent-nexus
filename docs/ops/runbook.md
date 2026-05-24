@@ -68,14 +68,14 @@ agent-nexus
 
 | 现象 | 检查 |
 |---|---|
-| 启动提示配置模板已创建 | 编辑 `~/.agent-nexus/config.json`，至少填 `discord.botUserId`、`discord.allowedUserIds`；默认 backend 填 `claudeCode.workingDir`，Codex backend 填 `agent.backend=codex` 与 `codex.workingDir` |
+| 启动提示配置模板已创建 | 编辑 `~/.agent-nexus/config.json`，至少填 `platforms[].botUserId`、`platforms[].auth.allowlist.userIds` 或 `roleIds`、`agents[].claudeCode.workingDir` / `agents[].codex.workingDir`，并给 `bindings[].match.discord.channelIds` 填目标频道 |
 | 启动提示 token 文件已创建 / token 为空 | 写入 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` 并保持 `0600` |
 | 启动报 token 权限 | `chmod 600 ~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` |
 | `cc_compat_probe_failed` | 先跑 `claude --version`；确认 Claude Code 已登录，且当前版本支持长驻 `stream-json` 与工具权限检查 |
 | `agent_compat_probe_failed` 且 `agentBackend=codex` | 先跑 `codex --version`；确认 Codex CLI 已登录；再跑 `scripts/verify-codex-agent.sh` 看 resume、错误或中断验证失败原因 |
-| Discord 里无响应 | 确认 `allowedUserIds` 包含发送者 user id；默认模式下确认消息显式 @bot |
-| `/reply-mode` 不出现 | 开发时配置 `discord.testGuildId`，避免全局 slash command 缓存延迟 |
-| bot 回复自己或循环 | 检查 `discord.botUserId` 是否等于实际 bot user id；启动日志中不应出现 `discord_bot_user_id_mismatch` |
+| Discord 里无响应 | 确认 `platforms[].auth.allowlist` 包含发送者 user id 或 role；确认当前频道命中某条 `bindings[].match.discord.channelIds`；默认模式下确认消息显式 @bot |
+| `/reply-mode` 不出现 | 开发时配置 `platforms[].testGuildId`，避免全局 slash command 缓存延迟 |
+| bot 回复自己或循环 | 检查 `platforms[].botUserId` 是否等于实际 bot user id；启动日志中不应出现 `discord_bot_user_id_mismatch` |
 
 ## 升级
 

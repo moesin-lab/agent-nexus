@@ -16,11 +16,154 @@ export interface DiscordConfig {
   testGuildId?: string;
 }
 
+export type DiscordPublicChannelMode = 'disabled' | 'thread' | 'public';
+
+export interface DiscordBindingMatchConfig {
+  channelIds: string[];
+}
+
+export interface DiscordPlatformConfig {
+  name: string;
+  type: 'discord';
+  botUserId: string;
+  tokenRef: string;
+  statePath: string;
+  testGuildId?: string;
+  publicChannelMode: DiscordPublicChannelMode;
+}
+
 export class DiscordConfigError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'DiscordConfigError';
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function assertNoUnknownKeys(
+  raw: Record<string, unknown>,
+  allowed: readonly string[],
+  path: string,
+): void {
+  for (const key of Object.keys(raw)) {
+    if (!allowed.includes(key)) {
+      throw new DiscordConfigError(`未知字段 ${path}.${key}`);
+    }
+  }
+}
+
+function requireString(raw: Record<string, unknown>, key: string, path: string): string {
+  const value = raw[key];
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new DiscordConfigError(`缺字段 ${path}.${key}（非空字符串）`);
+  }
+  return value;
+}
+
+function optionalString(
+  raw: Record<string, unknown>,
+  key: string,
+  path: string,
+): string | undefined {
+  const value = raw[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new DiscordConfigError(`字段 ${path}.${key} 必须是非空字符串`);
+  }
+  return value;
+}
+
+function assertValidSecretRef(value: string, path: string): void {
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(value)) {
+    throw new DiscordConfigError(`字段 ${path} 必须是 secret ref 名称，不能包含路径分隔符`);
+  }
+}
+
+export function parseDiscordBindingMatchConfig(
+  raw: unknown,
+  ctx: { path: string },
+): DiscordBindingMatchConfig {
+  const path = ctx.path;
+  if (!isRecord(raw)) {
+    throw new DiscordConfigError(`字段 ${path} 必须是对象`);
+  }
+  assertNoUnknownKeys(raw, ['channelIds'], path);
+
+  const channelIdsRaw = raw['channelIds'];
+  if (!Array.isArray(channelIdsRaw)) {
+    throw new DiscordConfigError(`字段 ${path}.channelIds 必须是非空字符串数组`);
+  }
+  if (channelIdsRaw.length === 0) {
+    throw new DiscordConfigError(`字段 ${path}.channelIds 不能是空数组`);
+  }
+  for (const channelId of channelIdsRaw) {
+    if (typeof channelId !== 'string' || channelId.length === 0) {
+      throw new DiscordConfigError(`字段 ${path}.channelIds 必须是非空字符串数组`);
+    }
+  }
+
+  return { channelIds: [...channelIdsRaw] };
+}
+
+export function parseDiscordPlatformConfig(
+  raw: unknown,
+  ctx: { path: string; defaultStatePath: string },
+): DiscordPlatformConfig {
+  if (!isRecord(raw)) {
+    throw new DiscordConfigError(`字段 ${ctx.path} 必须是对象`);
+  }
+  assertNoUnknownKeys(
+    raw,
+    [
+      'name',
+      'type',
+      'botUserId',
+      'tokenRef',
+      'auth',
+      'statePath',
+      'testGuildId',
+      'publicChannelMode',
+    ],
+    ctx.path,
+  );
+
+  const name = requireString(raw, 'name', ctx.path);
+  const type = requireString(raw, 'type', ctx.path);
+  if (type !== 'discord') {
+    throw new DiscordConfigError(`字段 ${ctx.path}.type 必须是 "discord"`);
+  }
+  const botUserId = requireString(raw, 'botUserId', ctx.path);
+  const tokenRef = requireString(raw, 'tokenRef', ctx.path);
+  assertValidSecretRef(tokenRef, `${ctx.path}.tokenRef`);
+
+  const statePath = optionalString(raw, 'statePath', ctx.path) ?? ctx.defaultStatePath;
+  const testGuildId = optionalString(raw, 'testGuildId', ctx.path);
+  const publicChannelModeRaw = raw['publicChannelMode'];
+  if (
+    publicChannelModeRaw !== undefined &&
+    !['disabled', 'thread', 'public'].includes(
+      publicChannelModeRaw as DiscordPublicChannelMode,
+    )
+  ) {
+    throw new DiscordConfigError(
+      `字段 ${ctx.path}.publicChannelMode 必须是 "disabled" / "thread" / "public"`,
+    );
+  }
+  const publicChannelMode =
+    (publicChannelModeRaw as DiscordPublicChannelMode | undefined) ?? 'thread';
+
+  return {
+    name,
+    type: 'discord',
+    botUserId,
+    tokenRef,
+    statePath,
+    ...(testGuildId === undefined ? {} : { testGuildId }),
+    publicChannelMode,
+  };
 }
 
 export function parseDiscordConfig(

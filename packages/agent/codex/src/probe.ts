@@ -18,6 +18,7 @@ export interface CodexCompatibilityProbeOptions {
   config: CodexConfig;
   logger: Logger;
   timeoutMs?: number;
+  mode?: 'startup' | 'full';
 }
 
 interface JsonlProbeFacts {
@@ -166,6 +167,17 @@ function runCodex(
   return execa(bin, args, { timeout: timeoutMs });
 }
 
+async function runProbeStep<T>(
+  logger: Logger,
+  step: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  logger.info({ step }, 'codex_compat_probe_step_start');
+  const result = await task();
+  logger.info({ step }, 'codex_compat_probe_step_ok');
+  return result;
+}
+
 async function verifyWorkspaceWrite(
   config: CodexConfig,
   timeoutMs: number | undefined,
@@ -196,17 +208,23 @@ export async function runCompatibilityProbe(
   opts: CodexCompatibilityProbeOptions,
 ): Promise<void> {
   const { config, logger, timeoutMs } = opts;
+  const probeMode = opts.mode ?? 'startup';
   try {
-    const version = await runCodex(config.bin, ['--version'], timeoutMs);
+    logger.info({ probeMode, sandbox: config.sandbox }, 'codex_compat_probe_start');
+    const version = await runProbeStep(logger, 'version', () =>
+      runCodex(config.bin, ['--version'], timeoutMs),
+    );
     const versionText = (version.stdout ?? '').toString().trim();
     if (!versionText) {
       throw new Error('empty stdout from --version');
     }
     logger.info({ version: versionText }, 'codex_cli_version');
 
-    const topHelp = await runCodex(config.bin, ['--help'], timeoutMs);
-    const execHelp = await runCodex(config.bin, ['exec', '--help'], timeoutMs);
-    const combinedHelp = `${topHelp.stdout}\n${execHelp.stdout}`;
+    const combinedHelp = await runProbeStep(logger, 'help', async () => {
+      const topHelp = await runCodex(config.bin, ['--help'], timeoutMs);
+      const execHelp = await runCodex(config.bin, ['exec', '--help'], timeoutMs);
+      return `${topHelp.stdout}\n${execHelp.stdout}`;
+    });
     for (const flag of [
       'exec',
       'resume',
@@ -223,10 +241,16 @@ export async function runCompatibilityProbe(
     if (config.model) {
       requireOneHelpToken(combinedHelp, ['--model', '-m'], '--model/-m');
     }
+    if (probeMode === 'startup') {
+      logger.info({ probeMode }, 'codex_compat_probe_complete');
+      return;
+    }
 
     const execArgs = buildCodexExecArgs(config, 'Reply exactly: CODEX_PROBE_OK');
     assertNoDangerousArgs(execArgs);
-    const execProbe = await runCodex(config.bin, execArgs, timeoutMs);
+    const execProbe = await runProbeStep(logger, 'exec-json', () =>
+      runCodex(config.bin, execArgs, timeoutMs),
+    );
     const execFacts = collectFacts((execProbe.stdout ?? '').toString());
     requireBaseTurnFacts(execFacts, 'exec');
 
@@ -236,7 +260,9 @@ export async function runCompatibilityProbe(
       'Reply exactly: CODEX_PROBE_RESUME_OK',
     );
     assertNoDangerousArgs(resumeArgs);
-    const resumeProbe = await runCodex(config.bin, resumeArgs, timeoutMs);
+    const resumeProbe = await runProbeStep(logger, 'resume-json', () =>
+      runCodex(config.bin, resumeArgs, timeoutMs),
+    );
     const resumeFacts = collectFacts((resumeProbe.stdout ?? '').toString());
     requireBaseTurnFacts(resumeFacts, 'resume');
     if (resumeFacts.threadId !== execFacts.threadId) {
@@ -248,7 +274,9 @@ export async function runCompatibilityProbe(
       'Use the shell to run: printf CODEX_TOOL_OK',
     );
     assertNoDangerousArgs(toolArgs);
-    const toolProbe = await runCodex(config.bin, toolArgs, timeoutMs);
+    const toolProbe = await runProbeStep(logger, 'tool-json', () =>
+      runCodex(config.bin, toolArgs, timeoutMs),
+    );
     const toolFacts = collectFacts((toolProbe.stdout ?? '').toString());
     if (!toolFacts.sawCommandStarted) {
       throw new Error('missing command_execution item.started in tool probe');
@@ -257,8 +285,11 @@ export async function runCompatibilityProbe(
       throw new Error('missing command_execution item.completed in tool probe');
     }
     if (config.sandbox === 'workspace-write') {
-      await verifyWorkspaceWrite(config, timeoutMs);
+      await runProbeStep(logger, 'workspace-write', () =>
+        verifyWorkspaceWrite(config, timeoutMs),
+      );
     }
+    logger.info({ probeMode }, 'codex_compat_probe_complete');
   } catch (err) {
     throw new CodexCompatibilityProbeError(
       `codex compatibility probe failed: ${(err as Error).message}`,

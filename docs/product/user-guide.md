@@ -104,6 +104,88 @@ chmod 600 ~/.agent-nexus/config.json
 | `ui.toolMessages` | 否 | 默认 `append`；工具调用追加为独立消息并在结果到达时编辑该工具消息。设为 `compact` 可回到旧式紧凑显示 |
 | `log.level` | 否 | `trace` / `debug` / `info` / `warn` / `error` / `fatal`，默认 `info` |
 
+### Codex backend 配置细节
+
+启用 Codex CLI backend 时，最小配置通常是：
+
+```json
+{
+  "agent": {
+    "backend": "codex"
+  },
+  "codex": {
+    "workingDir": "/path/to/your/repo",
+    "bin": "codex",
+    "sandbox": "read-only",
+    "addDirs": [],
+    "loadUserConfig": false,
+    "loadRules": false
+  }
+}
+```
+
+如果你希望 bot 能修改 `workingDir` 里的项目文件，把 `sandbox` 改成 `workspace-write`：
+
+```json
+{
+  "codex": {
+    "workingDir": "/path/to/your/repo",
+    "sandbox": "workspace-write",
+    "addDirs": [],
+    "loadUserConfig": false,
+    "loadRules": false
+  }
+}
+```
+
+`sandbox` 决定 Codex CLI 的文件访问模式：
+
+| 值 | 适用场景 | 行为 |
+|---|---|---|
+| `read-only` | 让 bot 只读代码、解释问题、做 review | 默认值；Codex 不能写项目文件 |
+| `workspace-write` | 让 bot 直接改 `workingDir` 下的仓库文件 | Codex 可以在工作目录内创建、修改、删除文件 |
+
+`addDirs` 用来额外开放工作目录之外的路径。默认保持 `[]`。只有当 Codex backend 必须访问另一个目录时才配置，例如主项目在 `/workspace/app`，但还需要读共享 SDK `/workspace/shared-sdk`：
+
+```json
+{
+  "codex": {
+    "workingDir": "/workspace/app",
+    "sandbox": "workspace-write",
+    "addDirs": ["/workspace/shared-sdk"]
+  }
+}
+```
+
+不要把 home、密钥目录、浏览器 profile、SSH/GPG 目录这类宽泛或敏感路径放进 `addDirs`。`addDirs` 是显式扩大 Codex CLI 可见范围的配置，应尽量只填具体项目目录。
+
+`loadUserConfig` 控制是否加载本机全局 Codex 配置：
+
+| 值 | 行为 | 建议 |
+|---|---|---|
+| `false` | 默认；启动时传 `--ignore-user-config` | 推荐。bot 行为只受 agent-nexus 配置控制 |
+| `true` | 允许 Codex CLI 继承你的全局 Codex config | 只在你明确需要复用全局模型、provider 或其他 Codex CLI 设置时打开 |
+
+`loadRules` 控制是否加载 Codex rules：
+
+| 值 | 行为 | 建议 |
+|---|---|---|
+| `false` | 默认；启动时传 `--ignore-rules` | 推荐。避免仓库外或用户级 rules 改变 bot 行为 |
+| `true` | 允许 Codex CLI 读取 rules | 只在你确认这些 rules 适合 Discord bot 场景时打开 |
+
+常见组合：
+
+| 目标 | 推荐配置 |
+|---|---|
+| 只让 bot 解释代码 / review | `sandbox: "read-only"`，`addDirs: []`，`loadUserConfig: false`，`loadRules: false` |
+| 让 bot 修改当前仓库 | `sandbox: "workspace-write"`，`addDirs: []`，`loadUserConfig: false`，`loadRules: false` |
+| 多仓库联动 | `workspace-write` 加上最小必要的 `addDirs` |
+| 复用个人 Codex CLI 行为 | 只在理解影响后把 `loadUserConfig` 或 `loadRules` 改为 `true` |
+
+Codex backend 固定使用非交互 `codex exec --json` / `resume`，并固定传 `--ask-for-approval never`。因此需要人工确认的操作不会弹出审批窗口；应通过 `sandbox`、`workingDir`、`addDirs` 和默认不加载用户配置 / rules 来控制边界。
+
+启动时默认只跑快速 Codex compatibility probe：检查 `codex --version` 与 help 中的必需 flag，不发起真实模型 turn。这样 Discord bot 启动不会先等待多轮 `codex exec --json`。如果要做完整 Codex backend 验证，使用仓库里的 `scripts/verify-codex-agent.sh`。
+
 写 Discord token：
 
 ```bash

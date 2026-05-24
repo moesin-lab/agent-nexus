@@ -49,27 +49,49 @@ npm install -g packages/cli/agent-nexus-cli-*.tgz
 
 ```json
 {
-  "agent": {
-    "backend": "claudecode"
-  },
-  "discord": {
-    "botUserId": "1234567890123456789",
-    "allowedUserIds": ["2345678901234567890"]
-  },
-  "claudeCode": {
-    "workingDir": "/path/to/your/repo",
-    "bin": "claude",
-    "permissionLevel": "default",
-    "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"]
-  },
-  "codex": {
-    "workingDir": "/path/to/your/repo",
-    "bin": "codex",
-    "sandbox": "read-only",
-    "addDirs": [],
-    "loadUserConfig": false,
-    "loadRules": false
-  },
+  "platforms": [
+    {
+      "name": "discord-main",
+      "type": "discord",
+      "botUserId": "1234567890123456789",
+      "tokenRef": "DISCORD_BOT_TOKEN",
+      "publicChannelMode": "thread",
+      "auth": {
+        "allowlist": {
+          "userIds": ["2345678901234567890"],
+          "roleIds": [],
+          "allowedGuildIds": [],
+          "allowedChannelIds": [],
+          "allowDM": true,
+          "requireMentionOrSlash": true
+        }
+      }
+    }
+  ],
+  "agents": [
+    {
+      "name": "claude-prod",
+      "backend": "claudecode",
+      "claudeCode": {
+        "workingDir": "/path/to/your/repo",
+        "bin": "claude",
+        "permissionLevel": "default",
+        "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"]
+      }
+    }
+  ],
+  "bindings": [
+    {
+      "name": "discord-main-claude-prod",
+      "platformName": "discord-main",
+      "agentName": "claude-prod",
+      "match": {
+        "discord": {
+          "channelIds": ["3456789012345678901"]
+        }
+      }
+    }
+  ],
   "ui": {
     "toolMessages": "append"
   },
@@ -87,20 +109,30 @@ chmod 600 ~/.agent-nexus/config.json
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `discord.botUserId` | 是 | Discord bot user id |
-| `discord.allowedUserIds` | 是 | 允许使用 bot 的用户 id 列表；缺失或空数组会启动失败 |
-| `discord.testGuildId` | 否 | 开发时把 `/reply-mode` 限定注册到一个 guild，避免全局 slash command 缓存延迟 |
-| `agent.backend` | 否 | 默认 `claudecode`；可设为 `codex` 显式启用 Codex CLI backend |
-| `claudeCode.workingDir` | backend 为 `claudecode` 时是 | Claude Code 默认工作目录 |
-| `claudeCode.bin` | 否 | Claude Code CLI 路径；默认 `claude` |
-| `claudeCode.permissionLevel` | 否 | 默认 `default`；允许 `default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan`，会原样传给 `--permission-mode`。只有 `default` 自检工具权限控制；其他模式会跳过该 probe 并打 warn |
-| `claudeCode.allowedTools` | 否 | 默认 `Read/Grep/Glob/Edit/Write`；启用 `Bash` 需要显式加入 |
-| `codex.workingDir` | backend 为 `codex` 时是 | Codex 默认工作目录，传给 `--cd` |
-| `codex.bin` | 否 | Codex CLI 路径；默认 `codex` |
-| `codex.model` | 否 | 传给 Codex CLI 的 `--model` |
-| `codex.sandbox` | 否 | 默认 `read-only`；可设为 `workspace-write` |
-| `codex.addDirs` | 否 | 默认 `[]`；逐个传给 `--add-dir` |
-| `codex.loadUserConfig` / `codex.loadRules` | 否 | 默认 `false`，启动时传 `--ignore-user-config` / `--ignore-rules` |
+| `platforms[].name` | 是 | platform bot 实例稳定名称；binding 用它引用该 bot |
+| `platforms[].type` | 是 | 当前支持 `discord` |
+| `platforms[].botUserId` | 是 | Discord bot user id |
+| `platforms[].tokenRef` | 是 | token secret 文件名；默认读取 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` |
+| `platforms[].auth.allowlist.userIds` / `roleIds` | 是 | 允许使用 bot 的用户或角色；至少有一个 ID 维度非空 |
+| `platforms[].auth.allowlist.allowedGuildIds` | 否 | 限定可用 server/guild；`[]` 表示不按 guild 收窄 |
+| `platforms[].auth.allowlist.allowedChannelIds` | 否 | 限定可用 channel/thread；`[]` 表示不按 channel 收窄 |
+| `platforms[].auth.allowlist.allowDM` | 否 | 默认 `true`；DM 仍必须命中 `userIds` |
+| `platforms[].testGuildId` | 否 | 开发时把 `/reply-mode` 限定注册到一个 guild，避免全局 slash command 缓存延迟 |
+| `agents[].name` | 是 | agent 配置稳定名称；binding 用它引用该 agent |
+| `agents[].backend` | 是 | `claudecode` 或 `codex` |
+| `agents[].claudeCode.workingDir` | backend 为 `claudecode` 时是 | Claude Code 默认工作目录 |
+| `agents[].claudeCode.bin` | 否 | Claude Code CLI 路径；默认 `claude` |
+| `agents[].claudeCode.permissionLevel` | 否 | 默认 `default`；允许 `default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan` |
+| `agents[].claudeCode.allowedTools` | 否 | 默认 `Read/Grep/Glob/Edit/Write`；启用 `Bash` 需要显式加入 |
+| `agents[].codex.workingDir` | backend 为 `codex` 时是 | Codex 默认工作目录，传给 `--cd` |
+| `agents[].codex.bin` | 否 | Codex CLI 路径；默认 `codex` |
+| `agents[].codex.model` | 否 | 传给 Codex CLI 的 `--model` |
+| `agents[].codex.sandbox` | 否 | 默认 `read-only`；可设为 `workspace-write` |
+| `agents[].codex.addDirs` | 否 | 默认 `[]`；逐个传给 `--add-dir` |
+| `agents[].codex.loadUserConfig` / `loadRules` | 否 | 默认 `false`，启动时传 `--ignore-user-config` / `--ignore-rules` |
+| `bindings[].platformName` | 是 | 引用 `platforms[].name` |
+| `bindings[].agentName` | 是 | 引用 `agents[].name` |
+| `bindings[].match.discord.channelIds` | 是 | 该 binding 匹配的 Discord channel/thread id 列表 |
 | `ui.toolMessages` | 否 | 默认 `append`；工具调用追加为独立消息并在结果到达时编辑该工具消息。设为 `compact` 可回到旧式紧凑显示 |
 | `log.level` | 否 | `trace` / `debug` / `info` / `warn` / `error` / `fatal`，默认 `info` |
 
@@ -110,9 +142,8 @@ chmod 600 ~/.agent-nexus/config.json
 
 ```json
 {
-  "agent": {
-    "backend": "codex"
-  },
+  "name": "codex-dev",
+  "backend": "codex",
   "codex": {
     "workingDir": "/path/to/your/repo",
     "bin": "codex",
@@ -128,6 +159,8 @@ chmod 600 ~/.agent-nexus/config.json
 
 ```json
 {
+  "name": "codex-dev",
+  "backend": "codex",
   "codex": {
     "workingDir": "/path/to/your/repo",
     "sandbox": "workspace-write",
@@ -149,6 +182,8 @@ chmod 600 ~/.agent-nexus/config.json
 
 ```json
 {
+  "name": "codex-dev",
+  "backend": "codex",
   "codex": {
     "workingDir": "/workspace/app",
     "sandbox": "workspace-write",

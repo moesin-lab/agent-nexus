@@ -18,7 +18,7 @@
     "build": "tsc --build && npm run bundle",
     "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --conditions=development --external:discord.js --external:execa --external:pino --external:pino-pretty --outfile=dist/index.js && node -e \"require('node:fs').chmodSync('dist/index.js', 0o755)\"",
     "typecheck": "tsc --build",
-    "test": "vitest run",
+    "test": "vitest run --root ../.. packages/cli",
     "dev": "tsx watch --conditions=development src/index.ts",
     "prepack": "npm run build"
   },
@@ -30,6 +30,7 @@
   },
   "devDependencies": {
     "@agent-nexus/agent-claudecode": "workspace:*",
+    "@agent-nexus/agent-codex": "workspace:*",
     "@agent-nexus/daemon": "workspace:*",
     "@agent-nexus/platform-discord": "workspace:*",
     "@agent-nexus/protocol": "workspace:*",

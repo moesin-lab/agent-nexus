@@ -25,7 +25,7 @@ related:
 | 主题 | Spec | 对应模块 |
 |---|---|---|
 | 谁能触发 agent | [`auth.md`](auth.md) | `daemon.auth` |
-| 能做什么操作 | [`tool-boundary.md`](tool-boundary.md) | `daemon.toolguard` |
+| 能做什么操作 | [`tool-boundary.md`](tool-boundary.md) | `agent-claudecode` permission control / backend sandbox |
 | 密钥怎么放 | [`secrets.md`](secrets.md) | `daemon.secrets` |
 | 出口脱敏 | [`redaction.md`](redaction.md) | `daemon.redact` |
 | 去重防重放 | [`idempotency.md`](../infra/idempotency.md) | `daemon.idempotency` |
@@ -88,7 +88,7 @@ related:
 3. **Allowlist**：至少一个字段非空；格式合法（[`auth.md`](auth.md) §Allowlist §约束）
 4. **SQLite schema version**：兼容（[`persistence.md`](../infra/persistence.md) §迁移）
 5. **Hook / Redactor 基线测试**：内置的 red-team fixture 通过（[`redaction.md`](redaction.md) §合约测试）
-6. **CC CLI probe**：CompatibilityProbe 通过（[`claude-code-cli-contract.md`](../agent-backends/claude-code-cli.md) §兼容性自检）
+6. **CC CLI probe**：CompatibilityProbe 通过（[`claude-code-cli.md`](../agent-backends/claude-code-cli.md) §兼容性自检）
 
 任何一项失败 → 退出码非零 + 清晰错误消息（不包含密钥值）。
 

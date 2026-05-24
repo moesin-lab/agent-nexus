@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"thread-failed"}
+{"type":"turn.started"}
+{"type":"error","message":"temporary reconnecting"}
+{"type":"turn.failed","error":{"message":"401 Unauthorized: Missing bearer or basic authentication"}}

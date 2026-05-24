@@ -33,6 +33,18 @@ importers:
         specifier: ^9.5.0
         version: 9.6.1
 
+  packages/agent/codex:
+    dependencies:
+      '@agent-nexus/daemon':
+        specifier: workspace:*
+        version: link:../../daemon
+      '@agent-nexus/protocol':
+        specifier: workspace:*
+        version: link:../../protocol
+      execa:
+        specifier: ^9.5.0
+        version: 9.6.1
+
   packages/cli:
     dependencies:
       discord.js:
@@ -51,6 +63,9 @@ importers:
       '@agent-nexus/agent-claudecode':
         specifier: workspace:*
         version: link:../agent/claudecode
+      '@agent-nexus/agent-codex':
+        specifier: workspace:*
+        version: link:../agent/codex
       '@agent-nexus/daemon':
         specifier: workspace:*
         version: link:../daemon

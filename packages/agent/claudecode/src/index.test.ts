@@ -34,7 +34,6 @@ const sessionKey: SessionKey = {
 const sessionConfig: SessionConfig = {
   sessionId: 'sess-1',
   workingDir: '/x',
-  toolWhitelist: ['Read', 'Bash'],
   timeoutMs: 300_000,
 };
 
@@ -135,7 +134,7 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
 
     const runtime = createClaudeCodeRuntime({
       claudeBin: 'claude',
-      allowedTools: ['Read'],
+      allowedTools: ['Read', 'Bash'],
       defaultWorkingDir: '/fallback',
       logger: fakeLogger,
     });
@@ -239,10 +238,7 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
       defaultWorkingDir: '/x',
       logger: fakeLogger,
     });
-    const session = runtime.startSession(sessionKey, {
-      ...sessionConfig,
-      toolWhitelist: ['Read'],
-    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
     const events = await collectEvents(runtime, session);
 
     const turn = runtime.sendInput(session, {
@@ -313,7 +309,6 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     });
     const session = runtime.startSession(sessionKey, {
       ...sessionConfig,
-      toolWhitelist: ['Bash'],
     });
     const events = await collectEvents(runtime, session);
 
@@ -362,7 +357,6 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     });
     const session = runtime.startSession(sessionKey, {
       ...sessionConfig,
-      toolWhitelist: ['Read', 'Edit', 'Write', 'Grep', 'Glob'],
     });
     const events = await collectEvents(runtime, session);
 
@@ -415,10 +409,7 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
       defaultWorkingDir: '/x',
       logger: fakeLogger,
     });
-    const session = runtime.startSession(sessionKey, {
-      ...sessionConfig,
-      toolWhitelist: ['Read'],
-    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
     const events = await collectEvents(runtime, session);
 
     const turn = runtime.sendInput(session, {
@@ -460,7 +451,7 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     ]);
   });
 
-  it('responds to can_use_tool with allow or deny based on bare tool whitelist', async () => {
+  it('responds to can_use_tool with allow or deny based on allowedTools', async () => {
     const child = makeInteractiveSubproc();
     mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
 
@@ -472,7 +463,6 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     });
     const session = runtime.startSession(sessionKey, {
       ...sessionConfig,
-      toolWhitelist: ['Read'],
     });
     const events = await collectEvents(runtime, session);
 
@@ -565,7 +555,6 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     });
     const session = runtime.startSession(sessionKey, {
       ...sessionConfig,
-      toolWhitelist: ['Read'],
     });
     const events = await collectEvents(runtime, session);
     const originalWrite = child.stdin.write.bind(child.stdin);
@@ -794,14 +783,11 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
   it('rejects unsupported tool subpatterns instead of degrading them to bare tool allow', async () => {
     const runtime = createClaudeCodeRuntime({
       claudeBin: 'claude',
-      allowedTools: ['Read'],
+      allowedTools: ['Bash(git *)'],
       defaultWorkingDir: '/x',
       logger: fakeLogger,
     });
-    const session = runtime.startSession(sessionKey, {
-      ...sessionConfig,
-      toolWhitelist: ['Bash(git *)'],
-    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
     const events = await collectEvents(runtime, session);
 
     await runtime.sendInput(session, {
@@ -813,7 +799,7 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     expect(mockedExeca).not.toHaveBeenCalled();
     const err = events[0];
     if (err?.type !== 'error') throw new Error('expected error');
-    expect(err.payload.errorKind).toBe('tool_whitelist_invalid');
+    expect(err.payload.errorKind).toBe('allowed_tools_invalid');
   });
 
   it('delays the next stdin write after synthetic interrupt until cleanup ack arrives', async () => {

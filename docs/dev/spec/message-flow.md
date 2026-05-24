@@ -89,7 +89,7 @@ contracts:
      session_started / thinking / text_delta / text_final / tool_call_started /
      tool_call_progress / tool_result / tool_call_finished / turn_finished / usage /
      error / session_stopped）
-  - tool 调用前 daemon.toolguard 校验（见下文 §工具边界校验）
+  - 后端专属工具 / sandbox 边界在 agent runtime 内执行（见下文 §工具边界校验）
         │
         │  (2) AgentEvent 流（push 给 daemon）
         ▼
@@ -123,10 +123,10 @@ contracts:
 agent 后端尝试调用工具（如 CC CLI 触发 tool_use）
         │
         ▼
-AgentRuntime 实现内调用 daemon.toolguard
+Claude Code runtime 执行前 permission control
         │                                    (权威源：security/tool-boundary.md)
-        ├─ 工具不在 SessionConfig.toolWhitelist
-        │     → adapter 不转发工具调用请求，不发送结果
+        ├─ 工具不在 claudeCode.allowedTools
+        │     → runtime 回 control_response deny，工具不执行
         │     → 产出 AgentEvent{type: error, payload: {errorKind, code, message}}
         │       (权威源：agent-runtime.md §error 事件 payload)
         │

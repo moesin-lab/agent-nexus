@@ -236,7 +236,6 @@ const SILENT_LOGGER = createLogger({ level: 'fatal', pretty: false });
 
 const DEFAULT_CFG = {
   workingDir: '/tmp',
-  toolWhitelist: [],
   timeoutMs: 60_000,
 };
 

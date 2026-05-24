@@ -1,0 +1,25 @@
+{
+  "name": "@agent-nexus/agent-codex",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --build",
+    "test": "vitest run --root ../../.. packages/agent/codex"
+  },
+  "dependencies": {
+    "@agent-nexus/daemon": "workspace:*",
+    "@agent-nexus/protocol": "workspace:*",
+    "execa": "^9.5.0"
+  }
+}

@@ -33,7 +33,7 @@ NormalizedEvent {
     // 标识
     eventId: string                          // 平台事件 ID（全局唯一，含时间序）
     platform: string                         // "discord"
-    sessionKey: SessionKey
+    sessionKey: PlatformSessionKey
     messageId: string?                       // 消息类事件必填
     traceId: string                          // adapter 生成或从上下文继承
 
@@ -76,21 +76,27 @@ enum EventType {
 
 ## SessionKey
 
-入站事件归一化的会话路由 key。
+Platform adapter 产出的入站事件只包含平台类型、频道和发起者；配置实例名由 daemon routing 层在
+`RouteContext.platformName` 中注入。daemon/agent 侧使用的完整 `SessionKey` 必须包含 `platformName`。
 
 ```text
-SessionKey {
+PlatformSessionKey {
     platform: string                // IM 平台标识，例 "discord"
     channelId: string               // 会话容器 ID（Discord channel ID 或 thread ID）
     initiatorUserId: string         // 发起者 ID
 }
+
+SessionKey {
+    platformName: string            // 配置实例名，例 "discord-main"
+    platform: string
+    channelId: string
+    initiatorUserId: string
+}
 ```
 
-序列化（日志、持久化）：`<platform>:<channelId>:<initiatorUserId>`。
-
-多 platform instance 路由引入后，session partition 必须额外区分配置实例名
-`platformName`；迁移语义见 [`config-routing.md`](config-routing.md) §Session 隔离。在迁移落地前，
-不得同时启动两个同 type platform 实例。
+完整 `SessionKey` 序列化（日志、持久化、session/idempotency key）：
+`<platformName>:<platform>:<channelId>:<initiatorUserId>`。`PlatformSessionKey` 只能用于 adapter
+入站归一化，不得作为 daemon session/idempotency 存储 key。
 
 **SessionKey 不唯一跨时间**——同一 SessionKey 可以随时间对应多个已归档 + 一个活跃的 session 实例。会话本体的持久化主键是 `sessionId`，不是 SessionKey。SessionKey 与 sessionId 的关系、生命周期、Discord thread 映射等组合语义见 [`../architecture/session-model.md`](../architecture/session-model.md)。
 

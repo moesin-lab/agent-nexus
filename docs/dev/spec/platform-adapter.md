@@ -87,7 +87,7 @@ platform instance 的稳定实例名由 [`config-routing.md`](config-routing.md)
 |---|---|---|
 | `eventId` | 是 | 平台事件 ID（Discord interaction id / message id） |
 | `platform` | 是 | `"discord"` |
-| `sessionKey` | 是 | `(platform, channelId, userId)` 构造 |
+| `sessionKey` | 是 | adapter 层 `PlatformSessionKey(platform, channelId, userId)`；daemon routing 层再注入 `platformName` |
 | `messageId` | 视事件 | 消息类事件必填（Discord message snowflake） |
 | `type` | 是 | `message | command | reaction | ...` |
 | `text` | 视事件 | 消息正文（已去除 bot mention） |

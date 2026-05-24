@@ -11,12 +11,15 @@ import type {
   MessageRef,
   NormalizedEvent,
   OutboundMessage,
+  PlatformSessionKey,
   PlatformAdapter,
   SessionConfig,
   SessionKey,
 } from '@agent-nexus/protocol';
+import { withPlatformName } from '@agent-nexus/protocol';
 import { Engine } from './engine.js';
 import { createLogger, type Logger } from './logger.js';
+import type { RoutingEntry } from './router.js';
 import { SessionStore } from './session-store.js';
 
 // ----- mocks -----
@@ -43,11 +46,15 @@ const agentCaps: AgentCapabilitySet = {
   supportsStdinInterrupt: false,
 };
 
-const SESSION_KEY: SessionKey = {
+const SESSION_KEY: PlatformSessionKey = {
   platform: 'discord',
   channelId: 'C1',
   initiatorUserId: 'U1',
 };
+const ROUTED_SESSION_KEY: SessionKey = withPlatformName(
+  SESSION_KEY,
+  'mock-platform',
+);
 
 let eventCounter = 0;
 function makeEvent(text: string, overrides: Partial<NormalizedEvent> = {}): NormalizedEvent {
@@ -271,7 +278,7 @@ describe('Engine', () => {
     expect(cfg.resumeFromAgentSessionId).toBeUndefined();
     expect(cfg.sessionId).toBeTruthy();
 
-    expect(store.get(SESSION_KEY)?.agentSessionId).toBe('sid-123');
+    expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-123');
 
     expect(platform.send).toHaveBeenCalledTimes(1);
     const sendArgs = platform.send.mock.calls[0]!;
@@ -303,7 +310,7 @@ describe('Engine', () => {
       ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
     ]);
     await dispatchHandler(makeEvent('first prompt'));
-    expect(store.get(SESSION_KEY)?.agentSessionId).toBe('sid-123');
+    expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-123');
 
     const firstSession = agent.sendInput.mock.calls[0]![0] as AgentSession;
 
@@ -317,7 +324,7 @@ describe('Engine', () => {
     expect(agent.startSession).toHaveBeenCalledTimes(1);
     expect(agent.onEvent).toHaveBeenCalledTimes(1);
     expect(agent.sendInput.mock.calls[1]![0]).toBe(firstSession);
-    expect(store.get(SESSION_KEY)?.agentSessionId).toBe('sid-123');
+    expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-123');
     expect(agent.stopSession).not.toHaveBeenCalled();
   });
 
@@ -355,7 +362,7 @@ describe('Engine', () => {
     expect(agent.startSession).toHaveBeenCalledTimes(2);
     const cfg2 = agent.startSession.mock.calls[1]![1] as SessionConfig;
     expect(cfg2.resumeFromAgentSessionId).toBe('sid-123');
-    expect(store.get(SESSION_KEY)?.agentSessionId).toBe('sid-456');
+    expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-456');
   });
 
   it('/new 带后续文本：清 store + 用 trim 后的剩余作 prompt', async () => {
@@ -363,7 +370,7 @@ describe('Engine', () => {
     const agent = makeAgent();
     const store = new SessionStore();
     // 预置一条旧的
-    store.set(SESSION_KEY, { agentSessionId: 'sid-123', lastTurnAt: new Date(0) });
+    store.set(ROUTED_SESSION_KEY, { agentSessionId: 'sid-123', lastTurnAt: new Date(0) });
 
     const engine = new Engine({
       platform,
@@ -393,7 +400,7 @@ describe('Engine', () => {
     expect(input.text).toBe('what is X?');
 
     // 新一轮 session_started 写回 sid-new；旧的 sid-123 已被清掉
-    expect(store.get(SESSION_KEY)?.agentSessionId).toBe('sid-new');
+    expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-new');
   });
 
   it('/new 单独：发 [new session ready] 不调 agent', async () => {
@@ -464,7 +471,7 @@ describe('Engine', () => {
     expect(agent.sendInput.mock.calls[1]![0]).toBe(agent.sendInput.mock.calls[0]![0]);
 
     // store 仍保留当前活跃 agent session id；第二轮未重启 session。
-    expect(store.get(SESSION_KEY)?.agentSessionId).toBe('sid-first');
+    expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-first');
   });
 
   it('不同 SessionKey 并发不串行：互不阻塞', async () => {
@@ -482,8 +489,8 @@ describe('Engine', () => {
     await engine.start();
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
 
-    const KEY_A: SessionKey = { platform: 'discord', channelId: 'C1', initiatorUserId: 'A' };
-    const KEY_B: SessionKey = { platform: 'discord', channelId: 'C1', initiatorUserId: 'B' };
+    const KEY_A: PlatformSessionKey = { platform: 'discord', channelId: 'C1', initiatorUserId: 'A' };
+    const KEY_B: PlatformSessionKey = { platform: 'discord', channelId: 'C1', initiatorUserId: 'B' };
 
     // A 慢；B 应该不被 A 拖累，可以早于 A 完成
     agent.queueEventsAfter(
@@ -510,8 +517,8 @@ describe('Engine', () => {
     // B 不应等满 A 的 30ms 延迟；给 25ms 余量足够区分串行/并行
     expect(tBDone).toBeLessThan(25);
 
-    expect(store.get(KEY_A)?.agentSessionId).toBe('sid-a');
-    expect(store.get(KEY_B)?.agentSessionId).toBe('sid-b');
+    expect(store.get(withPlatformName(KEY_A, 'mock-platform'))?.agentSessionId).toBe('sid-a');
+    expect(store.get(withPlatformName(KEY_B, 'mock-platform'))?.agentSessionId).toBe('sid-b');
   });
 
   it('turn_finished 后写 outbound info 日志（含 length、无 text），debug 日志含 text', async () => {
@@ -638,6 +645,274 @@ describe('Engine', () => {
     // 用 fill-1024 重投——还在表内，应被 dedup，agent.startSession 不再增加
     await dispatchHandler(makeEvent('hello', { eventId: 'fill-1024' }));
     expect(agent.startSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('routingTable 未命中：打 route_not_found 且不调用任何 agent', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const claude = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+        {
+          agentName: 'claude-prod',
+          agent: claude.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello', {
+      sessionKey: { ...SESSION_KEY, channelId: 'C9' },
+    }));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(claude.startSession).not.toHaveBeenCalled();
+    const warnCalls = (mockLogger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    expect(warnCalls.find(([, msg]) => msg === 'route_not_found')).toBeDefined();
+  });
+
+  it('routingTable 多重命中：打 route_ambiguous 且不调用任何 agent', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex-a',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+      {
+        bindingName: 'discord-main-codex-b',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    const warnCalls = (mockLogger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const routeLog = warnCalls.find(([, msg]) => msg === 'route_ambiguous');
+    expect(routeLog).toBeDefined();
+    expect(routeLog![0]).toMatchObject({
+      bindingNames: ['discord-main-codex-a', 'discord-main-codex-b'],
+    });
+  });
+
+  it('routingTable 按 platformName + channel 选择 agent，并用 platformName 隔离 session key', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const claude = makeAgent();
+    const store = new SessionStore();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+      {
+        bindingName: 'discord-main-claude',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'claude-prod',
+        match: { discord: { channelIds: ['C2'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+        {
+          agentName: 'claude-prod',
+          agent: claude.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    claude.queueEvents([
+      ev('session_started', { agentSessionId: 'claude-sid' }),
+      ev('text_final', { text: 'from claude' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello', {
+      sessionKey: { ...SESSION_KEY, channelId: 'C2' },
+    }));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(claude.startSession).toHaveBeenCalledTimes(1);
+    const startedKey = claude.startSession.mock.calls[0]![0] as SessionKey;
+    expect(startedKey).toMatchObject({
+      platformName: 'discord-main',
+      platform: 'discord',
+      channelId: 'C2',
+      initiatorUserId: 'U1',
+    });
+    expect(
+      store.get({
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'C2',
+        initiatorUserId: 'U1',
+      })?.agentSessionId,
+    ).toBe('claude-sid');
+  });
+
+  it('两个同 type Engine 共享 SessionStore 时，同 channel/user 仍按 platformName 隔离', async () => {
+    const platformMain = makePlatform();
+    const platformSide = makePlatform();
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+      {
+        bindingName: 'discord-side-codex',
+        platformName: 'discord-side',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const agents = [
+      {
+        agentName: 'codex-dev',
+        agent: codex.runtime,
+        defaultSessionConfig: DEFAULT_CFG,
+      },
+    ];
+
+    const mainEngine = new Engine({
+      platform: platformMain,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents,
+      routingTable,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+    const sideEngine = new Engine({
+      platform: platformSide,
+      platformName: 'discord-side',
+      platformType: 'discord',
+      agents,
+      routingTable,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-main' }),
+      ev('text_final', { text: 'main' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-side' }),
+      ev('text_final', { text: 'side' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await mainEngine.start();
+    await sideEngine.start();
+    const mainDispatch = (platformMain.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const sideDispatch = (platformSide.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    await mainDispatch(makeEvent('hello'));
+    await sideDispatch(makeEvent('hello'));
+
+    expect(codex.startSession).toHaveBeenCalledTimes(2);
+    expect(codex.startSession.mock.calls[0]![0]).toMatchObject({
+      platformName: 'discord-main',
+      channelId: 'C1',
+      initiatorUserId: 'U1',
+    });
+    expect(codex.startSession.mock.calls[1]![0]).toMatchObject({
+      platformName: 'discord-side',
+      channelId: 'C1',
+      initiatorUserId: 'U1',
+    });
+    expect(store.size).toBe(2);
+    expect(
+      store.get({
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'C1',
+        initiatorUserId: 'U1',
+      })?.agentSessionId,
+    ).toBe('sid-main');
+    expect(
+      store.get({
+        platformName: 'discord-side',
+        platform: 'discord',
+        channelId: 'C1',
+        initiatorUserId: 'U1',
+      })?.agentSessionId,
+    ).toBe('sid-side');
   });
 
   it('supportsEdit=false：text_delta 只缓冲，turn_finished 发送 text_final 且不调用 edit/typing', async () => {
@@ -1401,13 +1676,13 @@ describe('Engine', () => {
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
     await dispatchHandler(makeEvent('hello'));
 
-    expect(store.get(SESSION_KEY)?.agentSessionId).toBe('sid-1');
+    expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-1');
     expect(agent.stopSession).not.toHaveBeenCalled();
 
     await engine.stop();
 
     expect(platform.stop).toHaveBeenCalledTimes(1);
     expect(agent.stopSession).toHaveBeenCalledTimes(1);
-    expect(store.get(SESSION_KEY)).toBeUndefined();
+    expect(store.get(ROUTED_SESSION_KEY)).toBeUndefined();
   });
 });

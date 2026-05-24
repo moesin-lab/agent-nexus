@@ -438,19 +438,6 @@ function parsePlatform(raw: unknown, index: number): PlatformConfig {
   }
 }
 
-function assertSinglePlatformTypeUntilP10(platforms: PlatformConfig[]): void {
-  const seen = new Set<string>();
-  for (const platform of platforms) {
-    if (seen.has(platform.type)) {
-      throw new ConfigError(
-        'platforms[].type 暂不允许配置多个同 type platform；' +
-          'P10 完成 platformName session 隔离后再放开。',
-      );
-    }
-    seen.add(platform.type);
-  }
-}
-
 function assertAgentReferences(
   bindings: BindingConfig[],
   agents: AgentConfig[],
@@ -462,6 +449,17 @@ function assertAgentReferences(
         `字段 bindings[${bindingIndex}].agentName 引用了不存在的 agent "${binding.agentName}"`,
       );
     }
+  }
+}
+
+function assertUniquePlatformStatePaths(platforms: PlatformConfig[]): void {
+  const duplicateStatePaths = duplicateNames(
+    platforms.map((platform) => platform.statePath),
+  );
+  if (duplicateStatePaths.length > 0) {
+    throw new ConfigError(
+      `platforms[].statePath 重复：${duplicateStatePaths.join(', ')}`,
+    );
   }
 }
 
@@ -538,7 +536,7 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
       `platforms[].name 重复：${duplicatePlatformNames.join(', ')}`,
     );
   }
-  assertSinglePlatformTypeUntilP10(platforms);
+  assertUniquePlatformStatePaths(platforms);
   const platformsByName = new Map(
     platforms.map((platform) => [platform.name, platform]),
   );

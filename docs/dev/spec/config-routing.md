@@ -256,17 +256,16 @@ platform adapter 实例。
 
 ## Session 隔离
 
-`SessionKey.platform` 当前只有平台类型字符串（如 `"discord"`）。多 platform 实例后，同一类型的不同 bot 可能拥有相同 channel/user ID，必须纳入 platform instance identity。
+Adapter 产出的 `PlatformSessionKey.platform` 只有平台类型字符串（如 `"discord"`）。多 platform 实例后，同一类型的不同 bot 可能拥有相同 channel/user ID，daemon 必须在 route decision 后注入 platform instance identity。
 
-P10 起 `SessionKey` 或等价 routing/session context 必须包含 `platformName`。序列化 session key 至少区分：
+P10 起 daemon/agent 侧完整 `SessionKey` 必须包含 `platformName`。序列化 session key 区分：
 
 ```text
 platformName + platformType + channelId + initiatorUserId
 ```
 
-在该迁移完成前，CLI 必须拒绝同时启动两个同 type platform 实例，错误消息说明当前 session 隔离尚未完成。
-P10 改动必须同步覆盖 session-store、idempotency 与 persistence 的 key 序列化测试；不得让新 4 段 key 与旧
-3 段 key 在同一 store 中混用。
+P10 迁移完成后，CLI 可以同时启动多个同 type platform 实例；session store、idempotency 与 persistence
+不得使用旧 3 段 key。
 
 ## Legacy 配置迁移
 
@@ -319,7 +318,7 @@ P9 实现必须覆盖：
 5. Discord binding `match.discord.channelIds` 非空字符串数组校验。
 6. legacy config 被清晰拒绝。
 7. routing 0 命中、1 命中、多命中三分支；未授权用户走 `auth_denied` 而不是 `route_not_found`。
-8. 两个同 type platform 实例在 session 隔离迁移前被清晰拒绝。
+8. 两个同 type platform 实例在 session 隔离迁移完成后可被解析；statePath 由 platform name 派生，互不复用。
 9. secret 示例与日志不包含 token 明文。
 
 P10 实现必须覆盖：

@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   CapabilitySet,
   CommandDescriptor,
+  CommandRegistrationPort,
+  CommandRegistrationResult,
   CommandRegistrationScope,
 } from '@agent-nexus/protocol';
 import {
@@ -190,4 +192,132 @@ describe('ActiveCommandRegistry', () => {
       CommandRegistryError,
     );
   });
+
+  it('preserves the previous active map when remote registration fails', async () => {
+    const initial = buildCommandRegistrationPlan({
+      descriptors: [agentCommand('codex', 'new')],
+      scope,
+      capabilities: caps,
+      policy: DEFAULT_COMMAND_NAME_POLICY,
+      agentOwnersInScope: ['codex'],
+      generation: 'g1',
+    });
+    const next = buildCommandRegistrationPlan({
+      descriptors: [agentCommand('claudecode', 'new')],
+      scope,
+      capabilities: caps,
+      policy: DEFAULT_COMMAND_NAME_POLICY,
+      agentOwnersInScope: ['claudecode'],
+      generation: 'g2',
+    });
+    const registry = new ActiveCommandRegistry();
+    registry.activate(initial, new Date(0));
+    const logger = { error: vi.fn() };
+
+    const result = await registry.applyRegistrationPlan(next, {
+      logger,
+      port: portReturning({
+        status: 'failed',
+        error: { code: 'command_registration_failed', message: 'remote failed' },
+      }),
+      activatedAt: new Date(1),
+    });
+
+    expect(result).toMatchObject({ status: 'failed' });
+    expect(registry.resolve(scope, 'codex-new')).toMatchObject({
+      canonicalId: 'agent:codex:new',
+    });
+    expect(() => registry.resolve(scope, 'claudecode-new')).toThrow(
+      CommandRegistryError,
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generation: 'g2',
+        error: { code: 'command_registration_failed', message: 'remote failed' },
+      }),
+      'command_registration_failed',
+    );
+  });
+
+  it('does not log registration error causes', async () => {
+    const plan = buildCommandRegistrationPlan({
+      descriptors: [agentCommand('codex', 'new')],
+      scope,
+      capabilities: caps,
+      policy: DEFAULT_COMMAND_NAME_POLICY,
+      agentOwnersInScope: ['codex'],
+      generation: 'g1',
+    });
+    const registry = new ActiveCommandRegistry();
+    const logger = { error: vi.fn() };
+
+    await registry.applyRegistrationPlan(plan, {
+      logger,
+      port: portReturning({
+        status: 'failed',
+        error: {
+          code: 'command_registration_failed',
+          message: 'remote failed',
+          cause: { rawPayload: 'SECRET_PAYLOAD' },
+        },
+      }),
+      activatedAt: new Date(0),
+    });
+
+    const [logFields] = logger.error.mock.calls[0]!;
+    expect(logFields).toMatchObject({
+      error: { code: 'command_registration_failed', message: 'remote failed' },
+    });
+    expect(JSON.stringify(logFields)).not.toContain('SECRET_PAYLOAD');
+  });
+
+  it('does not activate a stale generation result', async () => {
+    const initial = buildCommandRegistrationPlan({
+      descriptors: [agentCommand('codex', 'new')],
+      scope,
+      capabilities: caps,
+      policy: DEFAULT_COMMAND_NAME_POLICY,
+      agentOwnersInScope: ['codex'],
+      generation: 'g1',
+    });
+    const next = buildCommandRegistrationPlan({
+      descriptors: [agentCommand('claudecode', 'new')],
+      scope,
+      capabilities: caps,
+      policy: DEFAULT_COMMAND_NAME_POLICY,
+      agentOwnersInScope: ['claudecode'],
+      generation: 'g2',
+    });
+    const registry = new ActiveCommandRegistry();
+    registry.activate(initial, new Date(0));
+    const logger = { error: vi.fn() };
+
+    const result = await registry.applyRegistrationPlan(next, {
+      logger,
+      port: portReturning({ status: 'applied', generation: 'stale-g1' }),
+      activatedAt: new Date(1),
+    });
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: { code: 'command_activation_generation_mismatch' },
+    });
+    expect(registry.resolve(scope, 'codex-new')).toMatchObject({
+      canonicalId: 'agent:codex:new',
+    });
+    expect(() => registry.resolve(scope, 'claudecode-new')).toThrow(
+      CommandRegistryError,
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedGeneration: 'g2',
+        resultGeneration: 'stale-g1',
+      }),
+      'command_activation_generation_mismatch',
+    );
+  });
 });
+
+function portReturning(result: CommandRegistrationResult): CommandRegistrationPort {
+  return { applyCommandPlan: vi.fn(async () => result) };
+}

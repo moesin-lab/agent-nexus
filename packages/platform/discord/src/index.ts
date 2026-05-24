@@ -1,8 +1,9 @@
 export {
   parseDiscordConfig,
+  parseDiscordBindingMatchConfig,
   parseDiscordPlatformConfig,
   DiscordConfigError,
-  type DiscordBindingConfig,
+  type DiscordBindingMatchConfig,
   type DiscordConfig,
   type DiscordPlatformConfig,
   type DiscordPublicChannelMode,

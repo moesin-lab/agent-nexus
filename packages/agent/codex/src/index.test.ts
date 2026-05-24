@@ -36,6 +36,7 @@ const codexConfig: CodexConfig = {
 };
 
 const sessionKey: SessionKey = {
+  platformName: 'discord-main',
   platform: 'discord',
   channelId: 'C1',
   initiatorUserId: 'U1',

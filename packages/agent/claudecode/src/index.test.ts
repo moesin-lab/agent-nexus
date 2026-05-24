@@ -26,6 +26,7 @@ const fakeLogger = {
 } as unknown as import('@agent-nexus/daemon').Logger;
 
 const sessionKey: SessionKey = {
+  platformName: 'discord-main',
   platform: 'discord',
   channelId: 'C1',
   initiatorUserId: 'U1',

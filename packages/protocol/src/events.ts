@@ -1,4 +1,4 @@
-import type { SessionKey } from './session-key.js';
+import type { PlatformSessionKey } from './session-key.js';
 
 /** docs/dev/spec/message-protocol.md §EventType。MVP 仅实现 message。 */
 export type EventType =
@@ -33,7 +33,7 @@ export interface Attachment {
 export interface NormalizedEvent {
   eventId: string;
   platform: string;
-  sessionKey: SessionKey;
+  sessionKey: PlatformSessionKey;
   messageId?: string;
   traceId: string;
 

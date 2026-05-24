@@ -9,11 +9,13 @@ related:
   - dev/spec/platform-adapter
   - dev/spec/agent-runtime
   - dev/spec/message-flow
+  - dev/spec/security/auth
   - dev/spec/security/secrets
 contracts:
   - AgentNexusConfig
   - PlatformConfig
   - AgentConfig
+  - PlatformAuthConfig
   - PlatformBinding
   - RoutingTable
 ---
@@ -41,7 +43,7 @@ AgentNexusConfig {
 }
 ```
 
-顶层不再使用 `discord`、`agent`、`claudeCode`、`codex` 作为主配置入口。loader 看到这些 legacy 顶层字段时不得悄悄混用；迁移语义见下文。
+顶层不再使用 `discord`、`agent`、`claudeCode`、`codex` 作为主配置入口。loader 看到这些 legacy 顶层字段时必须按 §Legacy 配置迁移 报错，不得悄悄混用。
 
 ## PlatformConfig
 
@@ -50,13 +52,14 @@ PlatformConfig {
     name: string                      // 全局唯一，稳定实例名
     type: "discord"                   // P8 锁定的首个类型
     bindings: PlatformBinding[]       // 必填，非空
+    auth: PlatformAuthConfig          // 必填；由 daemon.auth owner parser 校验
 
     // type="discord" owner 字段，由 platform-discord parser 校验
     botUserId: string
     tokenRef: string                  // secret ref 名称，不是 token 值
     statePath?: path
     testGuildId?: string
-    allowedUserIds: string[]
+    publicChannelMode?: "disabled" | "thread" | "public"
 }
 ```
 
@@ -67,9 +70,27 @@ PlatformConfig {
 | `name` | 非空字符串；在 `platforms[]` 内唯一；用于日志、routing table 与 session key partition |
 | `type` | P8 只允许 `"discord"`；未知 type 启动失败 |
 | `bindings` | 非空数组；每条 binding 由该 platform type 的 owner parser 校验平台侧条件 |
+| `auth` | 实例级授权配置；必填；字段语义见 §PlatformAuthConfig |
 | `tokenRef` | secret ref 名称；loader 只能用它定位 secret 文件 / secret provider，不得接受明文 token |
-| `allowedUserIds` | Discord 实例级 allowlist；必填且非空；缺失或空数组按 platform-discord 现有 fail-closed 规则处理 |
 | `statePath` | 可选；缺省由 CLI 以 platform `name` 派生稳定路径，避免多 bot 共用同一 state 文件 |
+| `publicChannelMode` | Discord 公开 channel 策略；缺省 `thread`；字段语义见 [`security/auth.md`](security/auth.md) |
+
+## PlatformAuthConfig
+
+多 platform instance 后，授权配置从 legacy `config.security.allowlist` 迁到每个 `PlatformConfig.auth`。
+同一进程内多个 bot 可以拥有不同 allowlist。auth 由 `daemon.auth` 拥有；router 不读取 user/role/guild
+授权字段。
+
+```text
+PlatformAuthConfig {
+    allowlist: AllowlistConfig        // 必填；见 security/auth.md
+}
+```
+
+`AllowlistConfig` 字段继续以 [`security/auth.md`](security/auth.md) 为权威源：
+`userIds`、`roleIds`、`allowedGuildIds`、`allowedChannelIds`、`allowDM`、`requireMentionOrSlash`。
+P9 实现新 loader 时必须调用 daemon.auth owner parser 校验这些字段，不能由 platform parser 或 routing
+matcher 自行解释。
 
 ## AgentConfig
 
@@ -92,10 +113,11 @@ AgentConfig {
 |---|---|
 | `name` | 非空字符串；在 `agents[]` 内唯一；binding 只能通过此名称引用 |
 | `backend` | 必填；未知 backend 启动失败 |
-| `claudeCode` | `backend="claudecode"` 时必填，且只能由 `@agent-nexus/agent-claudecode` parser 校验 |
-| `codex` | `backend="codex"` 时必填，且只能由 `@agent-nexus/agent-codex` parser 校验 |
+| `claudeCode` | `backend="claudecode"` 时必填；`backend="codex"` 时必须缺省；字段内容只能由 `@agent-nexus/agent-claudecode` parser 校验 |
+| `codex` | `backend="codex"` 时必填；`backend="claudecode"` 时必须缺省；字段内容只能由 `@agent-nexus/agent-codex` parser 校验 |
 
 `AgentConfig` 不继承全局 workingDir / toolWhitelist。需要两套不同工作目录或工具边界时，配置两个不同 `agents[]` 项。
+inactive backend 配置块必须拒绝，不能作为"未知但忽略"字段保留，避免陈旧私有配置影响审计。
 
 ## PlatformBinding
 
@@ -106,10 +128,7 @@ PlatformBinding {
     agentName: string                 // 必须引用 agents[].name
 
     // type="discord" owner 字段，由 platform-discord parser 校验
-    channelIds?: string[]             // 至少一个平台条件必须存在
-    guildIds?: string[]
-    threadIds?: string[]
-    allowedUserIds?: string[]
+    channelIds: string[]              // 非空；命中 event.sessionKey.channelId
 }
 ```
 
@@ -119,15 +138,20 @@ PlatformBinding {
 |---|---|
 | `agentName` | 必填；必须引用存在的 `agents[].name` |
 | `channelIds` | Discord channel allow/bind 条件；非空字符串数组；命中 `event.sessionKey.channelId` |
-| `guildIds` | Discord guild 条件；仅当 NormalizedEvent 携带 guild identity 后可实现，P9 可先拒绝该字段并给迁移错误 |
-| `threadIds` | Discord thread 条件；仅当平台 event 能区分 thread identity 后可实现，P9 可先拒绝该字段并给迁移错误 |
-| `allowedUserIds` | binding 级用户条件；与 platform 实例级 allowlist 取交集语义 |
 
-Discord P9 的最小实现必须支持 `channelIds` 与 `allowedUserIds`。若配置了 P9 尚未实现的条件字段，loader 必须 fail-closed，错误消息包含字段路径。
+Discord P9 的最小 binding 条件只支持 `channelIds`。用户、角色、guild、DM、公开 channel 策略全部属于
+`PlatformAuthConfig` / `daemon.auth`，不属于 routing matcher。若配置了未知 binding 条件字段，loader 必须
+fail-closed，错误消息包含字段路径。
 
 ### 空条件禁止
 
-每条 binding 至少包含一个平台侧匹配条件。禁止用"无条件 catch-all binding"伪装默认 agent；需要全频道开放时必须显式列出 channel 或由后续 ADR/spec 定义可审计的 allow-all 语法。
+每条 binding 必须显式列出至少一个 `channelIds`。禁止用"无条件 catch-all binding"伪装默认 agent；需要全频道开放时必须显式列出 channel 或由后续 ADR/spec 定义可审计的 allow-all 语法。
+
+### 暂不支持的条件
+
+`guildIds` / 独立 `threadIds` 路由条件暂不进入 P9 schema：当前 `NormalizedEvent` / `SessionKey` 没有独立
+guild identity，且 thread 已折叠为 `sessionKey.channelId`。若后续要按 guild 或 thread 类型路由，必须先扩展
+`message-protocol.md` 的身份字段并同步 persistence / idempotency 契约。
 
 ## Owner 校验边界
 
@@ -135,13 +159,15 @@ CLI loader 的职责：
 
 1. 校验顶层结构、`name` 唯一性、`type` / `backend` 枚举、binding 引用存在。
 2. 按 `platform.type` 调用对应 platform parser 校验平台字段与 binding 条件。
-3. 按 `agent.backend` 调用对应 agent parser 校验 backend 私有字段。
-4. 组装 platform adapter、agent runtime 与 routing table。
+3. 调用 daemon.auth parser 校验每个 `platforms[].auth`。
+4. 按 `agent.backend` 调用对应 agent parser 校验 backend 私有字段。
+5. 组装 platform adapter、agent runtime 与 routing table。
 
 CLI loader 不得：
 
 - 解释 `claudeCode` / `codex` 的业务字段。
 - 解释 Discord token 明文值。
+- 用 routing matcher 解释 user/role/guild/DM 授权字段。
 - 在未知字段或未知条件上静默忽略。
 - 为未命中 binding 的事件选择默认 agent。
 
@@ -167,8 +193,7 @@ PlatformMatchSpec {
 }
 
 DiscordMatchSpec {
-    channelIds?: string[]
-    allowedUserIds?: string[]
+    channelIds: string[]
 }
 ```
 
@@ -196,13 +221,14 @@ RouteContext {
 
 1. 只考虑 `entry.platformName == context.platformName` 的 routing entries。
 2. 按 `platformType` 调用 platform owner 的 match 函数。
-3. `channelIds` 存在时，`event.sessionKey.channelId` 必须在列表内。
-4. `allowedUserIds` 存在时，`event.sessionKey.initiatorUserId` 必须在列表内。
-5. 匹配结果数量为 1 时，返回该 `agentName`。
-6. 匹配结果数量为 0 时，拒绝 dispatch，打结构化日志 `route_not_found`。
-7. 匹配结果数量大于 1 时，拒绝 dispatch，打结构化日志 `route_ambiguous`。
+3. `event.sessionKey.channelId` 必须在 `channelIds` 内。
+4. 匹配结果数量为 1 时，返回该 `agentName`。
+5. 匹配结果数量为 0 时，拒绝 dispatch，打结构化日志 `route_not_found`。
+6. 匹配结果数量大于 1 时，拒绝 dispatch，打结构化日志 `route_ambiguous`。
 
 拒绝 dispatch 不得调用任何 agent runtime，也不得创建 session。
+用户未授权不得表现为 `route_not_found`；唯一路由命中后，auth 层再按 `platforms[].auth.allowlist`
+做四元组检查，拒绝时打 `auth_denied`。
 
 唯一命中后，路由结果至少包含：
 
@@ -228,6 +254,8 @@ platformName + platformType + channelId + initiatorUserId
 ```
 
 在该迁移完成前，CLI 必须拒绝同时启动两个同 type platform 实例，错误消息说明当前 session 隔离尚未完成。
+P10 改动必须同步覆盖 session-store、idempotency 与 persistence 的 key 序列化测试；不得让新 4 段 key 与旧
+3 段 key 在同一 store 中混用。
 
 ## Legacy 配置迁移
 
@@ -242,12 +270,8 @@ platformName + platformType + channelId + initiatorUserId
 }
 ```
 
-P9 必须选择以下之一，不得静默半兼容：
-
-1. **显式迁移**：loader 识别 legacy 形态，输出完整新结构到用户确认的路径；迁移结果中 platform `name` 与 agent `name` 使用稳定默认值，例如 `discord-main`、`claude-main`、`codex-main`。
-2. **清晰错误**：loader 拒绝 legacy 形态，错误消息说明需要改为 `platforms[]` / `agents[]`，并给出最小字段路径清单。
-
-无论选择哪一种，loader 都不得在内存里把 legacy 配置偷偷当新配置启动；否则运维无法审计实际路由。
+P9 决策为 **清晰错误**：loader 拒绝 legacy 形态，错误消息说明需要改为 `platforms[]` / `agents[]`，
+并给出最小字段路径清单。可在 P12 文档中提供人工迁移示例或后续迁移命令，但 loader 不做自动迁移，也不得在内存里把 legacy 配置偷偷当新配置启动。
 
 ## Secret 规则
 
@@ -264,6 +288,8 @@ P9 必须选择以下之一，不得静默半兼容：
 | `agents[]` 缺失或空 | loadConfig | `ConfigError`，含字段路径 |
 | platform / agent name 重复 | loadConfig | `ConfigError`，列出重复 name |
 | 未知 platform type / backend | loadConfig | `ConfigError`，列出允许值 |
+| platform auth 缺失或非法 | loadConfig | `ConfigError`，含 `platforms[i].auth` 字段路径 |
+| agent owner 字段缺失或 inactive backend 块存在 | loadConfig | `ConfigError`，含 `agents[i].claudeCode` / `agents[i].codex` 字段路径 |
 | binding 引用不存在 agent | loadConfig | `ConfigError`，含 binding 字段路径 |
 | binding 条件为空 | owner parser | `ConfigError`，含 binding 字段路径 |
 | binding 条件非法 | owner parser | `ConfigError`，含 binding 字段路径 |
@@ -272,21 +298,29 @@ P9 必须选择以下之一，不得静默半兼容：
 
 ## 合约测试
 
-P9/P10 实现必须覆盖：
+P9 实现必须覆盖：
 
 1. `platforms[]` / `agents[]` 缺失、空数组、重复 name、未知 type/backend。
-2. binding 引用不存在 agent。
-3. Discord binding `channelIds` / `allowedUserIds` 非空字符串数组校验。
-4. legacy config 被显式迁移或清晰拒绝。
-5. routing 0 命中、1 命中、多命中三分支。
-6. 两个 Discord platform 实例的同 channel/user 不共享 session key。
-7. secret 示例与日志不包含 token 明文。
+2. `platforms[].auth.allowlist` 缺失、空列表、非法字段走 `ConfigError`，且字段路径清楚。
+3. binding 引用不存在 agent。
+4. agent owner 字段缺失、inactive backend 块存在。
+5. Discord binding `channelIds` 非空字符串数组校验。
+6. legacy config 被清晰拒绝。
+7. routing 0 命中、1 命中、多命中三分支；未授权用户走 `auth_denied` 而不是 `route_not_found`。
+8. 两个同 type platform 实例在 session 隔离迁移前被清晰拒绝。
+9. secret 示例与日志不包含 token 明文。
+
+P10 实现必须覆盖：
+
+1. 两个 Discord platform 实例的同 channel/user 不共享 session key。
+2. route decision 后续 auth、idempotency、session 队列与出站发送沿用同一个 `platformName`。
 
 ## 反模式
 
 - 配置未命中 binding 时回落到某个默认 agent。
 - 多个 binding 命中时按数组顺序选择第一个。
 - CLI 直接解析 backend 私有字段。
+- router 用 userId / roleId / guildId 做授权判断。
 - Discord parser 静默忽略未知 binding 条件。
 - 多个 platform 实例共用不含 platform name 的 session key。
 - 示例配置把 token 写成明文字段。

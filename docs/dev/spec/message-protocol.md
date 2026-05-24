@@ -137,7 +137,7 @@ ReactionPayload {
 
 见独立 spec：[`idempotency.md`](infra/idempotency.md)。
 
-**要点**：`(sessionKey, messageId)` TTL 窗口内最多处理一次；**adapter 不做去重**，由 daemon 在 `auth → idempotency → 限流 → 队列` 流程中执行 `checkAndSet`。本 spec 只定义 `NormalizedEvent` 与相关数据结构；幂等的规则、存储、流程、GC、合约测试全部集中在 `idempotency.md`。
+**要点**：`(sessionKey, messageId)` TTL 窗口内最多处理一次；**adapter 不做去重**，由 daemon 在 `routing → auth → idempotency → 限流 → 队列` 流程中执行 `checkAndSet`。本 spec 只定义 `NormalizedEvent` 与相关数据结构；幂等的规则、存储、流程、GC、合约测试全部集中在 `idempotency.md`。
 
 ## 顺序
 

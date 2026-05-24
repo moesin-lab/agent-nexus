@@ -45,10 +45,10 @@ agent-nexus 已经有两个 agent backend：Claude Code CLI 默认后端与 Code
 
 ### Option B：引入顶层 `platforms[]` 与 `agents[]`，binding 住在 platform 实例
 
-- **是什么**：顶层配置包含命名 `platforms[]` 与命名 `agents[]`；每个 platform 实例按自身类型携带平台字段与 `bindings[]`，binding 通过 `agentName` 引用命名 agent，并携带平台侧条件，例如 Discord `channelIds` / `allowedUserIds`。
+- **是什么**：顶层配置包含命名 `platforms[]` 与命名 `agents[]`；每个 platform 实例按自身类型携带平台字段、实例级 auth 配置与 `bindings[]`，binding 通过 `agentName` 引用命名 agent，并携带平台侧路由条件，例如 Discord `channelIds`。
 - **优点**：
   - 平台实例、agent 实例、路由关系三者边界清楚。
-  - Discord 可以同时配置多个 bot，每个 bot 有独立 tokenRef、statePath、allowed users 与 channel binding。
+  - Discord 可以同时配置多个 bot，每个 bot 有独立 tokenRef、statePath、auth allowlist 与 channel binding。
   - Claude Code 与 Codex 可以各有多套配置，同一 backend 的不同工作目录或安全策略不需要复制顶层 selector。
   - 未命中、重复命中、缺失引用、名称重复都能在 loader / router 层 fail-closed。
 - **缺点**：需要一次配置迁移，CLI 组装逻辑要从单 platform / 单 agent 升级为集合。
@@ -65,18 +65,21 @@ agent-nexus 已经有两个 agent backend：Claude Code CLI 默认后端与 Code
 
 选 **Option B：顶层 `platforms[]` 与 `agents[]`，binding 住在 platform 实例**。
 
+legacy 单实例配置不自动迁移。P9 loader 必须清晰报错并提示改为新结构；迁移示例可以放到 P12 文档或后续命令，但启动路径不得把 legacy 配置在内存里静默当作新结构运行。
+
 ## Consequences
 
 ### 正向
 
 - 配置能同时表达多个平台 bot 与多套 agent runtime，路由关系通过名称引用可审计。
 - Discord channel bind 是 platform-discord 的字段语义，CLI 只做组合校验和引用校验。
+- 用户、角色、guild、DM 与公开 channel 授权归 `daemon.auth`，router 不承担用户授权，避免 `route_not_found` 掩盖 `auth_denied`。
 - daemon 可以继续不读取 backend / platform 私有配置，只接收 CLI 组装好的 platform adapter、agent runtime 与 routing table。
 - 安全默认值明确：未命中 binding、多个 binding 命中、引用不存在、名称重复、平台条件非法都拒绝启动或拒绝 dispatch，不选择隐式默认 agent。
 
 ### 负向
 
-- 现有 `config.json` 单实例形态不能静默半兼容；P9 需要给出迁移错误或显式迁移路径。
+- 现有 `config.json` 单实例形态不能静默半兼容；P9 会清晰报错，用户需要按文档迁移。
 - `SessionKey` / routing context 需要包含 platform instance identity，避免两个 Discord bot 的同 channel/user 发生会话串线。
 - CLI 需要维护 platform registry 与 agent registry，先解析 owner 字段，再组装 routing table。
 
@@ -92,7 +95,7 @@ agent-nexus 已经有两个 agent backend：Claude Code CLI 默认后端与 Code
 - 不新增第二个 IM 平台；P8 只定义多 platform 实例机制，当前落地平台仍是 Discord。
 - 不改变 Claude Code 或 Codex backend 的安全默认值；backend 专属字段仍由各自 package parser 拥有。
 - 不定义 UI 管理配置的形态；当前配置源仍是本地 JSON 与 secret file/ref。
-- 不决定从 `feature/codex_agent` 合入 `main` 的时间。
+- 不改变目标分支治理或发布分支策略。
 
 ## Amendments
 

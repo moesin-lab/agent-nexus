@@ -51,7 +51,7 @@ AgentNexusConfig {
 ```text
 PlatformConfig {
     name: string                      // 全局唯一，稳定实例名
-    type: "discord"                   // P8 锁定的首个类型
+    type: "discord"                   // 当前支持的首个类型
     auth: PlatformAuthConfig          // 必填；由 daemon.auth owner parser 校验
 
     // type="discord" owner 字段，由 platform-discord parser 校验
@@ -68,7 +68,7 @@ PlatformConfig {
 | 字段 | 规则 |
 |---|---|
 | `name` | 非空字符串；在 `platforms[]` 内唯一；用于日志、routing table 与 session key partition |
-| `type` | P8 只允许 `"discord"`；未知 type 启动失败 |
+| `type` | 当前只允许 `"discord"`；未知 type 启动失败 |
 | `auth` | 实例级授权配置；必填；字段语义见 §PlatformAuthConfig |
 | `tokenRef` | secret ref 名称；loader 只能用它定位 secret 文件 / secret provider，不得接受明文 token |
 | `statePath` | 可选；缺省由 CLI 以 platform `name` 派生稳定路径，避免多 bot 共用同一 state 文件 |
@@ -88,7 +88,7 @@ PlatformAuthConfig {
 
 `AllowlistConfig` 字段继续以 [`security/auth.md`](security/auth.md) 为权威源：
 `userIds`、`roleIds`、`allowedGuildIds`、`allowedChannelIds`、`allowDM`、`requireMentionOrSlash`。
-P9 实现新 loader 时必须调用 daemon.auth owner parser 校验这些字段，不能由 platform parser 或 routing
+loader 必须调用 daemon.auth owner parser 校验这些字段，不能由 platform parser 或 routing
 matcher 自行解释。
 
 ## AgentConfig
@@ -149,7 +149,7 @@ DiscordMatchSpec {
 | `agentName` | 必填；必须引用存在的 `agents[].name` |
 | `match.discord.channelIds` | Discord channel allow/bind 条件；非空字符串数组；命中 `event.sessionKey.channelId` |
 
-Discord P9 的最小 binding 条件只支持 `channelIds`。用户、角色、guild、DM、公开 channel 策略全部属于
+Discord 当前最小 binding 条件只支持 `channelIds`。用户、角色、guild、DM、公开 channel 策略全部属于
 `PlatformAuthConfig` / `daemon.auth`，不属于 routing matcher。若配置了未知 binding 条件字段，loader 必须
 fail-closed，错误消息包含字段路径。
 
@@ -159,7 +159,7 @@ fail-closed，错误消息包含字段路径。
 
 ### 暂不支持的条件
 
-`guildIds` / 独立 `threadIds` 路由条件暂不进入 P9 schema：当前 `NormalizedEvent` / `SessionKey` 没有独立
+`guildIds` / 独立 `threadIds` 路由条件暂不进入当前 schema：当前 `NormalizedEvent` / `SessionKey` 没有独立
 guild identity，且 thread 已折叠为 `sessionKey.channelId`。若后续要按 guild 或 thread 类型路由，必须先扩展
 `message-protocol.md` 的身份字段并同步 persistence / idempotency 契约。
 
@@ -258,13 +258,13 @@ platform adapter 实例。
 
 Adapter 产出的 `PlatformSessionKey.platform` 只有平台类型字符串（如 `"discord"`）。多 platform 实例后，同一类型的不同 bot 可能拥有相同 channel/user ID，daemon 必须在 route decision 后注入 platform instance identity。
 
-P10 起 daemon/agent 侧完整 `SessionKey` 必须包含 `platformName`。序列化 session key 区分：
+daemon/agent 侧完整 `SessionKey` 必须包含 `platformName`。序列化 session key 区分：
 
 ```text
 platformName + platformType + channelId + initiatorUserId
 ```
 
-P10 迁移完成后，CLI 可以同时启动多个同 type platform 实例；session store、idempotency 与 persistence
+迁移完成后，CLI 可以同时启动多个同 type platform 实例；session store、idempotency 与 persistence
 不得使用旧 3 段 key。
 
 ## Legacy 配置迁移
@@ -280,8 +280,8 @@ P10 迁移完成后，CLI 可以同时启动多个同 type platform 实例；ses
 }
 ```
 
-P9 决策为 **清晰错误**：loader 拒绝 legacy 形态，错误消息说明需要改为 `platforms[]` / `agents[]`，
-并给出最小字段路径清单。可在 P12 文档中提供人工迁移示例或后续迁移命令，但 loader 不做自动迁移，也不得在内存里把 legacy 配置偷偷当新配置启动。
+迁移策略为 **清晰错误**：loader 拒绝 legacy 形态，错误消息说明需要改为 `platforms[]` / `agents[]`，
+并给出最小字段路径清单。可在用户文档中提供人工迁移示例或后续迁移命令，但 loader 不做自动迁移，也不得在内存里把 legacy 配置偷偷当新配置启动。
 
 ## Secret 规则
 
@@ -309,7 +309,7 @@ P9 决策为 **清晰错误**：loader 拒绝 legacy 形态，错误消息说明
 
 ## 合约测试
 
-P9 实现必须覆盖：
+loader / router 合约测试必须覆盖：
 
 1. `platforms[]` / `agents[]` 缺失、空数组、重复 name、未知 type/backend。
 2. `platforms[].auth.allowlist` 缺失、ID 列表全空、非法字段走 `ConfigError`，且字段路径清楚。
@@ -321,7 +321,7 @@ P9 实现必须覆盖：
 8. 两个同 type platform 实例在 session 隔离迁移完成后可被解析；statePath 由 platform name 派生，互不复用。
 9. secret 示例与日志不包含 token 明文。
 
-P10 实现必须覆盖：
+session 隔离合约测试必须覆盖：
 
 1. 两个 Discord platform 实例的同 channel/user 不共享 session key。
 2. route decision 后续 auth、idempotency、session 队列与出站发送沿用同一个 `platformName`。

@@ -65,7 +65,7 @@ agent-nexus 已经有两个 agent backend：Claude Code CLI 默认后端与 Code
 
 选 **Option C：顶层 `platforms[]`、`agents[]` 与独立 `bindings[]` 关系实体**。
 
-legacy 单实例配置不自动迁移。P9 loader 必须清晰报错并提示改为新结构；迁移示例可以放到 P12 文档或后续命令，但启动路径不得把 legacy 配置在内存里静默当作新结构运行。
+legacy 单实例配置不自动迁移。loader 必须清晰报错并提示改为新结构；迁移示例可以放到用户文档或后续迁移命令，但启动路径不得把 legacy 配置在内存里静默当作新结构运行。
 
 ## Consequences
 
@@ -79,20 +79,20 @@ legacy 单实例配置不自动迁移。P9 loader 必须清晰报错并提示改
 
 ### 负向
 
-- 现有 `config.json` 单实例形态不能静默半兼容；P9 会清晰报错，用户需要按文档迁移。
+- 现有 `config.json` 单实例形态不能静默半兼容；loader 会清晰报错，用户需要按文档迁移。
 - `SessionKey` / routing context 需要包含 platform instance identity，避免两个 Discord bot 的同 channel/user 发生会话串线。
 - CLI 需要维护 platform registry 与 agent registry，先解析 owner 字段，再组装 routing table。
 
 ### 需要后续跟进的事
 
-- P9 实现新 config loader：解析 `platforms[]`、`agents[]`、`bindings[]`；校验唯一性、引用、backend/type、空 binding、Discord 条件。
-- P10 升级 runtime 组装与 routing：创建多个 platform adapter 与 agent runtime，按 platform instance + binding 条件选择 agent。
-- P11 收口 Discord channel bind 与多 bot 会话隔离测试。
-- P12 更新 README、product user guide、ops runbook 与端到端示例。
+- 实现新 config loader：解析 `platforms[]`、`agents[]`、`bindings[]`；校验唯一性、引用、backend/type、空 binding、Discord 条件。
+- 升级 runtime 组装与 routing：创建多个 platform adapter 与 agent runtime，按 platform instance + binding 条件选择 agent。
+- 收口 Discord channel bind 与多 bot 会话隔离测试。
+- 更新 README、product user guide、ops runbook 与端到端示例。
 
 ## Out of scope
 
-- 不新增第二个 IM 平台；P8 只定义多 platform 实例机制，当前落地平台仍是 Discord。
+- 不新增第二个 IM 平台；当前只定义多 platform 实例机制，落地平台仍是 Discord。
 - 不改变 Claude Code 或 Codex backend 的安全默认值；backend 专属字段仍由各自 package parser 拥有。
 - 不定义 UI 管理配置的形态；当前配置源仍是本地 JSON 与 secret file/ref。
 - 不改变目标分支治理或发布分支策略。

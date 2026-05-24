@@ -84,6 +84,27 @@ export interface CommandRegistrationPlan {
   generation: string;
 }
 
+export type CommandRegistrationErrorCode =
+  | 'command_registration_failed'
+  | 'command_activation_generation_mismatch';
+
+export interface CommandRegistrationError {
+  code: CommandRegistrationErrorCode;
+  message: string;
+  cause?: unknown;
+}
+
+export type CommandRegistrationResult =
+  | { status: 'applied'; generation: string }
+  | { status: 'failed'; error: CommandRegistrationError };
+
+/** docs/dev/spec/command-registry.md §Remote Registration Activation */
+export interface CommandRegistrationPort {
+  applyCommandPlan(
+    plan: CommandRegistrationPlan,
+  ): Promise<CommandRegistrationResult>;
+}
+
 export interface ActiveCommandMap {
   scope: CommandRegistrationScope;
   reverseMap: CommandReverseMap;

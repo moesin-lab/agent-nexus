@@ -41,7 +41,9 @@ async function main(): Promise<void> {
   logger.warn(
     {
       platformName: platformConfig.name,
-      bindingChannelIds: platformConfig.bindings.map((binding) => binding.channelIds),
+      bindingChannelIds: config.bindings
+        .filter((binding) => binding.platformName === platformConfig.name)
+        .map((binding) => binding.match.discord.channelIds),
       authFieldsParsedOnly: [
         'roleIds',
         'allowedGuildIds',

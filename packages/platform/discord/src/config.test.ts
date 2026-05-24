@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseDiscordConfig,
+  parseDiscordBindingMatchConfig,
   parseDiscordPlatformConfig,
   DiscordConfigError,
 } from './config.js';
@@ -144,10 +145,9 @@ describe('parseDiscordPlatformConfig', () => {
     botUserId: '12345',
     tokenRef: 'DISCORD_BOT_TOKEN',
     auth: { allowlist: { userIds: ['U1'], allowedGuildIds: ['G1'] } },
-    bindings: [{ agentName: 'codex-dev', channelIds: ['C1'] }],
   };
 
-  it('解析 Discord platform owner 字段和 channel binding', () => {
+  it('解析 Discord platform owner 字段', () => {
     const result = parseDiscordPlatformConfig(validPlatform, {
       path: 'platforms[0]',
       defaultStatePath: DEFAULT_STATE_PATH,
@@ -160,43 +160,7 @@ describe('parseDiscordPlatformConfig', () => {
       tokenRef: 'DISCORD_BOT_TOKEN',
       statePath: DEFAULT_STATE_PATH,
       publicChannelMode: 'thread',
-      bindings: [{ agentName: 'codex-dev', channelIds: ['C1'] }],
     });
-  });
-
-  it('binding.channelIds 缺失、空数组、非字符串元素都拒绝并带字段路径', () => {
-    expect(() =>
-      parseDiscordPlatformConfig(
-        { ...validPlatform, bindings: [{ agentName: 'codex-dev' }] },
-        { path: 'platforms[0]', defaultStatePath: DEFAULT_STATE_PATH },
-      ),
-    ).toThrow(/platforms\[0\]\.bindings\[0\]\.channelIds/);
-
-    expect(() =>
-      parseDiscordPlatformConfig(
-        { ...validPlatform, bindings: [{ agentName: 'codex-dev', channelIds: [] }] },
-        { path: 'platforms[0]', defaultStatePath: DEFAULT_STATE_PATH },
-      ),
-    ).toThrow(/platforms\[0\]\.bindings\[0\]\.channelIds/);
-
-    expect(() =>
-      parseDiscordPlatformConfig(
-        { ...validPlatform, bindings: [{ agentName: 'codex-dev', channelIds: ['C1', 42] }] },
-        { path: 'platforms[0]', defaultStatePath: DEFAULT_STATE_PATH },
-      ),
-    ).toThrow(/platforms\[0\]\.bindings\[0\]\.channelIds/);
-  });
-
-  it('binding 未知条件字段 fail-closed', () => {
-    expect(() =>
-      parseDiscordPlatformConfig(
-        {
-          ...validPlatform,
-          bindings: [{ agentName: 'codex-dev', channelIds: ['C1'], guildIds: ['G1'] }],
-        },
-        { path: 'platforms[0]', defaultStatePath: DEFAULT_STATE_PATH },
-      ),
-    ).toThrow(/platforms\[0\]\.bindings\[0\]\.guildIds/);
   });
 
   it('未知 platform 字段 fail-closed，避免把 token 明文混进配置', () => {
@@ -208,6 +172,15 @@ describe('parseDiscordPlatformConfig', () => {
     ).toThrow(/platforms\[0\]\.token/);
   });
 
+  it('platform 内 bindings 字段 fail-closed，binding 必须住在顶层 bindings[]', () => {
+    expect(() =>
+      parseDiscordPlatformConfig(
+        { ...validPlatform, bindings: [{ agentName: 'codex-dev', channelIds: ['C1'] }] },
+        { path: 'platforms[0]', defaultStatePath: DEFAULT_STATE_PATH },
+      ),
+    ).toThrow(/platforms\[0\]\.bindings/);
+  });
+
   it('tokenRef 必须是 secret ref 名称，不能包含路径分隔符', () => {
     expect(() =>
       parseDiscordPlatformConfig(
@@ -215,5 +188,45 @@ describe('parseDiscordPlatformConfig', () => {
         { path: 'platforms[0]', defaultStatePath: DEFAULT_STATE_PATH },
       ),
     ).toThrow(/platforms\[0\]\.tokenRef/);
+  });
+});
+
+describe('parseDiscordBindingMatchConfig', () => {
+  it('解析 Discord binding match channelIds', () => {
+    expect(
+      parseDiscordBindingMatchConfig(
+        { channelIds: ['C1'] },
+        { path: 'bindings[0].match.discord' },
+      ),
+    ).toEqual({ channelIds: ['C1'] });
+  });
+
+  it('channelIds 缺失、空数组、非字符串元素都拒绝并带字段路径', () => {
+    expect(() =>
+      parseDiscordBindingMatchConfig({}, { path: 'bindings[0].match.discord' }),
+    ).toThrow(/bindings\[0\]\.match\.discord\.channelIds/);
+
+    expect(() =>
+      parseDiscordBindingMatchConfig(
+        { channelIds: [] },
+        { path: 'bindings[0].match.discord' },
+      ),
+    ).toThrow(/bindings\[0\]\.match\.discord\.channelIds/);
+
+    expect(() =>
+      parseDiscordBindingMatchConfig(
+        { channelIds: ['C1', 42] },
+        { path: 'bindings[0].match.discord' },
+      ),
+    ).toThrow(/bindings\[0\]\.match\.discord\.channelIds/);
+  });
+
+  it('未知 match 条件字段 fail-closed', () => {
+    expect(() =>
+      parseDiscordBindingMatchConfig(
+        { channelIds: ['C1'], guildIds: ['G1'] },
+        { path: 'bindings[0].match.discord' },
+      ),
+    ).toThrow(/bindings\[0\]\.match\.discord\.guildIds/);
   });
 });

@@ -89,10 +89,10 @@ export async function createSelectedAgent(
   if (!platform) {
     throw new ConfigError('P9 CLI 启动需要一个 platform');
   }
-  if (platform.bindings.length !== 1) {
+  if (config.bindings.length !== 1) {
     throw new ConfigError('P9 CLI 启动暂只支持一个 binding；P10 会接入多 agent 路由');
   }
-  const binding = platform.bindings[0];
+  const binding = config.bindings[0];
   if (!binding) {
     throw new ConfigError('P9 CLI 启动需要一个 binding');
   }

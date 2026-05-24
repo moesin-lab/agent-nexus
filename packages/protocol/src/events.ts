@@ -1,4 +1,5 @@
 import type { PlatformSessionKey } from './session-key.js';
+import type { CommandPayload } from './command.js';
 
 /** docs/dev/spec/message-protocol.md §EventType。MVP 仅实现 message。 */
 export type EventType =
@@ -40,6 +41,7 @@ export interface NormalizedEvent {
   type: EventType;
 
   text?: string;
+  command?: CommandPayload;
   attachments?: Attachment[];
 
   rawPayload: unknown;

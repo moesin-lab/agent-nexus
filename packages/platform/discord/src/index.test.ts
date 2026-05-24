@@ -285,6 +285,7 @@ describe('edit / typing capabilities', () => {
     expect(platform.capabilities()).toMatchObject({
       supportsEdit: true,
       supportsTypingIndicator: true,
+      supportsSlashCommands: true,
     });
   });
 

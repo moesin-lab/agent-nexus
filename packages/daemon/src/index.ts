@@ -9,6 +9,15 @@ export {
   type RoutingEntry,
 } from './router.js';
 export {
+  ActiveCommandRegistry,
+  buildCommandRegistrationPlan,
+  CommandRegistryError,
+  DEFAULT_COMMAND_NAME_POLICY,
+  type BuildCommandRegistrationPlanInput,
+  type CommandNamePolicy,
+  type CommandRegistryErrorCode,
+} from './command-registry.js';
+export {
   parseDaemonConfig,
   parsePlatformAuthConfig,
   DaemonConfigError,

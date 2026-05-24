@@ -303,6 +303,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
         supportsAttachments: false,
         maxAttachmentsPerMessage: 0,
         supportsTypingIndicator: true,
+        supportsSlashCommands: true,
       };
     },
 

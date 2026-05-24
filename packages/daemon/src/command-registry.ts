@@ -30,7 +30,10 @@ export type CommandRegistryErrorCode =
   | 'command_name_collision'
   | 'command_name_reserved'
   | 'command_active_map_missing'
-  | 'command_reverse_map_miss';
+  | 'command_reverse_map_miss'
+  | 'command_agent_binding_miss'
+  | 'command_agent_owner_mismatch'
+  | 'command_handler_missing';
 
 export class CommandRegistryError extends Error {
   constructor(

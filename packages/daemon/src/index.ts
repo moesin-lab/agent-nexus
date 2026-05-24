@@ -25,6 +25,15 @@ export {
   type CommandRegistryErrorCode,
 } from './command-registry.js';
 export {
+  dispatchCommandEvent,
+  resolveCommandDispatch,
+  type CommandDispatchAgentTarget,
+  type CommandDispatchDecision,
+  type CommandDispatchInput,
+  type CommandDispatchLogger,
+  type DispatchCommandEventInput,
+} from './command-dispatch.js';
+export {
   parseDaemonConfig,
   parsePlatformAuthConfig,
   DaemonConfigError,

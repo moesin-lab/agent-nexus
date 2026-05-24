@@ -1,4 +1,12 @@
-export { parseDiscordConfig, type DiscordConfig, DiscordConfigError } from './config.js';
+export {
+  parseDiscordConfig,
+  parseDiscordPlatformConfig,
+  DiscordConfigError,
+  type DiscordBindingConfig,
+  type DiscordConfig,
+  type DiscordPlatformConfig,
+  type DiscordPublicChannelMode,
+} from './config.js';
 
 // TODO MVP 跳过：
 // - DM 消息（intents 没开 DirectMessages）

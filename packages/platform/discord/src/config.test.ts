@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { parseDiscordConfig, DiscordConfigError } from './config.js';
+import {
+  parseDiscordConfig,
+  parseDiscordPlatformConfig,
+  DiscordConfigError,
+} from './config.js';
 
 const DEFAULT_STATE_PATH = '/default/state/discord.json';
 const ctx = { defaultStatePath: DEFAULT_STATE_PATH };
@@ -130,5 +134,86 @@ describe('parseDiscordConfig', () => {
     expect(result.allowedUserIds).toEqual(['U1']);
     expect(result.statePath).toBe(DEFAULT_STATE_PATH);
     expect(result.testGuildId).toBeUndefined();
+  });
+});
+
+describe('parseDiscordPlatformConfig', () => {
+  const validPlatform = {
+    name: 'discord-main',
+    type: 'discord',
+    botUserId: '12345',
+    tokenRef: 'DISCORD_BOT_TOKEN',
+    auth: { allowlist: { userIds: ['U1'], allowedGuildIds: ['G1'] } },
+    bindings: [{ agentName: 'codex-dev', channelIds: ['C1'] }],
+  };
+
+  it('解析 Discord platform owner 字段和 channel binding', () => {
+    const result = parseDiscordPlatformConfig(validPlatform, {
+      path: 'platforms[0]',
+      defaultStatePath: DEFAULT_STATE_PATH,
+    });
+
+    expect(result).toEqual({
+      name: 'discord-main',
+      type: 'discord',
+      botUserId: '12345',
+      tokenRef: 'DISCORD_BOT_TOKEN',
+      statePath: DEFAULT_STATE_PATH,
+      publicChannelMode: 'thread',
+      bindings: [{ agentName: 'codex-dev', channelIds: ['C1'] }],
+    });
+  });
+
+  it('binding.channelIds 缺失、空数组、非字符串元素都拒绝并带字段路径', () => {
+    expect(() =>
+      parseDiscordPlatformConfig(
+        { ...validPlatform, bindings: [{ agentName: 'codex-dev' }] },
+        { path: 'platforms[0]', defaultStatePath: DEFAULT_STATE_PATH },
+      ),
+    ).toThrow(/platforms\[0\]\.bindings\[0\]\.channelIds/);
+
+    expect(() =>
+      parseDiscordPlatformConfig(
+        { ...validPlatform, bindings: [{ agentName: 'codex-dev', channelIds: [] }] },
+        { path: 'platforms[0]', defaultStatePath: DEFAULT_STATE_PATH },
+      ),
+    ).toThrow(/platforms\[0\]\.bindings\[0\]\.channelIds/);
+
+    expect(() =>
+      parseDiscordPlatformConfig(
+        { ...validPlatform, bindings: [{ agentName: 'codex-dev', channelIds: ['C1', 42] }] },
+        { path: 'platforms[0]', defaultStatePath: DEFAULT_STATE_PATH },
+      ),
+    ).toThrow(/platforms\[0\]\.bindings\[0\]\.channelIds/);
+  });
+
+  it('binding 未知条件字段 fail-closed', () => {
+    expect(() =>
+      parseDiscordPlatformConfig(
+        {
+          ...validPlatform,
+          bindings: [{ agentName: 'codex-dev', channelIds: ['C1'], guildIds: ['G1'] }],
+        },
+        { path: 'platforms[0]', defaultStatePath: DEFAULT_STATE_PATH },
+      ),
+    ).toThrow(/platforms\[0\]\.bindings\[0\]\.guildIds/);
+  });
+
+  it('未知 platform 字段 fail-closed，避免把 token 明文混进配置', () => {
+    expect(() =>
+      parseDiscordPlatformConfig(
+        { ...validPlatform, token: 'secret-value' },
+        { path: 'platforms[0]', defaultStatePath: DEFAULT_STATE_PATH },
+      ),
+    ).toThrow(/platforms\[0\]\.token/);
+  });
+
+  it('tokenRef 必须是 secret ref 名称，不能包含路径分隔符', () => {
+    expect(() =>
+      parseDiscordPlatformConfig(
+        { ...validPlatform, tokenRef: '../DISCORD_BOT_TOKEN' },
+        { path: 'platforms[0]', defaultStatePath: DEFAULT_STATE_PATH },
+      ),
+    ).toThrow(/platforms\[0\]\.tokenRef/);
   });
 });

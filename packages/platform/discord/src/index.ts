@@ -55,11 +55,15 @@ export interface DiscordPlatformOptions {
    */
   statePath: string;
   /**
-   * 用户白名单——同时控制 inbound chat 与 `/reply-mode` slash command。
-   * fail-closed：CLI loader 必填且不允许空数组。
-   * 详见 spec/platform-adapter.md §"用户白名单"。
+   * legacy 用户白名单。默认同时控制 inbound chat 与 `/reply-mode` slash command；
+   * 多平台运行时可用 inboundAllowedUserIds 显式把 chat 授权交给 daemon。
    */
   allowedUserIds: readonly string[];
+  /**
+   * inbound chat 用户白名单。undefined → 复用 allowedUserIds；null → 不在 adapter
+   * 层做用户白名单，交给 daemon 的 platform auth gate。
+   */
+  inboundAllowedUserIds?: readonly string[] | null;
   /**
    * 可选：开发 / 单 guild 测试时把 slash command 限定注册到该 guild，
    * 瞬时生效（global 注册有最长 1 小时的 client 缓存延迟）。
@@ -159,6 +163,12 @@ export function buildBotMentionRegex(botUserId: string): RegExp {
   return new RegExp(`<@!?${escaped}>`, 'g');
 }
 
+function discordMemberRoleIds(msg: Message): string[] {
+  const cache = msg.member?.roles.cache;
+  if (!cache) return [];
+  return [...cache.keys()];
+}
+
 /**
  * `parseInbound` 的返回形态——tagged union，让 caller 拿到"为什么被丢"。
  * `drop.reason` 只用于决定上层日志策略，不参与业务逻辑。
@@ -174,11 +184,13 @@ export type ParsedInbound =
  *   1. Discord system message（pin / join / thread-create 等）→ drop:noise
  *   2. 任意 bot 发的（含本机器人）→ drop:noise
  *   3. 与 botUserId 同 id 的 author → drop:noise（防 bot 标志位被绕；'all' 档下还兼防自回环）
- *   4. msg.author.id ∉ allowedUserIds → drop:unauthorized（fail-closed 用户白名单；空列表 = 拒绝所有）
+ *   4. 若配置了 allowedUserIds，msg.author.id ∉ allowedUserIds → drop:unauthorized
  *   5. mention 模式且没显式 @ 本机器人 → drop:no-mention
  *   6. 否则剥本机器人 mention，构造事件 → kind:event
  *
- * `allowedUserIds` 同时管 inbound chat 与 slash command（见 spec §"用户白名单"）。
+ * `allowedUserIds === null` 表示 chat 路径不做 adapter user guard，由 daemon
+ * 统一按 platform auth 判定；slash command 路径仍在 reply-mode.ts 内检查
+ * DiscordPlatformOptions.allowedUserIds。
  * 这里仅做 chat 路径的 guard；slash command 路径在 reply-mode.ts 内做相同检查。
  *
  * 把 reason 抬到返回值里（而不是让 caller 重做一遍 guard 判断）是为了让
@@ -188,13 +200,13 @@ export type ParsedInbound =
 export function parseInbound(
   msg: Message,
   botUserId: string,
-  allowedUserIds: readonly string[],
+  allowedUserIds: readonly string[] | null,
   replyMode: ReplyMode = 'mention',
 ): ParsedInbound {
   if (msg.system === true) return { kind: 'drop', reason: 'noise' };
   if (msg.author.bot === true) return { kind: 'drop', reason: 'noise' };
   if (msg.author.id === botUserId) return { kind: 'drop', reason: 'noise' };
-  if (!allowedUserIds.includes(msg.author.id)) {
+  if (allowedUserIds !== null && !allowedUserIds.includes(msg.author.id)) {
     return { kind: 'drop', reason: 'unauthorized' };
   }
 
@@ -226,6 +238,8 @@ export function parseInbound(
     text,
     receivedAt: new Date(),
     platformTimestamp: msg.createdAt,
+    ...(msg.guildId ? { guildId: msg.guildId } : {}),
+    initiatorRoleIds: discordMemberRoleIds(msg),
     initiator: {
       userId: msg.author.id,
       displayName: msg.author.username,
@@ -239,6 +253,7 @@ export function parseInbound(
 
 export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAdapter {
   const { token, botUserId, logger, statePath, allowedUserIds, testGuildId } = opts;
+  const inboundAllowedUserIds = opts.inboundAllowedUserIds ?? allowedUserIds;
 
   const client = new Client({
     intents: [
@@ -343,7 +358,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
       });
 
       client.on('messageCreate', async (msg: Message) => {
-        const parsed = parseInbound(msg, botUserId, allowedUserIds, replyMode);
+        const parsed = parseInbound(msg, botUserId, inboundAllowedUserIds, replyMode);
         if (parsed.kind === 'drop') {
           // 仅在被 allowlist guard 拦下时打 info 日志（其它过滤路径噪声太大）。
           // 仅记 user id；不写 username / message text（PII / 隐私卫生）。

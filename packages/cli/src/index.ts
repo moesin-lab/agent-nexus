@@ -100,14 +100,16 @@ async function main(): Promise<void> {
       {
         platformName: platformConfig.name,
         authFieldsParsedOnly: [
-          'roleIds',
-          'allowedGuildIds',
-          'allowedChannelIds',
-          'allowDM',
           'requireMentionOrSlash',
         ],
         publicChannelMode: platformConfig.publicChannelMode,
-        enforcedUntilAuthLayer: ['auth.allowlist.userIds'],
+        enforcedAtRuntime: [
+          'auth.allowlist.userIds',
+          'auth.allowlist.roleIds',
+          'auth.allowlist.allowedGuildIds',
+          'auth.allowlist.allowedChannelIds',
+          'auth.allowlist.allowDM',
+        ],
       },
       'platform_constraints_partially_enforced_until_auth_layer',
     );
@@ -125,6 +127,7 @@ async function main(): Promise<void> {
       botUserId: platformConfig.botUserId,
       statePath: platformConfig.statePath,
       allowedUserIds: platformConfig.auth.allowlist.userIds,
+      inboundAllowedUserIds: null,
       testGuildId: platformConfig.testGuildId,
       logger,
     });
@@ -134,6 +137,7 @@ async function main(): Promise<void> {
         platform,
         platformName: platformConfig.name,
         platformType: platformConfig.type,
+        platformAuth: platformConfig.auth,
         agents,
         routingTable,
         logger,

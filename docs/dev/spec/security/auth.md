@@ -33,15 +33,17 @@ platform instance 下沉到 `platforms[].auth.allowlist`，字段语义不变；
 |---|---|---|
 | `userIds` | string[] | 允许的 Discord user id |
 | `roleIds` | string[] | 允许的 Discord role id（guild 内） |
-| `allowedGuildIds` | string[] | 允许的 guild id（空列表 = 拒绝所有 guild） |
+| `allowedGuildIds` | string[] | 允许的 guild id（空列表 = 不限制 guild） |
 | `allowedChannelIds` | string[] | 允许的 channel / thread id（可选；留空则 guild 内任意 channel） |
 | `allowDM` | bool | 是否允许 Discord DM 触发（默认 `true`） |
 | `requireMentionOrSlash` | bool | 是否要求消息 @ bot 或走 slash command 才触发（默认 `true`；仅 DM 自动豁免） |
 
 **约束**：
 
-- **fail-closed**：任一字段空列表 = 拒绝所有（`userIds=[]` 和 `allowedGuildIds=[]` 都会让 bot 拒绝一切 guild 消息；DM 受 `allowDM` 控制）
-- 启动时验证格式与至少一个字段非空，有错立即失败
+- **fail-closed**：启动时至少需要一个 ID 列表非空；所有 ID 列表都缺省或为空时拒绝启动。
+- 空的 `roleIds` / `allowedChannelIds` / `allowedGuildIds` 表示该维度不额外收窄；空的 `userIds` 只有在 `roleIds` 非空时才可用于角色授权。
+- DM 事件没有 guild / role 上下文；即使 `allowDM=true`，DM 也必须命中 `userIds`。只靠 `roleIds` / `allowedGuildIds` / `allowedChannelIds` 的配置不得放行 DM。
+- 启动时验证格式，有错立即失败。
 
 ## 权限检查位置
 
@@ -49,6 +51,14 @@ platform instance 下沉到 `platforms[].auth.allowlist`，字段语义不变；
 - `daemon.router` 只做 platform instance + binding 到 agent 的选择，不是授权层；未命中 / 多重命中时不进入 auth
 - 唯一路由命中后，用命中的 `platforms[].auth.allowlist` 做 auth；auth 通过后，再执行 idempotency checkAndSet，再限流/预算（见 [`idempotency.md`](../infra/idempotency.md) §流程）
 - 拒绝时：打 `auth_denied` 日志（字段含 `guildId` / `channelId` / `userId` / `reason`）+ 可选 DM 通知
+
+P11 runtime 执行的 allowlist 维度：
+
+- `userIds` 与 `roleIds` 是身份 allowlist；任一命中即可通过身份检查。
+- `allowedGuildIds` 非空时，guild 消息必须来自其中一个 guild；DM 不走 guild 匹配。
+- `allowedChannelIds` 非空时，消息 channel/thread 必须命中。
+- `allowDM=false` 时，缺少 `guildId` 的 DM 事件拒绝；`allowDM=true` 时，DM 仍必须命中 `userIds`，role 授权不适用于 DM。
+- `requireMentionOrSlash` 由 Discord adapter 的 trigger 策略控制，不由 router 判断。
 
 ## 会话绑定
 

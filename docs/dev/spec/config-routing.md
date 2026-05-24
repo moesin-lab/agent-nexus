@@ -115,7 +115,7 @@ AgentConfig {
 | `claudeCode` | `backend="claudecode"` 时必填；`backend="codex"` 时必须缺省；字段内容只能由 `@agent-nexus/agent-claudecode` parser 校验 |
 | `codex` | `backend="codex"` 时必填；`backend="claudecode"` 时必须缺省；字段内容只能由 `@agent-nexus/agent-codex` parser 校验 |
 
-`AgentConfig` 不继承全局 workingDir / toolWhitelist。需要两套不同工作目录或工具边界时，配置两个不同 `agents[]` 项。
+`AgentConfig` 不继承全局 workingDir 或 backend 私有安全字段。需要两套不同工作目录或 Claude Code `allowedTools` 边界时，配置两个不同 `agents[]` 项。
 inactive backend 配置块必须拒绝，不能作为"未知但忽略"字段保留，避免陈旧私有配置影响审计。
 
 ## PlatformBinding

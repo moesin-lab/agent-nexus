@@ -1,5 +1,9 @@
 import type { Logger } from '@agent-nexus/daemon';
-import type { ApplicationCommandDataResolvable } from 'discord.js';
+import type { PlannedCommand } from '@agent-nexus/protocol';
+import {
+  ApplicationCommandOptionType,
+  type ApplicationCommandDataResolvable,
+} from 'discord.js';
 
 /**
  * 一条 slash command 注册描述。`name` 仅用于结构化日志（注册成功/失败时识别）；
@@ -8,6 +12,37 @@ import type { ApplicationCommandDataResolvable } from 'discord.js';
 export interface SlashCommandSpec {
   name: string;
   data: ApplicationCommandDataResolvable;
+}
+
+function optionType(type: PlannedCommand['descriptor']['options'][number]['type']) {
+  if (type === 'string') return ApplicationCommandOptionType.String;
+  if (type === 'integer') return ApplicationCommandOptionType.Integer;
+  if (type === 'number') return ApplicationCommandOptionType.Number;
+  return ApplicationCommandOptionType.Boolean;
+}
+
+export function plannedCommandToSlashCommandSpec(
+  command: PlannedCommand,
+): SlashCommandSpec {
+  return {
+    name: command.commandName,
+    data: {
+      name: command.commandName,
+      description: command.descriptor.summary,
+      options: command.descriptor.options.map((option) => {
+        const mapped = {
+          type: optionType(option.type),
+          name: option.name,
+          description: option.description,
+          required: option.required,
+        };
+        if (option.type === 'boolean' || option.choices.length === 0) {
+          return mapped;
+        }
+        return { ...mapped, choices: option.choices };
+      }),
+    } as ApplicationCommandDataResolvable,
+  };
 }
 
 /**

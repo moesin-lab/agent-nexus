@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  plannedCommandToSlashCommandSpec,
   registerSlashCommands,
   type SlashCommandRegistrar,
   type SlashCommandSpec,
 } from './commands.js';
+import { discordReplyModeCommandDescriptor } from './reply-mode.js';
 
 function makeLogger() {
   return {
@@ -132,5 +134,80 @@ describe('registerSlashCommands', () => {
       expect.objectContaining({ command: 'other' }),
       'discord_slash_command_registered',
     );
+  });
+});
+
+describe('plannedCommandToSlashCommandSpec', () => {
+  it('maps stable descriptor commands to Discord slash command payloads', () => {
+    const spec = plannedCommandToSlashCommandSpec({
+      commandName: 'discord-reply-mode',
+      canonicalId: 'platform:discord:reply-mode',
+      aliasKind: 'stable',
+      descriptor: discordReplyModeCommandDescriptor,
+    });
+
+    expect(spec.name).toBe('discord-reply-mode');
+    expect(spec.data).toMatchObject({
+      name: 'discord-reply-mode',
+      description: 'Query or switch the bot reply trigger mode',
+      options: [
+        expect.objectContaining({
+          name: 'mode',
+          required: false,
+          choices: [
+            { name: 'mention', value: 'mention' },
+            { name: 'all', value: 'all' },
+          ],
+        }),
+      ],
+    });
+  });
+
+  it('maps the legacy /reply-mode alias to the same handler descriptor payload', () => {
+    const spec = plannedCommandToSlashCommandSpec({
+      commandName: 'reply-mode',
+      canonicalId: 'platform:discord:reply-mode',
+      aliasKind: 'legacy',
+      descriptor: discordReplyModeCommandDescriptor,
+    });
+
+    expect(spec.name).toBe('reply-mode');
+    expect(spec.data).toMatchObject({
+      name: 'reply-mode',
+      description: 'Query or switch the bot reply trigger mode',
+    });
+  });
+
+  it('omits empty choices so Discord does not reject boolean or empty-choice options', () => {
+    const spec = plannedCommandToSlashCommandSpec({
+      commandName: 'nexus-status',
+      canonicalId: 'daemon:status',
+      aliasKind: 'stable',
+      descriptor: {
+        canonicalId: 'daemon:status',
+        owner: { type: 'daemon' },
+        localName: 'status',
+        summary: 'Show daemon status',
+        options: [
+          {
+            name: 'verbose',
+            type: 'boolean',
+            required: false,
+            description: 'Show verbose status',
+            choices: [],
+          },
+        ],
+        handlerKey: 'status',
+        applicability: {
+          platformTypes: ['discord'],
+          requiredCapabilities: ['slash-command-registration'],
+        },
+        legacyNames: [],
+      },
+    });
+
+    expect(spec.data).toMatchObject({
+      options: [expect.not.objectContaining({ choices: expect.any(Array) })],
+    });
   });
 });

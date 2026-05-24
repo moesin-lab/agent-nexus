@@ -8,6 +8,11 @@ export {
   type DiscordPlatformConfig,
   type DiscordPublicChannelMode,
 } from './config.js';
+export {
+  createDiscordCommandRegistrationPort,
+  plannedCommandToSlashCommandSpec,
+} from './commands.js';
+export { discordReplyModeCommandDescriptor } from './reply-mode.js';
 
 // TODO MVP 跳过：
 // - DM 消息（intents 没开 DirectMessages）

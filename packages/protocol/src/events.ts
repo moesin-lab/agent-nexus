@@ -47,6 +47,8 @@ export interface NormalizedEvent {
 
   receivedAt: Date;
   platformTimestamp?: Date;
+  guildId?: string;
+  initiatorRoleIds?: string[];
 
   initiator: Initiator;
 }

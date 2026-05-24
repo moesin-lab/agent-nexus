@@ -6,6 +6,7 @@ summary: IM ↔ daemon ↔ agent 的入站/出站全链路 + 横切检查顺序 
 tags: [spec, message-flow, dispatch, pipeline, normalized-event, agent-event]
 related:
   - dev/architecture/overview
+  - dev/spec/config-routing
   - dev/spec/platform-adapter
   - dev/spec/agent-runtime
   - dev/spec/message-protocol
@@ -40,9 +41,13 @@ contracts:
   - 打 traceId, sessionKey
   - 不做业务决策（不做 auth / 幂等 / 限流）
         │
-        │  (2) NormalizedEvent
+        │  (2) NormalizedEvent + configured platformName
         ▼
-@agent-nexus/daemon · daemon.Engine.dispatch(event)
+@agent-nexus/daemon · daemon.Engine.dispatch(RouteContext)
+  ├─ daemon.router        platform instance + binding 选 agent
+  │                                              (权威源：config-routing.md §路由匹配语义)
+  │     未命中 / 多重命中 → 不调用 agent → 流程终止
+  │     唯一命中 ↓
   ├─ daemon.auth          权限/白名单检查      (权威源：security/auth.md §权限检查位置)
   │     拒绝 → 不插入幂等表（直接返回）→ 流程终止
   │     通过 ↓
@@ -70,9 +75,12 @@ contracts:
 [外部 agent 后端，如 CC CLI 子进程]
 ```
 
-**入站顺序硬约束**（权威源：security/auth.md §权限检查位置 + infra/idempotency.md §流程）：
+**入站顺序硬约束**（权威源：config-routing.md §路由匹配语义 + security/auth.md §权限检查位置 + infra/idempotency.md §流程）：
 
-`auth → idempotency → 限流/预算 → session 队列`
+`routing → auth → idempotency → 限流/预算 → session 队列`
+
+`RouteContext.platformName` 由 CLI / daemon 在注册每个 configured platform instance 时注入；
+`PlatformAdapter` 仍只产出 `NormalizedEvent`。
 
 ---
 

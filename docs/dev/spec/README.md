@@ -26,6 +26,7 @@ spec 触发条件（什么改动需要 spec / 何时可跳过）见 [`../standar
 - [`platform-adapter.md`](platform-adapter.md) — IM 平台适配层接口
 - [`agent-runtime.md`](agent-runtime.md) — Agent 后端适配层接口
 - [`message-protocol.md`](message-protocol.md) — 归一化消息与事件类型定义
+- [`config-routing.md`](config-routing.md) — `platforms[]` / `agents[]` / bindings 配置与路由契约
 
 ### `infra/` — 横切基础设施
 
@@ -57,6 +58,7 @@ spec 触发条件（什么改动需要 spec / 何时可跳过）见 [`../standar
 | `platform-adapter.md` | `@agent-nexus/protocol`（`PlatformAdapter` 接口） | `@agent-nexus/platform-<name>`（如 `platform-discord`） |
 | `agent-runtime.md` | `@agent-nexus/protocol`（`AgentRuntime` 接口） | `@agent-nexus/agent-<name>`（如 `agent-claudecode`） |
 | `message-protocol.md` | `@agent-nexus/protocol`（`NormalizedEvent` / `AgentEvent` / `OutboundMessage` 等类型） | N/A（纯类型契约） |
+| `config-routing.md` | N/A（配置与路由契约） | `@agent-nexus/cli`（loader / 组装）+ `@agent-nexus/daemon`（routing dispatch） |
 | `agent-backends/*.md` | N/A（外部契约） | 各 `@agent-nexus/agent-<name>` 必须遵守 |
 | `infra/*.md` | N/A | `@agent-nexus/daemon`（核心引擎 + 横切） |
 | `security/*.md` | N/A | `@agent-nexus/daemon`（横切） |
@@ -64,5 +66,5 @@ spec 触发条件（什么改动需要 spec / 何时可跳过）见 [`../standar
 ## 阅读顺序
 
 1. 先读 [`../architecture/overview.md`](../architecture/overview.md) 建立心智
-2. 再读本目录核心三件套
+2. 再读本目录核心契约
 3. 最后按需查阅横切四件套

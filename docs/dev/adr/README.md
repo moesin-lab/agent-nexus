@@ -72,6 +72,7 @@ Proposed ──(显式签字盖章)──> Accepted
 | [0012](0012-claudecode-stream-json-mainline.md) | claudecode 切到 stream-json 主路径——协议合约 / interrupt / timeout / 工具隔离强制点 | Accepted |
 | [0013](0013-usage-completeness-cost-confidence.md) | UsageRecord.completeness 语义——$ 视图可信度 | Proposed |
 | [0014](0014-agent-backend-codex-cli.md) | Agent 后端扩展——Codex CLI | Proposed |
+| [0015](0015-multi-platform-agent-config.md) | 多平台多 Agent 命名配置 | Proposed |
 
 ## 职责边界
 

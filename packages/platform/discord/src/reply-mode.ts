@@ -1,6 +1,7 @@
 import type { Logger } from '@agent-nexus/daemon';
-import { ApplicationCommandOptionType } from 'discord.js';
+import type { CommandDescriptor } from '@agent-nexus/protocol';
 import type { ReplyMode } from './state.js';
+import { plannedCommandToSlashCommandSpec } from './commands.js';
 
 export interface ReplyModeContext {
   allowedUserIds: readonly string[];
@@ -21,25 +22,46 @@ export interface ReplyModeInteractionLike {
 }
 
 /**
+ * Platform-neutral command descriptor. Discord payload mapping lives in commands.ts.
+ */
+export const discordReplyModeCommandDescriptor: CommandDescriptor = {
+  canonicalId: 'platform:discord:reply-mode',
+  owner: { type: 'platform', platformType: 'discord' },
+  localName: 'reply-mode',
+  summary: 'Query or switch the bot reply trigger mode',
+  options: [
+    {
+      name: 'mode',
+      type: 'string',
+      required: false,
+      description: 'New mode (omit to query current)',
+      choices: [
+        { name: 'mention', value: 'mention' },
+        { name: 'all', value: 'all' },
+      ],
+    },
+  ],
+  handlerKey: 'reply-mode',
+  applicability: {
+    platformTypes: ['discord'],
+    requiredCapabilities: [
+      'slash-command-registration',
+      'ephemeral-response',
+    ],
+  },
+  legacyNames: [{ name: 'reply-mode', reason: 'historical-compatibility' }],
+};
+
+/**
  * Slash command 注册描述。formatted as ApplicationCommandData (discord.js 接受 plain JSON)。
  */
-export function replyModeCommandDefinition() {
-  return {
-    name: 'reply-mode',
-    description: 'Query or switch the bot reply trigger mode',
-    options: [
-      {
-        type: ApplicationCommandOptionType.String,
-        name: 'mode',
-        description: 'New mode (omit to query current)',
-        required: false,
-        choices: [
-          { name: 'mention', value: 'mention' },
-          { name: 'all', value: 'all' },
-        ],
-      },
-    ],
-  } as const;
+export function replyModeCommandDefinition(name = 'reply-mode') {
+  return plannedCommandToSlashCommandSpec({
+    commandName: name,
+    canonicalId: discordReplyModeCommandDescriptor.canonicalId,
+    aliasKind: name === 'reply-mode' ? 'legacy' : 'stable',
+    descriptor: discordReplyModeCommandDescriptor,
+  }).data;
 }
 
 /**

@@ -1,4 +1,7 @@
 export {
+  codexCommandDescriptors,
+} from './command-descriptors.js';
+export {
   CodexConfigError,
   DEFAULT_BIN,
   DEFAULT_SANDBOX,

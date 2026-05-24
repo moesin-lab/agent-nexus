@@ -40,10 +40,13 @@ import {
 } from './state.js';
 import {
   assertBotUserIdMatch,
+  discordReplyModeCommandDescriptor,
   handleReplyModeInteraction,
-  replyModeCommandDefinition,
 } from './reply-mode.js';
-import { registerSlashCommands } from './commands.js';
+import {
+  plannedCommandToSlashCommandSpec,
+  registerSlashCommands,
+} from './commands.js';
 
 export interface DiscordPlatformOptions {
   token: string;
@@ -331,7 +334,20 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
         });
         void registerSlashCommands(
           client.application?.commands,
-          [{ name: 'reply-mode', data: replyModeCommandDefinition() }],
+          [
+            plannedCommandToSlashCommandSpec({
+              commandName: 'discord-reply-mode',
+              canonicalId: discordReplyModeCommandDescriptor.canonicalId,
+              aliasKind: 'stable',
+              descriptor: discordReplyModeCommandDescriptor,
+            }),
+            plannedCommandToSlashCommandSpec({
+              commandName: 'reply-mode',
+              canonicalId: discordReplyModeCommandDescriptor.canonicalId,
+              aliasKind: 'legacy',
+              descriptor: discordReplyModeCommandDescriptor,
+            }),
+          ],
           logger,
           testGuildId,
         );
@@ -339,7 +355,12 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
 
       client.on('interactionCreate', async (interaction: Interaction) => {
         if (!interaction.isChatInputCommand()) return;
-        if (interaction.commandName !== 'reply-mode') return;
+        if (
+          interaction.commandName !== 'reply-mode' &&
+          interaction.commandName !== 'discord-reply-mode'
+        ) {
+          return;
+        }
         try {
           await handleReplyModeInteraction(interaction, {
             allowedUserIds,

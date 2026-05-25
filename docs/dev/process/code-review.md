@@ -77,6 +77,46 @@ node scripts/validate-pr-metadata.mjs --hook
 
 若 harness 的 matcher 不能精确匹配 MCP tool name，可以把该脚本挂到所有 PreToolUse；脚本会自行判断非 PR metadata 写入工具并放行。
 
+## PR checks 异步感知
+
+PreToolUse 只能在创建 / 更新 PR 前拦截 metadata 错误；GitHub Actions 仍是异步的。支持 PostToolUse hook 的 harness 应在 MCP 创建 / 更新 PR 后运行：
+
+```bash
+scripts/posttool-pr-check-guard.mjs
+```
+
+脚本从 tool result 里提取 PR number / head SHA，轮询 required checks。默认 required checks 为 `check,pr-metadata`，默认总超时 10 分钟，轮询间隔为 `5s, 10s, 15s, 20s, 30s, 45s, 60s...`。任一 required check 失败、取消、超时，或总超时后仍 pending / expected，脚本都 exit 2，并在 stderr 明确写出失败 / pending check。agent 不得把这类 PR 汇报为 ready。
+
+Claude Code 示例：
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "mcp__codex_apps__github._create_pull_request",
+        "hooks": [
+          { "type": "command", "command": "scripts/posttool-pr-check-guard.mjs" }
+        ]
+      },
+      {
+        "matcher": "mcp__codex_apps__github._update_pull_request",
+        "hooks": [
+          { "type": "command", "command": "scripts/posttool-pr-check-guard.mjs" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+可用环境变量覆盖默认值：
+
+- `POSTTOOL_PR_CHECK_REQUIRED=check,pr-metadata`
+- `POSTTOOL_PR_CHECK_TIMEOUT_MS=600000`
+- `POSTTOOL_PR_CHECK_DELAYS_MS=5000,10000,15000,20000,30000,45000`
+- `POSTTOOL_PR_CHECK_MAX_DELAY_MS=60000`
+
 ## 作者自查时机
 
 开 PR 前按 [`../standards/code-review.md` §自查清单合格条件](../standards/code-review.md#自查清单合格条件) 走一遍，每项打勾。任一项未达合格不开 PR。

@@ -28,6 +28,10 @@ describe('daemon config', () => {
 });
 
 describe('daemon runtime config', () => {
+  it('ruleset smoke: intentionally fails required CI', () => {
+    expect(true).toBe(false);
+  });
+
   it('缺省 commandRegistry 配置保持兼容默认值', () => {
     expect(parseDaemonRuntimeConfig(undefined)).toEqual(
       DEFAULT_DAEMON_RUNTIME_CONFIG,

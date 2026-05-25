@@ -27,7 +27,7 @@ agent-nexus 让你在 IM（当前：Discord）里直接和本机 Claude Code 对
 **Discord + 本机 Claude Code CLI MVP** 已可端到端运行：
 
 - Discord `@mention` → daemon `Engine` → 长驻 Claude Code `stream-json` 子进程 → Discord 回复。
-- 同一 `(channelId, userId)` 复用活跃 session；`/new` 文本前缀重置该会话。
+- 同一 `(channelId, userId)` 复用活跃 session；`/new` 文本前缀或 agent slash command 可重置该会话。
 - IM 侧可看到工具调用状态、流式文本、typing 指示与原地 edit。
 - 白名单外工具会在执行前被拒绝；机制见 [`docs/dev/spec/security/tool-boundary.md`](docs/dev/spec/security/tool-boundary.md)。`Bash` 不在默认允许集。
 
@@ -136,7 +136,7 @@ chmod 600 ~/.agent-nexus/config.json
 - `platforms[].botUserId`（必填）：bot 的 Discord user ID
 - `platforms[].auth.allowlist.userIds` / `roleIds`（必填其一）：允许使用 bot 的 Discord user 或 role ID
 - `platforms[].auth.allowlist.allowedGuildIds` / `allowedChannelIds`（可选）：进一步收窄允许的 guild / channel；空数组表示不按该维度收窄
-- `platforms[].testGuildId`（可选）：把 `/reply-mode` slash command 限定注册到某个测试 guild，开发时更快生效
+- `platforms[].testGuildId`（可选）：把 slash command 限定注册到某个测试 guild，开发时更快生效
 - `agents[].backend`（必填）：选择 `claudecode` 或 `codex`
 - `agents[].claudeCode.workingDir`（`backend=claudecode` 时必填）：CC 默认工作目录，per-session 可覆盖
 - `agents[].claudeCode.bin`（可选，默认 `claude`）：CC CLI 可执行路径
@@ -184,7 +184,10 @@ agent-nexus
 - `@bot <prompt>`：发起一轮 CC 对话；同 `(channelId, userId)` 后续消息复用活跃 session
 - `@bot /new`：清当前 (channel, user) 的内存 session，回复 `[new session ready]`
 - `@bot /new <prompt>`：清 + 立即用 `<prompt>` 起新一轮
-- `/reply-mode mode:<mention|all>`：在 allowlist 内切换 Discord 消息触发模式
+- `/claudecode-new` / `/codex-new`：按绑定到当前频道的 agent owner 清当前会话，回复 `[new session ready]`；只有对应 backend 已配置且在该 Discord 注册 scope 有 binding 时才会出现
+- `/new`：仅在同一个 Discord 注册 scope 里只有一种 agent owner 时作为便捷 alias 出现
+- `/discord-reply-mode mode:<mention|all>`：在 allowlist 内切换 Discord 消息触发模式
+- `/reply-mode mode:<mention|all>`：legacy alias；迁移期内等价于 `/discord-reply-mode`
 
 约束：
 

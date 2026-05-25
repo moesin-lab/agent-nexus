@@ -2,13 +2,18 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
+  ActiveCommandRegistry,
   Engine,
   SessionStore,
   createLogger,
   type RoutingEntry,
 } from '@agent-nexus/daemon';
-import { createDiscordPlatform } from '@agent-nexus/platform-discord';
+import {
+  DISCORD_CAPABILITIES,
+  createDiscordPlatform,
+} from '@agent-nexus/platform-discord';
 import { createAgentRegistry } from './agent.js';
+import { buildCliCommandRegistrationPlan } from './command-registry.js';
 import {
   ConfigError,
   SecretsPermissionError,
@@ -85,6 +90,7 @@ async function main(): Promise<void> {
   );
 
   const sessionStore = new SessionStore();
+  const commandRegistry = new ActiveCommandRegistry();
   const engines: Engine[] = [];
 
   for (const platformConfig of config.platforms) {
@@ -122,6 +128,12 @@ async function main(): Promise<void> {
     if (!token) {
       throw new ConfigError(`secret ref "${platformConfig.tokenRef}" 未加载`);
     }
+    const commandPlan = buildCliCommandRegistrationPlan({
+      config,
+      platformName: platformConfig.name,
+      capabilities: DISCORD_CAPABILITIES,
+      generation: `${platformConfig.name}:${Date.now()}`,
+    });
     const platform = createDiscordPlatform({
       token,
       botUserId: platformConfig.botUserId,
@@ -130,6 +142,15 @@ async function main(): Promise<void> {
       inboundAllowedUserIds: null,
       testGuildId: platformConfig.testGuildId,
       logger,
+      commandRegistration: {
+        plan: commandPlan,
+        apply: (port, plan) =>
+          commandRegistry.applyRegistrationPlan(plan, {
+            port,
+            logger,
+            activatedAt: new Date(),
+          }),
+      },
     });
 
     engines.push(
@@ -138,6 +159,7 @@ async function main(): Promise<void> {
         platformName: platformConfig.name,
         platformType: platformConfig.type,
         platformAuth: platformConfig.auth,
+        commandRegistry,
         agents,
         routingTable,
         logger,

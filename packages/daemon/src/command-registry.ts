@@ -54,16 +54,25 @@ export interface BuildCommandRegistrationPlanInput {
   policy: CommandNamePolicy;
   agentOwnersInScope: readonly string[];
   generation: string;
+  singleAgentAliasesEnabled?: boolean;
+  legacyReplyModeEnabled?: boolean;
 }
 
 export interface CommandRegistryLogger {
   error(obj: Record<string, unknown>, msg: string): void;
+  warn?(obj: Record<string, unknown>, msg: string): void;
 }
 
 export interface ApplyRegistrationPlanOptions {
   port: CommandRegistrationPort;
   activatedAt: Date;
   logger?: CommandRegistryLogger;
+  enabled?: boolean;
+  timeoutMs?: number;
+  retry?: {
+    maxAttempts: number;
+    backoffMs: number;
+  };
 }
 
 interface ParsedCanonicalId {
@@ -371,6 +380,12 @@ export function buildCommandRegistrationPlan(
 
   for (const descriptor of applicable) {
     for (const legacy of descriptor.legacyNames) {
+      if (
+        legacy.name === 'reply-mode' &&
+        input.legacyReplyModeEnabled === false
+      ) {
+        continue;
+      }
       if (!input.policy.historicalReservedBareNames.includes(legacy.name)) {
         throw new CommandRegistryError(
           'command_name_reserved',
@@ -394,6 +409,7 @@ export function buildCommandRegistrationPlan(
 
   for (const descriptor of applicable) {
     if (descriptor.owner.type !== 'agent') continue;
+    if (input.singleAgentAliasesEnabled === false) continue;
     const owners = agentOwnersByLocalName.get(descriptor.localName);
     if (!owners || owners.size !== 1) continue;
 
@@ -439,6 +455,45 @@ function safeRegistrationError(
   };
 }
 
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function applyPortWithTimeout(
+  port: CommandRegistrationPort,
+  plan: CommandRegistrationPlan,
+  timeoutMs: number | undefined,
+): Promise<CommandRegistrationResult> {
+  const portResult = port.applyCommandPlan(plan).catch((err: unknown) => ({
+    status: 'failed' as const,
+    error: {
+      code: 'command_registration_failed' as const,
+      message: 'command registration port threw',
+      cause: err,
+    },
+  }));
+  if (timeoutMs === undefined) return portResult;
+
+  let timer: NodeJS.Timeout | undefined;
+  const timeoutResult = new Promise<CommandRegistrationResult>((resolve) => {
+    timer = setTimeout(() => {
+      resolve({
+        status: 'failed',
+        error: {
+          code: 'command_registration_failed',
+          message: 'command registration timed out',
+        },
+      });
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([portResult, timeoutResult]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export class ActiveCommandRegistry {
   private readonly activeMaps = new Map<string, ActiveCommandMap>();
 
@@ -457,18 +512,43 @@ export class ActiveCommandRegistry {
   ): Promise<CommandRegistrationResult> {
     // Caller owns the per-scope single-in-flight guarantee from the spec.
     // This method validates the returned generation for the one plan it applied.
-    let result: CommandRegistrationResult;
-    try {
-      result = await options.port.applyCommandPlan(plan);
-    } catch (err) {
-      result = {
+    if (options.enabled === false) {
+      options.logger?.warn?.(
+        {
+          platformName: plan.scope.platformName,
+          scope: plan.scope.nativeScope,
+          generation: plan.generation,
+        },
+        'command_registration_disabled',
+      );
+      return {
         status: 'failed',
         error: {
-          code: 'command_registration_failed',
-          message: 'command registration port threw',
-          cause: err,
+          code: 'command_registration_disabled',
+          message: 'command registration disabled by config',
         },
       };
+    }
+
+    const retry = options.retry ?? { maxAttempts: 1, backoffMs: 0 };
+    let result: CommandRegistrationResult = {
+      status: 'failed',
+      error: {
+        code: 'command_registration_failed',
+        message: 'command registration not attempted',
+      },
+    };
+
+    for (let attempt = 1; attempt <= retry.maxAttempts; attempt += 1) {
+      result = await applyPortWithTimeout(
+        options.port,
+        plan,
+        options.timeoutMs,
+      );
+      if (result.status === 'applied') break;
+      if (attempt < retry.maxAttempts) {
+        await sleep(retry.backoffMs);
+      }
     }
 
     if (result.status === 'failed') {

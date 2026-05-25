@@ -19,9 +19,12 @@ import {
   CodexConfigError,
 } from '@agent-nexus/agent-codex';
 import {
+  DEFAULT_DAEMON_RUNTIME_CONFIG,
   parseDaemonConfig,
+  parseDaemonRuntimeConfig,
   parsePlatformAuthConfig,
   type DaemonConfig,
+  type DaemonRuntimeConfig,
   type PlatformAuthConfig,
   DaemonConfigError,
 } from '@agent-nexus/daemon';
@@ -58,6 +61,7 @@ export interface AgentNexusConfig {
   platforms: PlatformConfig[];
   agents: AgentConfig[];
   bindings: BindingConfig[];
+  daemon: DaemonRuntimeConfig;
   ui: DaemonConfig;
   log: {
     level: LogLevel;
@@ -184,6 +188,29 @@ const DEFAULT_CONFIG_TEMPLATE = `\
       }
     }
   ],
+  "daemon": {
+    "commandRegistry": {
+      "registration": {
+        "enabled": true,
+        "applyTimeoutMs": 30000,
+        "retry": {
+          "maxAttempts": 1,
+          "backoffMs": 0
+        }
+      },
+      "aliases": {
+        "singleAgent": {
+          "enabled": true
+        },
+        "legacy": {
+          "replyMode": true
+        }
+      },
+      "textPrefixes": {
+        "newSession": true
+      }
+    }
+  },
   "log": {
     "_levelComment": "allowed: trace, debug, info, warn, error, fatal",
     "level": "info"
@@ -231,6 +258,44 @@ function assertNoUnknownKeys(
       throw new ConfigError(`未知字段 ${path}.${key}`);
     }
   }
+}
+
+function cloneDefaultDaemonConfig(): DaemonRuntimeConfig {
+  return JSON.parse(JSON.stringify(DEFAULT_DAEMON_RUNTIME_CONFIG)) as DaemonRuntimeConfig;
+}
+
+function mergeMissingObjectFields(
+  target: Record<string, unknown>,
+  defaults: Record<string, unknown>,
+): boolean {
+  let changed = false;
+  for (const [key, defaultValue] of Object.entries(defaults)) {
+    if (!(key in target)) {
+      target[key] = defaultValue;
+      changed = true;
+      continue;
+    }
+    if (isRecord(target[key]) && isRecord(defaultValue)) {
+      changed = mergeMissingObjectFields(
+        target[key] as Record<string, unknown>,
+        defaultValue,
+      ) || changed;
+    }
+  }
+  return changed;
+}
+
+function applyTemplateDefaultsIfMissing(
+  parsed: Record<string, unknown>,
+): boolean {
+  return mergeMissingObjectFields(parsed, {
+    daemon: cloneDefaultDaemonConfig(),
+  });
+}
+
+async function persistConfig(path: string, parsed: Record<string, unknown>): Promise<void> {
+  await writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`);
+  await chmod(path, 0o600);
 }
 
 async function createFileIfMissing(
@@ -512,7 +577,8 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     throw new ConfigError(`${path} 顶层必须是对象`);
   }
   rejectLegacyTopLevel(path, parsed);
-  assertNoUnknownKeys(parsed, ['platforms', 'agents', 'bindings', 'log', 'ui'], path);
+  assertNoUnknownKeys(parsed, ['platforms', 'agents', 'bindings', 'daemon', 'log', 'ui'], path);
+  const templateDefaultsChanged = applyTemplateDefaultsIfMissing(parsed);
 
   const platformsRaw = assertArray(parsed, 'platforms', path);
   const agentsRaw = assertArray(parsed, 'agents', path);
@@ -555,8 +621,10 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
   assertAgentReferences(bindings, agents);
 
   let ui: DaemonConfig;
+  let daemon: DaemonRuntimeConfig;
   try {
     ui = parseDaemonConfig(parsed['ui']);
+    daemon = parseDaemonRuntimeConfig(parsed['daemon']);
   } catch (err) {
     if (err instanceof DaemonConfigError) {
       throw new ConfigError(`${path} ${err.message}`);
@@ -564,10 +632,20 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     throw err;
   }
 
+  if (templateDefaultsChanged) {
+    try {
+      await persistConfig(path, parsed);
+    } catch {
+      // Parsed defaults are already applied in memory; a read-only config file
+      // must not make an otherwise valid legacy config fail to start.
+    }
+  }
+
   return {
     platforms,
     agents,
     bindings,
+    daemon,
     ui,
     log: parseLog(parsed['log']),
   };

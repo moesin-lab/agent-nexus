@@ -32,8 +32,8 @@ related:
 - portal 里 `Bot Token` 已生成并可用
 - `MESSAGE CONTENT INTENT` 已开启
 - 用 `@bot ping` 能收到响应
-- slash command 列表里能看到 `/discord-reply-mode`，迁移期内还会看到 legacy `/reply-mode`
-- slash command 列表里能看到已绑定 backend 对应的 `/claudecode-new` 或 `/codex-new`
+- slash command 列表里能看到 `/discord-reply-mode`；`daemon.commandRegistry.aliases.legacy.replyMode=true` 时还会看到 legacy `/reply-mode`
+- slash command 列表里能看到已绑定 backend 对应的 `/claudecode-new` 或 `/codex-new`；单 agent scope 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时还会看到裸 `/new`
 
 ## 参考
 

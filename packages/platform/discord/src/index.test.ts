@@ -288,6 +288,72 @@ describe('command registry integration', () => {
       },
     });
   });
+
+  it('registration plan 未包含 legacy /reply-mode 时把它作为普通 command 事件交给 daemon', async () => {
+    const plan = {
+      scope: {
+        platformName: 'discord-main',
+        platformType: 'discord' as const,
+        nativeScope: { kind: 'global' as const },
+      },
+      commands: [],
+      reverseMap: {
+        entries: {
+          'discord-reply-mode': {
+            canonicalId: 'platform:discord:reply-mode',
+            aliasKind: 'stable' as const,
+            owner: { type: 'platform' as const, platformType: 'discord' },
+            handlerKey: 'reply-mode',
+          },
+        },
+      },
+      generation: 'g-no-legacy',
+    };
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      commandRegistration: {
+        plan,
+        apply: vi.fn(async () => ({ status: 'applied' as const, generation: 'g-no-legacy' })),
+      },
+    });
+    const handler = vi.fn(async () => undefined);
+    const deferReply = vi.fn(async () => undefined);
+    const deleteReply = vi.fn(async () => undefined);
+    const reply = vi.fn(async () => undefined);
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    await interactionCreate({
+      id: 'i-legacy-off',
+      commandName: 'reply-mode',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      options: { data: [], getString: vi.fn(() => null) },
+      deferReply,
+      deleteReply,
+      editReply: vi.fn(async () => undefined),
+      reply,
+      isChatInputCommand: () => true,
+    });
+
+    expect(reply).not.toHaveBeenCalled();
+    expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(deleteReply).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0]![0]).toMatchObject({
+      command: {
+        name: 'reply-mode',
+        registrationScope: plan.scope,
+      },
+    });
+  });
 });
 
 function makeTextChannel(overrides: {

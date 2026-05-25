@@ -34,11 +34,16 @@ export {
   type DispatchCommandEventInput,
 } from './command-dispatch.js';
 export {
+  DEFAULT_DAEMON_RUNTIME_CONFIG,
   parseDaemonConfig,
+  parseDaemonRuntimeConfig,
   parsePlatformAuthConfig,
   DaemonConfigError,
   type AllowlistConfig,
+  type DaemonCommandRegistryConfig,
   type DaemonConfig,
+  type DaemonRegistrationRetryConfig,
+  type DaemonRuntimeConfig,
   type PlatformAuthConfig,
   type ToolMessageMode,
 } from './config.js';

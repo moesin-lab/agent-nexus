@@ -58,7 +58,7 @@ Codex CLI 当前没有 Claude Code 那种执行前工具审批。它的边界来
 
 ## 为什么看不到 `/new`？
 
-`/codex-new` 和 `/claudecode-new` 是稳定的 agent slash command 名称。每个 `-new` 命令只在对应 backend 已配置且在该 Discord 注册 scope 有 binding 时注册；只启用一个 backend 时只会看到对应的那一个。裸 `/new` 只在同一个 Discord 注册 scope 里只有一种 agent owner 时注册；如果同一个 scope 同时暴露 Codex 和 Claude Code，系统不会注册 `/new`，避免用户看不出会路由到哪个 backend。
+`/codex-new` 和 `/claudecode-new` 是稳定的 agent slash command 名称。每个 `-new` 命令只在对应 backend 已配置且在该 Discord 注册 scope 有 binding 时注册；只启用一个 backend 时只会看到对应的那一个。裸 `/new` 只在同一个 Discord 注册 scope 里只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时注册；如果同一个 scope 同时暴露 Codex 和 Claude Code，系统不会注册 `/new`，避免用户看不出会路由到哪个 backend。
 
 ## 数据和密钥放在哪里？
 

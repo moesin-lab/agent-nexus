@@ -61,6 +61,9 @@ export interface EngineDeps {
   toolMessages?: {
     mode?: ToolMessageMode;
   };
+  textPrefixes?: {
+    newSession?: boolean;
+  };
 }
 
 const DEFAULT_STREAM_EDIT_THROTTLE_MS = 1500;
@@ -126,6 +129,7 @@ export class Engine {
   private readonly streamEditThrottleMs: number;
   private readonly typingRefreshMs: number;
   private readonly toolMessageMode: ToolMessageMode;
+  private readonly newSessionTextPrefixEnabled: boolean;
   private readonly agentSessions = new Map<string, ActiveAgentSession>();
   /**
    * Per-SessionKey 串行队列：同 key 的 dispatch 必须按到达序排队执行，
@@ -178,6 +182,7 @@ export class Engine {
     this.typingRefreshMs =
       deps.streaming?.typingRefreshMs ?? DEFAULT_TYPING_REFRESH_MS;
     this.toolMessageMode = deps.toolMessages?.mode ?? 'append';
+    this.newSessionTextPrefixEnabled = deps.textPrefixes?.newSession ?? true;
   }
 
   async start(): Promise<void> {
@@ -502,7 +507,10 @@ export class Engine {
       const rawText = event.text ?? '';
       const trimmed = rawText.trim();
       let prompt: string;
-      if (trimmed === '/new' || trimmed.startsWith('/new ')) {
+      if (
+        this.newSessionTextPrefixEnabled &&
+        (trimmed === '/new' || trimmed.startsWith('/new '))
+      ) {
         this.stopActiveSession(sessionKeyStr, event.traceId);
         this.sessionStore.delete(event.sessionKey);
         const remainder = trimmed === '/new' ? '' : trimmed.slice(5).trim();

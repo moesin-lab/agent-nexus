@@ -136,6 +136,7 @@ async function main(): Promise<void> {
       capabilities: DISCORD_CAPABILITIES,
       generation: `${platformConfig.name}:${Date.now()}`,
     });
+    const commandRegistrationConfig = config.daemon.commandRegistry.registration;
     const platform = createDiscordPlatform({
       token,
       botUserId: platformConfig.botUserId,
@@ -151,6 +152,9 @@ async function main(): Promise<void> {
             port,
             logger,
             activatedAt: new Date(),
+            enabled: commandRegistrationConfig.enabled,
+            timeoutMs: commandRegistrationConfig.applyTimeoutMs,
+            retry: commandRegistrationConfig.retry,
           }),
       },
     });
@@ -169,6 +173,9 @@ async function main(): Promise<void> {
         sessionStore,
         toolMessages: {
           mode: config.ui.toolMessages,
+        },
+        textPrefixes: {
+          newSession: config.daemon.commandRegistry.textPrefixes.newSession,
         },
       }),
     );

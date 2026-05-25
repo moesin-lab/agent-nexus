@@ -73,6 +73,20 @@ function baseConfig(overrides: Partial<AgentNexusConfig> = {}): AgentNexusConfig
         match: { discord: { channelIds: ['C1'] } },
       },
     ],
+    daemon: {
+      commandRegistry: {
+        registration: {
+          enabled: true,
+          applyTimeoutMs: 30000,
+          retry: { maxAttempts: 1, backoffMs: 0 },
+        },
+        aliases: {
+          singleAgent: { enabled: true },
+          legacy: { replyMode: true },
+        },
+        textPrefixes: { newSession: true },
+      },
+    },
     ui: { toolMessages: 'append' },
     log: { level: 'info' },
     ...overrides,
@@ -202,6 +216,60 @@ describe('buildCliCommandRegistrationPlan', () => {
       kind: 'guild',
       guildId: 'GUILD123',
     });
+  });
+
+  it('daemon config can disable the bare single-agent /new alias without removing stable names', () => {
+    const plan = buildCliCommandRegistrationPlan({
+      config: baseConfig({
+        daemon: {
+          ...baseConfig().daemon,
+          commandRegistry: {
+            ...baseConfig().daemon.commandRegistry,
+            aliases: {
+              ...baseConfig().daemon.commandRegistry.aliases,
+              singleAgent: { enabled: false },
+            },
+          },
+        },
+      }),
+      platformName: 'discord-main',
+      capabilities,
+      generation: 'g-alias-off',
+    });
+
+    expect(commandKeys(plan)).toEqual([
+      'discord-reply-mode:platform:discord:reply-mode:stable',
+      'codex-new:agent:codex:new:stable',
+      'reply-mode:platform:discord:reply-mode:legacy',
+    ]);
+    expect(plan.reverseMap.entries).not.toHaveProperty('new');
+  });
+
+  it('daemon config can disable legacy /reply-mode while keeping the stable replacement', () => {
+    const plan = buildCliCommandRegistrationPlan({
+      config: baseConfig({
+        daemon: {
+          ...baseConfig().daemon,
+          commandRegistry: {
+            ...baseConfig().daemon.commandRegistry,
+            aliases: {
+              ...baseConfig().daemon.commandRegistry.aliases,
+              legacy: { replyMode: false },
+            },
+          },
+        },
+      }),
+      platformName: 'discord-main',
+      capabilities,
+      generation: 'g-legacy-off',
+    });
+
+    expect(commandKeys(plan)).toEqual([
+      'discord-reply-mode:platform:discord:reply-mode:stable',
+      'codex-new:agent:codex:new:stable',
+      'new:agent:codex:new:single-agent-alias',
+    ]);
+    expect(plan.reverseMap.entries).not.toHaveProperty('reply-mode');
   });
 
   it('fails clearly when the requested platform is absent', () => {

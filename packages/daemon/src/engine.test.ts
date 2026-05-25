@@ -495,6 +495,36 @@ describe('Engine', () => {
     expect(out.text).toBe('[new session ready]');
   });
 
+  it('textPrefixes.newSession=false 时 /new 文本按普通 prompt 转给 agent', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+      textPrefixes: { newSession: false },
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-new' }),
+      ev('text_final', { text: 'answer' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('/new'));
+
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect(agent.startSession).toHaveBeenCalledTimes(1);
+    expect(agent.sendInput).toHaveBeenCalledTimes(1);
+    expect((agent.sendInput.mock.calls[0]![1] as AgentInput).text).toBe('/new');
+  });
+
   it('同 SessionKey 并发：第二条 dispatch 必须串行在第一条之后，看到首轮 agentSessionId 作 resume', async () => {
     // race regression：两条来自同一频道+同一用户的 @mention 几乎同时到达。
     // 期望：第二条 startSession 的 config.resumeFromAgentSessionId === 首轮的 agentSessionId。

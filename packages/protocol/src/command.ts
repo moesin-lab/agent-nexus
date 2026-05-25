@@ -86,6 +86,7 @@ export interface CommandRegistrationPlan {
 
 export type CommandRegistrationErrorCode =
   | 'command_registration_failed'
+  | 'command_registration_disabled'
   | 'command_activation_generation_mismatch';
 
 export interface CommandRegistrationError {

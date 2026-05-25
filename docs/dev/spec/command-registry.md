@@ -205,6 +205,10 @@ alias 前置条件：
 
 scope 从 single-agent 变为 multi-agent 时，只移除 bare alias；stable name 保持不变。移除 alias 不影响 active stable command dispatch。
 
+`daemon.commandRegistry.aliases.singleAgent.enabled=false` 时，daemon planner
+不生成 single-agent bare alias。该配置只移除 bare alias；stable agent command name
+仍按 §Stable Names 注册。
+
 ## Legacy Names
 
 legacy name 是已经发布过、需要兼容迁移窗口的裸名。legacy name 必须显式写在 descriptor 的 `legacyNames`，同时列入 `CommandNamePolicy.historicalReservedBareNames`。
@@ -220,6 +224,10 @@ legacy name 是已经发布过、需要兼容迁移窗口的裸名。legacy name
 - `/discord-reply-mode` 是 stable name。
 - `/reply-mode` 在迁移窗口内作为 legacy alias 保留。
 - 移除 `/reply-mode` 是破坏性变更；移除后 `reply-mode` 仍保留在 historical reserved bare names，agent alias 不得复用。
+
+`daemon.commandRegistry.aliases.legacy.replyMode=false` 时，registration plan
+不包含 legacy `/reply-mode`，但 `reply-mode` 必须继续留在 `historicalReservedBareNames`，
+避免 agent bare alias 复用历史名字。
 
 ## Registration Scope
 
@@ -325,6 +333,16 @@ CommandRegistrationResult =
 
 daemon 启动或重启时必须重新构建 plan 并 apply；远端 command 可能仍存在，但本地 active map 只有 apply 成功后才恢复。激活成功前该 scope dispatch fail-closed 是预期行为。
 
+运行期配置由 `config-routing.md` 的 `daemon.commandRegistry.registration` 拥有：
+
+- `enabled=false` 时，daemon 不调用 platform registration port，也不从未 apply 的远端状态激活新的 reverse map。
+- `applyTimeoutMs` 超时等同 registration failure，必须记录 `command_registration_failed` 并保留旧 active map。
+- `retry.maxAttempts` / `retry.backoffMs` 只重试 remote apply failure；retry 期间不得部分激活 active map。
+
+`applyTimeoutMs` 不能取消已经发出的 platform native request。运维同时调低 timeout 并提高
+`retry.maxAttempts` 时，远端可能收到重复的 bulk overwrite；本地仍必须只在 matching generation
+成功返回时激活 active map。
+
 平台 native API 如果不提供 all-or-nothing 语义，adapter 必须把任一 planned command 的失败表示为 `status:"failed"`；不得在 partial success 后要求 daemon 激活 next map。Discord adapter 必须使用能表达期望全集的提交方式，例如 bulk overwrite，而不是只增量 create/upsert。
 
 ## Dispatch
@@ -421,6 +439,7 @@ CommandDescriptor {
 | `command_name_collision` | 同 scope 内 command name 冲突 |
 | `command_name_reserved` | alias 或 stable name 命中保留规则 |
 | `command_registration_failed` | 远端注册失败或 partial apply |
+| `command_registration_disabled` | 配置关闭远端注册，daemon 未调用 registration port |
 | `command_activation_generation_mismatch` | registration result generation 与 next plan 不一致 |
 | `command_active_map_missing` | 收到 command event 但 scope 没有 active map |
 | `command_reverse_map_miss` | active map 中没有该 platform-visible name |

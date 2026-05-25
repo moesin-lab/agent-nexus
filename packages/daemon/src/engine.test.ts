@@ -7,6 +7,8 @@ import type {
   AgentRuntime,
   AgentSession,
   CapabilitySet,
+  CommandDescriptor,
+  CommandRegistrationScope,
   EventHandler,
   MessageRef,
   NormalizedEvent,
@@ -17,6 +19,11 @@ import type {
   SessionKey,
 } from '@agent-nexus/protocol';
 import { withPlatformName } from '@agent-nexus/protocol';
+import {
+  ActiveCommandRegistry,
+  buildCommandRegistrationPlan,
+  DEFAULT_COMMAND_NAME_POLICY,
+} from './command-registry.js';
 import { Engine } from './engine.js';
 import { createLogger, type Logger } from './logger.js';
 import type { RoutingEntry } from './router.js';
@@ -257,6 +264,54 @@ const PLATFORM_AUTH_ALLOW_U1 = {
     requireMentionOrSlash: true,
   },
 };
+
+const COMMAND_SCOPE: CommandRegistrationScope = {
+  platformName: 'discord-main',
+  platformType: 'discord',
+  nativeScope: { kind: 'global' },
+};
+
+const CODEX_NEW_COMMAND: CommandDescriptor = {
+  canonicalId: 'agent:codex:new',
+  owner: { type: 'agent', agentOwner: 'codex' },
+  localName: 'new',
+  summary: 'Start a new Codex conversation',
+  options: [],
+  handlerKey: 'new',
+  applicability: { requiredCapabilities: ['slash-command-registration'] },
+  legacyNames: [],
+};
+
+function makeCommandEvent(
+  commandName: string,
+  overrides: Partial<NormalizedEvent> = {},
+): NormalizedEvent {
+  return makeEvent('', {
+    type: 'command',
+    text: undefined,
+    command: {
+      name: commandName,
+      args: {},
+      registrationScope: COMMAND_SCOPE,
+    },
+    rawContentType: 'discord:interaction',
+    ...overrides,
+  });
+}
+
+function makeActiveRegistry(): ActiveCommandRegistry {
+  const registry = new ActiveCommandRegistry();
+  const plan = buildCommandRegistrationPlan({
+    descriptors: [CODEX_NEW_COMMAND],
+    scope: COMMAND_SCOPE,
+    capabilities: { ...platformCaps, supportsSlashCommands: true },
+    policy: DEFAULT_COMMAND_NAME_POLICY,
+    agentOwnersInScope: ['codex'],
+    generation: 'g-command',
+  });
+  registry.activate(plan, new Date(0));
+  return registry;
+}
 
 // ----- tests -----
 
@@ -1046,6 +1101,104 @@ describe('Engine', () => {
         initiatorUserId: 'U1',
       })?.agentSessionId,
     ).toBe('claude-sid');
+  });
+
+  it('command event 通过 active reverse map 路由 agent /new，不从 commandName 拆 owner', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          commandHandlerKeys: ['new'],
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeCommandEvent('new'));
+
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      '[new session ready]',
+    );
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(codex.sendInput).not.toHaveBeenCalled();
+  });
+
+  it('command event scope 与当前 Engine platform 不一致时 fail-closed', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          commandHandlerKeys: ['new'],
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeCommandEvent('new', {
+      command: {
+        name: 'new',
+        args: {},
+        registrationScope: {
+          ...COMMAND_SCOPE,
+          platformName: 'discord-side',
+        },
+      },
+    }));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(platform.send).not.toHaveBeenCalled();
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    expect(errorCalls.find(([, msg]) => msg === 'command_scope_mismatch')).toBeDefined();
   });
 
   it('两个同 type Engine 共享 SessionStore 时，同 channel/user 仍按 platformName 隔离', async () => {

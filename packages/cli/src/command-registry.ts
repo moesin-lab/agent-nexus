@@ -97,5 +97,9 @@ export function buildCliCommandRegistrationPlan(
     policy: DEFAULT_COMMAND_NAME_POLICY,
     agentOwnersInScope: agentOwnersForPlatform(input.config, platform.name),
     generation: input.generation,
+    singleAgentAliasesEnabled:
+      input.config.daemon.commandRegistry.aliases.singleAgent.enabled,
+    legacyReplyModeEnabled:
+      input.config.daemon.commandRegistry.aliases.legacy.replyMode,
   });
 }

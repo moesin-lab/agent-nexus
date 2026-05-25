@@ -252,6 +252,23 @@ function commandScope(testGuildId?: string): CommandRegistrationScope {
   };
 }
 
+function replyModeCommandNames(
+  commandRegistration: DiscordCommandRegistration | undefined,
+): Set<string> {
+  if (!commandRegistration) {
+    return new Set(['reply-mode', 'discord-reply-mode']);
+  }
+  const names = new Set<string>();
+  for (const [name, route] of Object.entries(
+    commandRegistration.plan.reverseMap.entries,
+  )) {
+    if (route.canonicalId === discordReplyModeCommandDescriptor.canonicalId) {
+      names.add(name);
+    }
+  }
+  return names;
+}
+
 function commandEventFromInteraction(
   interaction: ChatInputCommandInteraction,
   scope: CommandRegistrationScope,
@@ -447,6 +464,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
   let stopped = false;
   // 启动时从 state 文件读，缺省 'mention'。运行时由 /reply-mode 切换更新。
   let replyMode: ReplyMode = 'mention';
+  const replyModeNames = replyModeCommandNames(commandRegistration);
   const editLocks = new WeakMap<MessageRef, Promise<void>>();
 
   const runSerializedEdit = async (
@@ -531,10 +549,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
 
       client.on('interactionCreate', async (interaction: Interaction) => {
         if (!interaction.isChatInputCommand()) return;
-        if (
-          interaction.commandName !== 'reply-mode' &&
-          interaction.commandName !== 'discord-reply-mode'
-        ) {
+        if (!replyModeNames.has(interaction.commandName)) {
           if (!(await deferCommandInteraction(interaction, logger))) return;
           const event = commandEventFromInteraction(
             interaction,

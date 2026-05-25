@@ -1,8 +1,10 @@
 import {
+  claudeCodeCommandDescriptors,
   createClaudeCodeRuntime,
   runCompatibilityProbe as runClaudeCodeCompatibilityProbe,
 } from '@agent-nexus/agent-claudecode';
 import {
+  codexCommandDescriptors,
   createCodexRuntime,
   runCompatibilityProbe as runCodexCompatibilityProbe,
 } from '@agent-nexus/agent-codex';
@@ -86,6 +88,11 @@ export async function createAgentRegistry(
     const selected = await createAgentRuntime(agentConfig, logger);
     registry.push({
       agentName: agentConfig.name,
+      agentOwner: agentConfig.backend,
+      commandHandlerKeys:
+        agentConfig.backend === 'codex'
+          ? codexCommandDescriptors.map((descriptor) => descriptor.handlerKey)
+          : claudeCodeCommandDescriptors.map((descriptor) => descriptor.handlerKey),
       agent: selected.agent,
       defaultSessionConfig: selected.defaultSessionConfig,
     });

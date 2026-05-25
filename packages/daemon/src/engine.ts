@@ -3,6 +3,7 @@ import type {
   AgentEvent,
   AgentRuntime,
   AgentSession,
+  CommandPayload,
   MessageRef,
   NormalizedEvent,
   PlatformAdapter,
@@ -11,6 +12,10 @@ import type {
 } from '@agent-nexus/protocol';
 import { serializeSessionKey, withPlatformName } from '@agent-nexus/protocol';
 import { checkPlatformAuth } from './auth.js';
+import {
+  ActiveCommandRegistry,
+} from './command-registry.js';
+import { dispatchCommandEvent } from './command-dispatch.js';
 import type { PlatformAuthConfig, ToolMessageMode } from './config.js';
 import type { IdempotencyStore } from './idempotency.js';
 import type { Logger } from './logger.js';
@@ -21,6 +26,8 @@ import type { SessionStore } from './session-store.js';
 export interface EngineAgent {
   agent: AgentRuntime;
   agentName: string;
+  agentOwner?: string;
+  commandHandlerKeys?: readonly string[];
   defaultSessionConfig: Omit<
     SessionConfig,
     'resumeFromAgentSessionId' | 'sessionId'
@@ -37,6 +44,9 @@ export interface EngineDeps {
   platformAuth?: PlatformAuthConfig;
   idempotencyStore?: IdempotencyStore;
   redactor?: Redactor;
+  commandRegistry?: ActiveCommandRegistry;
+  platformCommandHandlerKeys?: readonly string[];
+  daemonCommandHandlerKeys?: readonly string[];
   logger: Logger;
   sessionStore: SessionStore;
   /** 每轮 sessionId 由 Engine 生成；resumeFromAgentSessionId 由 store 决定 */
@@ -106,6 +116,9 @@ export class Engine {
   private readonly platformAuth?: PlatformAuthConfig;
   private readonly idempotencyStore?: IdempotencyStore;
   private readonly redactor: Redactor;
+  private readonly commandRegistry?: ActiveCommandRegistry;
+  private readonly platformCommandHandlerKeys: readonly string[];
+  private readonly daemonCommandHandlerKeys: readonly string[];
   private readonly agents: Map<string, EngineAgent>;
   private readonly routingTable?: readonly RoutingEntry[];
   private readonly logger: Logger;
@@ -140,6 +153,9 @@ export class Engine {
     this.platformAuth = deps.platformAuth;
     this.idempotencyStore = deps.idempotencyStore;
     this.redactor = deps.redactor ?? new BasicRedactor();
+    this.commandRegistry = deps.commandRegistry;
+    this.platformCommandHandlerKeys = deps.platformCommandHandlerKeys ?? [];
+    this.daemonCommandHandlerKeys = deps.daemonCommandHandlerKeys ?? [];
     this.routingTable = deps.routingTable;
     this.agents = new Map();
     if (deps.agents) {
@@ -183,25 +199,37 @@ export class Engine {
   }
 
   private dispatch(event: NormalizedEvent): Promise<void> {
+    if (event.type === 'command') {
+      return this.dispatchCommand(event);
+    }
     const route = this.route(event);
     if (!route) return Promise.resolve();
-    if (this.platformAuth) {
-      const decision = checkPlatformAuth(this.platformAuth, event);
-      if (!decision.allowed) {
-        this.logger.info(
-          {
-            traceId: event.traceId,
-            platformName: this.platformName,
-            guildId: event.guildId,
-            channelId: event.sessionKey.channelId,
-            userId: event.initiator.userId,
-            reason: decision.reason,
-          },
-          'auth_denied',
-        );
-        return Promise.resolve();
-      }
-    }
+    if (!this.checkAuth(event)) return Promise.resolve();
+    return this.dispatchToAgent(event, route);
+  }
+
+  private checkAuth(event: NormalizedEvent): boolean {
+    if (!this.platformAuth) return true;
+    const decision = checkPlatformAuth(this.platformAuth, event);
+    if (decision.allowed) return true;
+    this.logger.info(
+      {
+        traceId: event.traceId,
+        platformName: this.platformName,
+        guildId: event.guildId,
+        channelId: event.sessionKey.channelId,
+        userId: event.initiator.userId,
+        reason: decision.reason,
+      },
+      'auth_denied',
+    );
+    return false;
+  }
+
+  private dispatchToAgent(
+    event: NormalizedEvent,
+    route: { bindingName: string; agentName: string },
+  ): Promise<void> {
     const routedSessionKey = withPlatformName(
       event.sessionKey,
       this.platformName,
@@ -281,6 +309,106 @@ export class Engine {
       }
     });
     return next;
+  }
+
+  private dispatchCommand(event: NormalizedEvent): Promise<void> {
+    if (!this.checkAuth(event)) return Promise.resolve();
+    if (!this.commandRegistry || !this.routingTable) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          commandName: event.command?.name,
+        },
+        'command_handler_missing',
+      );
+      return Promise.resolve();
+    }
+    if (!this.commandScopeMatchesEngine(event.command?.registrationScope)) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          platformType: this.platformType,
+          scope: event.command?.registrationScope,
+          commandName: event.command?.name,
+        },
+        'command_scope_mismatch',
+      );
+      return Promise.resolve();
+    }
+
+    const decision = dispatchCommandEvent({
+      event,
+      registry: this.commandRegistry,
+      platformName: this.platformName,
+      platformType: this.platformType,
+      routingTable: this.routingTable,
+      agentTargets: [...this.agents.values()].map((agent) => ({
+        agentName: agent.agentName,
+        agentOwner: agent.agentOwner ?? agent.agent.name(),
+        handlerKeys: agent.commandHandlerKeys ?? [],
+      })),
+      platformHandlerKeys: this.platformCommandHandlerKeys,
+      daemonHandlerKeys: this.daemonCommandHandlerKeys,
+      logger: this.logger,
+    });
+    if (!decision) return Promise.resolve();
+    if (decision.ownerType !== 'agent') {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          commandName: decision.commandName,
+          canonicalId: decision.canonicalId,
+          handlerKey: decision.handlerKey,
+          ownerType: decision.ownerType,
+        },
+        'command_handler_missing',
+      );
+      return Promise.resolve();
+    }
+    const commandEvent = this.eventForAgentCommand(
+      event,
+      event.command,
+      decision.handlerKey,
+    );
+    if (!commandEvent) return Promise.resolve();
+    return this.dispatchToAgent(commandEvent, {
+      bindingName: decision.bindingName,
+      agentName: decision.agentName,
+    });
+  }
+
+  private commandScopeMatchesEngine(
+    scope: CommandPayload['registrationScope'] | undefined,
+  ): boolean {
+    return (
+      scope?.platformName === this.platformName &&
+      scope.platformType === this.platformType
+    );
+  }
+
+  private eventForAgentCommand(
+    event: NormalizedEvent,
+    command: CommandPayload | undefined,
+    handlerKey: string,
+  ): NormalizedEvent | undefined {
+    if (handlerKey === 'new') {
+      const { command: _command, ...messageEvent } = event;
+      void _command;
+      return { ...messageEvent, type: 'message', text: '/new' };
+    }
+    this.logger.error(
+      {
+        traceId: event.traceId,
+        platformName: this.platformName,
+        commandName: command?.name,
+        handlerKey,
+      },
+      'command_handler_missing',
+    );
+    return undefined;
   }
 
   private route(event: NormalizedEvent):

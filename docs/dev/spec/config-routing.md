@@ -13,6 +13,7 @@ related:
   - dev/spec/security/secrets
 contracts:
   - AgentNexusConfig
+  - DaemonRuntimeConfig
   - PlatformConfig
   - AgentConfig
   - PlatformAuthConfig
@@ -39,12 +40,58 @@ AgentNexusConfig {
     platforms: PlatformConfig[]       // 必填，非空
     agents: AgentConfig[]             // 必填，非空
     bindings: PlatformBinding[]       // 必填，非空
+    daemon: DaemonRuntimeConfig?      // daemon-owned operational config
     log: LogConfig?                   // 现有 log 配置，缺省仍为 info
     ui: DaemonConfig?                 // 现有 daemon/ui 配置
 }
 ```
 
 顶层不再使用 `discord`、`agent`、`claudeCode`、`codex` 作为主配置入口。loader 看到这些 legacy 顶层字段时必须按 §Legacy 配置迁移 报错，不得悄悄混用。
+
+## DaemonRuntimeConfig
+
+`daemon` 承载 daemon 拥有的运行期控制面配置。字段由 `@agent-nexus/daemon`
+owner parser 校验并提供默认值；CLI 只能读取、持久化默认模板并把解析结果传给 daemon owner
+实现，不得在 CLI 内重新解释命名策略或 dispatch 语义。
+
+```text
+DaemonRuntimeConfig {
+    commandRegistry: DaemonCommandRegistryConfig
+}
+
+DaemonCommandRegistryConfig {
+    registration: {
+        enabled: boolean              // 缺省 true
+        applyTimeoutMs: integer       // 缺省 30000，必须 > 0
+        retry: {
+            maxAttempts: integer      // 缺省 1，必须 >= 1
+            backoffMs: integer        // 缺省 0，必须 >= 0
+        }
+    }
+    aliases: {
+        singleAgent: {
+            enabled: boolean          // 缺省 true
+        }
+        legacy: {
+            replyMode: boolean        // 缺省 true
+        }
+    }
+    textPrefixes: {
+        newSession: boolean           // 缺省 true
+    }
+}
+```
+
+字段语义：
+
+| 字段 | 规则 |
+|---|---|
+| `daemon.commandRegistry.registration.enabled` | `false` 时不向远端 apply registration plan；由于没有持久化 active map，command dispatch 保持 fail-closed |
+| `daemon.commandRegistry.registration.applyTimeoutMs` | daemon 调用 platform `CommandRegistrationPort.applyCommandPlan` 的超时上限；timeout 等价 registration failure，保留旧 active map |
+| `daemon.commandRegistry.registration.retry.maxAttempts` / `backoffMs` | daemon 启动时 apply plan 的重试策略；只有 generation 匹配的成功结果能激活 active map |
+| `daemon.commandRegistry.aliases.singleAgent.enabled` | 控制 single-agent bare alias（如 `/new`）是否进入 plan；stable `/codex-new` / `/claudecode-new` 不受影响 |
+| `daemon.commandRegistry.aliases.legacy.replyMode` | 控制 legacy `/reply-mode` 是否进入 plan；`reply-mode` 仍保留为 historical reserved bare name |
+| `daemon.commandRegistry.textPrefixes.newSession` | 控制文本前缀 `@bot /new` / `@bot /new <prompt>`；不影响 slash command stable names |
 
 ## PlatformConfig
 

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   DaemonConfigError,
+  DEFAULT_DAEMON_RUNTIME_CONFIG,
   parseDaemonConfig,
+  parseDaemonRuntimeConfig,
   parsePlatformAuthConfig,
 } from './config.js';
 
@@ -22,6 +24,67 @@ describe('daemon config', () => {
     expect(() => parseDaemonConfig({ toolMessages: 'hidden' })).toThrow(
       /ui\.toolMessages/,
     );
+  });
+});
+
+describe('daemon runtime config', () => {
+  it('缺省 commandRegistry 配置保持兼容默认值', () => {
+    expect(parseDaemonRuntimeConfig(undefined)).toEqual(
+      DEFAULT_DAEMON_RUNTIME_CONFIG,
+    );
+    expect(parseDaemonRuntimeConfig({})).toEqual(DEFAULT_DAEMON_RUNTIME_CONFIG);
+  });
+
+  it('解析 commandRegistry 显式配置并补齐未写字段', () => {
+    expect(
+      parseDaemonRuntimeConfig({
+        commandRegistry: {
+          registration: {
+            enabled: false,
+            applyTimeoutMs: 5000,
+            retry: { maxAttempts: 3 },
+          },
+          aliases: {
+            singleAgent: { enabled: false },
+            legacy: { replyMode: false },
+          },
+          textPrefixes: { newSession: false },
+        },
+      }),
+    ).toEqual({
+      commandRegistry: {
+        registration: {
+          enabled: false,
+          applyTimeoutMs: 5000,
+          retry: { maxAttempts: 3, backoffMs: 0 },
+        },
+        aliases: {
+          singleAgent: { enabled: false },
+          legacy: { replyMode: false },
+        },
+        textPrefixes: { newSession: false },
+      },
+    });
+  });
+
+  it('commandRegistry 数值和未知字段 fail-closed', () => {
+    expect(() => parseDaemonRuntimeConfig(5)).toThrow(/字段 daemon 必须是对象/);
+
+    expect(() =>
+      parseDaemonRuntimeConfig({
+        commandRegistry: {
+          registration: { applyTimeoutMs: 0 },
+        },
+      }),
+    ).toThrow(/daemon\.commandRegistry\.registration\.applyTimeoutMs/);
+
+    expect(() =>
+      parseDaemonRuntimeConfig({
+        commandRegistry: {
+          aliases: { singleAgent: { enabled: true, mode: 'auto' } },
+        },
+      }),
+    ).toThrow(/daemon\.commandRegistry\.aliases\.singleAgent\.mode/);
   });
 });
 

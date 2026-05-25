@@ -118,6 +118,29 @@ pnpm typecheck     # 仅 tsc --build；不生成 npm bin bundle
       }
     }
   ],
+  "daemon": {
+    "commandRegistry": {
+      "registration": {
+        "enabled": true,
+        "applyTimeoutMs": 30000,
+        "retry": {
+          "maxAttempts": 1,
+          "backoffMs": 0
+        }
+      },
+      "aliases": {
+        "singleAgent": {
+          "enabled": true
+        },
+        "legacy": {
+          "replyMode": true
+        }
+      },
+      "textPrefixes": {
+        "newSession": true
+      }
+    }
+  },
   "ui": {
     "toolMessages": "append"
   },
@@ -143,6 +166,11 @@ chmod 600 ~/.agent-nexus/config.json
 - `agents[].claudeCode.permissionLevel`（可选，默认 `default`）：原样传给 Claude Code 子进程的 `--permission-mode`，允许 `default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan`
 - `agents[].claudeCode.allowedTools`（可选）：默认 `Read/Grep/Glob/Edit/Write`。**`Bash` 不在默认集**——启用须显式列出，启动会打 warn（参见 [`docs/dev/spec/security/tool-boundary.md`](docs/dev/spec/security/tool-boundary.md)）
 - `agents[].codex.workingDir`（`backend=codex` 时必填）：Codex 默认工作目录，传给 `--cd`
+- `daemon.commandRegistry.registration.enabled`（可选，默认 `true`）：设为 `false` 时不向 Discord apply slash command 注册计划，本地 command dispatch 保持 fail-closed
+- `daemon.commandRegistry.registration.applyTimeoutMs`（可选，默认 `30000`）：slash command 注册 apply 超时
+- `daemon.commandRegistry.aliases.singleAgent.enabled`（可选，默认 `true`）：控制裸 `/new` single-agent slash alias；稳定 `/codex-new` / `/claudecode-new` 不受影响
+- `daemon.commandRegistry.aliases.legacy.replyMode`（可选，默认 `true`）：控制 legacy `/reply-mode` 是否注册；稳定 `/discord-reply-mode` 不受影响
+- `daemon.commandRegistry.textPrefixes.newSession`（可选，默认 `true`）：控制 `@bot /new` 文本前缀；不影响 slash command
 - `bindings[].platformName` / `agentName`（必填）：把命名 platform bot 绑定到命名 agent
 - `bindings[].match.discord.channelIds`（必填）：该 binding 匹配的 Discord channel/thread id 列表
 - `codex.bin`（可选，默认 `codex`）：Codex CLI 可执行路径
@@ -182,12 +210,12 @@ agent-nexus
 ### 5. 使用
 
 - `@bot <prompt>`：发起一轮 CC 对话；同 `(channelId, userId)` 后续消息复用活跃 session
-- `@bot /new`：清当前 (channel, user) 的内存 session，回复 `[new session ready]`
-- `@bot /new <prompt>`：清 + 立即用 `<prompt>` 起新一轮
+- `@bot /new`：清当前 (channel, user) 的内存 session，回复 `[new session ready]`；可用 `daemon.commandRegistry.textPrefixes.newSession=false` 禁用
+- `@bot /new <prompt>`：清 + 立即用 `<prompt>` 起新一轮；同样受 `textPrefixes.newSession` 控制
 - `/claudecode-new` / `/codex-new`：按绑定到当前频道的 agent owner 清当前会话，回复 `[new session ready]`；只有对应 backend 已配置且在该 Discord 注册 scope 有 binding 时才会出现
-- `/new`：仅在同一个 Discord 注册 scope 里只有一种 agent owner 时作为便捷 alias 出现
+- `/new`：仅在同一个 Discord 注册 scope 里只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时作为便捷 alias 出现
 - `/discord-reply-mode mode:<mention|all>`：在 allowlist 内切换 Discord 消息触发模式
-- `/reply-mode mode:<mention|all>`：legacy alias；迁移期内等价于 `/discord-reply-mode`
+- `/reply-mode mode:<mention|all>`：legacy alias；`daemon.commandRegistry.aliases.legacy.replyMode=true` 时注册
 
 约束：
 

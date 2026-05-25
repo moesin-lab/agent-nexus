@@ -92,6 +92,29 @@ npm install -g packages/cli/agent-nexus-cli-*.tgz
       }
     }
   ],
+  "daemon": {
+    "commandRegistry": {
+      "registration": {
+        "enabled": true,
+        "applyTimeoutMs": 30000,
+        "retry": {
+          "maxAttempts": 1,
+          "backoffMs": 0
+        }
+      },
+      "aliases": {
+        "singleAgent": {
+          "enabled": true
+        },
+        "legacy": {
+          "replyMode": true
+        }
+      },
+      "textPrefixes": {
+        "newSession": true
+      }
+    }
+  },
   "ui": {
     "toolMessages": "append"
   },
@@ -133,6 +156,12 @@ chmod 600 ~/.agent-nexus/config.json
 | `bindings[].platformName` | 是 | 引用 `platforms[].name` |
 | `bindings[].agentName` | 是 | 引用 `agents[].name` |
 | `bindings[].match.discord.channelIds` | 是 | 该 binding 匹配的 Discord channel/thread id 列表 |
+| `daemon.commandRegistry.registration.enabled` | 否 | 默认 `true`；设为 `false` 时不 apply 远端 slash command 注册计划，本地 command dispatch 保持 fail-closed |
+| `daemon.commandRegistry.registration.applyTimeoutMs` | 否 | 默认 `30000`；注册计划 apply 超时毫秒数 |
+| `daemon.commandRegistry.registration.retry.maxAttempts` / `backoffMs` | 否 | 默认 `1` / `0`；启动时注册计划 apply 的重试策略 |
+| `daemon.commandRegistry.aliases.singleAgent.enabled` | 否 | 默认 `true`；控制裸 `/new` single-agent slash alias，不影响 `/codex-new` / `/claudecode-new` |
+| `daemon.commandRegistry.aliases.legacy.replyMode` | 否 | 默认 `true`；控制 legacy `/reply-mode` 是否注册，不影响 `/discord-reply-mode` |
+| `daemon.commandRegistry.textPrefixes.newSession` | 否 | 默认 `true`；控制 `@bot /new` 文本前缀，不影响 slash command |
 | `ui.toolMessages` | 否 | 默认 `append`；工具调用追加为独立消息并在结果到达时编辑该工具消息。设为 `compact` 可回到旧式紧凑显示 |
 | `log.level` | 否 | `trace` / `debug` / `info` / `warn` / `error` / `fatal`，默认 `info` |
 
@@ -266,7 +295,7 @@ agent-nexus
 /codex-new       # 配置并绑定 Codex backend 时出现
 ```
 
-`/claudecode-new` 和 `/codex-new` 是 agent slash command 的稳定名称，按当前频道 binding 路由到对应 backend。每个 `-new` 命令只在对应 backend 已配置且在该 Discord 注册 scope 有 binding 时注册；只启用一个 backend 时只会看到对应的那一个。`/new` 只有在同一个 Discord 注册 scope 里只有一种 agent owner 时才会作为 slash command alias 出现；多 backend 共用同一个 scope 时不会注册裸 `/new`，避免歧义。`@bot /new <prompt>` 仍是文本前缀形式，可以在重置后立即带 prompt 开新一轮。
+`/claudecode-new` 和 `/codex-new` 是 agent slash command 的稳定名称，按当前频道 binding 路由到对应 backend。每个 `-new` 命令只在对应 backend 已配置且在该 Discord 注册 scope 有 binding 时注册；只启用一个 backend 时只会看到对应的那一个。`/new` 只有在同一个 Discord 注册 scope 里只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时才会作为 slash command alias 出现；多 backend 共用同一个 scope 时不会注册裸 `/new`，避免歧义。`@bot /new <prompt>` 是文本前缀形式，可以在重置后立即带 prompt 开新一轮；可用 `daemon.commandRegistry.textPrefixes.newSession=false` 禁用。
 
 切换触发模式：
 
@@ -277,7 +306,7 @@ agent-nexus
 /reply-mode mode:all
 ```
 
-`/discord-reply-mode` 是稳定名称；`/reply-mode` 是迁移期 legacy alias。
+`/discord-reply-mode` 是稳定名称；`/reply-mode` 是迁移期 legacy alias，可用 `daemon.commandRegistry.aliases.legacy.replyMode=false` 停止注册。
 
 `all` 模式只影响消息触发条件，不绕过 `allowedUserIds`。不在 allowlist 里的用户仍不能驱动 bot。
 

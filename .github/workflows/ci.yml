@@ -24,6 +24,8 @@ jobs:
           node-version: 20
           cache: pnpm
 
+      - run: node scripts/validate-pr-metadata.mjs --self-test
+
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm build

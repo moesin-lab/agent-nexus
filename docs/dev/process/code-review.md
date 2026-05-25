@@ -30,6 +30,53 @@ related:
 
 PR 描述模板见 [`../standards/code-review.md` §PR 描述合格条件](../standards/code-review.md#pr-描述合格条件)。
 
+## PR metadata 同步校验
+
+GitHub ruleset + `pr-metadata` workflow 是 merge 门禁；它们不能保证 agent 在创建 PR 的那一刻同步感知失败，因为 GitHub Actions 是异步的。支持 PreToolUse hook 的 harness 应在 MCP 创建 PR 前运行仓库脚本：
+
+```bash
+node scripts/validate-pr-metadata.mjs --hook
+```
+
+脚本从 stdin 读取 hook JSON；仅命中 GitHub MCP `create_pull_request` / `update_pull_request` 类工具时校验 `tool_input.title` / `tool_input.body`，其他工具直接放行。校验失败时 exit 2 并在 stderr 输出缺失项，agent 不应继续创建或改坏 PR。
+
+本地 hook 配置不入库。Claude Code 示例：
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__codex_apps__github._create_pull_request",
+        "hooks": [
+          { "type": "command", "command": "node scripts/validate-pr-metadata.mjs --hook" }
+        ]
+      },
+      {
+        "matcher": "mcp__github__create_pull_request",
+        "hooks": [
+          { "type": "command", "command": "node scripts/validate-pr-metadata.mjs --hook" }
+        ]
+      },
+      {
+        "matcher": "mcp__codex_apps__github._update_pull_request",
+        "hooks": [
+          { "type": "command", "command": "node scripts/validate-pr-metadata.mjs --hook" }
+        ]
+      },
+      {
+        "matcher": "mcp__github__update_pull_request",
+        "hooks": [
+          { "type": "command", "command": "node scripts/validate-pr-metadata.mjs --hook" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+若 harness 的 matcher 不能精确匹配 MCP tool name，可以把该脚本挂到所有 PreToolUse；脚本会自行判断非 PR metadata 写入工具并放行。
+
 ## 作者自查时机
 
 开 PR 前按 [`../standards/code-review.md` §自查清单合格条件](../standards/code-review.md#自查清单合格条件) 走一遍，每项打勾。任一项未达合格不开 PR。

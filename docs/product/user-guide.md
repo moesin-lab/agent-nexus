@@ -117,7 +117,7 @@ chmod 600 ~/.agent-nexus/config.json
 | `platforms[].auth.allowlist.allowedGuildIds` | 否 | 限定可用 server/guild；`[]` 表示不按 guild 收窄 |
 | `platforms[].auth.allowlist.allowedChannelIds` | 否 | 限定可用 channel/thread；`[]` 表示不按 channel 收窄 |
 | `platforms[].auth.allowlist.allowDM` | 否 | 默认 `true`；DM 仍必须命中 `userIds` |
-| `platforms[].testGuildId` | 否 | 开发时把 `/reply-mode` 限定注册到一个 guild，避免全局 slash command 缓存延迟 |
+| `platforms[].testGuildId` | 否 | 开发时把 slash command 限定注册到一个 guild，避免全局 slash command 缓存延迟 |
 | `agents[].name` | 是 | agent 配置稳定名称；binding 用它引用该 agent |
 | `agents[].backend` | 是 | `claudecode` 或 `codex` |
 | `agents[].claudeCode.workingDir` | backend 为 `claudecode` 时是 | Claude Code 默认工作目录 |
@@ -262,14 +262,22 @@ agent-nexus
 ```text
 @bot /new
 @bot /new 从这个问题重新开始
+/claudecode-new  # 配置并绑定 Claude Code backend 时出现
+/codex-new       # 配置并绑定 Codex backend 时出现
 ```
+
+`/claudecode-new` 和 `/codex-new` 是 agent slash command 的稳定名称，按当前频道 binding 路由到对应 backend。每个 `-new` 命令只在对应 backend 已配置且在该 Discord 注册 scope 有 binding 时注册；只启用一个 backend 时只会看到对应的那一个。`/new` 只有在同一个 Discord 注册 scope 里只有一种 agent owner 时才会作为 slash command alias 出现；多 backend 共用同一个 scope 时不会注册裸 `/new`，避免歧义。`@bot /new <prompt>` 仍是文本前缀形式，可以在重置后立即带 prompt 开新一轮。
 
 切换触发模式：
 
 ```text
+/discord-reply-mode mode:mention
+/discord-reply-mode mode:all
 /reply-mode mode:mention
 /reply-mode mode:all
 ```
+
+`/discord-reply-mode` 是稳定名称；`/reply-mode` 是迁移期 legacy alias。
 
 `all` 模式只影响消息触发条件，不绕过 `allowedUserIds`。不在 allowlist 里的用户仍不能驱动 bot。
 

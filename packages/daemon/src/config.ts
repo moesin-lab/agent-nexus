@@ -136,7 +136,7 @@ function parseInteger(
 ): number {
   const value = raw[key];
   if (value === undefined) return defaultValue;
-  if (!Number.isInteger(value) || value < min) {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min) {
     throw new DaemonConfigError(`字段 ${path}.${key} 必须是 >= ${min} 的整数`);
   }
   return value;

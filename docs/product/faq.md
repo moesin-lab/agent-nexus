@@ -52,9 +52,13 @@ Codex CLI 当前没有 Claude Code 那种执行前工具审批。它的边界来
 
 也可以配置 `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan`，agent-nexus 会把字符串原样传给 Claude Code。非 `default` 模式会跳过工具权限控制 probe，并在启动日志打 warn；如果 Claude Code 实际 `init.permissionMode` 与配置不一致（例如 `auto` 不可用回退到 `default`），agent-nexus 会拒绝启动该 session。
 
-## `/reply-mode all` 会让所有人都能用吗？
+## `/discord-reply-mode all` 会让所有人都能用吗？
 
-不会。`all` 只表示“不必 @bot 也触发”，仍然先检查 `platforms[].auth.allowlist`。
+不会。`all` 只表示“不必 @bot 也触发”，仍然先检查 `platforms[].auth.allowlist`。`/reply-mode all` 是迁移期 legacy alias，行为相同。
+
+## 为什么看不到 `/new`？
+
+`/codex-new` 和 `/claudecode-new` 是稳定的 agent slash command 名称。每个 `-new` 命令只在对应 backend 已配置且在该 Discord 注册 scope 有 binding 时注册；只启用一个 backend 时只会看到对应的那一个。裸 `/new` 只在同一个 Discord 注册 scope 里只有一种 agent owner 时注册；如果同一个 scope 同时暴露 Codex 和 Claude Code，系统不会注册 `/new`，避免用户看不出会路由到哪个 backend。
 
 ## 数据和密钥放在哪里？
 

@@ -31,7 +31,9 @@ related:
 - bot 出现在 server 成员列表里
 - portal 里 `Bot Token` 已生成并可用
 - `MESSAGE CONTENT INTENT` 已开启
-- 用 `@bot ping` 或 slash command 能收到响应
+- 用 `@bot ping` 能收到响应
+- slash command 列表里能看到 `/discord-reply-mode`，迁移期内还会看到 legacy `/reply-mode`
+- slash command 列表里能看到已绑定 backend 对应的 `/claudecode-new` 或 `/codex-new`
 
 ## 参考
 

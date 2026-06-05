@@ -69,6 +69,16 @@ ln -sfn "../../skills/<name>" ".claude/skills/<name>"
 
 规则本身以 `docs/dev/process/` 下的权威源为准，skill 只是执行器。
 
+## Hook setup
+
+Hook 配置同样属于本地 harness 配置，不入库。clone 后除 skill 挂接外，支持 PreToolUse 的 harness 应按对应流程挂接仓库守卫脚本：
+
+- 文档读取防污染：`scripts/pretool-read-guard`，配置见 [`docs-read.md` §pretool-read-guard hook](docs-read.md#pretool-read-guard-hook)
+- PR metadata 同步校验：`node scripts/validate-pr-metadata.mjs --hook`，配置见 [`code-review.md` §PR metadata 同步校验](code-review.md#pr-metadata-同步校验)
+- PR checks 异步感知：`scripts/posttool-pr-check-guard.mjs`，配置见 [`code-review.md` §PR checks 异步感知](code-review.md#pr-checks-异步感知)
+
+这些 hook 的目的不同：文档读取 guard 避免 agent 读取非权威文档后污染决策；metadata guard 避免 agent 通过 MCP 创建不符合模板的 PR；checks guard 避免 agent 在远端 CI pending / failed 时把 PR 当成 ready 交付。
+
 ## 未挂接的后果
 
 ⚠️ **未挂接 → 协作 skill 静默不触发 → 协作产出格式漂移**。

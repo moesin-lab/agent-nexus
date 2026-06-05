@@ -38,6 +38,29 @@ main
  └── 分支删除
 ```
 
+### 开分支前工作区检查
+
+开任何新任务分支前，先确认当前分支和工作区：
+
+```bash
+git branch --show-current
+git status --short --branch
+```
+
+只有同时满足下面条件，才直接在当前 worktree 执行 `git switch -c <branch>`：
+
+- 当前分支是 `main`
+- 工作区没有未提交改动
+- 新任务不是明确声明的 stacked PR / 修复链
+
+如果当前 worktree 已在 feature 分支、或有无关未提交改动，禁止在其上为无关任务继续 `git switch -c`。正确做法是从 `main` 开独立 worktree，例如：
+
+```bash
+git worktree add -b <type>/<short-description> ../<repo>-<short-description> main
+```
+
+只有当新任务明确依赖当前 feature 分支，才允许从该分支开 stacked PR；此时必须在分支说明或 PR body 里写清 `base=<当前 PR 分支>`。
+
 ## 合并策略
 
 - **squash merge**：默认。把分支上的多个提交压成一个，进入 main 的历史干净
@@ -58,5 +81,6 @@ main
 - `--force-with-lease` 只允许在维护者明确要求，或需要修复错误推送 / 泄露风险 / rebase 后同步历史且已确认不会覆盖他人工作时使用；禁止使用裸 `--force`
 - 禁止跳过 hook：`--no-verify` 只有在 hook 本身出 bug 且得到维护者同意时才用
 - 禁止在 `main` 上直接 commit / push 未经 PR 的改动
+- 禁止在已有未提交改动的 feature worktree 上，为无关任务继续开新分支。例如：当前分支已有 slash command 半成品改动时，不能直接 `git switch -c docs/adr-xxx` 写无关 ADR；必须从 clean `main` 开独立 worktree。
 
 commit message、PR title、分支名的合格条件违反（含 `wip` 信息、无 type 前缀、subject 未承载 thesis、分支名超过 50 字符等）由 reviewer 拒绝——见 [`../standards/commit-style.md` §Reviewer 拒绝条件](../standards/commit-style.md#reviewer-拒绝条件)。

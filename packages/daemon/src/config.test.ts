@@ -56,7 +56,7 @@ describe('daemon runtime config', () => {
         registration: {
           enabled: false,
           applyTimeoutMs: 5000,
-          retry: { maxAttempts: 3, backoffMs: 0 },
+          retry: { maxAttempts: 3, backoffMs: 1000 },
         },
         aliases: {
           singleAgent: { enabled: false },

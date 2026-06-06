@@ -76,6 +76,7 @@ agent-nexus
 | Discord 里无响应 | 确认 `platforms[].auth.allowlist` 包含发送者 user id 或 role；确认当前频道命中某条 `bindings[].match.discord.channelIds`；默认模式下确认消息显式 @bot |
 | `/discord-reply-mode` / `/reply-mode` 不出现 | 开发时配置 `platforms[].testGuildId`，避免全局 slash command 缓存延迟；确认 bot 邀请包含 `applications.commands` scope；确认 `daemon.commandRegistry.registration.enabled=true`；legacy `/reply-mode` 还要求 `daemon.commandRegistry.aliases.legacy.replyMode=true` |
 | `/codex-new` / `/claudecode-new` 不出现 | 确认对应 backend 的 agent 已配置，且当前 platform 至少有一条 binding 指向该 agent；裸 `/new` 只在同一注册 scope 只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时出现 |
+| 同一个 Discord application 下其它工具注册的 slash command 消失 | agent-nexus 会用期望全集覆盖当前 application 在该 scope 下的命令；不要和其它工具共享同一个 bot application 的 slash command scope |
 | bot 回复自己或循环 | 检查 `platforms[].botUserId` 是否等于实际 bot user id；启动日志中不应出现 `discord_bot_user_id_mismatch` |
 
 ## 升级

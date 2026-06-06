@@ -1663,6 +1663,75 @@ describe('Engine', () => {
     expect(errorCalls.find(([, msg]) => msg === 'command_scope_mismatch')).toBeDefined();
   });
 
+  it('command event user 不在 platform auth allowlist 时 auth_denied 且不调用 agent command', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: {
+        allowlist: {
+          userIds: ['U-allowed'],
+          roleIds: [],
+          allowedGuildIds: [],
+          allowedChannelIds: [],
+          allowDM: true,
+          requireMentionOrSlash: true,
+        },
+      },
+      commandRegistry: makeActiveRegistry(),
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeCommandEvent('new', {
+      initiator: { userId: 'U-denied', displayName: 'denied', isBot: false },
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'C1',
+        initiatorUserId: 'U-denied',
+      },
+    }));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(codex.sendInput).not.toHaveBeenCalled();
+    expect(codex.handleCommand).not.toHaveBeenCalled();
+    expect(platform.send).not.toHaveBeenCalled();
+    expect(store.size).toBe(0);
+    const infoCalls = (mockLogger.info as ReturnType<typeof vi.fn>).mock.calls;
+    const authLog = infoCalls.find(([, msg]) => msg === 'auth_denied');
+    expect(authLog).toBeDefined();
+    expect(authLog![0]).toMatchObject({
+      platformName: 'discord-main',
+      channelId: 'C1',
+      userId: 'U-denied',
+      reason: 'user_not_allowed',
+    });
+  });
+
   it('两个同 type Engine 共享 SessionStore 时，同 channel/user 仍按 platformName 隔离', async () => {
     const platformMain = makePlatform();
     const platformSide = makePlatform();

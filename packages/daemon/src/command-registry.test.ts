@@ -275,6 +275,7 @@ describe('ActiveCommandRegistry', () => {
         error: { code: 'command_registration_failed', message: 'remote failed' },
       }),
       activatedAt: new Date(1),
+      retry: { maxAttempts: 1, backoffMs: 0 },
     });
 
     expect(result).toMatchObject({ status: 'failed' });
@@ -316,6 +317,7 @@ describe('ActiveCommandRegistry', () => {
         },
       }),
       activatedAt: new Date(0),
+      retry: { maxAttempts: 1, backoffMs: 0 },
     });
 
     const [logFields] = logger.error.mock.calls[0]!;
@@ -397,6 +399,7 @@ describe('ActiveCommandRegistry', () => {
       port: { applyCommandPlan: vi.fn(() => new Promise(() => {})) },
       activatedAt: new Date(1),
       timeoutMs: 1,
+      retry: { maxAttempts: 1, backoffMs: 0 },
     });
 
     expect(result).toMatchObject({

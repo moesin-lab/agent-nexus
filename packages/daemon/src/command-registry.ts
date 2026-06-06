@@ -532,7 +532,7 @@ export class ActiveCommandRegistry {
       };
     }
 
-    const retry = options.retry ?? { maxAttempts: 1, backoffMs: 0 };
+    const retry = options.retry ?? { maxAttempts: 3, backoffMs: 1000 };
     let result: CommandRegistrationResult = {
       status: 'failed',
       error: {

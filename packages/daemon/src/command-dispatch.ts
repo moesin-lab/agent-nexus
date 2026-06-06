@@ -5,6 +5,7 @@ import type {
 import {
   ActiveCommandRegistry,
   CommandRegistryError,
+  type CommandRegistryErrorCode,
 } from './command-registry.js';
 import {
   RouteError,
@@ -52,6 +53,24 @@ export type CommandDispatchDecision =
       localName: string;
       handlerKey: string;
     };
+
+export interface CommandDispatchFailure {
+  kind: 'failure';
+  code: CommandRegistryErrorCode;
+  message: string;
+  commandName?: string;
+  details: Record<string, unknown>;
+}
+
+export type CommandDispatchResult =
+  | CommandDispatchDecision
+  | CommandDispatchFailure;
+
+export function isCommandDispatchFailure(
+  result: CommandDispatchResult,
+): result is CommandDispatchFailure {
+  return 'kind' in result && result.kind === 'failure';
+}
 
 export interface CommandDispatchInput {
   event: NormalizedEvent;
@@ -205,7 +224,7 @@ export function resolveCommandDispatch(
 
 export function dispatchCommandEvent(
   input: DispatchCommandEventInput,
-): CommandDispatchDecision | undefined {
+): CommandDispatchResult {
   try {
     return resolveCommandDispatch(input);
   } catch (err) {
@@ -221,7 +240,13 @@ export function dispatchCommandEvent(
         },
         err.code,
       );
-      return undefined;
+      return {
+        kind: 'failure',
+        code: err.code,
+        message: err.message,
+        commandName: command?.name,
+        details: err.details,
+      };
     }
     throw err;
   }

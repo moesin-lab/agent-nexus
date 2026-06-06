@@ -18,8 +18,12 @@ import { serializeSessionKey, withPlatformName } from '@agent-nexus/protocol';
 import { checkPlatformAuth } from './auth.js';
 import {
   ActiveCommandRegistry,
+  type CommandRegistryErrorCode,
 } from './command-registry.js';
-import { dispatchCommandEvent } from './command-dispatch.js';
+import {
+  dispatchCommandEvent,
+  isCommandDispatchFailure,
+} from './command-dispatch.js';
 import type { CommandDispatchDecision } from './command-dispatch.js';
 import type { PlatformAuthConfig, ToolMessageMode } from './config.js';
 import type { IdempotencyStore } from './idempotency.js';
@@ -329,6 +333,19 @@ export class Engine {
     return { commandResponse: { text, ephemeral: true } };
   }
 
+  private commandFailureResponse(code: CommandRegistryErrorCode): EventHandlerResult {
+    if (code === 'command_active_map_missing') {
+      return this.commandResponse(COMMAND_NOT_READY_TEXT);
+    }
+    if (code === 'command_handler_missing') {
+      return this.commandResponse(COMMAND_NOT_READY_TEXT);
+    }
+    if (code === 'command_descriptor_invalid') {
+      return this.commandResponse(COMMAND_NOT_READY_TEXT);
+    }
+    return this.commandResponse(COMMAND_UNAVAILABLE_TEXT);
+  }
+
   private dispatchCommand(event: NormalizedEvent): Promise<void | EventHandlerResult> {
     if (!this.checkAuth(event)) {
       return Promise.resolve(this.commandResponse(COMMAND_NOT_ALLOWED_TEXT));
@@ -372,8 +389,8 @@ export class Engine {
       daemonHandlerKeys: this.daemonCommandHandlerKeys,
       logger: this.logger,
     });
-    if (!decision) {
-      return Promise.resolve(this.commandResponse(COMMAND_UNAVAILABLE_TEXT));
+    if (isCommandDispatchFailure(decision)) {
+      return Promise.resolve(this.commandFailureResponse(decision.code));
     }
     if (decision.ownerType === 'daemon') {
       return this.handleDaemonCommand(event, decision);

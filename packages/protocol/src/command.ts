@@ -148,5 +148,6 @@ export interface AgentCommandResult {
 export interface CommandPayload {
   name: string;
   args: Record<string, CommandArgValue>;
+  rawText?: string;
   registrationScope: CommandRegistrationScope;
 }

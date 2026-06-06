@@ -104,7 +104,7 @@ Discord command 注册本身又有 scope 与远端状态问题。当前逐条 cr
 
 ### 2026-05-25：daemon 不作为 agent harness
 
-ADR-0016 的 Option B 保持不变：daemon 仍拥有 command descriptor 收集、命名策略、registration plan、active reverse map 与 route resolution。
+本 ADR（0017）的 Option B 保持不变：daemon 仍拥有 command descriptor 收集、命名策略、registration plan、active reverse map 与 route resolution。
 
 补充边界：daemon 不拥有 agent command semantics。`owner.type = "agent"` 的 command 由对应 agent package 声明，daemon 只完成 auth、audit、registration scope、reverse-map lookup、binding route，并把 command envelope 转发给 agent runtime。daemon 不把 `/stop` 映射为统一 interrupt，不判断 `/steer` 是否 active turn，不校验 agent 私有 handler 是否存在，也不解释 `/model`、`/goal`、`/review`、`/compact` 等 agent command 参数语义。
 

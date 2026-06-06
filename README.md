@@ -124,8 +124,8 @@ pnpm typecheck     # 仅 tsc --build；不生成 npm bin bundle
         "enabled": true,
         "applyTimeoutMs": 30000,
         "retry": {
-          "maxAttempts": 1,
-          "backoffMs": 0
+          "maxAttempts": 3,
+          "backoffMs": 1000
         }
       },
       "aliases": {

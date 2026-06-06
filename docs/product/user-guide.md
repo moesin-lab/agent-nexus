@@ -98,8 +98,8 @@ npm install -g packages/cli/agent-nexus-cli-*.tgz
         "enabled": true,
         "applyTimeoutMs": 30000,
         "retry": {
-          "maxAttempts": 1,
-          "backoffMs": 0
+          "maxAttempts": 3,
+          "backoffMs": 1000
         }
       },
       "aliases": {
@@ -158,7 +158,7 @@ chmod 600 ~/.agent-nexus/config.json
 | `bindings[].match.discord.channelIds` | 是 | 该 binding 匹配的 Discord channel/thread id 列表 |
 | `daemon.commandRegistry.registration.enabled` | 否 | 默认 `true`；设为 `false` 时不 apply 远端 slash command 注册计划，本地 command dispatch 保持 fail-closed |
 | `daemon.commandRegistry.registration.applyTimeoutMs` | 否 | 默认 `30000`；注册计划 apply 超时毫秒数 |
-| `daemon.commandRegistry.registration.retry.maxAttempts` / `backoffMs` | 否 | 默认 `1` / `0`；启动时注册计划 apply 的重试策略 |
+| `daemon.commandRegistry.registration.retry.maxAttempts` / `backoffMs` | 否 | 默认 `3` / `1000`；启动时注册计划 apply 的重试策略 |
 | `daemon.commandRegistry.aliases.singleAgent.enabled` | 否 | 默认 `true`；控制裸 `/new` / `/stop` single-agent slash alias，不影响 `/codex-new` / `/codex-stop` / `/claudecode-new` / `/claudecode-stop` |
 | `daemon.commandRegistry.aliases.legacy.replyMode` | 否 | 默认 `true`；控制 legacy `/reply-mode` 是否注册，不影响 `/discord-reply-mode` |
 | `daemon.commandRegistry.textPrefixes.newSession` | 否 | 默认 `true`；控制 `@bot /new` 文本前缀，不影响 slash command |
@@ -307,6 +307,8 @@ agent-nexus
 ```
 
 `new` / `stop` 是 agent command，daemon 只完成鉴权、reverse-map、binding route 和 envelope 转发；重置、停止、排队或拒绝等具体语义由对应 agent package/runtime 决定。`/nexus-kill` 是 daemon command，会终止当前 RoutingSession，并清掉后续 resume 需要的 opaque agent conversation ref。
+
+当前除 `/discord-reply-mode` / `/reply-mode` 外，agent / daemon slash command 的成功 ack 会作为普通频道消息发送；如果 command registry 尚未激活、当前频道没有匹配 binding，或调用方未通过 allowlist，Discord 侧的 deferred reply 可能被清理而没有用户可见文本。排障时看 daemon 日志中的 `command_*` / `auth_denied` / `command_registration_*` 事件。把这些反馈统一做成 ephemeral reply 需要后续补 platform-native command response seam。
 
 切换触发模式：
 

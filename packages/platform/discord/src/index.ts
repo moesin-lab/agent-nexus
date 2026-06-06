@@ -518,7 +518,19 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
           void commandRegistration.apply(
             createDiscordCommandRegistrationPort(client.application?.commands, logger),
             commandRegistration.plan,
-          ).catch((err) => {
+          ).then((result) => {
+            if (result.status === 'failed') {
+              if (result.error.code === 'command_registration_disabled') return;
+              logger.error(
+                {
+                  generation: commandRegistration.plan.generation,
+                  errorCode: result.error.code,
+                  errorMessage: result.error.message,
+                },
+                'command_registration_apply_failed',
+              );
+            }
+          }).catch((err) => {
             logger.error(
               { err, generation: commandRegistration.plan.generation },
               'command_registration_apply_failed',

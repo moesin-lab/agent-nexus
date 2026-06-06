@@ -165,6 +165,52 @@ describe('command registry integration', () => {
     expect(set).toHaveBeenCalledWith([], undefined);
   });
 
+  it('ready 时 command registration apply 返回 failed 会明确记录未激活', async () => {
+    const logger = makeLogger();
+    const apply = vi.fn(async () => ({
+      status: 'failed' as const,
+      error: {
+        code: 'command_registration_failed' as const,
+        message: 'remote failed',
+      },
+    }));
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger,
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      commandRegistration: {
+        plan: {
+          scope: {
+            platformName: 'discord-main',
+            platformType: 'discord',
+            nativeScope: { kind: 'global' },
+          },
+          commands: [],
+          reverseMap: { entries: {} },
+          generation: 'g1',
+        },
+        apply,
+      },
+    });
+
+    await platform.start(vi.fn());
+    const ready = registeredHandler('ready');
+    ready();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generation: 'g1',
+        errorCode: 'command_registration_failed',
+        errorMessage: 'remote failed',
+      }),
+      'command_registration_apply_failed',
+    );
+  });
+
   it('把非 reply-mode chat input slash command 转成 normalized command event', async () => {
     const platform = createDiscordPlatform({
       token: 'test-token',

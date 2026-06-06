@@ -63,7 +63,9 @@ export type {
 
 export type {
   AgentEventHandler,
+  EventCommandResponse,
   AgentRuntime,
   EventHandler,
+  EventHandlerResult,
   PlatformAdapter,
 } from './interfaces.js';

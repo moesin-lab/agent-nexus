@@ -308,7 +308,7 @@ agent-nexus
 
 `new` / `stop` 是 agent command，daemon 只完成鉴权、reverse-map、binding route 和 envelope 转发；重置、停止、排队或拒绝等具体语义由对应 agent package/runtime 决定。`/nexus-kill` 是 daemon command，会终止当前 RoutingSession，并清掉后续 resume 需要的 opaque agent conversation ref。
 
-当前除 `/discord-reply-mode` / `/reply-mode` 外，agent / daemon slash command 的成功 ack 会作为普通频道消息发送；如果 command registry 尚未激活、当前频道没有匹配 binding，或调用方未通过 allowlist，Discord 侧的 deferred reply 可能被清理而没有用户可见文本。排障时看 daemon 日志中的 `command_*` / `auth_denied` / `command_registration_*` 事件。把这些反馈统一做成 ephemeral reply 需要后续补 platform-native command response seam。
+当前除 `/discord-reply-mode` / `/reply-mode` 外，agent / daemon slash command 的成功 ack 会作为普通频道消息发送；如果 command registry 尚未激活、当前频道没有匹配 binding，或调用方未通过 allowlist，Discord 会显示一条仅调用方可见的 ephemeral 反馈。排障时看 daemon 日志中的 `command_*` / `auth_denied` / `command_registration_*` 事件。
 
 切换触发模式：
 

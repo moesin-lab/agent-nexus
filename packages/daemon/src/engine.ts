@@ -7,6 +7,7 @@ import type {
   AgentSession,
   CommandDescriptor,
   CommandPayload,
+  EventHandlerResult,
   MessageRef,
   NormalizedEvent,
   PlatformAdapter,
@@ -72,6 +73,10 @@ export interface EngineDeps {
 
 const DEFAULT_STREAM_EDIT_THROTTLE_MS = 1500;
 const DEFAULT_TYPING_REFRESH_MS = 8000;
+const COMMAND_NOT_ALLOWED_TEXT = 'You are not allowed to use this command.';
+const COMMAND_NOT_READY_TEXT = 'Slash commands are not ready yet. Try again later.';
+const COMMAND_UNAVAILABLE_TEXT = 'This command is not available in this channel.';
+const COMMAND_FAILED_TEXT = 'Command failed.';
 
 interface ActiveAgentSession {
   agent: AgentRuntime;
@@ -141,7 +146,7 @@ export class Engine {
    * 互相覆盖 sessionStore 里的 agentSessionId（ordering corruption）。
    * 不同 key 之间互不阻塞。
    */
-  private readonly inflight = new Map<string, Promise<void>>();
+  private readonly inflight = new Map<string, Promise<unknown>>();
 
   /**
    * eventId 内存去重：防 adapter 重投同一事件导致 agent 被重复触发（重复消耗 turn 预算）。
@@ -207,7 +212,7 @@ export class Engine {
     this.idempotencyStore?.clearAll();
   }
 
-  private dispatch(event: NormalizedEvent): Promise<void> {
+  private dispatch(event: NormalizedEvent): Promise<void | EventHandlerResult> {
     if (event.type === 'command') {
       return this.dispatchCommand(event);
     }
@@ -320,8 +325,14 @@ export class Engine {
     return next;
   }
 
-  private dispatchCommand(event: NormalizedEvent): Promise<void> {
-    if (!this.checkAuth(event)) return Promise.resolve();
+  private commandResponse(text: string): EventHandlerResult {
+    return { commandResponse: { text, ephemeral: true } };
+  }
+
+  private dispatchCommand(event: NormalizedEvent): Promise<void | EventHandlerResult> {
+    if (!this.checkAuth(event)) {
+      return Promise.resolve(this.commandResponse(COMMAND_NOT_ALLOWED_TEXT));
+    }
     if (!this.commandRegistry || !this.routingTable) {
       this.logger.error(
         {
@@ -331,7 +342,7 @@ export class Engine {
         },
         'command_handler_missing',
       );
-      return Promise.resolve();
+      return Promise.resolve(this.commandResponse(COMMAND_NOT_READY_TEXT));
     }
     if (!this.commandScopeMatchesEngine(event.command?.registrationScope)) {
       this.logger.error(
@@ -344,7 +355,7 @@ export class Engine {
         },
         'command_scope_mismatch',
       );
-      return Promise.resolve();
+      return Promise.resolve(this.commandResponse(COMMAND_UNAVAILABLE_TEXT));
     }
 
     const decision = dispatchCommandEvent({
@@ -361,7 +372,9 @@ export class Engine {
       daemonHandlerKeys: this.daemonCommandHandlerKeys,
       logger: this.logger,
     });
-    if (!decision) return Promise.resolve();
+    if (!decision) {
+      return Promise.resolve(this.commandResponse(COMMAND_UNAVAILABLE_TEXT));
+    }
     if (decision.ownerType === 'daemon') {
       return this.handleDaemonCommand(event, decision);
     }
@@ -377,7 +390,7 @@ export class Engine {
         },
         'command_handler_missing',
       );
-      return Promise.resolve();
+      return Promise.resolve(this.commandResponse(COMMAND_NOT_READY_TEXT));
     }
     if (decision.dispatchMode === 'immediate') {
       return this.handleAgentCommand(event, decision);
@@ -420,7 +433,7 @@ export class Engine {
   private dispatchQueuedAgentCommand(
     event: NormalizedEvent,
     decision: Extract<CommandDispatchDecision, { ownerType: 'agent' }>,
-  ): Promise<void> {
+  ): Promise<void | EventHandlerResult> {
     const routedSessionKey = withPlatformName(
       event.sessionKey,
       this.platformName,
@@ -460,7 +473,7 @@ export class Engine {
   private async handleAgentCommand(
     event: NormalizedEvent,
     decision: Extract<CommandDispatchDecision, { ownerType: 'agent' }>,
-  ): Promise<void> {
+  ): Promise<void | EventHandlerResult> {
     const command = event.command;
     if (!command) {
       this.logger.error(
@@ -472,7 +485,7 @@ export class Engine {
         },
         'command_handler_missing',
       );
-      return;
+      return this.commandResponse(COMMAND_NOT_READY_TEXT);
     }
     const routedSessionKey = withPlatformName(
       event.sessionKey,
@@ -490,7 +503,7 @@ export class Engine {
         },
         'route_agent_missing',
       );
-      return;
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT);
     }
 
     const existing = this.agentSessions.get(sessionKeyStr);
@@ -528,9 +541,12 @@ export class Engine {
         },
         'agent_command_failed',
       );
-      return;
+      return this.commandResponse(COMMAND_FAILED_TEXT);
     }
     this.applyAgentCommandResult(routedSessionKey, sessionKeyStr, result);
+    if (result.status === 'rejected' || result.status === 'unsupported') {
+      return this.commandResponse(result.message ?? COMMAND_FAILED_TEXT);
+    }
     if (result.message) {
       await this.sendCommandAck(event, routedSessionKey, result.message);
     }
@@ -572,7 +588,7 @@ export class Engine {
   private async handleDaemonCommand(
     event: NormalizedEvent,
     decision: Extract<CommandDispatchDecision, { ownerType: 'daemon' }>,
-  ): Promise<void> {
+  ): Promise<void | EventHandlerResult> {
     if (decision.handlerKey !== 'kill') {
       this.logger.error(
         {
@@ -584,7 +600,7 @@ export class Engine {
         },
         'command_handler_missing',
       );
-      return;
+      return this.commandResponse(COMMAND_NOT_READY_TEXT);
     }
 
     const routedSessionKey = withPlatformName(

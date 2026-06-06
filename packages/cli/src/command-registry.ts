@@ -1,11 +1,11 @@
-import { claudeCodeCommandDescriptors } from '@agent-nexus/agent-claudecode';
-import { codexCommandDescriptors } from '@agent-nexus/agent-codex';
 import {
   discordReplyModeCommandDescriptor,
 } from '@agent-nexus/platform-discord';
 import {
   buildCommandRegistrationPlan,
+  daemonCommandDescriptors,
   DEFAULT_COMMAND_NAME_POLICY,
+  type EngineAgent,
 } from '@agent-nexus/daemon';
 import type {
   CapabilitySet,
@@ -22,6 +22,7 @@ import {
 
 export interface BuildCliCommandRegistrationPlanInput {
   config: AgentNexusConfig;
+  agents: readonly EngineAgent[];
   platformName: string;
   capabilities: CapabilitySet;
   generation: string;
@@ -39,20 +40,19 @@ function commandScopeForPlatform(
   };
 }
 
-function descriptorsForAgent(agent: AgentConfig): readonly CommandDescriptor[] {
-  if (agent.backend === 'codex') return codexCommandDescriptors;
-  return claudeCodeCommandDescriptors;
-}
-
 function enabledCommandDescriptors(
-  config: AgentNexusConfig,
+  agents: readonly EngineAgent[],
 ): CommandDescriptor[] {
-  const descriptors: CommandDescriptor[] = [discordReplyModeCommandDescriptor];
-  const seenAgentOwners = new Set<AgentConfig['backend']>();
-  for (const agent of config.agents) {
-    if (seenAgentOwners.has(agent.backend)) continue;
-    seenAgentOwners.add(agent.backend);
-    descriptors.push(...descriptorsForAgent(agent));
+  const descriptors: CommandDescriptor[] = [
+    ...daemonCommandDescriptors,
+    discordReplyModeCommandDescriptor,
+  ];
+  const seenAgentOwners = new Set<string>();
+  for (const agent of agents) {
+    const owner = agent.agentOwner ?? agent.agent.name();
+    if (seenAgentOwners.has(owner)) continue;
+    seenAgentOwners.add(owner);
+    descriptors.push(...(agent.commandDescriptors ?? []));
   }
   return descriptors;
 }
@@ -91,7 +91,7 @@ export function buildCliCommandRegistrationPlan(
   }
 
   return buildCommandRegistrationPlan({
-    descriptors: enabledCommandDescriptors(input.config),
+    descriptors: enabledCommandDescriptors(input.agents),
     scope: commandScopeForPlatform(platform),
     capabilities: input.capabilities,
     policy: DEFAULT_COMMAND_NAME_POLICY,

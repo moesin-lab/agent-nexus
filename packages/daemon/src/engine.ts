@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type {
   AgentEvent,
+  AgentCommandEnvelope,
+  AgentCommandResult,
   AgentRuntime,
   AgentSession,
+  CommandDescriptor,
   CommandPayload,
   MessageRef,
   NormalizedEvent,
@@ -16,6 +19,7 @@ import {
   ActiveCommandRegistry,
 } from './command-registry.js';
 import { dispatchCommandEvent } from './command-dispatch.js';
+import type { CommandDispatchDecision } from './command-dispatch.js';
 import type { PlatformAuthConfig, ToolMessageMode } from './config.js';
 import type { Logger } from './logger.js';
 import { RouteError, selectRoute, type RoutingEntry } from './router.js';
@@ -25,7 +29,7 @@ export interface EngineAgent {
   agent: AgentRuntime;
   agentName: string;
   agentOwner?: string;
-  commandHandlerKeys?: readonly string[];
+  commandDescriptors?: readonly CommandDescriptor[];
   defaultSessionConfig: Omit<
     SessionConfig,
     'resumeFromAgentSessionId' | 'sessionId'
@@ -297,14 +301,16 @@ export class Engine {
       agentTargets: [...this.agents.values()].map((agent) => ({
         agentName: agent.agentName,
         agentOwner: agent.agentOwner ?? agent.agent.name(),
-        handlerKeys: agent.commandHandlerKeys ?? [],
       })),
       platformHandlerKeys: this.platformCommandHandlerKeys,
       daemonHandlerKeys: this.daemonCommandHandlerKeys,
       logger: this.logger,
     });
     if (!decision) return Promise.resolve();
-    if (decision.ownerType !== 'agent') {
+    if (decision.ownerType === 'daemon') {
+      return this.handleDaemonCommand(event, decision);
+    }
+    if (decision.ownerType === 'platform') {
       this.logger.error(
         {
           traceId: event.traceId,
@@ -318,16 +324,10 @@ export class Engine {
       );
       return Promise.resolve();
     }
-    const commandEvent = this.eventForAgentCommand(
-      event,
-      event.command,
-      decision.handlerKey,
-    );
-    if (!commandEvent) return Promise.resolve();
-    return this.dispatchToAgent(commandEvent, {
-      bindingName: decision.bindingName,
-      agentName: decision.agentName,
-    });
+    if (decision.dispatchMode === 'immediate') {
+      return this.handleAgentCommand(event, decision);
+    }
+    return this.dispatchQueuedAgentCommand(event, decision);
   }
 
   private commandScopeMatchesEngine(
@@ -339,26 +339,215 @@ export class Engine {
     );
   }
 
-  private eventForAgentCommand(
+  private async sendCommandAck(
     event: NormalizedEvent,
-    command: CommandPayload | undefined,
-    handlerKey: string,
-  ): NormalizedEvent | undefined {
-    if (handlerKey === 'new') {
-      const { command: _command, ...messageEvent } = event;
-      void _command;
-      return { ...messageEvent, type: 'message', text: '/new' };
-    }
-    this.logger.error(
-      {
+    sessionKey: SessionKey,
+    text: string,
+  ): Promise<void> {
+    try {
+      await this.platform.send(sessionKey, {
+        text,
         traceId: event.traceId,
-        platformName: this.platformName,
-        commandName: command?.name,
-        handlerKey,
-      },
-      'command_handler_missing',
+        sessionKey,
+      });
+    } catch (err) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          sessionKey: serializeSessionKey(sessionKey),
+          err,
+        },
+        'platform_send_failed',
+      );
+    }
+  }
+
+  private dispatchQueuedAgentCommand(
+    event: NormalizedEvent,
+    decision: Extract<CommandDispatchDecision, { ownerType: 'agent' }>,
+  ): Promise<void> {
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
     );
-    return undefined;
+    const keyStr = serializeSessionKey(routedSessionKey);
+    const prev = this.inflight.get(keyStr) ?? Promise.resolve();
+    const next = prev
+      .catch(() => {})
+      .then(() => this.handleAgentCommand(event, decision));
+    this.inflight.set(keyStr, next);
+    void next.finally(() => {
+      if (this.inflight.get(keyStr) === next) {
+        this.inflight.delete(keyStr);
+      }
+    });
+    return next;
+  }
+
+  private clearTypingBestEffort(
+    sessionKey: SessionKey,
+    traceId: string,
+  ): void {
+    Promise.resolve()
+      .then(() => this.platform.clearTyping(sessionKey))
+      .catch((err) => {
+        this.logger.debug(
+          {
+            traceId,
+            sessionKey: serializeSessionKey(sessionKey),
+            err,
+          },
+          'platform_typing_failed',
+        );
+      });
+  }
+
+  private async handleAgentCommand(
+    event: NormalizedEvent,
+    decision: Extract<CommandDispatchDecision, { ownerType: 'agent' }>,
+  ): Promise<void> {
+    const command = event.command;
+    if (!command) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          commandName: decision.commandName,
+          canonicalId: decision.canonicalId,
+        },
+        'command_handler_missing',
+      );
+      return;
+    }
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    const sessionKeyStr = serializeSessionKey(routedSessionKey);
+    const agentSlot = this.agents.get(decision.agentName);
+    if (!agentSlot) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          agentName: decision.agentName,
+          bindingName: decision.bindingName,
+        },
+        'route_agent_missing',
+      );
+      return;
+    }
+
+    const existing = this.agentSessions.get(sessionKeyStr);
+    const active =
+      existing && existing.agentName === agentSlot.agentName
+        ? existing
+        : undefined;
+    const envelope: AgentCommandEnvelope = {
+      canonicalId: decision.canonicalId,
+      localName: decision.localName,
+      handlerKey: decision.handlerKey,
+      args: command.args ?? {},
+      rawText: event.text,
+      traceId: event.traceId,
+      routingSession: {
+        sessionKey: routedSessionKey,
+        platformName: this.platformName,
+        platformType: this.platformType,
+        channelId: routedSessionKey.channelId,
+        userId: routedSessionKey.initiatorUserId,
+      },
+    };
+
+    let result: AgentCommandResult;
+    try {
+      result = await agentSlot.agent.handleCommand(active?.session, envelope);
+    } catch (err) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          sessionKey: sessionKeyStr,
+          canonicalId: decision.canonicalId,
+          handlerKey: decision.handlerKey,
+          err,
+        },
+        'agent_command_failed',
+      );
+      return;
+    }
+    this.applyAgentCommandResult(routedSessionKey, sessionKeyStr, result);
+    if (result.message) {
+      await this.sendCommandAck(event, routedSessionKey, result.message);
+    }
+  }
+
+  private applyAgentCommandResult(
+    sessionKey: SessionKey,
+    sessionKeyStr: string,
+    result: AgentCommandResult,
+  ): void {
+    if (!Object.prototype.hasOwnProperty.call(result, 'updatedAgentSessionId')) {
+      return;
+    }
+    if (result.updatedAgentSessionId === null) {
+      this.sessionStore.delete(sessionKey);
+      const active = this.agentSessions.get(sessionKeyStr);
+      if (!active) return;
+      try {
+        if (!active.agent.isAlive(active.session)) {
+          this.agentSessions.delete(sessionKeyStr);
+        }
+      } catch (err) {
+        this.logger.warn(
+          { sessionKey: sessionKeyStr, err },
+          'agent_is_alive_failed',
+        );
+        this.agentSessions.delete(sessionKeyStr);
+      }
+      return;
+    }
+    if (typeof result.updatedAgentSessionId === 'string') {
+      this.sessionStore.set(sessionKey, {
+        agentSessionId: result.updatedAgentSessionId,
+        lastTurnAt: new Date(),
+      });
+    }
+  }
+
+  private async handleDaemonCommand(
+    event: NormalizedEvent,
+    decision: Extract<CommandDispatchDecision, { ownerType: 'daemon' }>,
+  ): Promise<void> {
+    if (decision.handlerKey !== 'kill') {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          commandName: decision.commandName,
+          canonicalId: decision.canonicalId,
+          handlerKey: decision.handlerKey,
+        },
+        'command_handler_missing',
+      );
+      return;
+    }
+
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    const sessionKeyStr = serializeSessionKey(routedSessionKey);
+    const hadActiveSession = this.stopActiveSession(sessionKeyStr, event.traceId);
+    const hadStoredSession = this.sessionStore.get(routedSessionKey) !== undefined;
+    this.sessionStore.delete(routedSessionKey);
+    this.clearTypingBestEffort(routedSessionKey, event.traceId);
+    await this.sendCommandAck(
+      event,
+      routedSessionKey,
+      hadActiveSession || hadStoredSession
+        ? '[session killed]'
+        : '[no active session]',
+    );
   }
 
   private route(event: NormalizedEvent):
@@ -890,6 +1079,13 @@ export class Engine {
           }
           if (e.type === 'turn_finished') {
             clearTyping();
+            if (
+              e.payload.reason === 'user_interrupt' &&
+              buf.length === 0 &&
+              toolMessages.size === 0
+            ) {
+              return;
+            }
             if (!errored) {
               await finalizeReply();
             }
@@ -1058,9 +1254,9 @@ export class Engine {
     return activeSession;
   }
 
-  private stopActiveSession(sessionKeyStr: string, traceId: string): void {
+  private stopActiveSession(sessionKeyStr: string, traceId: string): boolean {
     const active = this.agentSessions.get(sessionKeyStr);
-    if (!active) return;
+    if (!active) return false;
     this.agentSessions.delete(sessionKeyStr);
     try {
       active.agent.stopSession(active.session);
@@ -1070,5 +1266,6 @@ export class Engine {
         'agent_stop_session_failed',
       );
     }
+    return true;
   }
 }

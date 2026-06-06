@@ -301,7 +301,9 @@ function makeRoute(
     canonicalId: descriptor.canonicalId,
     aliasKind,
     owner: descriptor.owner,
+    localName: descriptor.localName,
     handlerKey: descriptor.handlerKey,
+    dispatchMode: descriptor.dispatchMode,
   };
 }
 

@@ -17,6 +17,8 @@ import { EventEmitter } from 'node:events';
 import { createInterface } from 'node:readline';
 import { execa } from 'execa';
 import type {
+  AgentCommandEnvelope,
+  AgentCommandResult,
   AgentCapabilitySet,
   AgentEvent,
   AgentEventHandler,
@@ -807,6 +809,26 @@ export function createClaudeCodeRuntime(
     });
   }
 
+  function requestInterrupt(session: AgentSession): boolean {
+    const state = getState(session);
+    const turn = state.currentTurn;
+    if (!state.proc || !turn || turn.terminalEmitted) {
+      logger.debug({ sessionKey: session.key }, 'claudecode_interrupt_no_inflight');
+      return false;
+    }
+    const signaled = state.proc.kill('SIGINT');
+    if (!signaled) return false;
+    turn.interruptRequested = true;
+    setTimeout(() => {
+      if (!state.currentTurn || state.currentTurn !== turn || turn.terminalEmitted) {
+        return;
+      }
+      finishTurn(state, 'user_interrupt', 'runtime-synthesized');
+      beginCleanupBarrier(session, state, state.proc!, turn.traceId);
+    }, syntheticDeliveryMs);
+    return true;
+  }
+
   const runtime: AgentRuntime = {
     name(): string {
       return 'claudecode';
@@ -861,22 +883,45 @@ export function createClaudeCodeRuntime(
     },
 
     interrupt(session: AgentSession): void {
-      const state = getState(session);
-      const turn = state.currentTurn;
-      if (!state.proc || !turn || turn.terminalEmitted) {
-        logger.debug({ sessionKey: session.key }, 'claudecode_interrupt_no_inflight');
-        return;
-      }
-      const signaled = state.proc.kill('SIGINT');
-      if (!signaled) return;
-      turn.interruptRequested = true;
-      setTimeout(() => {
-        if (!state.currentTurn || state.currentTurn !== turn || turn.terminalEmitted) {
-          return;
+      requestInterrupt(session);
+    },
+
+    async handleCommand(
+      session: AgentSession | undefined,
+      command: AgentCommandEnvelope,
+    ): Promise<AgentCommandResult> {
+      if (command.handlerKey === 'new') {
+        if (session) {
+          const state = getState(session);
+          state.stopped = true;
+          session.state = 'Stopped';
+          state.proc?.kill('SIGTERM');
+          clearCleanupTimers(state);
+          if (state.currentTurn && !state.currentTurn.terminalEmitted) {
+            finishTurn(state, 'user_interrupt', 'runtime-synthesized');
+            cleanupAfterRealResult(state);
+          }
+          emitEvent(state, 'session_stopped', command.traceId, {
+            reason: 'user_stop',
+          });
         }
-        finishTurn(state, 'user_interrupt', 'runtime-synthesized');
-        beginCleanupBarrier(session, state, state.proc!, turn.traceId);
-      }, syntheticDeliveryMs);
+        return {
+          status: 'handled',
+          message: '[new session ready]',
+          updatedAgentSessionId: null,
+        };
+      }
+
+      if (command.handlerKey === 'stop') {
+        if (!session) {
+          return { status: 'rejected', message: '[no active output]' };
+        }
+        return requestInterrupt(session)
+          ? { status: 'handled', message: '[stop requested]' }
+          : { status: 'rejected', message: '[no active output]' };
+      }
+
+      return { status: 'unsupported', message: '[unsupported command]' };
     },
 
     stopSession(session: AgentSession): void {

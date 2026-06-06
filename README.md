@@ -27,7 +27,7 @@ agent-nexus 让你在 IM（当前：Discord）里直接和本机 Claude Code 对
 **Discord + 本机 Claude Code CLI MVP** 已可端到端运行：
 
 - Discord `@mention` → daemon `Engine` → 长驻 Claude Code `stream-json` 子进程 → Discord 回复。
-- 同一 `(channelId, userId)` 复用活跃 session；`/new` 文本前缀或 agent slash command 可重置该会话。
+- 同一 `(channelId, userId)` 复用 daemon RoutingSession；`/new`、`/stop` 等 agent slash command 会路由给对应 agent package 处理，`/nexus-kill` 终止当前 Nexus route 并清除 resume 记录。
 - IM 侧可看到工具调用状态、流式文本、typing 指示与原地 edit。
 - 白名单外工具会在执行前被拒绝；机制见 [`docs/dev/spec/security/tool-boundary.md`](docs/dev/spec/security/tool-boundary.md)。`Bash` 不在默认允许集。
 
@@ -168,7 +168,7 @@ chmod 600 ~/.agent-nexus/config.json
 - `agents[].codex.workingDir`（`backend=codex` 时必填）：Codex 默认工作目录，传给 `--cd`
 - `daemon.commandRegistry.registration.enabled`（可选，默认 `true`）：设为 `false` 时不向 Discord apply slash command 注册计划，本地 command dispatch 保持 fail-closed
 - `daemon.commandRegistry.registration.applyTimeoutMs`（可选，默认 `30000`）：slash command 注册 apply 超时
-- `daemon.commandRegistry.aliases.singleAgent.enabled`（可选，默认 `true`）：控制裸 `/new` single-agent slash alias；稳定 `/codex-new` / `/claudecode-new` 不受影响
+- `daemon.commandRegistry.aliases.singleAgent.enabled`（可选，默认 `true`）：控制裸 `/new` / `/stop` single-agent slash alias；稳定 `/codex-new` / `/codex-stop` / `/claudecode-new` / `/claudecode-stop` 不受影响
 - `daemon.commandRegistry.aliases.legacy.replyMode`（可选，默认 `true`）：控制 legacy `/reply-mode` 是否注册；稳定 `/discord-reply-mode` 不受影响
 - `daemon.commandRegistry.textPrefixes.newSession`（可选，默认 `true`）：控制 `@bot /new` 文本前缀；不影响 slash command
 - `bindings[].platformName` / `agentName`（必填）：把命名 platform bot 绑定到命名 agent
@@ -212,8 +212,10 @@ agent-nexus
 - `@bot <prompt>`：发起一轮 CC 对话；同 `(channelId, userId)` 后续消息复用活跃 session
 - `@bot /new`：清当前 (channel, user) 的内存 session，回复 `[new session ready]`；可用 `daemon.commandRegistry.textPrefixes.newSession=false` 禁用
 - `@bot /new <prompt>`：清 + 立即用 `<prompt>` 起新一轮；同样受 `textPrefixes.newSession` 控制
-- `/claudecode-new` / `/codex-new`：按绑定到当前频道的 agent owner 清当前会话，回复 `[new session ready]`；只有对应 backend 已配置且在该 Discord 注册 scope 有 binding 时才会出现
-- `/new`：仅在同一个 Discord 注册 scope 里只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时作为便捷 alias 出现
+- `/claudecode-new` / `/codex-new`：按绑定到当前频道的 agent owner 路由给对应 agent package；只有对应 backend 已配置且在该 Discord 注册 scope 有 binding 时才会出现
+- `/claudecode-stop` / `/codex-stop`：按绑定到当前频道的 agent owner 路由给对应 agent package；具体停止语义由该 agent runtime 决定
+- `/new` / `/stop`：仅在同一个 Discord 注册 scope 里只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时作为便捷 alias 出现
+- `/nexus-kill`：daemon 直接终止当前 RoutingSession，并清除 resume 记录
 - `/discord-reply-mode mode:<mention|all>`：在 allowlist 内切换 Discord 消息触发模式
 - `/reply-mode mode:<mention|all>`：legacy alias；`daemon.commandRegistry.aliases.legacy.replyMode=true` 时注册
 

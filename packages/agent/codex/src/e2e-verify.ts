@@ -223,6 +223,7 @@ export class RuntimeRecorder {
       stopSession: (session) => base.stopSession(session),
       isAlive: (session) => base.isAlive(session),
       sendInput: (session, input) => base.sendInput(session, input),
+      handleCommand: (session, command) => base.handleCommand(session, command),
       interrupt: (session) => base.interrupt(session),
       onEvent: (session: AgentSession, handler: AgentEventHandler): void => {
         base.onEvent(session, (event) => {

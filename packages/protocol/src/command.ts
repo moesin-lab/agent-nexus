@@ -1,3 +1,5 @@
+import type { SessionKey } from './session-key.js';
+
 export type CommandCanonicalId = string;
 
 export type CommandOwner =
@@ -24,6 +26,8 @@ export type CommandRequiredCapability =
   | 'slash-command-registration'
   | 'ephemeral-response';
 
+export type AgentCommandDispatchMode = 'queued' | 'immediate';
+
 export interface CommandApplicability {
   platformTypes?: string[];
   requiredCapabilities: CommandRequiredCapability[];
@@ -42,6 +46,7 @@ export interface CommandDescriptor {
   summary: string;
   options: CommandOption[];
   handlerKey: string;
+  dispatchMode?: AgentCommandDispatchMode;
   applicability: CommandApplicability;
   legacyNames: LegacyCommandName[];
 }
@@ -63,7 +68,9 @@ export interface CommandRoute {
   canonicalId: CommandCanonicalId;
   aliasKind: CommandAliasKind;
   owner: CommandOwner;
+  localName: string;
   handlerKey: string;
+  dispatchMode?: AgentCommandDispatchMode;
 }
 
 export interface CommandReverseMap {
@@ -114,6 +121,28 @@ export interface ActiveCommandMap {
 }
 
 export type CommandArgValue = string | number | boolean | null;
+
+export interface AgentCommandEnvelope {
+  canonicalId: CommandCanonicalId;
+  localName: string;
+  handlerKey: string;
+  args: Record<string, CommandArgValue>;
+  rawText?: string;
+  traceId: string;
+  routingSession: {
+    sessionKey: SessionKey;
+    platformName: string;
+    platformType: string;
+    channelId: string;
+    userId: string;
+  };
+}
+
+export interface AgentCommandResult {
+  status: 'handled' | 'rejected' | 'unsupported';
+  message?: string;
+  updatedAgentSessionId?: string | null;
+}
 
 /** docs/dev/spec/message-protocol.md §CommandPayload */
 export interface CommandPayload {

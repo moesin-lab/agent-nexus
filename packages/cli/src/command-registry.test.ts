@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { CapabilitySet } from '@agent-nexus/protocol';
+import { codexCommandDescriptors } from '@agent-nexus/agent-codex';
+import { claudeCodeCommandDescriptors } from '@agent-nexus/agent-claudecode';
+import type { CapabilitySet, AgentRuntime } from '@agent-nexus/protocol';
+import type { EngineAgent } from '@agent-nexus/daemon';
 import { ConfigError, type AgentConfig, type AgentNexusConfig } from './config.js';
 import { buildCliCommandRegistrationPlan } from './command-registry.js';
 
@@ -100,10 +103,28 @@ function commandKeys(plan: ReturnType<typeof buildCliCommandRegistrationPlan>): 
   );
 }
 
+function engineAgentsFor(config: AgentNexusConfig): EngineAgent[] {
+  return config.agents.map((agent): EngineAgent => {
+    const commandDescriptors =
+      agent.backend === 'codex'
+        ? codexCommandDescriptors
+        : claudeCodeCommandDescriptors;
+    return {
+      agentName: agent.name,
+      agentOwner: agent.backend,
+      commandDescriptors,
+      agent: { name: () => agent.backend } as AgentRuntime,
+      defaultSessionConfig: { workingDir: '/tmp', timeoutMs: 300_000 },
+    };
+  });
+}
+
 describe('buildCliCommandRegistrationPlan', () => {
   it('builds a Discord plan with platform commands and a single-agent alias for the bound Codex owner', () => {
+    const config = baseConfig();
     const plan = buildCliCommandRegistrationPlan({
-      config: baseConfig(),
+      config,
+      agents: engineAgentsFor(config),
       platformName: 'discord-main',
       capabilities,
       generation: 'g1',
@@ -115,10 +136,13 @@ describe('buildCliCommandRegistrationPlan', () => {
       nativeScope: { kind: 'global' },
     });
     expect(commandKeys(plan)).toEqual([
+      'nexus-kill:daemon:kill:stable',
       'discord-reply-mode:platform:discord:reply-mode:stable',
       'codex-new:agent:codex:new:stable',
+      'codex-stop:agent:codex:stop:stable',
       'reply-mode:platform:discord:reply-mode:legacy',
       'new:agent:codex:new:single-agent-alias',
+      'stop:agent:codex:stop:single-agent-alias',
     ]);
     expect(plan.reverseMap.entries['new']).toMatchObject({
       canonicalId: 'agent:codex:new',
@@ -126,9 +150,8 @@ describe('buildCliCommandRegistrationPlan', () => {
     });
   });
 
-  it('removes the bare /new alias when one platform scope exposes multiple agent owners', () => {
-    const plan = buildCliCommandRegistrationPlan({
-      config: baseConfig({
+  it('removes bare agent aliases when one platform scope exposes multiple agent owners', () => {
+    const config = baseConfig({
         agents: [codexAgent, claudeAgent],
         bindings: [
           {
@@ -144,16 +167,22 @@ describe('buildCliCommandRegistrationPlan', () => {
             match: { discord: { channelIds: ['C2'] } },
           },
         ],
-      }),
+      });
+    const plan = buildCliCommandRegistrationPlan({
+      config,
+      agents: engineAgentsFor(config),
       platformName: 'discord-main',
       capabilities,
       generation: 'g2',
     });
 
     expect(commandKeys(plan)).toEqual([
+      'nexus-kill:daemon:kill:stable',
       'discord-reply-mode:platform:discord:reply-mode:stable',
       'codex-new:agent:codex:new:stable',
+      'codex-stop:agent:codex:stop:stable',
       'claudecode-new:agent:claudecode:new:stable',
+      'claudecode-stop:agent:claudecode:stop:stable',
       'reply-mode:platform:discord:reply-mode:legacy',
     ]);
     expect(plan.reverseMap.entries).not.toHaveProperty('new');
@@ -165,8 +194,7 @@ describe('buildCliCommandRegistrationPlan', () => {
       name: 'codex-prod',
     };
 
-    const plan = buildCliCommandRegistrationPlan({
-      config: baseConfig({
+    const config = baseConfig({
         agents: [codexAgent, secondCodexAgent],
         bindings: [
           {
@@ -182,7 +210,10 @@ describe('buildCliCommandRegistrationPlan', () => {
             match: { discord: { channelIds: ['C2'] } },
           },
         ],
-      }),
+      });
+    const plan = buildCliCommandRegistrationPlan({
+      config,
+      agents: engineAgentsFor(config),
       platformName: 'discord-main',
       capabilities,
       generation: 'g2b',
@@ -198,15 +229,17 @@ describe('buildCliCommandRegistrationPlan', () => {
   });
 
   it('uses testGuildId as the native registration scope', () => {
-    const plan = buildCliCommandRegistrationPlan({
-      config: baseConfig({
+    const config = baseConfig({
         platforms: [
           {
             ...baseConfig().platforms[0]!,
             testGuildId: 'GUILD123',
           },
         ],
-      }),
+      });
+    const plan = buildCliCommandRegistrationPlan({
+      config,
+      agents: engineAgentsFor(config),
       platformName: 'discord-main',
       capabilities,
       generation: 'g3',
@@ -218,9 +251,8 @@ describe('buildCliCommandRegistrationPlan', () => {
     });
   });
 
-  it('daemon config can disable the bare single-agent /new alias without removing stable names', () => {
-    const plan = buildCliCommandRegistrationPlan({
-      config: baseConfig({
+  it('daemon config can disable bare single-agent aliases without removing stable names', () => {
+    const config = baseConfig({
         daemon: {
           ...baseConfig().daemon,
           commandRegistry: {
@@ -231,23 +263,27 @@ describe('buildCliCommandRegistrationPlan', () => {
             },
           },
         },
-      }),
+      });
+    const plan = buildCliCommandRegistrationPlan({
+      config,
+      agents: engineAgentsFor(config),
       platformName: 'discord-main',
       capabilities,
       generation: 'g-alias-off',
     });
 
     expect(commandKeys(plan)).toEqual([
+      'nexus-kill:daemon:kill:stable',
       'discord-reply-mode:platform:discord:reply-mode:stable',
       'codex-new:agent:codex:new:stable',
+      'codex-stop:agent:codex:stop:stable',
       'reply-mode:platform:discord:reply-mode:legacy',
     ]);
     expect(plan.reverseMap.entries).not.toHaveProperty('new');
   });
 
   it('daemon config can disable legacy /reply-mode while keeping the stable replacement', () => {
-    const plan = buildCliCommandRegistrationPlan({
-      config: baseConfig({
+    const config = baseConfig({
         daemon: {
           ...baseConfig().daemon,
           commandRegistry: {
@@ -258,16 +294,22 @@ describe('buildCliCommandRegistrationPlan', () => {
             },
           },
         },
-      }),
+      });
+    const plan = buildCliCommandRegistrationPlan({
+      config,
+      agents: engineAgentsFor(config),
       platformName: 'discord-main',
       capabilities,
       generation: 'g-legacy-off',
     });
 
     expect(commandKeys(plan)).toEqual([
+      'nexus-kill:daemon:kill:stable',
       'discord-reply-mode:platform:discord:reply-mode:stable',
       'codex-new:agent:codex:new:stable',
+      'codex-stop:agent:codex:stop:stable',
       'new:agent:codex:new:single-agent-alias',
+      'stop:agent:codex:stop:single-agent-alias',
     ]);
     expect(plan.reverseMap.entries).not.toHaveProperty('reply-mode');
   });
@@ -276,6 +318,7 @@ describe('buildCliCommandRegistrationPlan', () => {
     expect(() =>
       buildCliCommandRegistrationPlan({
         config: baseConfig(),
+        agents: engineAgentsFor(baseConfig()),
         platformName: 'discord-missing',
         capabilities,
         generation: 'g4',

@@ -116,6 +116,8 @@ OutboundMessage {
 
 Embed / Component 的具体结构单独定义（见本文件附录）。
 
+Platform-native ack/defer/followup/update/rate-limit 编排归 adapter。daemon 不持有 Discord interaction token、Slack ack deadline 或 Telegram callback query 等平台私有状态；daemon 只通过 `OutboundMessage` 表达平台中立的回复意图。Adapter 必须在平台要求的时限内完成 native ack/defer，并把后续 `send` / `edit` / followup 映射到对应平台 API。
+
 ## CapabilitySet
 
 Adapter 声明自己支持的能力，daemon 据此降级或拒绝操作。
@@ -130,7 +132,7 @@ CapabilitySet {
     supportsEmbeds: bool
     supportsButtons: bool
     supportsThreads: bool              // 是否支持 thread 作为 channelId
-    supportsEphemeral: bool            // 仅发起者可见
+    supportsEphemeral: bool            // 仅发起者可见；native 实现与 ack/followup 编排归 adapter
     supportsAttachments: bool
     maxAttachmentsPerMessage: int
     supportsTypingIndicator: bool

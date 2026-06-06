@@ -50,7 +50,6 @@ const routeToCodex: RoutingEntry = {
 const codexTarget: CommandDispatchAgentTarget = {
   agentName: 'codex-dev',
   agentOwner: 'codex',
-  handlerKeys: ['new'],
 };
 
 function agentCommand(agentOwner: string, localName: string): CommandDescriptor {
@@ -268,7 +267,7 @@ describe('dispatchCommandEvent', () => {
       platformType: 'discord',
       routingTable: [routeToCodex],
       agentTargets: [
-        { agentName: 'codex-dev', agentOwner: 'claudecode', handlerKeys: ['new'] },
+        { agentName: 'codex-dev', agentOwner: 'claudecode' },
       ],
       platformHandlerKeys: [],
       daemonHandlerKeys: [],
@@ -313,7 +312,7 @@ describe('dispatchCommandEvent', () => {
     );
   });
 
-  it('fails closed when an agent handler key is missing', () => {
+  it('does not validate agent handler keys during dispatch', () => {
     const log = logger();
 
     const decision = dispatchCommandEvent({
@@ -322,21 +321,18 @@ describe('dispatchCommandEvent', () => {
       platformName: 'discord-main',
       platformType: 'discord',
       routingTable: [routeToCodex],
-      agentTargets: [{ ...codexTarget, handlerKeys: [] }],
+      agentTargets: [codexTarget],
       platformHandlerKeys: [],
       daemonHandlerKeys: [],
       logger: log,
     });
 
-    expect(decision).toBeUndefined();
-    expect(log.error).toHaveBeenCalledWith(
-      expect.objectContaining({
-        commandName: 'codex-new',
-        canonicalId: 'agent:codex:new',
-        handlerKey: 'new',
-      }),
-      'command_handler_missing',
-    );
+    expect(decision).toMatchObject({
+      ownerType: 'agent',
+      canonicalId: 'agent:codex:new',
+      handlerKey: 'new',
+    });
+    expect(log.error).not.toHaveBeenCalled();
   });
 
   it('fails closed when a platform handler key is missing', () => {

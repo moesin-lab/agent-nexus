@@ -1,0 +1,12 @@
+[
+  {
+    "localName": "new",
+    "summary": "Start a new Claude Code conversation",
+    "dispatchMode": "queued"
+  },
+  {
+    "localName": "stop",
+    "summary": "Stop the current Claude Code output",
+    "dispatchMode": "immediate"
+  }
+]

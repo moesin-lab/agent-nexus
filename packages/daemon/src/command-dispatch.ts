@@ -16,7 +16,6 @@ import {
 export interface CommandDispatchAgentTarget {
   agentName: string;
   agentOwner: string;
-  handlerKeys: readonly string[];
 }
 
 export interface CommandDispatchLogger {
@@ -29,7 +28,9 @@ export type CommandDispatchDecision =
       commandName: string;
       canonicalId: string;
       aliasKind: CommandRoute['aliasKind'];
+      localName: string;
       handlerKey: string;
+      dispatchMode: CommandRoute['dispatchMode'];
       bindingName: string;
       agentName: string;
       agentOwner: string;
@@ -39,6 +40,7 @@ export type CommandDispatchDecision =
       commandName: string;
       canonicalId: string;
       aliasKind: CommandRoute['aliasKind'];
+      localName: string;
       handlerKey: string;
       platformType: string;
     }
@@ -47,6 +49,7 @@ export type CommandDispatchDecision =
       commandName: string;
       canonicalId: string;
       aliasKind: CommandRoute['aliasKind'];
+      localName: string;
       handlerKey: string;
     };
 
@@ -143,21 +146,14 @@ export function resolveCommandDispatch(
         },
       );
     }
-    if (!hasHandler(target.handlerKeys, route.handlerKey)) {
-      throw dispatchError(
-        'command_handler_missing',
-        'agent command handler is missing',
-        route,
-        command.name,
-        { bindingName: routed.bindingName, agentName: routed.agentName },
-      );
-    }
     return {
       ownerType: 'agent',
       commandName: command.name,
       canonicalId: route.canonicalId,
       aliasKind: route.aliasKind,
+      localName: route.localName,
       handlerKey: route.handlerKey,
+      dispatchMode: route.dispatchMode,
       bindingName: routed.bindingName,
       agentName: routed.agentName,
       agentOwner: target.agentOwner,
@@ -182,6 +178,7 @@ export function resolveCommandDispatch(
       commandName: command.name,
       canonicalId: route.canonicalId,
       aliasKind: route.aliasKind,
+      localName: route.localName,
       handlerKey: route.handlerKey,
       platformType: route.owner.platformType,
     };
@@ -201,6 +198,7 @@ export function resolveCommandDispatch(
     commandName: command.name,
     canonicalId: route.canonicalId,
     aliasKind: route.aliasKind,
+    localName: route.localName,
     handlerKey: route.handlerKey,
   };
 }

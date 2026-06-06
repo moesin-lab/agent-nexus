@@ -24,7 +24,7 @@ contracts:
 
 ## 归属
 
-`CommandDescriptor` 是 platform-neutral 契约，住在 `@agent-nexus/protocol`。daemon 拥有 descriptor 收集、name policy 校验、registration plan 构建、active reverse map 和 dispatch 语义。
+`CommandDescriptor` 是 platform-neutral 契约，住在 `@agent-nexus/protocol`。daemon 拥有 descriptor 收集、name policy 校验、registration plan 构建、active reverse map 和 route resolution。daemon 不拥有 agent command 的业务语义；agent command 只由 daemon 路由并包装成 envelope 转发。
 
 事实归属：
 
@@ -32,12 +32,14 @@ contracts:
 |---|---|
 | descriptor 字段形状、command option 基础类型 | `@agent-nexus/protocol` + 本 spec |
 | command owner taxonomy、name policy、alias、registration plan、reverse map、激活语义 | `@agent-nexus/daemon` + 本 spec |
-| agent command descriptor 内容 | 对应 `@agent-nexus/agent-<name>` package |
+| agent command descriptor 内容 | 对应 `@agent-nexus/agent-<name>` package 内随包构建的声明配置文件 |
+| agent command 参数语义、执行行为、结果文案 | 对应 `@agent-nexus/agent-<name>` package |
 | platform command descriptor 内容、native payload 映射 | 对应 `@agent-nexus/platform-<name>` package |
+| platform-native ack/defer/followup/update/rate-limit 编排 | 对应 `@agent-nexus/platform-<name>` package |
 | daemon command descriptor 内容 | `@agent-nexus/daemon` |
 | 启用哪些 platform / agent instance 与 binding | `config-routing.md` + CLI 组装 |
 
-CLI 只收集已启用 package 暴露的 descriptor 并把它们交给 daemon planner；CLI 不解释 command name policy、不生成 alias、不解析 platform native payload。
+agent package 自己读取随包构建的声明配置文件，并在创建 agent registry 时通过 daemon 侧 `EngineAgent.commandDescriptors` 传给组装层。CLI 只收集已启用 agent entry 暴露的 descriptor 并把它们交给 daemon planner；CLI 不直接读取 agent package 内的声明配置文件，不解释 command name policy、不生成 alias、不解析 platform native payload。
 
 ## Owner Taxonomy
 
@@ -65,6 +67,7 @@ CommandDescriptor {
     summary: string
     options: CommandOption[]
     handlerKey: string
+    dispatchMode?: "queued" | "immediate"
     applicability: CommandApplicability
     legacyNames: LegacyCommandName[]
 }
@@ -102,7 +105,8 @@ LegacyCommandName {
 | `localName` | owner 内的命令名，例 `new` / `reply-mode` / `status` |
 | `summary` | 平台 command description 的平台中立描述；平台映射时可截断或拒绝过长值 |
 | `options` | 平台中立参数 schema；platform adapter 映射到 native option |
-| `handlerKey` | owner 内 handler 查找 key；不得由平台 command name 推导 |
+| `handlerKey` | owner 内 handler 查找 key；不得由平台 command name 推导；对 agent owner 来说是 opaque metadata，daemon 不校验其存在性 |
+| `dispatchMode` | agent command 的调度策略；`queued` 进入 RoutingSession FIFO，`immediate` 绕过 FIFO 立即转发；缺省等价 `queued` |
 | `applicability` | 哪些 platform registration scope 可以暴露该命令 |
 | `legacyNames` | 已发布裸名兼容 alias；不得用于新增短名偏好 |
 
@@ -114,6 +118,8 @@ LegacyCommandName {
 - `localName`、option name、choice value 必须能映射到目标 platform 的命名限制；不能映射时该 scope 的 plan 构建失败。
 - `summary` 必须非空；平台 description 限制由 platform adapter 在 native payload 映射阶段校验。
 - `handlerKey` 只在对应 owner 内有意义，并且在同一 owner 内必须唯一；daemon 不跨 owner 解释 handler key。
+- agent command 的 `handlerKey` 不得被 daemon 映射为 daemon/runtime intent；daemon 只把它随 command route/envelope 交给 agent runtime。
+- `dispatchMode` 只对 agent command 生效，由 agent package 声明；daemon 不按 `localName` 猜测某个命令应排队还是立即执行。
 
 ## Applicability
 
@@ -176,9 +182,11 @@ stable name 始终注册，且由 owner type 决定：
 | Canonical id | Stable platform name |
 |---|---|
 | `agent:codex:new` | `codex-new` |
+| `agent:codex:stop` | `codex-stop` |
 | `agent:claudecode:new` | `claudecode-new` |
+| `agent:claudecode:stop` | `claudecode-stop` |
 | `platform:discord:reply-mode` | `discord-reply-mode` |
-| `daemon:status` | `nexus-status` |
+| `daemon:kill` | `nexus-kill` |
 
 生成规则：
 
@@ -281,7 +289,9 @@ CommandRoute {
     canonicalId: CommandCanonicalId
     aliasKind: "stable" | "single-agent-alias" | "legacy"
     owner: CommandOwner
+    localName: string
     handlerKey: string
+    dispatchMode?: "queued" | "immediate"
 }
 
 ActiveCommandMap {
@@ -361,7 +371,7 @@ Owner dispatch：
 
 | Owner type | Dispatch target |
 |---|---|
-| `agent` | 先按 `config-routing.md` 选出 binding / agentName，再验证该 agent instance 的 owner 与 command owner 匹配 |
+| `agent` | 先按 `config-routing.md` 选出 binding / agentName，再验证该 agent instance 的 owner 与 command owner 匹配，然后构造 agent command envelope 交给 agent runtime |
 | `platform` | 对应 platform adapter 的 platform command handler |
 | `daemon` | daemon command handler |
 
@@ -372,22 +382,38 @@ Owner dispatch：
 - event scope 与 active map scope 不匹配
 - agent command 未命中 binding 或多重命中 binding
 - route 命中的 agent owner 与 `agent` command owner 不匹配
-- handlerKey 在对应 owner 中不存在
+- platform / daemon handlerKey 在对应 owner 中不存在
+
+agent handlerKey 不在 daemon dispatch 层做存在性校验；agent package 声明文件是展示与转发的 source of truth，daemon 只做 owner / route 边界判断。
+
+Agent command envelope 语义见 [`agent-runtime.md`](agent-runtime.md#agent-command-envelope)。daemon 必须原样转发 `localName`、`handlerKey`、platform-neutral args、trace/session routing context；不得把 `/stop`、`/new`、`/steer`、`/model`、`/review`、`/compact` 等 agent command 映射为 daemon 自己的 intent 或私有 handler。
 
 daemon 不得从 `codex-new` / `discord-reply-mode` 这类字符串中拆 owner 或 localName。
 
 Agent command 的远端可见性是 registration scope 粒度，binding 是 channel 粒度。多 agent scope 中，用户可能看见某个 stable agent command 但在当前 channel route 到另一类 agent；这种情况必须以 `command_agent_owner_mismatch` fail-closed。
 
-## `/new` First Slice
+## Agent Session Commands
 
 首批 agent commands：
 
 | Descriptor | Stable name | Bare alias 条件 |
 |---|---|---|
 | `agent:codex:new` | `codex-new` | single-agent scope |
+| `agent:codex:stop` | `codex-stop` | single-agent scope |
 | `agent:claudecode:new` | `claudecode-new` | single-agent scope |
+| `agent:claudecode:stop` | `claudecode-stop` | single-agent scope |
 
-`new` 的语义是重置当前 route 命中的 agent conversation；如果用户同时提供 prompt，则重置后立即用该 prompt 开启新一轮。该语义由 agent command descriptor 声明，daemon handler 负责复用现有 session store / agent session lifecycle。
+`new` 的注册展示来自对应 agent package 内随包构建的声明配置文件，并声明 `dispatchMode: "queued"`。daemon 只把 `new` command envelope 按 RoutingSession FIFO 路由到当前 route 命中的 agent owner；是否重置 conversation、如何处理随 command 提供的 prompt、是否更新 opaque agent conversation ref，都由 agent package 决定。
+
+`stop` 的注册展示来自对应 agent package 内随包构建的声明配置文件（例如 `commands.config.json`），并声明 `dispatchMode: "immediate"`；不是 daemon 或 CLI 硬编码。daemon 只按 active reverse map 和 routing table 定位当前 channel 命中的 agent owner；不检查 backend 私有 handler，不判断是否存在 active turn，也不把 `stop` 映射到 `interrupt(session)`。`stop` 的具体执行、幂等结果和用户可见文案由 agent package/runtime 负责。
+
+首批 daemon command：
+
+| Descriptor | Stable name |
+|---|---|
+| `daemon:kill` | `nexus-kill` |
+
+`kill` 的语义是 daemon 直接终止当前 `(platformName, channelId, userId)` 的 RoutingSession，并清除 daemon 持久化的 opaque agent conversation ref。它不经过 agent command route；若存在活跃 runtime handle，daemon 只调用通用 cleanup/close 入口释放资源，不解释 agent 内部 conversation 语义。
 
 不得把 Claude Code 或 Codex 自身 TTY slash commands 直接透传为首批 agent-nexus slash command。后端 CLI 私有命令若要暴露，必须先补对应 backend contract 和安全边界。
 
@@ -444,7 +470,7 @@ CommandDescriptor {
 | `command_active_map_missing` | 收到 command event 但 scope 没有 active map |
 | `command_reverse_map_miss` | active map 中没有该 platform-visible name |
 | `command_agent_owner_mismatch` | route agent owner 与 agent command owner 不一致 |
-| `command_handler_missing` | owner 内找不到 handlerKey |
+| `command_handler_missing` | platform / daemon owner 内找不到 handlerKey；agent handlerKey 不在 daemon 层校验 |
 
 日志不得记录 raw platform payload、未脱敏 option 值或 secret。需要诊断时记录 `traceId`、`platformName`、`scope`、`commandName`、`canonicalId`、`aliasKind`、`generation`。
 
@@ -461,6 +487,9 @@ P3-P5 必须覆盖：
 - remote registration failure 或 partial apply 保留旧 active map。
 - stale generation result 不激活 active map。
 - active map missing、reverse map miss、agent owner mismatch fail-closed。
+- agent command descriptor 来自 agent package 内声明配置文件，并进入对应 package 构建产物。
+- `/stop` 在 single-agent scope 作为 agent alias 路由到当前 backend，并以 agent command envelope 转发；daemon 不校验 agent 私有 handler、不映射为 runtime interrupt。
+- `/nexus-kill` 作为 daemon command 终止当前 RoutingSession 并清除 opaque agent conversation ref。
 - `/discord-reply-mode` 与 `/reply-mode` 都路由到 `platform:discord:reply-mode`。
 - Claude Code / Codex descriptors 不 import platform package 或 platform naming utility。
 
@@ -470,6 +499,7 @@ P3-P5 必须覆盖：
 - 在 agent package 中 import Discord SDK、platform package 或 platform naming policy。
 - 在 platform package 中定义 agent command name policy。
 - 让 CLI 生成 alias 或解释 handlerKey。
+- 让 daemon 解释 agent command 的业务语义，或把 agent command 映射为 daemon runtime intent。
 - 远端注册失败后切换本地 active map。
 - 使用增量 upsert 导致已移除 alias 在远端残留。
 - 新增 bare command name 作为用户友好短名。

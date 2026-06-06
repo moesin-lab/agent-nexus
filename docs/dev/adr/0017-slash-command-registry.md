@@ -10,13 +10,13 @@ related:
   - dev/spec/platform-adapter
   - dev/spec/agent-runtime
 adr_status: Proposed
-adr_number: "0016"
+adr_number: "0017"
 decision_date: 2026-05-24
 supersedes: null
 superseded_by: null
 ---
 
-# ADR-0016：Slash command registry 统一声明与注册
+# ADR-0017：Slash command registry 统一声明与注册
 
 - **状态**：Proposed
 - **日期**：2026-05-24

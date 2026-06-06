@@ -26,6 +26,8 @@ jobs:
 
       - run: node scripts/validate-pr-metadata.mjs --self-test
 
+      - run: node scripts/posttool-pr-check-guard.mjs --self-test
+
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm build

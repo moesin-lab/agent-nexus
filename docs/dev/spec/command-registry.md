@@ -5,7 +5,7 @@ status: active
 summary: Slash command 的三类 owner、descriptor、命名策略、注册计划、reverse map 与激活语义
 tags: [spec, dispatch, platform-adapter, agent-runtime, message-protocol]
 related:
-  - dev/adr/0016-slash-command-registry
+  - dev/adr/0017-slash-command-registry
   - dev/spec/message-protocol
   - dev/spec/platform-adapter
   - dev/spec/agent-runtime

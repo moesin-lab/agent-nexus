@@ -9,7 +9,11 @@ import {
   runCompatibilityProbe as runCodexCompatibilityProbe,
 } from '@agent-nexus/agent-codex';
 import type { Logger } from '@agent-nexus/daemon';
-import type { AgentRuntime, SessionConfig } from '@agent-nexus/protocol';
+import type {
+  AgentRuntime,
+  CommandDescriptor,
+  SessionConfig,
+} from '@agent-nexus/protocol';
 import type { EngineAgent } from '@agent-nexus/daemon';
 import type { AgentConfig, AgentNexusConfig } from './config.js';
 
@@ -86,13 +90,14 @@ export async function createAgentRegistry(
   const registry: EngineAgent[] = [];
   for (const agentConfig of config.agents) {
     const selected = await createAgentRuntime(agentConfig, logger);
+    const commandDescriptors: readonly CommandDescriptor[] =
+      agentConfig.backend === 'codex'
+        ? codexCommandDescriptors
+        : claudeCodeCommandDescriptors;
     registry.push({
       agentName: agentConfig.name,
       agentOwner: agentConfig.backend,
-      commandHandlerKeys:
-        agentConfig.backend === 'codex'
-          ? codexCommandDescriptors.map((descriptor) => descriptor.handlerKey)
-          : claudeCodeCommandDescriptors.map((descriptor) => descriptor.handlerKey),
+      commandDescriptors,
       agent: selected.agent,
       defaultSessionConfig: selected.defaultSessionConfig,
     });

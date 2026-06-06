@@ -20,6 +20,9 @@ export type {
 
 export type {
   ActiveCommandMap,
+  AgentCommandEnvelope,
+  AgentCommandResult,
+  AgentCommandDispatchMode,
   CommandAliasKind,
   CommandApplicability,
   CommandArgValue,

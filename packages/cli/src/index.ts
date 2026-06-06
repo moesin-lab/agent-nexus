@@ -7,6 +7,7 @@ import {
   InMemoryIdempotencyStore,
   SessionStore,
   createLogger,
+  daemonCommandDescriptors,
   type RoutingEntry,
 } from '@agent-nexus/daemon';
 import {
@@ -132,6 +133,7 @@ async function main(): Promise<void> {
     }
     const commandPlan = buildCliCommandRegistrationPlan({
       config,
+      agents,
       platformName: platformConfig.name,
       capabilities: DISCORD_CAPABILITIES,
       generation: `${platformConfig.name}:${Date.now()}`,
@@ -166,6 +168,9 @@ async function main(): Promise<void> {
         platformType: platformConfig.type,
         platformAuth: platformConfig.auth,
         commandRegistry,
+        daemonCommandHandlerKeys: daemonCommandDescriptors.map(
+          (descriptor) => descriptor.handlerKey,
+        ),
         agents,
         routingTable,
         idempotencyStore,

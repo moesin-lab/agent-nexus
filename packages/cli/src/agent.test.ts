@@ -176,13 +176,11 @@ describe('createAgentRegistry', () => {
     expect(registry[0]).toMatchObject({
       agentName: 'codex-dev',
       agentOwner: 'codex',
-      commandHandlerKeys: ['new'],
       agent: codexRuntime,
     });
     expect(registry[1]).toMatchObject({
       agentName: 'claude-prod',
       agentOwner: 'claudecode',
-      commandHandlerKeys: ['new'],
       agent: claudeRuntime,
     });
   });

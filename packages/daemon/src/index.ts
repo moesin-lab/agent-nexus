@@ -24,6 +24,7 @@ export {
   type CommandNamePolicy,
   type CommandRegistryErrorCode,
 } from './command-registry.js';
+export { daemonCommandDescriptors } from './command-descriptors.js';
 export {
   dispatchCommandEvent,
   resolveCommandDispatch,

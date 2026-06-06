@@ -89,7 +89,7 @@ DaemonCommandRegistryConfig {
 | `daemon.commandRegistry.registration.enabled` | `false` 时不向远端 apply registration plan；由于没有持久化 active map，command dispatch 保持 fail-closed |
 | `daemon.commandRegistry.registration.applyTimeoutMs` | daemon 调用 platform `CommandRegistrationPort.applyCommandPlan` 的超时上限；timeout 等价 registration failure，保留旧 active map |
 | `daemon.commandRegistry.registration.retry.maxAttempts` / `backoffMs` | daemon 启动时 apply plan 的重试策略；只有 generation 匹配的成功结果能激活 active map |
-| `daemon.commandRegistry.aliases.singleAgent.enabled` | 控制 single-agent bare alias（如 `/new`）是否进入 plan；stable `/codex-new` / `/claudecode-new` 不受影响 |
+| `daemon.commandRegistry.aliases.singleAgent.enabled` | 控制 single-agent bare alias（如 `/new` / `/stop`）是否进入 plan；stable `/codex-new` / `/codex-stop` / `/claudecode-new` / `/claudecode-stop` 不受影响 |
 | `daemon.commandRegistry.aliases.legacy.replyMode` | 控制 legacy `/reply-mode` 是否进入 plan；`reply-mode` 仍保留为 historical reserved bare name |
 | `daemon.commandRegistry.textPrefixes.newSession` | 控制文本前缀 `@bot /new` / `@bot /new <prompt>`；不影响 slash command stable names |
 

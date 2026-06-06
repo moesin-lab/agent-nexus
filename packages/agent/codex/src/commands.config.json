@@ -1,0 +1,12 @@
+[
+  {
+    "localName": "new",
+    "summary": "Start a new Codex conversation",
+    "dispatchMode": "queued"
+  },
+  {
+    "localName": "stop",
+    "summary": "Stop the current Codex output",
+    "dispatchMode": "immediate"
+  }
+]

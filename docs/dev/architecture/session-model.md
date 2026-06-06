@@ -14,17 +14,28 @@ related:
 
 # 会话模型（Session Model）
 
-"会话"（session）是本项目的核心抽象。几乎所有横切能力（幂等、限流、预算、日志串联、错误恢复）都以 session 为单位组织。
+"会话"（session）在本项目里至少有三层含义。本文讨论的是 daemon 拥有的 **RoutingSession**：某个 IM 入口如何绑定到 agent owner、opaque agent conversation ref、队列与审计上下文。它不是 Codex / Claude Code 的原生 conversation，也不是 agent runtime 的子进程句柄。
+
+术语边界：
+
+| 名称 | Owner | 含义 |
+|---|---|---|
+| `TransportSession` | platform adapter | 平台原生会话/interaction/reply context，例如 Discord channel/thread/interaction token |
+| `RoutingSession` | daemon | IM 入口到 agent owner 与 opaque agent conversation ref 的路由状态 |
+| `AgentSession` | agent runtime | 当前运行的 agent 后端进程/SDK 句柄 |
+| `AgentConversation` | agent package | agent 原生对话上下文，例如 Codex thread、Claude session |
+
+几乎所有横切能力（幂等、限流、预算、日志串联、错误恢复）都以 RoutingSession 为组织单位；agent conversation 的内部生命周期由 agent package 自己解释。
 
 ## 标识：SessionKey vs sessionId
 
-会话有两层标识：**路由 key**（SessionKey）和**持久化主键**（sessionId）。字段契约与存储约束分别见 [`message-protocol.md`](../spec/message-protocol.md#sessionkey) 与 [`persistence.md`](../spec/infra/persistence.md#sessions)；本节只说明二者如何协作。
+RoutingSession 有两层标识：**路由 key**（SessionKey）和**持久化主键**（sessionId）。字段契约与存储约束分别见 [`message-protocol.md`](../spec/message-protocol.md#sessionkey) 与 [`persistence.md`](../spec/infra/persistence.md#sessions)；本节只说明二者如何协作。
 
 ### SessionKey（路由层）
 
 字段定义见 [`../spec/message-protocol.md` §SessionKey](../spec/message-protocol.md#sessionkey)。本节只讲它在架构里的角色：
 
-- **入站事件路由**：给定入站 `NormalizedEvent`，由 SessionKey 定位**当前活跃**的 session 实例
+- **入站事件路由**：给定入站 `NormalizedEvent`，由 SessionKey 定位**当前活跃**的 RoutingSession 实例
 - **串行队列键**：同 SessionKey 的事件串行；跨 SessionKey 并发
 - **幂等键的一部分**：见 [`../spec/infra/idempotency.md`](../spec/infra/idempotency.md)
 - **非唯一性**：跨时间允许同 key 多 generation 共存——入站路由必须先按 SessionKey 找当前活跃实例（字段定义与跨时间唯一性陈述见 [`../spec/message-protocol.md` §SessionKey](../spec/message-protocol.md#sessionkey)）
@@ -50,7 +61,8 @@ SessionKey 维度上的查询索引与唯一约束见 [`persistence.md`](../spec
 
 - **不包含 messageId**：messageId 是消息级概念，不是会话级
 - **不包含 timestamp**：SessionKey 本身跨时间持续（多个 generation 共享同一 key）
-- **不包含 agent 后端名**：一个 session 只绑定一个 agent，后端在 session 元数据里记录
+- **不包含 agent 后端名**：一个 RoutingSession 只绑定一个 agent owner，后端在 session 元数据里记录
+- **不包含 agent conversation id**：Codex thread id / Claude session id 作为 opaque agent conversation ref 存在 RoutingSession 元数据里，不进入 SessionKey
 
 ## 生命周期
 
@@ -124,6 +136,8 @@ SessionKey 维度上的查询索引与唯一约束见 [`persistence.md`](../spec
 - `/end` → Active/Idle/Errored/Interrupted → Archived
 - `/resume` → Errored/Interrupted → Active（会尝试 spawn 新 agent）
 - 用户在新 channel 发消息 → 创建新 SessionKey 的 Created
+
+Agent-owned `/new`、`/stop`、`/steer` 等 command 不直接改写本状态机；daemon 只把它们按 command registry 路由给 agent package。若 agent command 结果要求更新 opaque agent conversation ref，daemon 只保存该 opaque ref，不解释 agent conversation 语义。Daemon-owned `/nexus-kill` 是 RoutingSession 级控制：清除当前 route 与 opaque ref，并释放当前 runtime handle。
 
 ## 幂等
 

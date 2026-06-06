@@ -1728,6 +1728,153 @@ describe('Engine', () => {
     expect(errorCalls.find(([, msg]) => msg === 'command_agent_binding_miss')).toBeDefined();
   });
 
+  it('command event 未命中 active reverse map 时返回用户可见拒绝反馈', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('discord-reply-mode'));
+
+    expect(codex.handleCommand).not.toHaveBeenCalled();
+    expect(platform.send).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'This command is not available in this channel.',
+        ephemeral: true,
+      },
+    });
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    expect(errorCalls.find(([, msg]) => msg === 'command_reverse_map_miss')).toBeDefined();
+  });
+
+  it('daemon command handler 缺失时返回用户可见未就绪反馈', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('nexus-kill'));
+
+    expect(codex.handleCommand).not.toHaveBeenCalled();
+    expect(platform.send).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'Slash commands are not ready yet. Try again later.',
+        ephemeral: true,
+      },
+    });
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    expect(errorCalls.find(([, msg]) => msg === 'command_handler_missing')).toBeDefined();
+  });
+
+  it('agent command handler 抛错时返回用户可见失败反馈', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    codex.handleCommand.mockRejectedValueOnce(new Error('boom'));
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('new'));
+
+    expect(platform.send).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'Command failed.',
+        ephemeral: true,
+      },
+    });
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    expect(errorCalls.find(([, msg]) => msg === 'agent_command_failed')).toBeDefined();
+  });
+
   it('command event user 不在 platform auth allowlist 时 auth_denied 且不调用 agent command', async () => {
     const platform = makePlatform({ supportsSlashCommands: true });
     const codex = makeAgent();

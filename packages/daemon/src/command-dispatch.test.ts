@@ -246,7 +246,11 @@ describe('dispatchCommandEvent', () => {
       logger: log,
     });
 
-    expect(decision).toBeUndefined();
+    expect(decision).toMatchObject({
+      kind: 'failure',
+      code: 'command_agent_binding_miss',
+      commandName: 'codex-new',
+    });
     expect(log.error).toHaveBeenCalledWith(
       expect.objectContaining({
         commandName: 'codex-new',
@@ -274,7 +278,11 @@ describe('dispatchCommandEvent', () => {
       logger: log,
     });
 
-    expect(decision).toBeUndefined();
+    expect(decision).toMatchObject({
+      kind: 'failure',
+      code: 'command_agent_owner_mismatch',
+      commandName: 'codex-new',
+    });
     expect(log.error).toHaveBeenCalledWith(
       expect.objectContaining({
         traceId: 't-1',
@@ -301,7 +309,11 @@ describe('dispatchCommandEvent', () => {
       logger: log,
     });
 
-    expect(decision).toBeUndefined();
+    expect(decision).toMatchObject({
+      kind: 'failure',
+      code: 'command_handler_missing',
+      commandName: 'nexus-status',
+    });
     expect(log.error).toHaveBeenCalledWith(
       expect.objectContaining({
         commandName: 'nexus-status',
@@ -350,7 +362,11 @@ describe('dispatchCommandEvent', () => {
       logger: log,
     });
 
-    expect(decision).toBeUndefined();
+    expect(decision).toMatchObject({
+      kind: 'failure',
+      code: 'command_handler_missing',
+      commandName: 'reply-mode',
+    });
     expect(log.error).toHaveBeenCalledWith(
       expect.objectContaining({
         commandName: 'reply-mode',
@@ -376,7 +392,11 @@ describe('dispatchCommandEvent', () => {
       logger: log,
     });
 
-    expect(decision).toBeUndefined();
+    expect(decision).toMatchObject({
+      kind: 'failure',
+      code: 'command_reverse_map_miss',
+      commandName: 'discord-reply-mode',
+    });
     expect(log.error).toHaveBeenCalledWith(
       expect.objectContaining({
         commandName: 'discord-reply-mode',

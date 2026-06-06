@@ -1479,17 +1479,20 @@ describe('Engine', () => {
     await engine.start();
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
 
-    await dispatchHandler(makeCommandEvent('stop'));
+    const result = await dispatchHandler(makeCommandEvent('stop'));
 
     expect(codex.startSession).not.toHaveBeenCalled();
     expect(codex.handleCommand).toHaveBeenCalledWith(
       undefined,
       expect.objectContaining({ canonicalId: 'agent:codex:stop' }),
     );
-    expect(platform.send).toHaveBeenCalledWith(
-      expect.objectContaining({ platformName: 'discord-main' }),
-      expect.objectContaining({ text: '[no active output]' }),
-    );
+    expect(platform.send).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      commandResponse: {
+        text: '[no active output]',
+        ephemeral: true,
+      },
+    });
   });
 
   it('agent command 不做 handler 校验，按 handlerKey 和参数转发给当前 backend', async () => {
@@ -1646,7 +1649,7 @@ describe('Engine', () => {
 
     await engine.start();
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
-    await dispatchHandler(makeCommandEvent('new', {
+    const result = await dispatchHandler(makeCommandEvent('new', {
       command: {
         name: 'new',
         args: {},
@@ -1659,8 +1662,70 @@ describe('Engine', () => {
 
     expect(codex.startSession).not.toHaveBeenCalled();
     expect(platform.send).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'This command is not available in this channel.',
+        ephemeral: true,
+      },
+    });
     const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
     expect(errorCalls.find(([, msg]) => msg === 'command_scope_mismatch')).toBeDefined();
+  });
+
+  it('command event 当前 channel 未命中 binding 时返回用户可见拒绝反馈', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('new', {
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'C2',
+        initiatorUserId: 'U1',
+      },
+    }));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(codex.handleCommand).not.toHaveBeenCalled();
+    expect(platform.send).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'This command is not available in this channel.',
+        ephemeral: true,
+      },
+    });
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    expect(errorCalls.find(([, msg]) => msg === 'command_agent_binding_miss')).toBeDefined();
   });
 
   it('command event user 不在 platform auth allowlist 时 auth_denied 且不调用 agent command', async () => {
@@ -1707,7 +1772,7 @@ describe('Engine', () => {
 
     await engine.start();
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
-    await dispatchHandler(makeCommandEvent('new', {
+    const result = await dispatchHandler(makeCommandEvent('new', {
       initiator: { userId: 'U-denied', displayName: 'denied', isBot: false },
       sessionKey: {
         platform: 'discord',
@@ -1721,6 +1786,12 @@ describe('Engine', () => {
     expect(codex.handleCommand).not.toHaveBeenCalled();
     expect(platform.send).not.toHaveBeenCalled();
     expect(store.size).toBe(0);
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'You are not allowed to use this command.',
+        ephemeral: true,
+      },
+    });
     const infoCalls = (mockLogger.info as ReturnType<typeof vi.fn>).mock.calls;
     const authLog = infoCalls.find(([, msg]) => msg === 'auth_denied');
     expect(authLog).toBeDefined();

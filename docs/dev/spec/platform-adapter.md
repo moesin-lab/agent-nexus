@@ -118,6 +118,8 @@ Embed / Component 的具体结构单独定义（见本文件附录）。
 
 Platform-native ack/defer/followup/update/rate-limit 编排归 adapter。daemon 不持有 Discord interaction token、Slack ack deadline 或 Telegram callback query 等平台私有状态；daemon 只通过 `OutboundMessage` 表达平台中立的回复意图。Adapter 必须在平台要求的时限内完成 native ack/defer，并把后续 `send` / `edit` / followup 映射到对应平台 API。
 
+`EventHandler` 可返回 `EventHandlerResult.commandResponse`，仅用于已被 adapter native defer/ack 的 command interaction 收尾。Discord adapter 对非 reply-mode slash command 先发 ephemeral deferred reply；daemon 若返回 `commandResponse.text`，adapter 必须用 `editReply` 展示该 ephemeral 反馈，否则清理 deferred reply。普通消息与 agent 成功输出仍走 `OutboundMessage`。
+
 ## CapabilitySet
 
 Adapter 声明自己支持的能力，daemon 据此降级或拒绝操作。

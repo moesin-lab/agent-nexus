@@ -36,6 +36,7 @@ import type {
   CommandRegistrationResult,
   CommandRegistrationScope,
   EventHandler,
+  EventHandlerResult,
   MessageRef,
   NormalizedEvent,
   OutboundMessage,
@@ -338,6 +339,31 @@ async function deleteDeferredCommandReply(
   }
 }
 
+async function completeDeferredCommandReply(
+  interaction: ChatInputCommandInteraction,
+  logger: Logger,
+  event: NormalizedEvent,
+  result: EventHandlerResult | void,
+): Promise<void> {
+  if (result?.commandResponse) {
+    try {
+      await interaction.editReply({ content: result.commandResponse.text });
+    } catch (err) {
+      logger.error(
+        {
+          err,
+          traceId: event.traceId,
+          interactionId: interaction.id,
+          commandName: interaction.commandName,
+        },
+        'discord_command_response_update_failed',
+      );
+    }
+    return;
+  }
+  await deleteDeferredCommandReply(interaction, logger, event);
+}
+
 async function markDeferredCommandFailed(
   interaction: ChatInputCommandInteraction,
   logger: Logger,
@@ -568,8 +594,8 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
             commandRegistration?.plan.scope ?? commandScope(testGuildId),
           );
           try {
-            await handler(event);
-            await deleteDeferredCommandReply(interaction, logger, event);
+            const result = await handler(event);
+            await completeDeferredCommandReply(interaction, logger, event, result);
           } catch (err) {
             logger.error(
               { err, traceId: event.traceId, commandName: interaction.commandName },

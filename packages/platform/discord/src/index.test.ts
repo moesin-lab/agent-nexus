@@ -285,6 +285,49 @@ describe('command registry integration', () => {
     expect(event.traceId).toBeTruthy();
   });
 
+  it('daemon 返回 commandResponse 时用 deferred ephemeral reply 展示反馈', async () => {
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      testGuildId: 'G-dev',
+    });
+    const handler = vi.fn(async () => ({
+      commandResponse: {
+        text: 'This command is not available in this channel.',
+        ephemeral: true,
+      },
+    }));
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    const deferReply = vi.fn(async () => undefined);
+    const deleteReply = vi.fn(async () => undefined);
+    const editReply = vi.fn(async () => undefined);
+    await interactionCreate({
+      id: 'i-response',
+      commandName: 'new',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      options: { data: [] },
+      deferReply,
+      deleteReply,
+      editReply,
+      isChatInputCommand: () => true,
+    });
+
+    expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(editReply).toHaveBeenCalledWith({
+      content: 'This command is not available in this channel.',
+    });
+    expect(deleteReply).not.toHaveBeenCalled();
+  });
+
   it('command registration plan 存在时用 plan scope 构造 command event', async () => {
     const plan = {
       scope: {

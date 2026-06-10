@@ -180,7 +180,15 @@ async function main(): Promise<void> {
     engines.push(engine);
     configReloadTargets.push({
       platformName: platformConfig.name,
-      applyRuntimeUpdate: (update) => engine.applyRuntimeUpdate(update),
+      applyRuntimeUpdate: (update) => {
+        engine.applyRuntimeUpdate(update);
+        // adapter 内部命令（/discord-reply-mode）授权跟随热替换；
+        // chat 授权由 daemon platform auth 全维度判定（null = inbound guard 关闭，与启动语义一致）
+        platform.updateAuth({
+          allowedUserIds: update.platformAuth.allowlist.userIds,
+          inboundAllowedUserIds: null,
+        });
+      },
     });
   }
 

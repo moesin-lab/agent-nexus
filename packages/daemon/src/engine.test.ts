@@ -1895,6 +1895,141 @@ describe('Engine', () => {
     expect(codex.sendInput).toHaveBeenCalledTimes(1);
   });
 
+  it('applyRuntimeUpdate 切到 role-only allowlist 后按 role 维度判定', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    engine.applyRuntimeUpdate({
+      routingTable,
+      platformAuth: {
+        allowlist: {
+          userIds: [],
+          roleIds: ['R1'],
+          allowedGuildIds: [],
+          allowedChannelIds: [],
+          allowDM: true,
+          requireMentionOrSlash: true,
+        },
+      },
+      toolMessageMode: 'append',
+      newSessionTextPrefix: true,
+    });
+
+    // 旧 userIds 用户、无 role：拒绝
+    await dispatchHandler(makeEvent('hello', { guildId: 'G1' }));
+    expect(codex.sendInput).not.toHaveBeenCalled();
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-1' }),
+      ev('text_final', { text: 'hi' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(
+      makeEvent('hello', {
+        guildId: 'G1',
+        initiatorRoleIds: ['R1'],
+        sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: 'U9' },
+        initiator: { userId: 'U9', displayName: 'U9', isBot: false },
+      }),
+    );
+    expect(codex.sendInput).toHaveBeenCalledTimes(1);
+  });
+
+  it('turn 进行中 applyRuntimeUpdate 切换 toolMessages 不影响当前 turn 渲染', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+      toolMessages: { mode: 'append' },
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    codex.queueEventsAfter(
+      [
+        ev('session_started', { agentSessionId: 'sid-1' }),
+        ev('tool_call_started', {
+          callId: 'tc-1',
+          toolName: 'Bash',
+          inputSummary: 'ls',
+        }),
+        ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+      ],
+      40,
+    );
+    const dispatchPromise = dispatchHandler(makeEvent('hello'));
+    // turn 已开始（snapshot 应已取），事件 40ms 后才到——窗口内切 compact
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    engine.applyRuntimeUpdate({
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      toolMessageMode: 'compact',
+      newSessionTextPrefix: true,
+    });
+    await dispatchPromise;
+
+    // 当前 turn 仍按 append 渲染：tool message 独立发送、不补 [empty response]
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    const texts = platform.send.mock.calls.map(
+      (call) => (call[1] as OutboundMessage).text,
+    );
+    expect(texts[0]).toContain('Bash');
+    expect(texts).not.toContain('[empty response]');
+  });
+
   it('applyRuntimeUpdate 关闭 newSession text prefix 后 /new 文本按普通 prompt 转发', async () => {
     const platform = makePlatform();
     const codex = makeAgent();

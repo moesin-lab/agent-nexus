@@ -98,6 +98,16 @@ export interface DiscordPlatformOptions {
   commandRegistration?: DiscordCommandRegistration;
 }
 
+/** 配置热重载时替换 adapter 内部授权数据；字段语义同 DiscordPlatformOptions 同名字段 */
+export interface DiscordAuthUpdate {
+  allowedUserIds: readonly string[];
+  inboundAllowedUserIds?: readonly string[] | null;
+}
+
+export interface DiscordPlatformAdapter extends PlatformAdapter {
+  updateAuth(update: DiscordAuthUpdate): void;
+}
+
 /**
  * 单切片字符预算（UTF-16 code unit）。Discord 文档说 message content 上限 "2000
  * characters" 但没明指口径（code point / UTF-16 / grapheme 都可能），保守按最严的
@@ -466,17 +476,22 @@ export function parseInbound(
   return { kind: 'event', event };
 }
 
-export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAdapter {
+export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlatformAdapter {
   const {
     token,
     botUserId,
     logger,
     statePath,
-    allowedUserIds,
     testGuildId,
     commandRegistration,
   } = opts;
-  const inboundAllowedUserIds = opts.inboundAllowedUserIds ?? allowedUserIds;
+  // 可被 updateAuth 热替换；reply-mode ctx 与 inbound guard 每次调用时读取。
+  // null 必须保留（语义：chat guard 交给 daemon platform auth）——不能用 ?? 吞掉
+  let allowedUserIds = opts.allowedUserIds;
+  let inboundAllowedUserIds =
+    opts.inboundAllowedUserIds === undefined
+      ? opts.allowedUserIds
+      : opts.inboundAllowedUserIds;
 
   const client = new Client({
     intents: [
@@ -516,6 +531,22 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
 
     capabilities(): CapabilitySet {
       return DISCORD_CAPABILITIES;
+    },
+
+    updateAuth(update: DiscordAuthUpdate): void {
+      allowedUserIds = update.allowedUserIds;
+      // 与构造时同语义：undefined → 复用 allowedUserIds；null → chat guard 交给 daemon
+      inboundAllowedUserIds =
+        update.inboundAllowedUserIds === undefined
+          ? update.allowedUserIds
+          : update.inboundAllowedUserIds;
+      logger.info(
+        {
+          allowedUserCount: allowedUserIds.length,
+          inboundGuardEnabled: inboundAllowedUserIds !== null,
+        },
+        'discord_auth_updated',
+      );
     },
 
     async start(handler: EventHandler): Promise<void> {

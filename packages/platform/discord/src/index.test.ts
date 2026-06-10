@@ -444,6 +444,86 @@ describe('command registry integration', () => {
     });
   });
 
+  it('updateAuth 热替换后 reply-mode 授权立即按新 allowlist 判定', async () => {
+    const logger = makeLogger();
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger,
+      statePath: '/tmp/agent-nexus-missing-dir/reply-mode-auth.json',
+      allowedUserIds: ['U-old'],
+      commandRegistration: {
+        plan: {
+          scope: {
+            platformName: 'discord-main',
+            platformType: 'discord' as const,
+            nativeScope: { kind: 'global' as const },
+          },
+          commands: [],
+          reverseMap: {
+            entries: {
+              'discord-reply-mode': {
+                canonicalId: 'platform:discord:reply-mode',
+                aliasKind: 'stable' as const,
+                owner: { type: 'platform' as const, platformType: 'discord' },
+                handlerKey: 'reply-mode',
+              },
+            },
+          },
+          generation: 'g-auth-update',
+        },
+        apply: vi.fn(async () => ({
+          status: 'applied' as const,
+          generation: 'g-auth-update',
+        })),
+      },
+    });
+
+    await platform.start(vi.fn());
+    const interactionCreate = registeredHandler('interactionCreate');
+    const makeReplyModeInteraction = (
+      userId: string,
+      reply: ReturnType<typeof vi.fn>,
+    ) => ({
+      id: `i-auth-${userId}`,
+      commandName: 'discord-reply-mode',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: userId, username: 'u', bot: false },
+      member: { roles: { cache: new Map() } },
+      options: { data: [], getString: vi.fn(() => null) },
+      reply,
+      isChatInputCommand: () => true,
+    });
+
+    const replyBefore = vi.fn(async () => undefined);
+    await interactionCreate(makeReplyModeInteraction('U-new', replyBefore));
+    expect(replyBefore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('Permission denied'),
+      }),
+    );
+
+    platform.updateAuth({ allowedUserIds: ['U-new'], inboundAllowedUserIds: null });
+
+    const replyAfter = vi.fn(async () => undefined);
+    await interactionCreate(makeReplyModeInteraction('U-new', replyAfter));
+    expect(replyAfter).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('current reply mode'),
+      }),
+    );
+
+    const replyRemoved = vi.fn(async () => undefined);
+    await interactionCreate(makeReplyModeInteraction('U-old', replyRemoved));
+    expect(replyRemoved).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('Permission denied'),
+      }),
+    );
+  });
+
   it('stable /discord-reply-mode 内部失败时仍回复 ephemeral 错误，避免 Discord 显示未响应', async () => {
     const logger = makeLogger();
     const platform = createDiscordPlatform({
@@ -1246,6 +1326,58 @@ describe('parseInbound: 用户白名单（fail-closed）', () => {
     expect(
       parseInbound(makeMsg({ content: 's', authorId: BOT_ID }), BOT_ID, [BOT_ID]),
     ).toEqual({ kind: 'drop', reason: 'noise' });
+  });
+});
+
+describe('createDiscordPlatform: inboundAllowedUserIds 接线', () => {
+  it('显式传 null 时 chat 不做 adapter guard，事件交给 daemon 判定', async () => {
+    const logger = makeLogger();
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger,
+      statePath: '/tmp/agent-nexus-missing-dir/inbound-null-guard.json',
+      allowedUserIds: ['U-only'],
+      inboundAllowedUserIds: null,
+    });
+    const handler = vi.fn(async () => undefined);
+    await platform.start(handler);
+    const messageCreate = registeredHandler('messageCreate');
+
+    await messageCreate(
+      makeMsg({ content: `<@${BOT_ID}> hi`, authorId: 'U-stranger' }),
+    );
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    // updateAuth 传 null 同语义：guard 保持关闭
+    platform.updateAuth({ allowedUserIds: ['U-other'], inboundAllowedUserIds: null });
+    await messageCreate(
+      makeMsg({ content: `<@${BOT_ID}> hi again`, authorId: 'U-stranger-2', id: 'm-2' }),
+    );
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it('缺省（undefined）时沿用 allowedUserIds 做 chat guard', async () => {
+    const logger = makeLogger();
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger,
+      statePath: '/tmp/agent-nexus-missing-dir/inbound-default-guard.json',
+      allowedUserIds: ['U-only'],
+    });
+    const handler = vi.fn(async () => undefined);
+    await platform.start(handler);
+    const messageCreate = registeredHandler('messageCreate');
+
+    await messageCreate(
+      makeMsg({ content: `<@${BOT_ID}> hi`, authorId: 'U-stranger' }),
+    );
+    expect(handler).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'U-stranger' }),
+      'discord_inbound_unauthorized',
+    );
   });
 });
 

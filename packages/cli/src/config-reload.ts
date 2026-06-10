@@ -4,6 +4,7 @@ import type {
   EngineRuntimeUpdate,
   Logger,
 } from '@agent-nexus/daemon';
+import { agentOwnersForPlatform } from './command-registry.js';
 import { buildRoutingTable, type AgentNexusConfig } from './config.js';
 
 /** reload 时被热替换的 engine 目标；语义见 docs/dev/spec/config-routing.md §配置热重载 */
@@ -99,6 +100,20 @@ export function createConfigReloader(
     if (missingPlatforms.length > 0) {
       return failed(
         `新配置缺少运行中的 platform：${missingPlatforms.join(', ')}（platforms[] 变更需重启生效）`,
+      );
+    }
+
+    // slash command 注册集按启动时各 platform 的 agent owner 集合生成，
+    // 不在 reload 事务内；owner 集合变化会让已注册命令与路由失配，按失败处理
+    const ownerSet = (config: AgentNexusConfig, platformName: string) =>
+      [...agentOwnersForPlatform(config, platformName)].sort().join(',');
+    const ownerChangedPlatforms = opts.targets
+      .map((target) => target.platformName)
+      .filter((name) => ownerSet(current, name) !== ownerSet(next, name));
+    if (ownerChangedPlatforms.length > 0) {
+      return failed(
+        `bindings 变更改变了 platform 的 agent owner 集合：${ownerChangedPlatforms.join(', ')}；` +
+          'slash command 注册集不在 reload 事务内，需重启生效',
       );
     }
 

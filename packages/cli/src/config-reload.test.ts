@@ -181,6 +181,36 @@ describe('createConfigReloader', () => {
     expect(target.applyRuntimeUpdate).not.toHaveBeenCalled();
   });
 
+  it('bindings 变更改变 platform 的 agent owner 集合时按失败处理且不应用', async () => {
+    const target = makeTarget('discord-main');
+    const initial = baseConfig({ agents: [codexAgent, claudeAgent] });
+    const next = baseConfig({
+      agents: [codexAgent, claudeAgent],
+      bindings: [
+        {
+          name: 'discord-main-claude',
+          platformName: 'discord-main',
+          agentName: 'claude-prod',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+    });
+
+    const reload = createConfigReloader({
+      initialConfig: initial,
+      load: async () => next,
+      targets: [target],
+      runningAgentNames: ['codex-dev', 'claude-prod'],
+      logger: SILENT_LOGGER,
+    });
+
+    const result = await reload();
+
+    expect(result.status).toBe('failed');
+    expect(result.message).toContain('agent owner');
+    expect(target.applyRuntimeUpdate).not.toHaveBeenCalled();
+  });
+
   it('新配置缺少运行中的 platform 时按失败处理且不应用', async () => {
     const target = makeTarget('discord-main');
     const next = baseConfig();

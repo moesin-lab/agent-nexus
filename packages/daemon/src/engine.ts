@@ -757,6 +757,9 @@ export class Engine {
       }
 
       const platformCaps = this.platform.capabilities();
+      // turn 级 snapshot：reload 切换 toolMessages 只影响后续 turn，
+      // 避免同一 turn 内前后段按不同模式混合渲染
+      const toolMessageMode = this.toolMessageMode;
       let session: AgentSession | undefined;
       let buf = '';
       let sawDelta = false;
@@ -921,7 +924,7 @@ export class Engine {
       const finalizeReply = async (): Promise<void> => {
         cancelPendingEdit();
         if (
-          this.toolMessageMode === 'append' &&
+          toolMessageMode === 'append' &&
           toolMessages.size > 0 &&
           buf.length === 0
         ) {
@@ -1089,7 +1092,7 @@ export class Engine {
               e.payload.toolName,
               e.payload.inputSummary,
             );
-            if (this.toolMessageMode === 'append') {
+            if (toolMessageMode === 'append') {
               await splitAssistantMessageBeforeTool();
               await upsertToolMessage(
                 e.payload.callId,
@@ -1102,7 +1105,7 @@ export class Engine {
             return;
           }
           if (e.type === 'tool_call_progress') {
-            if (this.toolMessageMode === 'compact') {
+            if (toolMessageMode === 'compact') {
               await ensureToolVisible(`[tool: ${e.payload.callId}] running`);
             }
             return;
@@ -1119,7 +1122,7 @@ export class Engine {
               },
               'tool_result',
             );
-            if (this.toolMessageMode === 'compact') {
+            if (toolMessageMode === 'compact') {
               await ensureToolVisible(`[tool: ${e.payload.callId}] result`);
             }
             return;
@@ -1138,7 +1141,7 @@ export class Engine {
               },
               'tool_call_finished',
             );
-            if (this.toolMessageMode === 'compact') {
+            if (toolMessageMode === 'compact') {
               await ensureToolVisible(
                 `[tool: ${e.payload.toolName}] ${e.payload.status}`,
               );

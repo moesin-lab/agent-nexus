@@ -620,6 +620,17 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
             { err, commandName: interaction.commandName },
             'discord_interaction_handler_error',
           );
+          try {
+            await interaction.reply({
+              content: 'Command failed. Try again later.',
+              ephemeral: true,
+            });
+          } catch (replyErr) {
+            logger.error(
+              { err: replyErr, commandName: interaction.commandName },
+              'discord_interaction_error_reply_failed',
+            );
+          }
         }
       });
 

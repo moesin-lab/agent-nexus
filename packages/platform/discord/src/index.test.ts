@@ -443,6 +443,67 @@ describe('command registry integration', () => {
       },
     });
   });
+
+  it('stable /discord-reply-mode 内部失败时仍回复 ephemeral 错误，避免 Discord 显示未响应', async () => {
+    const logger = makeLogger();
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger,
+      statePath: '/tmp/agent-nexus-missing-dir/reply-mode.json',
+      allowedUserIds: ALLOWED,
+      commandRegistration: {
+        plan: {
+          scope: {
+            platformName: 'discord-main',
+            platformType: 'discord' as const,
+            nativeScope: { kind: 'global' as const },
+          },
+          commands: [],
+          reverseMap: {
+            entries: {
+              'discord-reply-mode': {
+                canonicalId: 'platform:discord:reply-mode',
+                aliasKind: 'stable' as const,
+                owner: { type: 'platform' as const, platformType: 'discord' },
+                handlerKey: 'reply-mode',
+              },
+            },
+          },
+          generation: 'g-stable-reply-mode',
+        },
+        apply: vi.fn(async () => ({
+          status: 'applied' as const,
+          generation: 'g-stable-reply-mode',
+        })),
+      },
+    });
+    const reply = vi.fn(async () => undefined);
+
+    await platform.start(vi.fn());
+    const interactionCreate = registeredHandler('interactionCreate');
+    await interactionCreate({
+      id: 'i-stable-reply-mode-fail',
+      commandName: 'discord-reply-mode',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      options: { data: [], getString: vi.fn(() => 'all') },
+      reply,
+      isChatInputCommand: () => true,
+    });
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ commandName: 'discord-reply-mode' }),
+      'discord_interaction_handler_error',
+    );
+    expect(reply).toHaveBeenCalledWith({
+      content: 'Command failed. Try again later.',
+      ephemeral: true,
+    });
+  });
 });
 
 function makeTextChannel(overrides: {

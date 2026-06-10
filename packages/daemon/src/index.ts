@@ -1,6 +1,13 @@
 export { createLogger, type Logger, type CreateLoggerOptions } from './logger.js';
 export { checkPlatformAuth, type AuthDecision } from './auth.js';
-export { Engine, type EngineAgent, type EngineDeps } from './engine.js';
+export {
+  Engine,
+  type DaemonConfigReloader,
+  type DaemonConfigReloadResult,
+  type EngineAgent,
+  type EngineDeps,
+  type EngineRuntimeUpdate,
+} from './engine.js';
 export {
   RouteError,
   selectRoute,

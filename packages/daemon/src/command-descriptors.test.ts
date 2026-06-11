@@ -14,6 +14,16 @@ describe('daemonCommandDescriptors', () => {
         },
         legacyNames: [],
       }),
+      expect.objectContaining({
+        canonicalId: 'daemon:reload-config',
+        owner: { type: 'daemon' },
+        localName: 'reload-config',
+        handlerKey: 'reload-config',
+        applicability: {
+          requiredCapabilities: ['slash-command-registration'],
+        },
+        legacyNames: [],
+      }),
     ]);
   });
 });

@@ -216,6 +216,7 @@ agent-nexus
 - `/claudecode-stop` / `/codex-stop`：按绑定到当前频道的 agent owner 路由给对应 agent package；具体停止语义由该 agent runtime 决定
 - `/new` / `/stop`：仅在同一个 Discord 注册 scope 里只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时作为便捷 alias 出现
 - `/nexus-kill`：daemon 直接终止当前 RoutingSession，并清除 resume 记录
+- `/nexus-reload-config`：daemon 重新加载 `config.json` 并热应用 bindings / auth / ui / textPrefixes；解析失败保留旧配置并返回错误，其余字段变更需重启生效
 - `/discord-reply-mode mode:<mention|all>`：在 allowlist 内切换 Discord 消息触发模式
 - `/reply-mode mode:<mention|all>`：legacy alias；`daemon.commandRegistry.aliases.legacy.replyMode=true` 时注册
 

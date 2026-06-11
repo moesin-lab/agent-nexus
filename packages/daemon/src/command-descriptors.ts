@@ -13,4 +13,16 @@ export const daemonCommandDescriptors: readonly CommandDescriptor[] = [
     },
     legacyNames: [],
   },
+  {
+    canonicalId: 'daemon:reload-config',
+    owner: { type: 'daemon' },
+    localName: 'reload-config',
+    summary: 'Reload config.json and apply runtime-safe fields',
+    options: [],
+    handlerKey: 'reload-config',
+    applicability: {
+      requiredCapabilities: ['slash-command-registration'],
+    },
+    legacyNames: [],
+  },
 ];

@@ -137,6 +137,7 @@ describe('buildCliCommandRegistrationPlan', () => {
     });
     expect(commandKeys(plan)).toEqual([
       'nexus-kill:daemon:kill:stable',
+      'nexus-reload-config:daemon:reload-config:stable',
       'discord-reply-mode:platform:discord:reply-mode:stable',
       'codex-new:agent:codex:new:stable',
       'codex-stop:agent:codex:stop:stable',
@@ -178,6 +179,7 @@ describe('buildCliCommandRegistrationPlan', () => {
 
     expect(commandKeys(plan)).toEqual([
       'nexus-kill:daemon:kill:stable',
+      'nexus-reload-config:daemon:reload-config:stable',
       'discord-reply-mode:platform:discord:reply-mode:stable',
       'codex-new:agent:codex:new:stable',
       'codex-stop:agent:codex:stop:stable',
@@ -274,6 +276,7 @@ describe('buildCliCommandRegistrationPlan', () => {
 
     expect(commandKeys(plan)).toEqual([
       'nexus-kill:daemon:kill:stable',
+      'nexus-reload-config:daemon:reload-config:stable',
       'discord-reply-mode:platform:discord:reply-mode:stable',
       'codex-new:agent:codex:new:stable',
       'codex-stop:agent:codex:stop:stable',
@@ -305,6 +308,7 @@ describe('buildCliCommandRegistrationPlan', () => {
 
     expect(commandKeys(plan)).toEqual([
       'nexus-kill:daemon:kill:stable',
+      'nexus-reload-config:daemon:reload-config:stable',
       'discord-reply-mode:platform:discord:reply-mode:stable',
       'codex-new:agent:codex:new:stable',
       'codex-stop:agent:codex:stop:stable',

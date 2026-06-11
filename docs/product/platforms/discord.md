@@ -34,7 +34,7 @@ related:
 - 用 `@bot ping` 能收到响应
 - slash command 列表里能看到 `/discord-reply-mode`；`daemon.commandRegistry.aliases.legacy.replyMode=true` 时还会看到 legacy `/reply-mode`
 - slash command 列表里能看到已绑定 backend 对应的 `/claudecode-new` / `/claudecode-stop` 或 `/codex-new` / `/codex-stop`；单 agent scope 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时还会看到裸 `/new` 和 `/stop`
-- slash command 列表里能看到 daemon command `/nexus-kill`
+- slash command 列表里能看到 daemon command `/nexus-kill` 和 `/nexus-reload-config`
 
 ## 参考
 

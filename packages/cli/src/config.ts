@@ -26,6 +26,7 @@ import {
   type DaemonConfig,
   type DaemonRuntimeConfig,
   type PlatformAuthConfig,
+  type RoutingEntry,
   DaemonConfigError,
 } from '@agent-nexus/daemon';
 
@@ -649,6 +650,27 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     ui,
     log: parseLog(parsed['log']),
   };
+}
+
+export function buildRoutingTable(config: AgentNexusConfig): RoutingEntry[] {
+  const platformsByName = new Map(
+    config.platforms.map((platform) => [platform.name, platform]),
+  );
+  return config.bindings.map((binding) => {
+    const platform = platformsByName.get(binding.platformName);
+    if (!platform) {
+      throw new ConfigError(
+        `binding "${binding.name}" 引用了不存在的 platform "${binding.platformName}"`,
+      );
+    }
+    return {
+      bindingName: binding.name,
+      platformName: binding.platformName,
+      platformType: platform.type,
+      agentName: binding.agentName,
+      match: binding.match,
+    };
+  });
 }
 
 function assertValidSecretName(name: string): void {

@@ -61,7 +61,8 @@ function agentByName(config: AgentNexusConfig): Map<string, AgentConfig> {
   return new Map(config.agents.map((agent) => [agent.name, agent]));
 }
 
-function agentOwnersForPlatform(
+/** registration plan 与热重载共用：owner 集合派生逻辑必须同源，否则 reload 校验会和注册集漂移 */
+export function agentOwnersForPlatform(
   config: AgentNexusConfig,
   platformName: string,
 ): string[] {

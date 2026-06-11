@@ -323,6 +323,14 @@ agent-nexus
 
 `all` 模式只影响消息触发条件，不绕过 `allowedUserIds`。不在 allowlist 里的用户仍不能驱动 bot。
 
+重载配置：
+
+```text
+/nexus-reload-config
+```
+
+`/nexus-reload-config` 是 daemon command，重新加载 `config.json` 并热应用 `bindings[]`、`platforms[].auth`、`ui.toolMessages` 和 `daemon.commandRegistry.textPrefixes`；解析或校验失败时保留当前生效配置，错误以 ephemeral 反馈返回调用方。`platforms[]` 其余字段、`agents[]`、`log` 等变更仍需重启进程生效，reload 成功反馈会带提示。完整语义见 [`config-routing.md` §配置热重载](../dev/spec/config-routing.md#配置热重载)。
+
 ## 工具与安全
 
 - 默认工具集是 `Read` / `Grep` / `Glob` / `Edit` / `Write`。

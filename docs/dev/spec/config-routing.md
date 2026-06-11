@@ -2,7 +2,7 @@
 title: Spec：配置与路由契约
 type: spec
 status: active
-summary: platforms[] / agents[] / bindings 的配置 schema、owner 校验边界、路由匹配语义与迁移规则
+summary: platforms[] / agents[] / bindings 的配置 schema、owner 校验边界、路由匹配语义、热重载与迁移规则
 tags: [spec, config, routing, platform, agent]
 related:
   - dev/adr/0015-multi-platform-agent-config
@@ -330,6 +330,35 @@ platformName + platformType + channelId + initiatorUserId
 迁移策略为 **清晰错误**：loader 拒绝 legacy 形态，错误消息说明需要改为 `platforms[]` / `agents[]`，
 并给出最小字段路径清单。可在用户文档中提供人工迁移示例或后续迁移命令，但 loader 不做自动迁移，也不得在内存里把 legacy 配置偷偷当新配置启动。
 
+## 配置热重载
+
+`/nexus-reload-config` daemon command 触发对 `config.json` 的全量重新加载（descriptor 与 dispatch 契约见 [`command-registry.md` §Agent Session Commands](command-registry.md#agent-session-commands)）。reload 由组装层注入 daemon 的 config reloader 执行；daemon 不读取配置文件。
+
+加载与校验语义与启动时 loader 完全一致。在此之上 reloader 增加三条运行态约束，违反任一条按失败处理：
+
+- `bindings[].agentName` 必须命中当前进程内运行中的 agent 实例 name。
+- 每个运行中 engine 的 `platformName` 必须仍存在于新配置 `platforms[]`。
+- 每个运行中 platform 由 `bindings[]` 派生的 agent owner 集合不得变化——slash command 注册集是启动时按 owner 集合生成的（见 [`command-registry.md` §Registration Plan](command-registry.md#registration-plan)），不在 reload 事务内；owner 集合变化会让已注册命令与路由失配。
+
+失败语义（rollback）：
+
+- 任何 parse / 校验 / 运行态约束失败 → 整次 reload 放弃，当前生效配置保持不变。
+- 错误信息必须返回给触发者（ephemeral command response），不得只落日志。
+
+成功语义：
+
+- 应用 all-or-nothing：先验证所有 engine 目标，再统一替换；不得出现部分 engine 用新配置、部分用旧配置。
+- 热生效字段：`bindings[]`（routing table）、`platforms[].auth`、`ui.toolMessages`、`daemon.commandRegistry.textPrefixes`。
+- `platforms[].auth` 的热应用以**重启等价**为准：成功 reload 后 daemon engine 鉴权（全维度 allowlist）与 platform adapter 内部授权数据（inbound guard、`/discord-reply-mode` 的 userIds 列表）必须与用新配置重启进程后一致；只换其一视为违反本 spec。
+- 已知限制（重启路径同样受限）：adapter 内部命令（`/discord-reply-mode`）的授权仅基于 `userIds` 维度；role / guild / channel 维度待 platform command 经 daemon dispatch 统一鉴权后覆盖。
+- `ui.toolMessages` 与 `textPrefixes` 在 turn 边界生效：进行中的 turn 沿用其开始时的值，不得中途混合渲染。
+- 仅重启生效字段：`platforms[]` 其余字段、`agents[]`、`log`、`daemon.commandRegistry` 其余字段。这些 section 有变化时，成功响应必须提示重启后才生效。
+
+并发与时序：
+
+- 并发 reload 不做序列化保证：手动触发场景下后完成者生效。
+- reload 只影响其后开始处理的事件；已通过 auth 检查、在 per-session 队列中等待的事件不重查。
+
 ## Secret 规则
 
 - platform 配置只接受 `tokenRef`，不接受 token 明文。
@@ -372,6 +401,17 @@ session 隔离合约测试必须覆盖：
 
 1. 两个 Discord platform 实例的同 channel/user 不共享 session key。
 2. route decision 后续 auth、idempotency、session 队列与出站发送沿用同一个 `platformName`。
+
+配置热重载合约测试必须覆盖：
+
+1. 配置 parse / 校验失败时不应用任何改动，错误信息进入 command response。
+2. 成功 reload 后 routing table、auth、ui、textPrefixes 替换生效。
+3. binding 引用未运行的 agent、或新配置缺失运行中 engine 的 platform 时按失败处理。
+4. bindings 变更改变运行中 platform 的 agent owner 集合时按失败处理。
+5. auth 热替换后 platform adapter 内部命令（reply-mode）按新 `userIds` allowlist 判定（其余维度见上文已知限制）。
+6. reload 切到 role-only allowlist 后，chat 按 role 维度在 daemon 判定（adapter 不做 userIds 预筛）。
+7. turn 进行中切换 `ui.toolMessages` 不影响该 turn 的渲染模式。
+8. 仅重启生效 section 有变化时，成功响应包含重启提示。
 
 ## 反模式
 

@@ -41,6 +41,20 @@ export interface EngineAgent {
   >;
 }
 
+/** config reloader 由组装层注入；语义见 docs/dev/spec/config-routing.md §配置热重载 */
+export type DaemonConfigReloadResult =
+  | { status: 'reloaded'; message: string }
+  | { status: 'failed'; message: string };
+
+export type DaemonConfigReloader = () => Promise<DaemonConfigReloadResult>;
+
+export interface EngineRuntimeUpdate {
+  routingTable: readonly RoutingEntry[];
+  platformAuth: PlatformAuthConfig;
+  toolMessageMode: ToolMessageMode;
+  newSessionTextPrefix: boolean;
+}
+
 export interface EngineDeps {
   platform: PlatformAdapter;
   platformName?: string;
@@ -52,6 +66,7 @@ export interface EngineDeps {
   commandRegistry?: ActiveCommandRegistry;
   platformCommandHandlerKeys?: readonly string[];
   daemonCommandHandlerKeys?: readonly string[];
+  configReloader?: DaemonConfigReloader;
   logger: Logger;
   sessionStore: SessionStore;
   /** 每轮 sessionId 由 Engine 生成；resumeFromAgentSessionId 由 store 决定 */
@@ -124,18 +139,20 @@ export class Engine {
   private readonly platform: PlatformAdapter;
   private readonly platformName: string;
   private readonly platformType: 'discord';
-  private readonly platformAuth?: PlatformAuthConfig;
+  // applyRuntimeUpdate 热替换的四个字段；其余 deps 启动后不可变
+  private platformAuth?: PlatformAuthConfig;
+  private routingTable?: readonly RoutingEntry[];
+  private toolMessageMode: ToolMessageMode;
+  private newSessionTextPrefixEnabled: boolean;
   private readonly commandRegistry?: ActiveCommandRegistry;
   private readonly platformCommandHandlerKeys: readonly string[];
   private readonly daemonCommandHandlerKeys: readonly string[];
+  private readonly configReloader?: DaemonConfigReloader;
   private readonly agents: Map<string, EngineAgent>;
-  private readonly routingTable?: readonly RoutingEntry[];
   private readonly logger: Logger;
   private readonly sessionStore: SessionStore;
   private readonly streamEditThrottleMs: number;
   private readonly typingRefreshMs: number;
-  private readonly toolMessageMode: ToolMessageMode;
-  private readonly newSessionTextPrefixEnabled: boolean;
   private readonly agentSessions = new Map<string, ActiveAgentSession>();
   /**
    * Per-SessionKey 串行队列：同 key 的 dispatch 必须按到达序排队执行，
@@ -164,6 +181,7 @@ export class Engine {
     this.commandRegistry = deps.commandRegistry;
     this.platformCommandHandlerKeys = deps.platformCommandHandlerKeys ?? [];
     this.daemonCommandHandlerKeys = deps.daemonCommandHandlerKeys ?? [];
+    this.configReloader = deps.configReloader;
     this.routingTable = deps.routingTable;
     this.agents = new Map();
     if (deps.agents) {
@@ -191,6 +209,14 @@ export class Engine {
 
   async start(): Promise<void> {
     await this.platform.start(this.dispatch.bind(this));
+  }
+
+  /** 热替换运行期可安全更新的配置字段；语义见 docs/dev/spec/config-routing.md §配置热重载 */
+  applyRuntimeUpdate(update: EngineRuntimeUpdate): void {
+    this.routingTable = update.routingTable;
+    this.platformAuth = update.platformAuth;
+    this.toolMessageMode = update.toolMessageMode;
+    this.newSessionTextPrefixEnabled = update.newSessionTextPrefix;
   }
 
   async stop(): Promise<void> {
@@ -551,6 +577,9 @@ export class Engine {
     event: NormalizedEvent,
     decision: Extract<CommandDispatchDecision, { ownerType: 'daemon' }>,
   ): Promise<void | EventHandlerResult> {
+    if (decision.handlerKey === 'reload-config' && this.configReloader) {
+      return this.handleReloadConfigCommand(event, decision);
+    }
     if (decision.handlerKey !== 'kill') {
       this.logger.error(
         {
@@ -581,6 +610,41 @@ export class Engine {
         ? '[session killed]'
         : '[no active session]',
     );
+  }
+
+  private async handleReloadConfigCommand(
+    event: NormalizedEvent,
+    decision: Extract<CommandDispatchDecision, { ownerType: 'daemon' }>,
+  ): Promise<EventHandlerResult> {
+    if (!this.configReloader) {
+      return this.commandResponse(COMMAND_NOT_READY_TEXT);
+    }
+    let result: DaemonConfigReloadResult;
+    try {
+      result = await this.configReloader();
+    } catch (err) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          commandName: decision.commandName,
+          canonicalId: decision.canonicalId,
+          err,
+        },
+        'config_reload_failed',
+      );
+      return this.commandResponse(COMMAND_FAILED_TEXT);
+    }
+    this.logger.info(
+      {
+        traceId: event.traceId,
+        platformName: this.platformName,
+        commandName: decision.commandName,
+        status: result.status,
+      },
+      'config_reload_result',
+    );
+    return this.commandResponse(result.message);
   }
 
   private route(event: NormalizedEvent):
@@ -693,6 +757,9 @@ export class Engine {
       }
 
       const platformCaps = this.platform.capabilities();
+      // turn 级 snapshot：reload 切换 toolMessages 只影响后续 turn，
+      // 避免同一 turn 内前后段按不同模式混合渲染
+      const toolMessageMode = this.toolMessageMode;
       let session: AgentSession | undefined;
       let buf = '';
       let sawDelta = false;
@@ -857,7 +924,7 @@ export class Engine {
       const finalizeReply = async (): Promise<void> => {
         cancelPendingEdit();
         if (
-          this.toolMessageMode === 'append' &&
+          toolMessageMode === 'append' &&
           toolMessages.size > 0 &&
           buf.length === 0
         ) {
@@ -1025,7 +1092,7 @@ export class Engine {
               e.payload.toolName,
               e.payload.inputSummary,
             );
-            if (this.toolMessageMode === 'append') {
+            if (toolMessageMode === 'append') {
               await splitAssistantMessageBeforeTool();
               await upsertToolMessage(
                 e.payload.callId,
@@ -1038,7 +1105,7 @@ export class Engine {
             return;
           }
           if (e.type === 'tool_call_progress') {
-            if (this.toolMessageMode === 'compact') {
+            if (toolMessageMode === 'compact') {
               await ensureToolVisible(`[tool: ${e.payload.callId}] running`);
             }
             return;
@@ -1055,7 +1122,7 @@ export class Engine {
               },
               'tool_result',
             );
-            if (this.toolMessageMode === 'compact') {
+            if (toolMessageMode === 'compact') {
               await ensureToolVisible(`[tool: ${e.payload.callId}] result`);
             }
             return;
@@ -1074,7 +1141,7 @@ export class Engine {
               },
               'tool_call_finished',
             );
-            if (this.toolMessageMode === 'compact') {
+            if (toolMessageMode === 'compact') {
               await ensureToolVisible(
                 `[tool: ${e.payload.toolName}] ${e.payload.status}`,
               );

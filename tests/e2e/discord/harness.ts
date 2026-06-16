@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
@@ -93,7 +94,22 @@ export type TranscriptEvent =
 
 export interface Transcript {
   caseId: string;
+  runId: string;
+  startedAt: string;
+  finishedAt?: string;
+  status: 'running' | 'passed' | 'failed';
+  environment: {
+    agentBackend: string;
+    node: string;
+    platform: string;
+  };
   events: TranscriptEvent[];
+  artifactPath?: string;
+  failure?: {
+    message: string;
+    lastEventKind?: string;
+    traceIds: string[];
+  };
 }
 
 export type OutboundSendEvent = Extract<
@@ -389,9 +405,82 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
     timeoutMs?: number,
   ): Promise<AgentTranscriptEvent>;
 } {
+  const rootDir = mkdtempSync(
+    path.join(tmpdir(), 'agent-nexus-discord-e2e-'),
+  );
+  const paths: DiscordE2EHarnessPaths = {
+    rootDir,
+    workingDir: path.join(rootDir, 'workdir'),
+    stateDir: path.join(rootDir, 'state'),
+    transcriptDir: path.join(rootDir, 'transcripts'),
+  };
+  mkdirSync(paths.workingDir, { recursive: true });
+  mkdirSync(paths.stateDir, { recursive: true });
+  mkdirSync(paths.transcriptDir, { recursive: true });
+  const caseId = options.caseId ?? 'harness-qualification';
+  const runId = `${Date.now()}-${randomUUID()}`;
+  const transcriptPath = path.join(
+    paths.transcriptDir,
+    `${caseId.replace(/[^a-zA-Z0-9._-]/g, '_')}-${runId}.json`,
+  );
   const transcript: Transcript = {
-    caseId: options.caseId ?? 'harness-qualification',
+    caseId,
+    runId,
+    startedAt: new Date().toISOString(),
+    status: 'running',
+    environment: {
+      agentBackend: 'scripted',
+      node: process.version,
+      platform: 'fake-discord',
+    },
     events: [],
+    artifactPath: transcriptPath,
+  };
+  let preserveArtifacts =
+    options.keepArtifacts ?? process.env.AGENT_NEXUS_E2E_KEEP_ARTIFACTS === '1';
+  let stopped = false;
+  const collectTraceIds = (): string[] => {
+    const traceIds = new Set<string>();
+    for (const event of transcript.events) {
+      if ('traceId' in event && event.traceId) {
+        traceIds.add(event.traceId);
+      }
+    }
+    return [...traceIds];
+  };
+  const writeTranscript = (
+    status: 'passed' | 'failed',
+    failureMessage?: string,
+  ): string => {
+    if (status === 'failed') preserveArtifacts = true;
+    transcript.status = status;
+    transcript.finishedAt = new Date().toISOString();
+    if (failureMessage) {
+      transcript.failure = {
+        message: failureMessage,
+        lastEventKind: transcript.events.at(-1)?.kind,
+        traceIds: collectTraceIds(),
+      };
+    }
+    const snapshot = {
+      ...transcript,
+      assertions: transcript.events.filter(
+        (event): event is Extract<TranscriptEvent, { kind: 'assertion' }> =>
+          event.kind === 'assertion',
+      ),
+    };
+    writeFileSync(transcriptPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+    return transcriptPath;
+  };
+  const formatFailure = (message: string, artifactPath: string): string => {
+    const traceIds = collectTraceIds();
+    return [
+      message,
+      `caseId=${transcript.caseId}`,
+      `traceIds=${traceIds.length > 0 ? traceIds.join(',') : 'none'}`,
+      `lastEvent=${transcript.events.at(-1)?.kind ?? 'none'}`,
+      `transcript=${artifactPath}`,
+    ].join('; ');
   };
   type OutboundWaiter = {
     predicate: (entry: OutboundEvent) => boolean;
@@ -449,18 +538,6 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
     settleAgentWaiters,
     options.agentEvents,
   );
-  const rootDir = mkdtempSync(
-    path.join(tmpdir(), 'agent-nexus-discord-e2e-'),
-  );
-  const paths: DiscordE2EHarnessPaths = {
-    rootDir,
-    workingDir: path.join(rootDir, 'workdir'),
-    stateDir: path.join(rootDir, 'state'),
-    transcriptDir: path.join(rootDir, 'transcripts'),
-  };
-  mkdirSync(paths.workingDir, { recursive: true });
-  mkdirSync(paths.stateDir, { recursive: true });
-  mkdirSync(paths.transcriptDir, { recursive: true });
   const engine = new Engine({
     platform,
     platformName: options.platformName ?? 'discord-main',
@@ -509,7 +586,9 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
             passed: false,
             details: `no agent event matched within ${timeoutMs}ms`,
           });
-          reject(new Error(`no agent event matched within ${timeoutMs}ms`));
+          const message = `no agent event matched within ${timeoutMs}ms`;
+          const artifactPath = writeTranscript('failed', message);
+          reject(new Error(formatFailure(message, artifactPath)));
         }, timeoutMs),
       };
       agentWaiters.add(waiter);
@@ -525,8 +604,13 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
       await engine.start();
     },
     async stop(): Promise<void> {
+      if (stopped) return;
+      stopped = true;
       await engine.stop();
-      if (!options.keepArtifacts) {
+      if (preserveArtifacts && transcript.status === 'running') {
+        writeTranscript('passed');
+      }
+      if (!preserveArtifacts) {
         rmSync(paths.rootDir, { recursive: true, force: true });
       }
     },
@@ -597,7 +681,9 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
               passed: false,
               details: `no outbound matched within ${timeoutMs}ms`,
             });
-            reject(new Error(`no outbound matched within ${timeoutMs}ms`));
+            const message = `no outbound matched within ${timeoutMs}ms`;
+            const artifactPath = writeTranscript('failed', message);
+            reject(new Error(formatFailure(message, artifactPath)));
           }, timeoutMs),
         };
         outboundWaiters.add(waiter);
@@ -618,9 +704,9 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
           : `expected ${expectedTotal} agent inputs, got ${agent.inputs.length}`,
       });
       if (!passed) {
-        throw new Error(
-          `expected ${expectedTotal} agent inputs, got ${agent.inputs.length}`,
-        );
+        const message = `expected ${expectedTotal} agent inputs, got ${agent.inputs.length}`;
+        const artifactPath = writeTranscript('failed', message);
+        throw new Error(formatFailure(message, artifactPath));
       }
     },
     async waitForTurnFinished(

@@ -14,7 +14,7 @@ related:
 
 # 测试数据与 Fixture
 
-所有测试数据（输入 fixture、预期输出 snapshot、CC transcript）的组织、命名、更新规则。
+所有测试数据（输入 fixture、预期输出 snapshot、agent backend transcript）的组织、命名、更新规则。
 
 ## 目录结构
 
@@ -33,9 +33,9 @@ related:
     │   │   └── ...
     │   └── snapshots/         # NormalizedEvent 快照比对
     │       └── ...
-    ├── cc-cli/
-    │   ├── transcripts/       # CC 输出回放
-    │   │   ├── v<ccver>/      # 按 CC 版本分组
+    ├── <agent-backend>/
+    │   ├── transcripts/       # agent backend 输出回放；现有目录如 cc-cli/
+    │   │   ├── v<backend-ver>/ # 按 backend 版本分组
     │   │   │   ├── basic_qa.jsonl
     │   │   │   ├── tool_call_read.jsonl
     │   │   │   └── ...
@@ -89,11 +89,12 @@ related:
 }
 ```
 
-### CC CLI Transcript（`testdata/cc-cli/transcripts/v<ver>/*.jsonl`）
+### Agent Backend Transcript（`testdata/<agent-backend>/transcripts/v<ver>/*.jsonl`）
 
-- CC 输出的 JSONL（按行一个事件）
+- agent backend 输出的 JSONL（按行一个事件）
 - 包含 timestamp、事件类型、payload
-- 用于 transcript 回放测试：mock CC runtime 按节奏吐出这些行
+- 用于 transcript 回放测试：mock backend runtime 按节奏吐出这些行
+- 现有 Claude Code CLI transcript 使用 `testdata/cc-cli/transcripts/`
 
 示例（简化）：
 
@@ -122,11 +123,11 @@ related:
 
 ## 版本控制
 
-### CC Transcript
+### Agent Backend Transcript
 
-- 按 CC CLI 版本分目录：`v1.3.0/`, `v1.4.0/`
-- 测试根据测的 CC 版本读对应目录
-- 新增 CC 版本：新开目录，运行录制脚本生成一批
+- 按 backend 和 backend 版本分目录：`testdata/cc-cli/transcripts/v1.3.0/`
+- 测试根据目标 backend 版本读对应目录
+- 新增 backend 或版本：新开目录，运行对应录制脚本生成一批
 
 ### 快照
 
@@ -152,7 +153,7 @@ Fixture 是契约的一部分，不是"试试看"：
 需要的工具（ADR-0004 语言定后补实现）：
 
 - `scripts/record-discord-event`：从真实 Discord 连接录制事件 + 脱敏
-- `scripts/record-cc-transcript`：在一个指定 prompt 下运行 CC CLI，落盘 JSONL
+- backend 专用 transcript 录制脚本：在一个指定 prompt 下运行目标 backend，落盘 JSONL（现有例：`scripts/record-cc-transcript`）
 - `scripts/regenerate-snapshots`：重新生成所有 snapshot（需要手工 review diff）
 
 ## 脱敏
@@ -179,7 +180,7 @@ Fixture 是契约的一部分，不是"试试看"：
 - 在测试代码里内联大段 JSON（放 fixture 文件）
 - Fixture 文件用 `final_v2_fixed.json` 这种人类命名（用语义化名字）
 - 录制的 fixture 未脱敏直接入库
-- CC 升级了但不更新 transcript fixture（下次测试不稳）
+- agent backend 升级了但不更新 transcript fixture（下次测试不稳）
 - 多个测试共享一个 mutable fixture（改一处挂一片）
 
 ## Out of spec

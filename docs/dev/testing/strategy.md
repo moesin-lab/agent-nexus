@@ -36,7 +36,7 @@ related:
 | Unit | 单函数、单类 | 外部 I/O 全 mock | <50ms / 测试 |
 | Integration | 模块对接 | 只 mock 系统边界 | <500ms / 测试 |
 | E2E | 完整链路 | 只 mock Discord | 5–30s / 测试 |
-| Eval | 对话质量 | 真实 LLM + 真实 CC | 数十秒 / case |
+| Eval | 对话质量 | 真实 LLM + 真实 agent backend | 数十秒 / case |
 
 ## 各层目标
 
@@ -76,7 +76,7 @@ Discord E2E 的 fake platform 边界、runner、transcript 与 seed case 见 [`d
 ### 总原则
 
 - **单元测试**：mock 所有 I/O（网络、磁盘、时钟、子进程）
-- **集成测试**：只 mock 系统边界（Discord API、Anthropic API、CC CLI 子进程）
+- **集成测试**：只 mock 系统边界（Discord API、Anthropic API、agent backend 子进程）
 - **E2E**：只 mock Discord（agent backend 真跑）
 - **Eval**：什么都不 mock
 
@@ -138,7 +138,7 @@ Agent backend CLI 是黑盒，输出格式可能变。维护两种 mock：
 
 ## 反模式
 
-- 每个测试都起一个真 CC 子进程（慢且脆弱，应 transcript 回放）
+- 每个测试都起一个真 agent backend 子进程（慢且脆弱，应 transcript 回放）
 - Mock 自己（只 mock 外部依赖）
 - 用 sleep 等异步（用 fake clock 或显式同步）
 - 用 print 调试后不删

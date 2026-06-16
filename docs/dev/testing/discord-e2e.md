@@ -45,7 +45,7 @@ Harness qualification 只能证明测试工具自身可用，不能替代 Discor
 
 ## Fake Discord 边界
 
-Fake Discord 实现 `PlatformAdapter`，不 mock `discord.js Client`，也不走真实网络。它的职责是模拟平台边界，而不是复刻 Discord SDK。
+Fake Discord 实现 `PlatformAdapter`，不 mock `discord.js Client`，也不走真实网络。它的职责是模拟平台边界，而不是复刻 Discord SDK。接口契约以 [`../spec/platform-adapter.md`](../spec/platform-adapter.md) 为准；下表只列 fake 实现必须覆盖的测试子集。
 
 Fake adapter 必备能力：
 
@@ -69,14 +69,13 @@ Fake adapter 不负责：
 
 ## 输入事件
 
-E2E case 注入的是 `NormalizedEvent`，不是 raw gateway JSON。Discord raw payload 到 `NormalizedEvent` 的映射由 platform adapter 合约测试负责。
+E2E case 注入的是 `NormalizedEvent`，不是 raw gateway JSON。Discord raw payload 到 `NormalizedEvent` 的映射由 platform adapter 合约测试负责。字段契约以 [`../spec/message-protocol.md`](../spec/message-protocol.md) 为准。
 
 事件工厂使用固定测试 ID：
 
 | 字段 | 示例 |
 |---|---|
 | `platform` | `discord` |
-| `platformName` | 由 Engine 注入，例如 `discord-main` |
 | `channelId` | `C-e2e-main` |
 | `initiatorUserId` | `U-e2e-owner` |
 | `guildId` | `G-e2e` |
@@ -84,6 +83,8 @@ E2E case 注入的是 `NormalizedEvent`，不是 raw gateway JSON。Discord raw 
 | `traceId` | 每次运行可唯一，但必须写入 transcript |
 
 测试事件不得包含真实 username、真实频道名、真实 token、真实附件 URL。raw payload 只允许放最小空对象或脱敏后的 fixture 引用。
+
+`platformName` 不由测试事件预填。E2E 应断言 daemon routing 后的完整 `SessionKey` 含配置实例名，例如 `discord-main`，从而覆盖 routing 注入路径。
 
 ## Runner
 
@@ -181,15 +182,16 @@ E2E 禁止用固定 sleep 等待业务结果。harness 提供显式等待：
 | Case | 目的 | 关键断言 |
 |---|---|---|
 | `happy-path` | 合法 Discord 消息触发真实 agent 并回送 Discord | route 命中；auth 通过；agent 收到输入；至少一条 outbound；traceId 串联 |
-| `auth-denied` | 非 allowlist 用户不触发 agent | `auth_denied`；无 agent session；无 outbound；无幂等记录 |
+| `auth-denied` | 非 allowlist 用户不触发 agent | `auth_denied`；无 agent session；无 agent outbound；无幂等记录 |
 | `idempotency-replay` | Discord at-least-once 重放只处理一次 | 同 `(sessionKey, messageId)` 第二次不触发 agent；记录命中日志 |
-| `long-output-slicing` | 长回复在 Discord outbound 中按平台能力切片 | `MessageRef.messageIds.length > 1`；切片顺序稳定；拼接等于脱敏后原文 |
+| `long-output-slicing` | 长回复切片归属清晰后，证明默认 E2E 不产生 fake-only 通过 | 不由 fake adapter 复刻 Discord `buildSlices`；最终断言随 platform-adapter owner 对切片归属的修正确定 |
 | `redaction` | agent 输出敏感模式时发到 Discord 前已脱敏 | outbound 不含原始 secret / 绝对路径；transcript 也不含原文 |
 
 当前代码缺口影响：
 
 - `idempotency-replay` 必须按 spec 的 `(sessionKey, messageId)` 语义实现；当前仅有 `eventId` 内存 dedup，不足以作为最终通过证据。
 - `redaction` 必须等 daemon redaction layer 落地后才可通过；当前直接发送 agent 文本，不能声明通过。
+- `long-output-slicing` 必须先澄清切片归属；当前实现的切片在真实 Discord adapter 内，默认 fake-adapter E2E 不能通过复刻该逻辑来声明生产切片通过。
 - 若 session/idempotency 存储仍是内存实现，E2E 可以用 tmpdir state，但不能声称已覆盖 SQLite 持久化。
 
 ## 真实 Agent 选择
@@ -212,7 +214,7 @@ case 断言不能依赖完整 LLM 文本逐字一致。需要确定输出时，p
 版本控制内 fixture：
 
 - Discord raw gateway fixture 继续放 `testdata/discord/events/`，供 adapter 合约测试使用。
-- agent transcript fixture 继续放 owner backend 的 testdata 或 `testdata/cc-cli/transcripts/`，供 replay / integration 使用。
+- agent transcript fixture 继续放 owner backend 的 testdata；现有 Claude Code transcript 归 [`fixtures.md`](fixtures.md) 定义的 `testdata/cc-cli/transcripts/`，新增 Codex transcript 不在本文重新命名。
 - E2E seed case 配置可以放 `tests/e2e/discord/cases/`，只写脱敏输入和断言，不写运行产物。
 
 运行产物：

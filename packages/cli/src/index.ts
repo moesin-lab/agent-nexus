@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
   Engine,
+  InMemoryIdempotencyStore,
   SessionStore,
   createLogger,
   type RoutingEntry,
@@ -85,6 +86,7 @@ async function main(): Promise<void> {
   );
 
   const sessionStore = new SessionStore();
+  const idempotencyStore = new InMemoryIdempotencyStore();
   const engines: Engine[] = [];
 
   for (const platformConfig of config.platforms) {
@@ -140,6 +142,7 @@ async function main(): Promise<void> {
         platformAuth: platformConfig.auth,
         agents,
         routingTable,
+        idempotencyStore,
         logger,
         sessionStore,
         toolMessages: {

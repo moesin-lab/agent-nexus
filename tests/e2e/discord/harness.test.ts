@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionKey } from '../../../packages/protocol/src/index.js';
 import {
@@ -133,6 +133,64 @@ describe('Discord E2E harness', () => {
     await harness.stop();
   });
 
+  it('should_write_failed_transcript_artifact_when_wait_for_outbound_times_out', async () => {
+    const harness = makeHarness({
+      caseId: 'artifact-timeout-case',
+      agentEvents: scriptedTextReply('artifact pong'),
+    });
+
+    await harness.start();
+    await harness.injectMessage('artifact input', {
+      traceId: 'artifact-trace',
+    });
+
+    let thrown: Error | undefined;
+    try {
+      await harness.waitForOutbound(
+        (entry) => entry.message.text === 'missing text',
+        1,
+      );
+    } catch (err) {
+      thrown = err as Error;
+    }
+
+    expect(thrown).toBeDefined();
+    expect(thrown?.message).toContain('caseId=artifact-timeout-case');
+    expect(thrown?.message).toContain('traceIds=artifact-trace');
+    expect(thrown?.message).toContain('transcript=');
+    const artifactPath = thrown?.message.match(/transcript=([^;\s]+)/)?.[1];
+    expect(artifactPath).toBeTruthy();
+    expect(existsSync(artifactPath!)).toBe(true);
+
+    const artifact = JSON.parse(readFileSync(artifactPath!, 'utf8')) as {
+      caseId: string;
+      status: string;
+      failure: { message: string };
+      events: Array<{ kind: string; traceId?: string; passed?: boolean }>;
+      assertions: Array<{ kind: string; passed: boolean }>;
+    };
+    expect(artifact.caseId).toBe('artifact-timeout-case');
+    expect(artifact.status).toBe('failed');
+    expect(artifact.failure.message).toContain(
+      'no outbound matched within 1ms',
+    );
+    expect(artifact.events.some((event) => event.kind === 'inbound')).toBe(true);
+    expect(
+      artifact.events.some((event) => event.kind === 'agent_event'),
+    ).toBe(true);
+    expect(
+      artifact.events.some((event) => event.kind === 'outbound_send'),
+    ).toBe(true);
+    expect(
+      artifact.assertions.some((event) => event.passed === false),
+    ).toBe(true);
+
+    const rootDir = harness.paths.rootDir;
+    await harness.stop();
+    expect(existsSync(rootDir)).toBe(true);
+    rmSync(rootDir, { recursive: true, force: true });
+  });
+
   it('should_expose_tmpdir_paths_and_remove_them_on_stop_by_default', async () => {
     const harness = makeHarness({
       agentEvents: scriptedTextReply('pong'),
@@ -148,6 +206,69 @@ describe('Discord E2E harness', () => {
     await harness.stop();
 
     expect(existsSync(rootDir)).toBe(false);
+  });
+
+  it('should_write_passed_transcript_artifact_when_keep_artifacts_is_enabled', async () => {
+    const harness = makeHarness({
+      caseId: 'artifact-passed-case',
+      keepArtifacts: true,
+      agentEvents: scriptedTextReply('kept pong'),
+    });
+
+    await harness.start();
+    await harness.injectMessage('keep transcript', {
+      traceId: 'artifact-pass-trace',
+    });
+    await harness.waitForOutbound(
+      (entry) => entry.message.text === 'kept pong',
+    );
+
+    const rootDir = harness.paths.rootDir;
+    const artifactPath = harness.transcript.artifactPath;
+    await harness.stop();
+
+    expect(artifactPath).toBeTruthy();
+    expect(existsSync(rootDir)).toBe(true);
+    expect(existsSync(artifactPath!)).toBe(true);
+    const artifact = JSON.parse(readFileSync(artifactPath!, 'utf8')) as {
+      caseId: string;
+      status: string;
+      events: Array<{ kind: string; traceId?: string }>;
+    };
+    expect(artifact.caseId).toBe('artifact-passed-case');
+    expect(artifact.status).toBe('passed');
+    expect(
+      artifact.events.some((event) => event.traceId === 'artifact-pass-trace'),
+    ).toBe(true);
+    rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it('should_respect_keep_artifacts_environment_variable', async () => {
+    const previous = process.env.AGENT_NEXUS_E2E_KEEP_ARTIFACTS;
+    process.env.AGENT_NEXUS_E2E_KEEP_ARTIFACTS = '1';
+    const harness = makeHarness({
+      caseId: 'artifact-env-case',
+      agentEvents: scriptedTextReply('env pong'),
+    });
+    try {
+      await harness.start();
+      await harness.injectMessage('env keep transcript');
+      await harness.waitForOutbound((entry) => entry.message.text === 'env pong');
+
+      const rootDir = harness.paths.rootDir;
+      const artifactPath = harness.transcript.artifactPath;
+      await harness.stop();
+
+      expect(existsSync(rootDir)).toBe(true);
+      expect(existsSync(artifactPath!)).toBe(true);
+      rmSync(rootDir, { recursive: true, force: true });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AGENT_NEXUS_E2E_KEEP_ARTIFACTS;
+      } else {
+        process.env.AGENT_NEXUS_E2E_KEEP_ARTIFACTS = previous;
+      }
+    }
   });
 
   it('should_wait_for_agent_event_and_turn_finished_when_waiters_start_before_injection', async () => {

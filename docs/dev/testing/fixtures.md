@@ -6,6 +6,7 @@ summary: testdata 目录结构、fixture 类型、命名与版本、录制与脱
 tags: [testing, fixtures]
 related:
   - dev/testing/strategy
+  - dev/testing/discord-e2e
   - dev/testing/eval
   - dev/spec/platform-adapter
   - dev/spec/agent-runtime

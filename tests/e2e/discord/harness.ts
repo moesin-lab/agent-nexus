@@ -20,6 +20,7 @@ import type {
 } from '../../../packages/protocol/src/index.js';
 import { Engine } from '../../../packages/daemon/src/engine.js';
 import type { PlatformAuthConfig } from '../../../packages/daemon/src/config.js';
+import { InMemoryIdempotencyStore } from '../../../packages/daemon/src/idempotency.js';
 import { createLogger } from '../../../packages/daemon/src/logger.js';
 import { SessionStore } from '../../../packages/daemon/src/session-store.js';
 
@@ -181,6 +182,27 @@ class FakeDiscordPlatform implements PlatformAdapter {
     return this.caps;
   }
 
+  private splitText(text: string): string[] {
+    const maxTextLength = this.caps.maxTextLength;
+    if (maxTextLength <= 0 || text.length <= maxTextLength) return [text];
+    const chunks: string[] = [];
+    for (let i = 0; i < text.length; i += maxTextLength) {
+      chunks.push(text.slice(i, i + maxTextLength));
+    }
+    return chunks.length > 0 ? chunks : [''];
+  }
+
+  private nextRef(sessionKey: SessionKey): MessageRef {
+    const messageId = `fake-discord-${this.nextMessageId++}`;
+    return {
+      platform: sessionKey.platform,
+      channelId: sessionKey.channelId,
+      messageId,
+      messageIds: [messageId],
+      sentAt: new Date(),
+    };
+  }
+
   async start(handler: EventHandler): Promise<void> {
     this.handler = handler;
   }
@@ -208,34 +230,55 @@ class FakeDiscordPlatform implements PlatformAdapter {
     sessionKey: SessionKey,
     message: OutboundMessage,
   ): Promise<MessageRef> {
-    const messageId = `fake-discord-${this.nextMessageId++}`;
-    const ref: MessageRef = {
-      platform: sessionKey.platform,
-      channelId: sessionKey.channelId,
-      messageId,
-      messageIds: [messageId],
-      sentAt: new Date(),
+    const refs: MessageRef[] = [];
+    for (const chunk of this.splitText(message.text)) {
+      const ref = this.nextRef(sessionKey);
+      refs.push(ref);
+      const entry: OutboundSendEvent = {
+        kind: 'outbound_send',
+        sessionKey,
+        message: { ...message, text: chunk },
+        ref,
+      };
+      this.transcript.events.push(entry);
+      this.onOutbound(entry);
+    }
+    const first = refs[0]!;
+    const last = refs[refs.length - 1]!;
+    return {
+      platform: last.platform,
+      channelId: last.channelId,
+      messageId: last.messageId,
+      messageIds: refs.flatMap((ref) => ref.messageIds),
+      sentAt: first.sentAt,
     };
-    const entry: OutboundSendEvent = {
-      kind: 'outbound_send',
-      sessionKey,
-      message,
-      ref,
-    };
-    this.transcript.events.push(entry);
-    this.onOutbound(entry);
-    return ref;
   }
 
   async edit(ref: MessageRef, message: OutboundMessage): Promise<void> {
-    const entry: OutboundEvent = {
-      kind: 'outbound_edit',
-      sessionKey: message.sessionKey,
-      ref,
-      message,
-    };
-    this.transcript.events.push(entry);
-    this.onOutbound(entry);
+    const chunks = this.splitText(message.text);
+    const existingIds = ref.messageIds.length > 0 ? ref.messageIds : [ref.messageId];
+    const nextIds: string[] = [];
+    chunks.forEach((chunk, index) => {
+      const messageId = existingIds[index] ?? `fake-discord-${this.nextMessageId++}`;
+      nextIds.push(messageId);
+      const chunkRef: MessageRef = {
+        platform: ref.platform,
+        channelId: ref.channelId,
+        messageId,
+        messageIds: [messageId],
+        sentAt: ref.sentAt,
+      };
+      const entry: OutboundEvent = {
+        kind: index < existingIds.length ? 'outbound_edit' : 'outbound_send',
+        sessionKey: message.sessionKey,
+        ref: chunkRef,
+        message: { ...message, text: chunk },
+      };
+      this.transcript.events.push(entry);
+      this.onOutbound(entry);
+    });
+    ref.messageIds = nextIds;
+    ref.messageId = nextIds[nextIds.length - 1] ?? ref.messageId;
   }
 
   async delete(_ref: MessageRef): Promise<void> {
@@ -422,6 +465,7 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
     platform,
     platformName: options.platformName ?? 'discord-main',
     platformAuth: options.platformAuth,
+    idempotencyStore: new InMemoryIdempotencyStore(),
     agent,
     logger: createLogger({ level: 'fatal', pretty: false }),
     sessionStore: new SessionStore(),

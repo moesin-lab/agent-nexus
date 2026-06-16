@@ -2,6 +2,13 @@ export { createLogger, type Logger, type CreateLoggerOptions } from './logger.js
 export { checkPlatformAuth, type AuthDecision } from './auth.js';
 export { Engine, type EngineAgent, type EngineDeps } from './engine.js';
 export {
+  InMemoryIdempotencyStore,
+  type IdempotencyDecision,
+  type IdempotencyStatus,
+  type IdempotencyStore,
+} from './idempotency.js';
+export { BasicRedactor, redactText, type Redactor } from './redaction.js';
+export {
   RouteError,
   selectRoute,
   type RouteContext,

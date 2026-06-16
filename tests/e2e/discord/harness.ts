@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
@@ -19,6 +19,7 @@ import type {
   SessionKey,
 } from '../../../packages/protocol/src/index.js';
 import { Engine } from '../../../packages/daemon/src/engine.js';
+import type { PlatformAuthConfig } from '../../../packages/daemon/src/config.js';
 import { createLogger } from '../../../packages/daemon/src/logger.js';
 import { SessionStore } from '../../../packages/daemon/src/session-store.js';
 
@@ -102,6 +103,10 @@ export type OutboundEvent = Extract<
   TranscriptEvent,
   { kind: 'outbound_send' | 'outbound_edit' }
 >;
+export type AgentTranscriptEvent = Extract<
+  TranscriptEvent,
+  { kind: 'agent_event' }
+>;
 
 export type ScriptedAgentEvents = (ctx: {
   session: AgentSession;
@@ -110,10 +115,30 @@ export type ScriptedAgentEvents = (ctx: {
 
 export interface DiscordE2EHarnessOptions {
   caseId?: string;
+  keepArtifacts?: boolean;
+  platformAuth?: PlatformAuthConfig;
   platformName?: string;
   platformCaps?: Partial<CapabilitySet>;
   sessionKey?: PlatformSessionKey;
   agentEvents: ScriptedAgentEvents;
+}
+
+export interface DiscordE2EHarnessPaths {
+  rootDir: string;
+  workingDir: string;
+  stateDir: string;
+  transcriptDir: string;
+}
+
+export interface InjectMessageOptions {
+  eventId?: string;
+  messageId?: string;
+  traceId?: string;
+  channelId?: string;
+  initiatorUserId?: string;
+  displayName?: string;
+  guildId?: string;
+  initiatorRoleIds?: string[];
 }
 
 export function scriptedTextReply(text: string): ScriptedAgentEvents {
@@ -241,6 +266,7 @@ class ScriptedAgentRuntime implements AgentRuntime {
 
   constructor(
     private readonly transcript: Transcript,
+    private readonly onAgentEvent: (entry: AgentTranscriptEvent) => void,
     private readonly events: ScriptedAgentEvents,
   ) {}
 
@@ -276,12 +302,14 @@ class ScriptedAgentRuntime implements AgentRuntime {
     const handler = this.handlers.get(session);
     if (!handler) return;
     for (const event of this.events({ session, input })) {
-      this.transcript.events.push({
+      const entry: AgentTranscriptEvent = {
         kind: 'agent_event',
         eventType: event.type,
         sequence: event.sequence,
         traceId: event.traceId,
-      });
+      };
+      this.transcript.events.push(entry);
+      this.onAgentEvent(entry);
       await handler(event);
     }
   }
@@ -295,15 +323,28 @@ class ScriptedAgentRuntime implements AgentRuntime {
 
 export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
   agent: ScriptedAgentRuntime;
-  injectMessage(text: string): Promise<NormalizedEvent>;
+  injectMessage(
+    text: string,
+    overrides?: InjectMessageOptions,
+  ): Promise<NormalizedEvent>;
+  paths: DiscordE2EHarnessPaths;
   platform: FakeDiscordPlatform;
   start(): Promise<void>;
   stop(): Promise<void>;
   transcript: Transcript;
+  waitForAgentEvent(
+    predicate: (entry: AgentTranscriptEvent) => boolean,
+    timeoutMs?: number,
+  ): Promise<AgentTranscriptEvent>;
   waitForOutbound(
     predicate: (entry: OutboundEvent) => boolean,
     timeoutMs?: number,
   ): Promise<OutboundEvent>;
+  waitForNoAgentCall(windowMs?: number, expectedTotal?: number): Promise<void>;
+  waitForTurnFinished(
+    traceId: string,
+    timeoutMs?: number,
+  ): Promise<AgentTranscriptEvent>;
 } {
   const transcript: Transcript = {
     caseId: options.caseId ?? 'harness-qualification',
@@ -337,26 +378,103 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
     options.platformCaps ?? {},
     settleOutboundWaiters,
   );
-  const agent = new ScriptedAgentRuntime(transcript, options.agentEvents);
-  const workingDir = mkdtempSync(
+  type AgentWaiter = {
+    predicate: (entry: AgentTranscriptEvent) => boolean;
+    resolve: (entry: AgentTranscriptEvent) => void;
+    timer: ReturnType<typeof setTimeout>;
+  };
+  const agentWaiters = new Set<AgentWaiter>();
+  const consumedAgentEvents = new WeakSet<AgentTranscriptEvent>();
+  const settleAgentWaiters = (entry: AgentTranscriptEvent): void => {
+    let matched = false;
+    for (const waiter of [...agentWaiters]) {
+      if (!waiter.predicate(entry)) continue;
+      clearTimeout(waiter.timer);
+      agentWaiters.delete(waiter);
+      matched = true;
+      transcript.events.push({
+        kind: 'assertion',
+        name: 'waitForAgentEvent',
+        passed: true,
+      });
+      waiter.resolve(entry);
+    }
+    if (matched) consumedAgentEvents.add(entry);
+  };
+  const agent = new ScriptedAgentRuntime(
+    transcript,
+    settleAgentWaiters,
+    options.agentEvents,
+  );
+  const rootDir = mkdtempSync(
     path.join(tmpdir(), 'agent-nexus-discord-e2e-'),
   );
+  const paths: DiscordE2EHarnessPaths = {
+    rootDir,
+    workingDir: path.join(rootDir, 'workdir'),
+    stateDir: path.join(rootDir, 'state'),
+    transcriptDir: path.join(rootDir, 'transcripts'),
+  };
+  mkdirSync(paths.workingDir, { recursive: true });
+  mkdirSync(paths.stateDir, { recursive: true });
+  mkdirSync(paths.transcriptDir, { recursive: true });
   const engine = new Engine({
     platform,
     platformName: options.platformName ?? 'discord-main',
+    platformAuth: options.platformAuth,
     agent,
     logger: createLogger({ level: 'fatal', pretty: false }),
     sessionStore: new SessionStore(),
     defaultSessionConfig: {
-      workingDir,
+      workingDir: paths.workingDir,
       timeoutMs: 10_000,
     },
   });
   const sessionKey = options.sessionKey ?? DEFAULT_PLATFORM_SESSION_KEY;
   let nextInboundId = 1;
 
+  const waitForAgentEvent = async (
+    predicate: (entry: AgentTranscriptEvent) => boolean,
+    timeoutMs = 1_000,
+  ): Promise<AgentTranscriptEvent> => {
+    const existing = transcript.events.find(
+      (event): event is AgentTranscriptEvent =>
+        event.kind === 'agent_event' &&
+        !consumedAgentEvents.has(event) &&
+        predicate(event),
+    );
+    if (existing) {
+      consumedAgentEvents.add(existing);
+      transcript.events.push({
+        kind: 'assertion',
+        name: 'waitForAgentEvent',
+        passed: true,
+      });
+      return existing;
+    }
+
+    return await new Promise<AgentTranscriptEvent>((resolve, reject) => {
+      const waiter: AgentWaiter = {
+        predicate,
+        resolve,
+        timer: setTimeout(() => {
+          agentWaiters.delete(waiter);
+          transcript.events.push({
+            kind: 'assertion',
+            name: 'waitForAgentEvent',
+            passed: false,
+            details: `no agent event matched within ${timeoutMs}ms`,
+          });
+          reject(new Error(`no agent event matched within ${timeoutMs}ms`));
+        }, timeoutMs),
+      };
+      agentWaiters.add(waiter);
+    });
+  };
+
   return {
     agent,
+    paths,
     platform,
     transcript,
     async start(): Promise<void> {
@@ -364,32 +482,45 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
     },
     async stop(): Promise<void> {
       await engine.stop();
-      rmSync(workingDir, { recursive: true, force: true });
+      if (!options.keepArtifacts) {
+        rmSync(paths.rootDir, { recursive: true, force: true });
+      }
     },
-    async injectMessage(text: string): Promise<NormalizedEvent> {
+    async injectMessage(
+      text: string,
+      overrides: InjectMessageOptions = {},
+    ): Promise<NormalizedEvent> {
       const id = nextInboundId++;
+      const eventSessionKey: PlatformSessionKey = {
+        platform: sessionKey.platform,
+        channelId: overrides.channelId ?? sessionKey.channelId,
+        initiatorUserId:
+          overrides.initiatorUserId ?? sessionKey.initiatorUserId,
+      };
       const event: NormalizedEvent = {
-        eventId: `e2e-event-${id}`,
+        eventId: overrides.eventId ?? `e2e-event-${id}`,
         platform: 'discord',
-        sessionKey,
-        messageId: `e2e-message-${id}`,
-        traceId: `e2e-trace-${id}`,
+        sessionKey: eventSessionKey,
+        messageId: overrides.messageId ?? `e2e-message-${id}`,
+        traceId: overrides.traceId ?? `e2e-trace-${id}`,
         type: 'message',
         text,
         rawPayload: {},
         rawContentType: 'application/json',
         receivedAt: new Date(),
         platformTimestamp: new Date(),
-        guildId: 'G-e2e',
+        guildId: overrides.guildId ?? 'G-e2e',
+        initiatorRoleIds: overrides.initiatorRoleIds,
         initiator: {
-          userId: sessionKey.initiatorUserId,
-          displayName: 'e2e-owner',
+          userId: eventSessionKey.initiatorUserId,
+          displayName: overrides.displayName ?? 'e2e-owner',
           isBot: false,
         },
       };
       await platform.inject(event);
       return event;
     },
+    waitForAgentEvent,
     async waitForOutbound(
       predicate: (entry: OutboundEvent) => boolean,
       timeoutMs = 1_000,
@@ -427,6 +558,36 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
         };
         outboundWaiters.add(waiter);
       });
+    },
+    async waitForNoAgentCall(
+      windowMs = 50,
+      expectedTotal = 0,
+    ): Promise<void> {
+      await new Promise((resolve) => setTimeout(resolve, windowMs));
+      const passed = agent.inputs.length === expectedTotal;
+      transcript.events.push({
+        kind: 'assertion',
+        name: 'waitForNoAgentCall',
+        passed,
+        details: passed
+          ? undefined
+          : `expected ${expectedTotal} agent inputs, got ${agent.inputs.length}`,
+      });
+      if (!passed) {
+        throw new Error(
+          `expected ${expectedTotal} agent inputs, got ${agent.inputs.length}`,
+        );
+      }
+    },
+    async waitForTurnFinished(
+      traceId: string,
+      timeoutMs = 1_000,
+    ): Promise<AgentTranscriptEvent> {
+      return await waitForAgentEvent(
+        (entry) =>
+          entry.eventType === 'turn_finished' && entry.traceId === traceId,
+        timeoutMs,
+      );
     },
   };
 }

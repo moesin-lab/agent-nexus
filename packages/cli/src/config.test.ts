@@ -18,8 +18,11 @@ vi.mock('node:os', async () => {
 
 import { homedir } from 'node:os';
 import {
+  AGENT_NEXUS_HOME_ENV,
+  applyConfigHomeArgv,
   ConfigError,
   SecretsPermissionError,
+  configRoot,
   loadConfig,
   loadDiscordToken,
   loadSecret,
@@ -80,14 +83,22 @@ function validConfig(overrides: Record<string, unknown> = {}): Record<string, un
 
 describe('config loader', () => {
   let tmp: string;
+  let previousAgentNexusHome: string | undefined;
 
   beforeEach(async () => {
+    previousAgentNexusHome = process.env[AGENT_NEXUS_HOME_ENV];
+    delete process.env[AGENT_NEXUS_HOME_ENV];
     tmp = await mkdtemp(join(tmpdir(), 'agent-nexus-cfg-'));
     vi.mocked(homedir).mockReturnValue(tmp);
     await mkdir(join(tmp, '.agent-nexus', 'secrets'), { recursive: true });
   });
 
   afterEach(async () => {
+    if (previousAgentNexusHome === undefined) {
+      delete process.env[AGENT_NEXUS_HOME_ENV];
+    } else {
+      process.env[AGENT_NEXUS_HOME_ENV] = previousAgentNexusHome;
+    }
     await rm(tmp, { recursive: true, force: true });
   });
 
@@ -127,6 +138,33 @@ describe('config loader', () => {
     expect(
       Object.prototype.hasOwnProperty.call(JSON.parse(configText), 'discord'),
     ).toBe(false);
+  });
+
+  it('AGENT_NEXUS_HOME 会作为 config / secrets / state 的实例根目录', async () => {
+    const root = join(tmp, 'agent-nexus-dev-root');
+    process.env[AGENT_NEXUS_HOME_ENV] = root;
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, 'config.json'), JSON.stringify(validConfig()));
+
+    const cfg = await loadConfig();
+
+    expect(configRoot()).toBe(root);
+    expect(cfg.platforms[0].statePath).toBe(
+      join(root, 'state', 'discord-discord-main.json'),
+    );
+
+    await writeFile(join(root, 'secrets', 'DISCORD_BOT_TOKEN'), 'token-dev');
+    await chmod(join(root, 'secrets', 'DISCORD_BOT_TOKEN'), 0o600);
+    await expect(loadSecret('DISCORD_BOT_TOKEN')).resolves.toBe('token-dev');
+  });
+
+  it('applyConfigHomeArgv 解析 --home 并写入 AGENT_NEXUS_HOME', () => {
+    const root = join(tmp, 'agent-nexus-flag-root');
+
+    applyConfigHomeArgv(['--home', root]);
+
+    expect(process.env[AGENT_NEXUS_HOME_ENV]).toBe(root);
+    expect(configRoot()).toBe(root);
   });
 
   it('loadConfig 解析 platforms[] / agents[] / bindings[] 新结构并应用 owner parser 默认值', async () => {

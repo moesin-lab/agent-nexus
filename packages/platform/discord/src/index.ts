@@ -18,10 +18,10 @@ export { discordReplyModeCommandDescriptor } from './reply-mode.js';
 // - DM 消息（intents 没开 DirectMessages）
 // - 长文本切片保留代码块边界 → docs/dev/spec/message-protocol.md §文本切片
 // - delete / react → spec/platform-adapter.md 各对应段
-// - threads → 同上
 
 import { randomUUID } from 'node:crypto';
 import {
+  ChannelType,
   Client,
   GatewayIntentBits,
   type ChatInputCommandInteraction,
@@ -35,14 +35,18 @@ import type {
   CommandRegistrationPort,
   CommandRegistrationResult,
   CommandRegistrationScope,
+  CreateThreadInput,
   EventHandler,
   EventHandlerResult,
+  EventModalResponse,
+  MessageComponent,
   MessageRef,
   NormalizedEvent,
   OutboundMessage,
   PlatformSessionKey,
   PlatformAdapter,
   SessionKey,
+  UpdateThreadInput,
 } from '@agent-nexus/protocol';
 import type { Logger } from '@agent-nexus/daemon';
 import {
@@ -121,8 +125,10 @@ export const DISCORD_CAPABILITIES: CapabilitySet = {
   supportsDelete: false,
   supportsReactions: false,
   supportsEmbeds: false,
-  supportsButtons: false,
-  supportsThreads: false,
+  supportsButtons: true,
+  supportsStringSelects: true,
+  supportsThreads: true,
+  supportsThreadCreation: true,
   supportsEphemeral: true,
   supportsAttachments: false,
   maxAttachmentsPerMessage: 0,
@@ -219,14 +225,53 @@ function discordMemberRoleIds(msg: Message): string[] {
   return [...cache.keys()];
 }
 
-function discordInteractionRoleIds(interaction: ChatInputCommandInteraction): string[] {
-  const roles = interaction.member?.roles;
+function discordInteractionRoleIds(interaction: { member?: unknown }): string[] {
+  const member = interaction.member;
+  const roles =
+    member && typeof member === 'object' && 'roles' in member
+      ? member.roles
+      : undefined;
   if (Array.isArray(roles)) return roles;
   const cache =
     roles && typeof roles === 'object' && 'cache' in roles
       ? roles.cache
       : undefined;
-  if (cache && typeof cache.keys === 'function') return [...cache.keys()];
+  if (
+    cache &&
+    typeof cache === 'object' &&
+    'keys' in cache &&
+    typeof cache.keys === 'function'
+  ) {
+    return [...cache.keys()] as string[];
+  }
+  return [];
+}
+
+function discordChannelThreadParentId(channel: unknown): string | undefined {
+  if (!channel || typeof channel !== 'object') return undefined;
+  const isThread =
+    'isThread' in channel && typeof channel.isThread === 'function'
+      ? channel.isThread()
+      : false;
+  if (!isThread) return undefined;
+  const parentId = 'parentId' in channel ? channel.parentId : undefined;
+  return typeof parentId === 'string' ? parentId : undefined;
+}
+
+function discordMessageThreadParentId(msg: Message): string | undefined {
+  return discordChannelThreadParentId(msg.channel);
+}
+
+function discordComponentType(
+  interaction: Interaction,
+): 'button' | 'string-select' | undefined {
+  if (interaction.isButton()) return 'button';
+  if (interaction.isStringSelectMenu()) return 'string-select';
+  return undefined;
+}
+
+function componentValues(interaction: Interaction): string[] {
+  if (interaction.isStringSelectMenu()) return interaction.values;
   return [];
 }
 
@@ -284,6 +329,7 @@ function commandEventFromInteraction(
   interaction: ChatInputCommandInteraction,
   scope: CommandRegistrationScope,
 ): NormalizedEvent {
+  const threadParentChannelId = discordChannelThreadParentId(interaction.channel);
   return {
     eventId: interaction.id,
     platform: 'discord',
@@ -305,12 +351,203 @@ function commandEventFromInteraction(
     platformTimestamp: interaction.createdAt,
     ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
     initiatorRoleIds: discordInteractionRoleIds(interaction),
+    ...(threadParentChannelId ? { threadParentChannelId } : {}),
     initiator: {
       userId: interaction.user.id,
       displayName: interaction.user.username,
       isBot: interaction.user.bot,
     },
   };
+}
+
+function componentEventFromInteraction(interaction: Interaction): NormalizedEvent {
+  if (!interaction.isButton() && !interaction.isStringSelectMenu()) {
+    throw new Error('unsupported component interaction');
+  }
+  const componentType = discordComponentType(interaction);
+  if (!componentType) throw new Error('unsupported component interaction');
+  const threadParentChannelId = discordChannelThreadParentId(interaction.channel);
+  return {
+    eventId: interaction.id,
+    platform: 'discord',
+    sessionKey: {
+      platform: 'discord',
+      channelId: interaction.channelId,
+      initiatorUserId: interaction.user.id,
+    },
+    traceId: randomUUID(),
+    type: 'interaction',
+    interaction: {
+      customId: interaction.customId,
+      componentType,
+      values: componentValues(interaction),
+    },
+    rawPayload: interaction,
+    rawContentType: 'discord:component-interaction',
+    receivedAt: new Date(),
+    platformTimestamp: interaction.createdAt,
+    ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
+    initiatorRoleIds: discordInteractionRoleIds(interaction),
+    ...(threadParentChannelId ? { threadParentChannelId } : {}),
+    initiator: {
+      userId: interaction.user.id,
+      displayName: interaction.user.username,
+      isBot: interaction.user.bot,
+    },
+  };
+}
+
+function modalEventFromInteraction(interaction: Interaction): NormalizedEvent {
+  if (!interaction.isModalSubmit()) {
+    throw new Error('unsupported modal interaction');
+  }
+  if (!interaction.channelId) {
+    throw new Error('modal interaction missing channel id');
+  }
+  const threadParentChannelId = discordChannelThreadParentId(interaction.channel);
+  const modalFields = interaction.fields.fields as {
+    map?: <T>(fn: (field: { customId: string }) => T) => T[];
+    values?: () => Iterable<{ customId: string }>;
+  };
+  const fieldEntries =
+    typeof modalFields.map === 'function'
+      ? modalFields.map((field) => [
+          field.customId,
+          interaction.fields.getTextInputValue(field.customId),
+        ])
+      : [...(modalFields.values?.() ?? [])].map((field) => [
+          field.customId,
+          interaction.fields.getTextInputValue(field.customId),
+        ]);
+  const fields = Object.fromEntries(fieldEntries);
+  return {
+    eventId: interaction.id,
+    platform: 'discord',
+    sessionKey: {
+      platform: 'discord',
+      channelId: interaction.channelId,
+      initiatorUserId: interaction.user.id,
+    },
+    traceId: randomUUID(),
+    type: 'interaction',
+    interaction: {
+      customId: interaction.customId,
+      componentType: 'modal-submit',
+      values: [],
+      fields,
+    },
+    rawPayload: interaction,
+    rawContentType: 'discord:modal-submit',
+    receivedAt: new Date(),
+    platformTimestamp: interaction.createdAt,
+    ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
+    initiatorRoleIds: discordInteractionRoleIds(interaction),
+    ...(threadParentChannelId ? { threadParentChannelId } : {}),
+    initiator: {
+      userId: interaction.user.id,
+      displayName: interaction.user.username,
+      isBot: interaction.user.bot,
+    },
+  };
+}
+
+function discordButtonStyle(
+  style: Extract<MessageComponent, { type: 'button' }>['style'],
+): number {
+  if (style === 'primary') return 1;
+  if (style === 'success') return 3;
+  if (style === 'danger') return 4;
+  return 2;
+}
+
+function discordMessageComponents(
+  components: readonly MessageComponent[] | undefined,
+): unknown[] | undefined {
+  if (!components || components.length === 0) return undefined;
+  const rows: unknown[] = [];
+  let buttonRow: unknown[] = [];
+  const flushButtons = (): void => {
+    if (buttonRow.length === 0) return;
+    rows.push({ type: 1, components: buttonRow });
+    buttonRow = [];
+  };
+  for (const component of components) {
+    if (component.type === 'button') {
+      buttonRow.push({
+        type: 2,
+        custom_id: component.customId,
+        label: component.label,
+        style: discordButtonStyle(component.style),
+        ...(component.disabled !== undefined
+          ? { disabled: component.disabled }
+          : {}),
+      });
+      if (buttonRow.length === 5) flushButtons();
+      continue;
+    }
+    flushButtons();
+    rows.push({
+      type: 1,
+      components: [
+        {
+          type: 3,
+          custom_id: component.customId,
+          ...(component.placeholder ? { placeholder: component.placeholder } : {}),
+          options: component.options.map((option) => ({
+            label: option.label,
+            value: option.value,
+            ...(option.description ? { description: option.description } : {}),
+            ...(option.default !== undefined ? { default: option.default } : {}),
+          })),
+          min_values: component.minValues ?? 1,
+          max_values: component.maxValues ?? 1,
+          ...(component.disabled !== undefined
+            ? { disabled: component.disabled }
+            : {}),
+        },
+      ],
+    });
+  }
+  flushButtons();
+  return rows;
+}
+
+function discordModal(response: EventModalResponse): unknown {
+  return {
+    custom_id: response.customId,
+    title: response.title,
+    components: response.textInputs.slice(0, 5).map((input) => ({
+      type: 1,
+      components: [
+        {
+          type: 4,
+          custom_id: input.customId,
+          label: input.label,
+          style: input.style === 'paragraph' ? 2 : 1,
+          required: input.required ?? true,
+          ...(input.placeholder ? { placeholder: input.placeholder } : {}),
+          ...(input.value ? { value: input.value } : {}),
+        },
+      ],
+    })),
+  };
+}
+
+function shouldHandleComponentBeforeDefer(interaction: Interaction): boolean {
+  if (!interaction.isButton()) return false;
+  return (
+    interaction.customId === 'nexus:settings:working-dir' ||
+    interaction.customId === 'nexus:queue:insert' ||
+    interaction.customId.startsWith('nexus:queue:edit:')
+  );
+}
+
+interface DeferredInteraction {
+  id: string;
+  commandName?: string;
+  customId?: string;
+  deleteReply(): Promise<unknown>;
+  editReply(message: unknown): Promise<unknown>;
 }
 
 async function deferCommandInteraction(
@@ -330,7 +567,7 @@ async function deferCommandInteraction(
 }
 
 async function deleteDeferredCommandReply(
-  interaction: ChatInputCommandInteraction,
+  interaction: DeferredInteraction,
   logger: Logger,
   event: NormalizedEvent,
 ): Promise<void> {
@@ -343,6 +580,7 @@ async function deleteDeferredCommandReply(
         traceId: event.traceId,
         interactionId: interaction.id,
         commandName: interaction.commandName,
+        customId: interaction.customId,
       },
       'discord_command_ack_cleanup_failed',
     );
@@ -350,14 +588,19 @@ async function deleteDeferredCommandReply(
 }
 
 async function completeDeferredCommandReply(
-  interaction: ChatInputCommandInteraction,
+  interaction: DeferredInteraction,
   logger: Logger,
   event: NormalizedEvent,
   result: EventHandlerResult | void,
 ): Promise<void> {
   if (result?.commandResponse) {
     try {
-      await interaction.editReply({ content: result.commandResponse.text });
+      await interaction.editReply({
+        content: result.commandResponse.text,
+        ...(result.commandResponse.components
+          ? { components: discordMessageComponents(result.commandResponse.components) }
+          : {}),
+      });
     } catch (err) {
       logger.error(
         {
@@ -365,6 +608,7 @@ async function completeDeferredCommandReply(
           traceId: event.traceId,
           interactionId: interaction.id,
           commandName: interaction.commandName,
+          customId: interaction.customId,
         },
         'discord_command_response_update_failed',
       );
@@ -375,7 +619,7 @@ async function completeDeferredCommandReply(
 }
 
 async function markDeferredCommandFailed(
-  interaction: ChatInputCommandInteraction,
+  interaction: DeferredInteraction,
   logger: Logger,
   event: NormalizedEvent,
 ): Promise<void> {
@@ -388,6 +632,7 @@ async function markDeferredCommandFailed(
         traceId: event.traceId,
         interactionId: interaction.id,
         commandName: interaction.commandName,
+        customId: interaction.customId,
       },
       'discord_command_ack_failure_update_failed',
     );
@@ -447,6 +692,7 @@ export function parseInbound(
   }
 
   const text = msg.content.replace(buildBotMentionRegex(botUserId), '').trim();
+  const threadParentChannelId = discordMessageThreadParentId(msg);
 
   const sessionKey: PlatformSessionKey = {
     platform: 'discord',
@@ -465,6 +711,7 @@ export function parseInbound(
     platformTimestamp: msg.createdAt,
     ...(msg.guildId ? { guildId: msg.guildId } : {}),
     initiatorRoleIds: discordMemberRoleIds(msg),
+    ...(threadParentChannelId ? { threadParentChannelId } : {}),
     initiator: {
       userId: msg.author.id,
       displayName: msg.author.username,
@@ -531,6 +778,57 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
 
     capabilities(): CapabilitySet {
       return DISCORD_CAPABILITIES;
+    },
+
+    settingsSnapshot(input) {
+      return {
+        items: [
+          {
+            key: 'discord.replyMode',
+            label: 'Reply mode',
+            owner: 'platform',
+            value: replyMode,
+            source: 'discord state',
+            durability: 'durable',
+            canChange: allowedUserIds.includes(input.userId),
+          },
+        ],
+      };
+    },
+
+    async applySettingsAction(input) {
+      if (input.action !== 'discord.replyMode') {
+        return {
+          status: 'unsupported' as const,
+          message: 'This setting is not supported by Discord.',
+        };
+      }
+      if (!allowedUserIds.includes(input.userId)) {
+        logger.info({ userId: input.userId }, 'discord_settings_unauthorized');
+        return {
+          status: 'rejected' as const,
+          message: `Permission denied. Your User ID is \`${input.userId}\`; ask the bot operator to add it.`,
+        };
+      }
+      if (input.value !== 'mention' && input.value !== 'all') {
+        return {
+          status: 'rejected' as const,
+          message: `invalid mode: \`${input.value ?? ''}\` (must be \`mention\` or \`all\`)`,
+        };
+      }
+      const from = replyMode;
+      const to = input.value;
+      if (from === to) {
+        logger.info({ mode: to, userId: input.userId }, 'discord_reply_mode_noop');
+        return { status: 'handled' as const, message: `already in \`${to}\`` };
+      }
+      await writeReplyModeState(statePath, to);
+      replyMode = to;
+      logger.info({ from, to, userId: input.userId }, 'discord_reply_mode_changed');
+      return {
+        status: 'handled' as const,
+        message: `reply mode: \`${from}\` -> \`${to}\``,
+      };
     },
 
     updateAuth(update: DiscordAuthUpdate): void {
@@ -617,7 +915,95 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
       });
 
       client.on('interactionCreate', async (interaction: Interaction) => {
-        if (!interaction.isChatInputCommand()) return;
+        if (
+          'isModalSubmit' in interaction &&
+          typeof interaction.isModalSubmit === 'function' &&
+          interaction.isModalSubmit()
+        ) {
+          try {
+            await interaction.deferReply({ ephemeral: true });
+          } catch (err) {
+            logger.error(
+              { err, interactionId: interaction.id },
+              'discord_modal_ack_failed',
+            );
+            return;
+          }
+          const event = modalEventFromInteraction(interaction);
+          try {
+            const result = await handler(event);
+            await completeDeferredCommandReply(interaction, logger, event, result);
+          } catch (err) {
+            logger.error(
+              { err, traceId: event.traceId, customId: event.interaction?.customId },
+              'platform_handler_error',
+            );
+            await markDeferredCommandFailed(interaction, logger, event);
+          }
+          return;
+        }
+        if (!interaction.isChatInputCommand()) {
+          if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
+          if (shouldHandleComponentBeforeDefer(interaction)) {
+            const event = componentEventFromInteraction(interaction);
+            try {
+              const result = await handler(event);
+              if (result?.modalResponse) {
+                await interaction.showModal(
+                  discordModal(result.modalResponse) as Parameters<
+                    typeof interaction.showModal
+                  >[0],
+                );
+                return;
+              }
+              await interaction.reply({
+                content: result?.commandResponse?.text ?? 'Command failed.',
+                ephemeral: true,
+                ...(result?.commandResponse?.components
+                  ? { components: discordMessageComponents(result.commandResponse.components) }
+                  : {}),
+              } as Parameters<typeof interaction.reply>[0]);
+            } catch (err) {
+              logger.error(
+                { err, traceId: event.traceId, customId: event.interaction?.customId },
+                'platform_handler_error',
+              );
+              try {
+                await interaction.reply({
+                  content: 'Command failed. Try again later.',
+                  ephemeral: true,
+                });
+              } catch (replyErr) {
+                logger.error(
+                  { err: replyErr, customId: interaction.customId },
+                  'discord_component_error_reply_failed',
+                );
+              }
+            }
+            return;
+          }
+          try {
+            await interaction.deferReply({ ephemeral: true });
+          } catch (err) {
+            logger.error(
+              { err, interactionId: interaction.id },
+              'discord_component_ack_failed',
+            );
+            return;
+          }
+          const event = componentEventFromInteraction(interaction);
+          try {
+            const result = await handler(event);
+            await completeDeferredCommandReply(interaction, logger, event, result);
+          } catch (err) {
+            logger.error(
+              { err, traceId: event.traceId, customId: event.interaction?.customId },
+              'platform_handler_error',
+            );
+            await markDeferredCommandFailed(interaction, logger, event);
+          }
+          return;
+        }
         if (!replyModeNames.has(interaction.commandName)) {
           if (!(await deferCommandInteraction(interaction, logger))) return;
           const event = commandEventFromInteraction(
@@ -804,6 +1190,86 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
 
     async react(): Promise<void> {
       throw new Error('platform-discord MVP: react not supported');
+    },
+
+    async createThread(input: CreateThreadInput) {
+      const channel = await client.channels.fetch(input.parentChannelId);
+      if (!channel || !channel.isTextBased() || !('threads' in channel)) {
+        throw new Error(
+          `platform-discord: channel ${input.parentChannelId} cannot create threads`,
+        );
+      }
+      const threads = channel.threads as {
+        create(options: {
+          name: string;
+          type: ChannelType.PrivateThread | ChannelType.PublicThread;
+          autoArchiveDuration: number;
+          invitable?: boolean;
+          reason?: string;
+        }): Promise<{
+          id: string;
+          guildId?: string;
+          members: { add(userId: string): Promise<unknown> };
+          send(message: unknown): Promise<unknown>;
+          delete?(reason?: string): Promise<unknown>;
+          setArchived?(archived: boolean, reason?: string): Promise<unknown>;
+        }>;
+      };
+      const thread = await threads.create({
+        name: input.title.slice(0, 100),
+        type:
+          input.visibility === 'private'
+            ? ChannelType.PrivateThread
+            : ChannelType.PublicThread,
+        autoArchiveDuration: input.autoArchiveDurationMinutes,
+        invitable: false,
+        reason: 'agent-nexus new thread',
+      });
+      try {
+        await thread.members.add(input.initiatorUserId);
+        if (input.initialMessage) {
+          await thread.send({
+            content: input.initialMessage,
+            allowedMentions: { parse: [] },
+          });
+        }
+      } catch (err) {
+        try {
+          if (thread.delete) {
+            await thread.delete('agent-nexus thread setup failed');
+          } else if (thread.setArchived) {
+            await thread.setArchived(true, 'agent-nexus thread setup failed');
+          }
+        } catch (cleanupErr) {
+          logger.error(
+            {
+              traceId: input.traceId,
+              threadId: thread.id,
+              err: cleanupErr,
+            },
+            'discord_thread_cleanup_failed',
+          );
+        }
+        throw err;
+      }
+      return {
+        threadId: thread.id,
+        parentChannelId: input.parentChannelId,
+        ...(thread.guildId
+          ? { url: `https://discord.com/channels/${thread.guildId}/${thread.id}` }
+          : {}),
+      };
+    },
+
+    async updateThread(input: UpdateThreadInput): Promise<void> {
+      if (!input.title) return;
+      const channel = await client.channels.fetch(input.threadId);
+      if (!channel || !('setName' in channel) || typeof channel.setName !== 'function') {
+        throw new Error(
+          `platform-discord: thread ${input.threadId} is not editable or not found`,
+        );
+      }
+      await channel.setName(input.title.slice(0, 100), 'agent-nexus session title');
     },
 
     async setTyping(sessionKey: SessionKey): Promise<void> {

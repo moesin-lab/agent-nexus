@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type {
   AgentEvent,
   AgentCommandEnvelope,
@@ -13,6 +14,7 @@ import type {
   PlatformAdapter,
   SessionConfig,
   SessionKey,
+  SettingsSnapshotItem,
 } from '@agent-nexus/protocol';
 import { serializeSessionKey, withPlatformName } from '@agent-nexus/protocol';
 import { checkPlatformAuth } from './auth.js';
@@ -28,6 +30,12 @@ import type { CommandDispatchDecision } from './command-dispatch.js';
 import type { PlatformAuthConfig, ToolMessageMode } from './config.js';
 import type { IdempotencyStore } from './idempotency.js';
 import type { Logger } from './logger.js';
+import {
+  InMemoryMessageQueue,
+  QueueFullError,
+  QueueItemCancelledError,
+  queueKeyFromEvent,
+} from './message-queue.js';
 import { BasicRedactor, type Redactor } from './redaction.js';
 import { RouteError, selectRoute, type RoutingEntry } from './router.js';
 import type { SessionStore } from './session-store.js';
@@ -96,6 +104,32 @@ const COMMAND_NOT_ALLOWED_TEXT = 'You are not allowed to use this command.';
 const COMMAND_NOT_READY_TEXT = 'Slash commands are not ready yet. Try again later.';
 const COMMAND_UNAVAILABLE_TEXT = 'This command is not available in this channel.';
 const COMMAND_FAILED_TEXT = 'Command failed.';
+const SESSION_RESUME_COMPONENT_ID = 'nexus:sessions:resume';
+const NEW_THREAD_DEFAULT_TITLE = 'New Nexus session';
+const THREAD_AUTO_ARCHIVE_DURATION_MINUTES = 1440;
+const WORKING_DIR_ARG = 'path';
+const WORKING_DIR_SCOPE_ARG = 'scope';
+const SETTINGS_COMPONENT_PREFIX = 'nexus:settings:';
+const SETTINGS_REPLY_MODE_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}reply-mode`;
+const SETTINGS_RESUME_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}resume`;
+const SETTINGS_NEW_THREAD_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}new-thread`;
+const SETTINGS_WORKING_DIR_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}working-dir`;
+const SETTINGS_WORKING_DIR_MODAL_ID = `${SETTINGS_COMPONENT_PREFIX}working-dir-modal`;
+const SETTINGS_WORKING_DIR_PATH_FIELD_ID = 'path';
+const SETTINGS_AGENT_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}agent`;
+const QUEUE_ACTION_ARG = 'action';
+const QUEUE_FULL_TEXT = 'Nexus queue is full. Try again after current tasks finish.';
+const QUEUE_COMPONENT_PREFIX = 'nexus:queue:';
+const QUEUE_SELECT_COMPONENT_ID = `${QUEUE_COMPONENT_PREFIX}select`;
+const QUEUE_INSERT_COMPONENT_ID = `${QUEUE_COMPONENT_PREFIX}insert`;
+const QUEUE_INSERT_MODAL_ID = `${QUEUE_COMPONENT_PREFIX}insert-modal`;
+const QUEUE_NEXT_COMPONENT_ID = `${QUEUE_COMPONENT_PREFIX}next`;
+const QUEUE_EDIT_COMPONENT_PREFIX = `${QUEUE_COMPONENT_PREFIX}edit:`;
+const QUEUE_EDIT_MODAL_PREFIX = `${QUEUE_COMPONENT_PREFIX}edit-modal:`;
+const QUEUE_MOVE_UP_COMPONENT_PREFIX = `${QUEUE_COMPONENT_PREFIX}up:`;
+const QUEUE_MOVE_DOWN_COMPONENT_PREFIX = `${QUEUE_COMPONENT_PREFIX}down:`;
+const QUEUE_CANCEL_COMPONENT_PREFIX = `${QUEUE_COMPONENT_PREFIX}cancel:`;
+const QUEUE_PROMPT_FIELD_ID = 'prompt';
 
 interface ActiveAgentSession {
   agent: AgentRuntime;
@@ -103,6 +137,8 @@ interface ActiveAgentSession {
   session: AgentSession;
   currentTurn?: {
     eventId: string;
+    traceId: string;
+    interruptRequested?: boolean;
     pending: Set<Promise<void>>;
     tail: Promise<void>;
     handle(event: AgentEvent): Promise<void>;
@@ -116,6 +152,15 @@ interface ToolMessageState {
   startText: string;
 }
 
+type PreparedWorkingDirUpdate =
+  | {
+      ok: true;
+      workingDir: string;
+      scope: 'channel' | 'session';
+      apply(): string;
+    }
+  | { ok: false; message: string };
+
 function codeBlock(lang: string, text: string): string {
   const fence = text.includes('```') ? '````' : '```';
   return `${fence}${lang}\n${text}\n${fence}`;
@@ -127,6 +172,56 @@ function renderToolStart(toolName: string, inputSummary: string): string {
     return `Bash:\n${codeBlock('bash', summary)}`;
   }
   return `${toolName}: ${summary}`;
+}
+
+function sessionTitleFromPrompt(prompt: string): string | undefined {
+  const title = prompt.replace(/\s+/g, ' ').trim();
+  if (title.length === 0) return undefined;
+  return title.length > 100 ? `${title.slice(0, 97)}...` : title;
+}
+
+function commandStringArg(
+  args: Record<string, string | number | boolean | null> | undefined,
+  name: string,
+): string | undefined {
+  const value = args?.[name];
+  if (typeof value !== 'string') return undefined;
+  return value;
+}
+
+function validateWorkingDirArg(
+  value: string | undefined,
+  allowedRoot: string,
+):
+  | { ok: true; workingDir: string }
+  | { ok: false; message: string } {
+  const workingDir = value?.trim();
+  if (!workingDir) {
+    return { ok: false, message: 'Working directory path is required.' };
+  }
+  if (workingDir.includes('\0')) {
+    return { ok: false, message: 'Working directory path is invalid.' };
+  }
+  if (!isAbsolute(workingDir)) {
+    return {
+      ok: false,
+      message: 'Working directory must be an absolute path.',
+    };
+  }
+  const normalizedWorkingDir = resolve(workingDir);
+  const normalizedRoot = resolve(allowedRoot);
+  const rel = relative(normalizedRoot, normalizedWorkingDir);
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    return {
+      ok: false,
+      message: `Working directory must be inside the configured root: ${normalizedRoot}`,
+    };
+  }
+  return { ok: true, workingDir: normalizedWorkingDir };
+}
+
+function workingDirScope(value: string | undefined): 'channel' | 'session' {
+  return value === 'session' ? 'session' : 'channel';
 }
 
 /**
@@ -161,13 +256,12 @@ export class Engine {
   private readonly streamEditThrottleMs: number;
   private readonly typingRefreshMs: number;
   private readonly agentSessions = new Map<string, ActiveAgentSession>();
+  private readonly agentOverridesByChannel = new Map<string, string>();
   /**
-   * Per-SessionKey 串行队列：同 key 的 dispatch 必须按到达序排队执行，
-   * 否则两条并发 inbound 会同时读到陈旧 prevAgentSessionId 各自启新 session、
-   * 互相覆盖 sessionStore 里的 agentSessionId（ordering corruption）。
-   * 不同 key 之间互不阻塞。
+   * Daemon 级 per-SessionKey barrier：同 key 的 message / queued command
+   * 按到达序执行，不同 key 之间互不阻塞。
    */
-  private readonly inflight = new Map<string, Promise<unknown>>();
+  private readonly messageQueue = new InMemoryMessageQueue();
 
   /**
    * eventId 内存去重：防 adapter 重投同一事件导致 agent 被重复触发（重复消耗 turn 预算）。
@@ -238,6 +332,7 @@ export class Engine {
       }
     }
     this.agentSessions.clear();
+    this.messageQueue.clearAll();
     this.sessionStore.clearAll();
     this.idempotencyStore?.clearAll();
   }
@@ -245,6 +340,9 @@ export class Engine {
   private dispatch(event: NormalizedEvent): Promise<void | EventHandlerResult> {
     if (event.type === 'command') {
       return this.dispatchCommand(event);
+    }
+    if (event.type === 'interaction') {
+      return this.dispatchInteraction(event);
     }
     const route = this.route(event);
     if (!route) return Promise.resolve();
@@ -254,6 +352,74 @@ export class Engine {
 
   private checkAuth(event: NormalizedEvent): boolean {
     if (!this.platformAuth) return true;
+    const thread = this.sessionStore.findThreadByChannelId({
+      platformName: this.platformName,
+      platform: event.sessionKey.platform,
+      channelId: event.sessionKey.channelId,
+    });
+    if (thread) {
+      if (thread.ownerUserId !== event.initiator.userId) {
+        this.logger.info(
+          {
+            traceId: event.traceId,
+            platformName: this.platformName,
+            guildId: event.guildId,
+            channelId: event.sessionKey.channelId,
+            userId: event.initiator.userId,
+            ownerUserId: thread.ownerUserId,
+            reason: 'thread_owner_mismatch',
+          },
+          'auth_denied',
+        );
+        return false;
+      }
+      const inheritedEvent: NormalizedEvent = {
+        ...event,
+        sessionKey: {
+          ...event.sessionKey,
+          channelId: thread.parentChannelId,
+        },
+      };
+      const decision = checkPlatformAuth(this.platformAuth, inheritedEvent);
+      if (decision.allowed) return true;
+      this.logger.info(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          guildId: event.guildId,
+          channelId: event.sessionKey.channelId,
+          parentChannelId: thread.parentChannelId,
+          userId: event.initiator.userId,
+          reason: decision.reason,
+        },
+        'auth_denied',
+      );
+      return false;
+    }
+    if (event.threadParentChannelId) {
+      const inheritedEvent: NormalizedEvent = {
+        ...event,
+        sessionKey: {
+          ...event.sessionKey,
+          channelId: event.threadParentChannelId,
+        },
+      };
+      const decision = checkPlatformAuth(this.platformAuth, inheritedEvent);
+      if (decision.allowed) return true;
+      this.logger.info(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          guildId: event.guildId,
+          channelId: event.sessionKey.channelId,
+          parentChannelId: event.threadParentChannelId,
+          userId: event.initiator.userId,
+          reason: decision.reason,
+        },
+        'auth_denied',
+      );
+      return false;
+    }
     const decision = checkPlatformAuth(this.platformAuth, event);
     if (decision.allowed) return true;
     this.logger.info(
@@ -319,44 +485,123 @@ export class Engine {
         'idempotency_insert',
       );
     }
-    const keyStr = serializeSessionKey(routedSessionKey);
-    const prev = this.inflight.get(keyStr) ?? Promise.resolve();
-    // 链式 await：上一条 settle 后再跑当前这条。前一条若 reject 不影响后续——
-    // dispatchImpl 内部已 try/catch + 日志化错误，外层只用 catch swallow 防止
-    // 链上某条 throw 把整条链 poison 掉。
-    const next = prev
-      .catch(() => {})
-      .then(async () => {
-        try {
-          await this.dispatchImpl(routedEvent, agentSlot);
+    const keyStr = queueKeyFromEvent(event, this.platformName);
+    const queuedMessage = { text: event.text };
+    let queued: Promise<void>;
+    try {
+      queued = this.messageQueue.enqueue({
+        key: keyStr,
+        kind: 'message',
+        traceId: event.traceId,
+        label: this.queueLabelForEvent(event),
+        ...(idempotencyMessageId ? { eventId: idempotencyMessageId } : {}),
+        ...(event.text ? { editableText: event.text } : {}),
+        onEdit: (text) => {
+          queuedMessage.text = text;
+        },
+        onCancel: () => {
           if (this.idempotencyStore && idempotencyMessageId) {
-            this.idempotencyStore.markProcessed(
+            this.idempotencyStore.markCancelled(
               routedSessionKey,
               idempotencyMessageId,
             );
           }
-        } catch (err) {
-          if (this.idempotencyStore && idempotencyMessageId) {
-            this.idempotencyStore.markFailed(
-              routedSessionKey,
-              idempotencyMessageId,
+        },
+        run: async () => {
+          try {
+            await this.dispatchImpl(
+              { ...routedEvent, text: queuedMessage.text },
+              agentSlot,
             );
+            if (this.idempotencyStore && idempotencyMessageId) {
+              this.idempotencyStore.markProcessed(
+                routedSessionKey,
+                idempotencyMessageId,
+              );
+            }
+          } catch (err) {
+            if (this.idempotencyStore && idempotencyMessageId) {
+              this.idempotencyStore.markFailed(
+                routedSessionKey,
+                idempotencyMessageId,
+              );
+            }
+            throw err;
           }
-          throw err;
-        }
+        },
       });
-    this.inflight.set(keyStr, next);
-    // 链尾 cleanup：当前这条就是最末时清掉 map 项，避免长期累积空 promise。
-    void next.finally(() => {
-      if (this.inflight.get(keyStr) === next) {
-        this.inflight.delete(keyStr);
+    } catch (err) {
+      if (err instanceof QueueFullError) {
+        if (this.idempotencyStore && idempotencyMessageId) {
+          this.idempotencyStore.forget(routedSessionKey, idempotencyMessageId);
+        }
+        this.logger.warn(
+          {
+            traceId: event.traceId,
+            sessionKey: keyStr,
+            maxPendingPerKey: err.maxPendingPerKey,
+          },
+          'message_queue_full',
+        );
+        return this.sendQueueFullNotice(routedSessionKey, event.traceId);
       }
+      throw err;
+    }
+    return queued.catch((err: unknown) => {
+      if (err instanceof QueueItemCancelledError) {
+        this.logger.info(
+          {
+            traceId: event.traceId,
+            sessionKey: keyStr,
+            messageId: idempotencyMessageId,
+          },
+          'message_queue_cancelled',
+        );
+        return;
+      }
+      throw err;
     });
-    return next;
   }
 
   private commandResponse(text: string): EventHandlerResult {
     return { commandResponse: { text, ephemeral: true } };
+  }
+
+  private queueLabelForEvent(event: NormalizedEvent): string {
+    return this.queueLabelForText(event.text, event.messageId ?? event.eventId);
+  }
+
+  private queueLabelForText(
+    value: string | undefined,
+    fallback: string,
+  ): string {
+    const text = value?.replace(/\s+/g, ' ').trim();
+    if (text && text.length > 0) {
+      return text.length > 80 ? `${text.slice(0, 77)}...` : text;
+    }
+    return fallback;
+  }
+
+  private async sendQueueFullNotice(
+    sessionKey: SessionKey,
+    traceId: string,
+  ): Promise<void> {
+    try {
+      await this.platform.send(sessionKey, {
+        text: QUEUE_FULL_TEXT,
+        traceId,
+        sessionKey,
+      });
+    } catch (err) {
+      this.logger.error(
+        {
+          traceId,
+          sessionKey: serializeSessionKey(sessionKey),
+          err,
+        },
+        'platform_send_failed',
+      );
+    }
   }
 
   private commandFailureResponse(code: CommandRegistryErrorCode): EventHandlerResult {
@@ -402,7 +647,7 @@ export class Engine {
     }
 
     const decision = dispatchCommandEvent({
-      event,
+      event: this.routeEventForBinding(event),
       registry: this.commandRegistry,
       platformName: this.platformName,
       platformType: this.platformType,
@@ -477,22 +722,26 @@ export class Engine {
     event: NormalizedEvent,
     decision: Extract<CommandDispatchDecision, { ownerType: 'agent' }>,
   ): Promise<void | EventHandlerResult> {
-    const routedSessionKey = withPlatformName(
-      event.sessionKey,
-      this.platformName,
-    );
-    const keyStr = serializeSessionKey(routedSessionKey);
-    const prev = this.inflight.get(keyStr) ?? Promise.resolve();
-    const next = prev
-      .catch(() => {})
-      .then(() => this.handleAgentCommand(event, decision));
-    this.inflight.set(keyStr, next);
-    void next.finally(() => {
-      if (this.inflight.get(keyStr) === next) {
-        this.inflight.delete(keyStr);
+    const keyStr = queueKeyFromEvent(event, this.platformName);
+    try {
+      return this.messageQueue.enqueue({
+        key: keyStr,
+        kind: 'agent-command',
+        traceId: event.traceId,
+        label: `/${decision.localName}`,
+        run: () => this.handleAgentCommand(event, decision),
+      }).catch((err: unknown) => {
+        if (err instanceof QueueItemCancelledError) {
+          return this.commandResponse('[command cancelled]');
+        }
+        throw err;
+      });
+    } catch (err) {
+      if (err instanceof QueueFullError) {
+        return Promise.resolve(this.commandResponse(QUEUE_FULL_TEXT));
       }
-    });
-    return next;
+      throw err;
+    }
   }
 
   private clearTypingBestEffort(
@@ -635,6 +884,21 @@ export class Engine {
     if (decision.handlerKey === 'reload-config' && this.configReloader) {
       return this.handleReloadConfigCommand(event, decision);
     }
+    if (decision.handlerKey === 'sessions') {
+      return this.handleSessionsCommand(event);
+    }
+    if (decision.handlerKey === 'new-thread') {
+      return this.handleNewThreadCommand(event);
+    }
+    if (decision.handlerKey === 'queue') {
+      return this.handleQueueCommand(event);
+    }
+    if (decision.handlerKey === 'working-dir') {
+      return this.handleWorkingDirCommand(event);
+    }
+    if (decision.handlerKey === 'settings') {
+      return this.handleSettingsCommand(event);
+    }
     if (decision.handlerKey !== 'kill') {
       this.logger.error(
         {
@@ -655,6 +919,13 @@ export class Engine {
     );
     const sessionKeyStr = serializeSessionKey(routedSessionKey);
     const hadActiveSession = this.stopActiveSession(sessionKeyStr, event.traceId);
+    const cancelled = this.messageQueue.clearPending(sessionKeyStr).cancelled;
+    if (cancelled > 0) {
+      this.logger.info(
+        { traceId: event.traceId, sessionKey: sessionKeyStr, cancelled },
+        'message_queue_cleared',
+      );
+    }
     const hadStoredSession = this.sessionStore.get(routedSessionKey) !== undefined;
     this.sessionStore.delete(routedSessionKey);
     this.clearTypingBestEffort(routedSessionKey, event.traceId);
@@ -702,6 +973,995 @@ export class Engine {
     return this.commandResponse(result.message);
   }
 
+  private handleSessionsCommand(event: NormalizedEvent): EventHandlerResult {
+    const sessions = this.sessionStore.listForUser({
+      platformName: this.platformName,
+      platform: event.sessionKey.platform,
+      initiatorUserId: event.initiator.userId,
+      limit: 25,
+    });
+    if (sessions.length === 0) {
+      return this.commandResponse('[no resumable sessions]');
+    }
+    return {
+      commandResponse: {
+        text: 'Select a session to resume.',
+        ephemeral: true,
+        components: [
+          {
+            type: 'string-select',
+            customId: SESSION_RESUME_COMPONENT_ID,
+            placeholder: 'Resume session',
+            minValues: 1,
+            maxValues: 1,
+            options: sessions.map((session) => ({
+              label: (session.title ?? session.channelId).slice(0, 100),
+              value: session.sessionId,
+              description: `${session.channelId} · ${session.agentSessionId}`.slice(0, 100),
+            })),
+          },
+        ],
+      },
+    };
+  }
+
+  private async handleNewThreadCommand(
+    event: NormalizedEvent,
+  ): Promise<EventHandlerResult> {
+    if (
+      !this.platform.capabilities().supportsThreadCreation ||
+      !this.platform.createThread
+    ) {
+      return this.commandResponse('This platform cannot create threads.');
+    }
+    const requestedTitle = sessionTitleFromPrompt(
+      commandStringArg(event.command?.args, 'title') ?? '',
+    );
+    const title = requestedTitle ?? NEW_THREAD_DEFAULT_TITLE;
+    let result: Awaited<ReturnType<NonNullable<PlatformAdapter['createThread']>>>;
+    try {
+      result = await this.platform.createThread({
+        parentChannelId: event.sessionKey.channelId,
+        initiatorUserId: event.initiator.userId,
+        title,
+        visibility: 'private',
+        autoArchiveDurationMinutes: THREAD_AUTO_ARCHIVE_DURATION_MINUTES,
+        initialMessage: `[new Nexus session: ${title}]`,
+        traceId: event.traceId,
+      });
+    } catch (err) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          channelId: event.sessionKey.channelId,
+          userId: event.initiator.userId,
+          err,
+        },
+        'thread_create_failed',
+      );
+      return this.commandResponse('Could not create a thread. Check bot permissions and try again.');
+    }
+    const threadSessionKey = withPlatformName(
+      {
+        platform: event.sessionKey.platform,
+        channelId: result.threadId,
+        initiatorUserId: event.initiator.userId,
+      },
+      this.platformName,
+    );
+    this.sessionStore.set(threadSessionKey, {
+      lastTurnAt: new Date(),
+      title,
+    });
+    this.sessionStore.registerThread(threadSessionKey, {
+      parentChannelId: result.parentChannelId,
+      ownerUserId: event.initiator.userId,
+      autoArchiveDurationMinutes: THREAD_AUTO_ARCHIVE_DURATION_MINUTES,
+      renameOnFirstPrompt: requestedTitle === undefined,
+    });
+    const suffix = result.url ? ` ${result.url}` : ` ${result.threadId}`;
+    return this.commandResponse(`[thread created]${suffix}`);
+  }
+
+  private handleQueueCommand(event: NormalizedEvent): EventHandlerResult {
+    const action = commandStringArg(event.command?.args, QUEUE_ACTION_ARG) ?? 'status';
+    if (action !== 'status' && action !== 'clear' && action !== 'next') {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT);
+    }
+    const key = queueKeyFromEvent(event, this.platformName);
+    if (action === 'clear') {
+      const { cancelled } = this.messageQueue.clearPending(key);
+      return this.queueCommandResponse(event, `Cancelled: \`${cancelled}\``);
+    }
+    if (action === 'next') {
+      return this.handleQueueNextCommand(event);
+    }
+    return this.queueCommandResponse(event);
+  }
+
+  private handleQueueNextCommand(event: NormalizedEvent): EventHandlerResult {
+    const key = queueKeyFromEvent(event, this.platformName);
+    const snapshot = this.messageQueue.snapshot(key);
+    if (!snapshot.running) {
+      return this.queueCommandResponse(event, 'No running item.');
+    }
+    if (snapshot.pendingCount === 0) {
+      return this.queueCommandResponse(event, 'No pending item to run next.');
+    }
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    const sessionKeyStr = serializeSessionKey(routedSessionKey);
+    const active = this.agentSessions.get(sessionKeyStr);
+    if (!active) {
+      return this.queueCommandResponse(event, 'Current queue item cannot be interrupted.');
+    }
+    if (active.currentTurn?.traceId !== snapshot.running.traceId) {
+      return this.queueCommandResponse(event, 'Current queue item already advanced.');
+    }
+    if (active.currentTurn.interruptRequested) {
+      return this.queueCommandResponse(event, 'Run next already requested.');
+    }
+    active.currentTurn.interruptRequested = true;
+    try {
+      active.agent.interrupt(active.session);
+    } catch (err) {
+      active.currentTurn.interruptRequested = false;
+      this.logger.error(
+        { traceId: event.traceId, sessionKey: sessionKeyStr, err },
+        'agent_interrupt_failed',
+      );
+      return this.queueCommandResponse(event, COMMAND_FAILED_TEXT);
+    }
+    return this.queueCommandResponse(
+      event,
+      'Interrupted current turn; next queued item will run.',
+    );
+  }
+
+  private queueCommandResponse(
+    event: NormalizedEvent,
+    prefix?: string,
+    selectedItemId?: string,
+  ): EventHandlerResult {
+    const key = queueKeyFromEvent(event, this.platformName);
+    const snapshot = this.messageQueue.snapshot(key);
+    return {
+      commandResponse: {
+        text: this.renderQueueStatus(key, prefix, selectedItemId),
+        ephemeral: true,
+        components: this.queueComponents(snapshot, selectedItemId),
+      },
+    };
+  }
+
+  private renderQueueStatus(
+    key: string,
+    prefix?: string,
+    selectedItemId?: string,
+  ): string {
+    const snapshot = this.messageQueue.snapshot(key);
+    const running = snapshot.running
+      ? `${snapshot.running.kind} · ${snapshot.running.label}`
+      : 'none';
+    const selected = snapshot.pending.find((item) => item.id === selectedItemId);
+    const pendingLines = snapshot.pending.slice(0, 5).map(
+      (item, index) => `${index + 1}. ${item.kind} · ${item.label}`,
+    );
+    const lines = ['**Nexus queue**'];
+    if (prefix) {
+      lines.push('', prefix);
+    }
+    lines.push(
+      '',
+      `Key: \`${key}\``,
+      `Running: \`${running}\``,
+      `Pending: \`${snapshot.pendingCount} / ${snapshot.maxPendingPerKey}\``,
+      `Recent: completed \`${snapshot.recentCounts.completed}\`, failed \`${snapshot.recentCounts.failed}\`, cancelled \`${snapshot.recentCounts.cancelled}\``,
+    );
+    if (selected) {
+      lines.push('', `Selected: \`${selected.kind} · ${selected.label}\``);
+    }
+    if (pendingLines.length > 0) {
+      lines.push('', '**Pending**', ...pendingLines);
+    }
+    return lines.join('\n');
+  }
+
+  private queueComponents(
+    snapshot: ReturnType<InMemoryMessageQueue['snapshot']>,
+    selectedItemId?: string,
+  ): NonNullable<EventHandlerResult['commandResponse']>['components'] {
+    const components: NonNullable<EventHandlerResult['commandResponse']>['components'] = [];
+    if (snapshot.pending.length > 0) {
+      components.push({
+        type: 'string-select',
+        customId: QUEUE_SELECT_COMPONENT_ID,
+        placeholder: 'Select queued item',
+        minValues: 1,
+        maxValues: 1,
+        options: snapshot.pending.slice(0, 25).map((item, index) => ({
+          label: `${index + 1}. ${item.label}`.slice(0, 100),
+          value: item.id,
+          description: item.kind.slice(0, 100),
+          default: item.id === selectedItemId,
+        })),
+      });
+    }
+    const selected = snapshot.pending.find((item) => item.id === selectedItemId);
+    if (!selected) {
+      if (snapshot.running && snapshot.pendingCount > 0) {
+        components.push({
+          type: 'button',
+          customId: QUEUE_NEXT_COMPONENT_ID,
+          label: 'Run next',
+          style: 'primary',
+        });
+      }
+      components.push({
+        type: 'button',
+        customId: QUEUE_INSERT_COMPONENT_ID,
+        label: 'Insert next',
+        style:
+          snapshot.running && snapshot.pendingCount > 0
+            ? 'secondary'
+            : 'primary',
+      });
+    }
+    if (selected) {
+      components.push(
+        {
+          type: 'button',
+          customId: `${QUEUE_MOVE_UP_COMPONENT_PREFIX}${selected.id}`,
+          label: 'Up',
+          style: 'secondary',
+        },
+        {
+          type: 'button',
+          customId: `${QUEUE_MOVE_DOWN_COMPONENT_PREFIX}${selected.id}`,
+          label: 'Down',
+          style: 'secondary',
+        },
+        {
+          type: 'button',
+          customId: `${QUEUE_EDIT_COMPONENT_PREFIX}${selected.id}`,
+          label: 'Edit',
+          style: 'secondary',
+          disabled: selected.kind !== 'message',
+        },
+        {
+          type: 'button',
+          customId: `${QUEUE_CANCEL_COMPONENT_PREFIX}${selected.id}`,
+          label: 'Cancel',
+          style: 'danger',
+        },
+      );
+    }
+    return components;
+  }
+
+  private async handleWorkingDirCommand(
+    event: NormalizedEvent,
+  ): Promise<EventHandlerResult> {
+    const prepared = this.prepareWorkingDirUpdate(
+      event,
+      commandStringArg(event.command?.args, WORKING_DIR_ARG),
+      commandStringArg(event.command?.args, WORKING_DIR_SCOPE_ARG),
+    );
+    if (!prepared.ok) {
+      return this.commandResponse(prepared.message);
+    }
+    return this.enqueueWorkingDirUpdate(event, prepared);
+  }
+
+  private prepareWorkingDirUpdate(
+    event: NormalizedEvent,
+    path: string | undefined,
+    scopeArg: string | undefined,
+  ): PreparedWorkingDirUpdate {
+    const route = this.route(event);
+    if (!route) {
+      return { ok: false, message: COMMAND_UNAVAILABLE_TEXT };
+    }
+    const agentSlot = this.agents.get(route.agentName);
+    if (!agentSlot) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          agentName: route.agentName,
+          bindingName: route.bindingName,
+        },
+        'route_agent_missing',
+      );
+      return { ok: false, message: COMMAND_UNAVAILABLE_TEXT };
+    }
+    const parsed = validateWorkingDirArg(path, agentSlot.defaultSessionConfig.workingDir);
+    if (!parsed.ok) {
+      return { ok: false, message: parsed.message };
+    }
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    const scope = workingDirScope(scopeArg);
+    return {
+      ok: true,
+      workingDir: parsed.workingDir,
+      scope,
+      apply: () => {
+        if (scope === 'session') {
+          this.sessionStore.setNextWorkingDir(
+            routedSessionKey,
+            parsed.workingDir,
+            new Date(),
+          );
+          return `[next session workingDir: ${parsed.workingDir}]`;
+        }
+        this.sessionStore.setChannelWorkingDir(
+          {
+            platformName: this.platformName,
+            platform: event.sessionKey.platform,
+            channelId: event.sessionKey.channelId,
+          },
+          parsed.workingDir,
+        );
+        return `[channel workingDir: ${parsed.workingDir}]`;
+      },
+    };
+  }
+
+  private async enqueueWorkingDirUpdate(
+    event: NormalizedEvent,
+    update: Extract<PreparedWorkingDirUpdate, { ok: true }>,
+  ): Promise<EventHandlerResult> {
+    const key = queueKeyFromEvent(event, this.platformName);
+    const wasIdle = this.messageQueue.isIdle(key);
+    let queued: Promise<string>;
+    try {
+      queued = this.messageQueue.enqueue({
+        key,
+        kind: 'daemon-state-command',
+        traceId: event.traceId,
+        label: `working-dir:${update.scope}`,
+        run: async () => update.apply(),
+      });
+    } catch (err) {
+      if (err instanceof QueueFullError) {
+        return this.commandResponse(QUEUE_FULL_TEXT);
+      }
+      throw err;
+    }
+
+    if (wasIdle) {
+      try {
+        return this.commandResponse(await queued);
+      } catch (err) {
+        if (err instanceof QueueItemCancelledError) {
+          return this.commandResponse('[workingDir update cancelled]');
+        }
+        throw err;
+      }
+    }
+
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    void queued
+      .then((text) => this.sendCommandAck(event, routedSessionKey, text))
+      .catch((err: unknown) => {
+        if (err instanceof QueueItemCancelledError) {
+          this.logger.info(
+            { traceId: event.traceId, sessionKey: key },
+            'message_queue_cancelled',
+          );
+          return;
+        }
+        this.logger.error(
+          { traceId: event.traceId, sessionKey: key, err },
+          'working_dir_update_failed',
+        );
+      });
+    return this.commandResponse(`[workingDir update queued: ${update.workingDir}]`);
+  }
+
+  private async handleSettingsCommand(
+    event: NormalizedEvent,
+    prefix?: string,
+  ): Promise<EventHandlerResult> {
+    return {
+      commandResponse: await this.buildSettingsResponse(event, prefix),
+    };
+  }
+
+  private async buildSettingsResponse(
+    event: NormalizedEvent,
+    prefix?: string,
+  ): Promise<NonNullable<EventHandlerResult['commandResponse']>> {
+    const platformItems = await this.platform.settingsSnapshot?.({
+      userId: event.initiator.userId,
+      channelId: event.sessionKey.channelId,
+      ...(event.threadParentChannelId
+        ? { threadParentChannelId: event.threadParentChannelId }
+        : {}),
+    });
+    const items = [
+      ...(platformItems?.items ?? []),
+      ...this.daemonSettingsSnapshotItems(event),
+    ];
+    const sessions = this.sessionStore.listForUser({
+      platformName: this.platformName,
+      platform: event.sessionKey.platform,
+      initiatorUserId: event.initiator.userId,
+      limit: 25,
+    });
+    const text = this.renderSettingsText(items, sessions.length, prefix);
+    return {
+      text,
+      ephemeral: true,
+      components: this.settingsComponents(items, sessions),
+    };
+  }
+
+  private renderSettingsText(
+    items: readonly SettingsSnapshotItem[],
+    sessionCount: number,
+    prefix?: string,
+  ): string {
+    const replyMode = items.find((item) => item.key === 'discord.replyMode');
+    const agent = items.find((item) => item.key === 'daemon.agent');
+    const workingDir = items.find((item) => item.key === 'daemon.workingDir');
+    const lines = ['**Nexus settings**'];
+    if (prefix) {
+      lines.push('', `Result: ${prefix}`);
+    }
+    lines.push(
+      '',
+      '**Current state**',
+      `Reply mode: ${this.renderSettingsValue(replyMode)}`,
+      `Agent: ${this.renderSettingsValue(agent)}`,
+      `WorkingDir: ${this.renderSettingsValue(workingDir)}`,
+      `Resumable sessions: \`${sessionCount}\``,
+      '',
+      '**Notes**',
+      'Controls below apply to this channel/thread. Values marked `in-memory` reset when the daemon restarts.',
+    );
+    return lines.join('\n');
+  }
+
+  private renderSettingsValue(item: SettingsSnapshotItem | undefined): string {
+    if (!item) return '`unavailable`';
+    return `\`${item.value}\` · ${item.source} · ${item.durability}`;
+  }
+
+  private daemonSettingsSnapshotItems(
+    event: NormalizedEvent,
+  ): SettingsSnapshotItem[] {
+    const route = this.route(event);
+    const routedChannelId = this.routeEventForBinding(event).sessionKey.channelId;
+    const agentOverride = this.agentOverridesByChannel.get(
+      this.channelOverrideKey(event.sessionKey.platform, routedChannelId),
+    );
+    const bindingItem: SettingsSnapshotItem = {
+      key: 'daemon.agent',
+      label: 'Agent',
+      owner: 'daemon',
+      value: agentOverride ?? route?.agentName ?? '[unavailable]',
+      source: agentOverride ? 'channel override' : 'binding route',
+      durability: agentOverride ? 'in-memory' : 'derived',
+      canChange: this.agents.size > 1,
+    };
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    const nextWorkingDir = this.sessionStore.get(routedSessionKey)
+      ?.nextSession?.workingDir;
+    if (nextWorkingDir) {
+      return [
+        bindingItem,
+        {
+          key: 'daemon.workingDir',
+          label: 'WorkingDir',
+          owner: 'daemon',
+          value: nextWorkingDir,
+          source: 'next session override',
+          durability: 'in-memory',
+          canChange: false,
+        },
+      ];
+    }
+    const currentChannelWorkingDir = this.sessionStore.getChannelWorkingDir({
+      platformName: this.platformName,
+      platform: event.sessionKey.platform,
+      channelId: event.sessionKey.channelId,
+    });
+    if (currentChannelWorkingDir) {
+      return [
+        bindingItem,
+        {
+          key: 'daemon.workingDir',
+          label: 'WorkingDir',
+          owner: 'daemon',
+          value: currentChannelWorkingDir,
+          source: 'channel default',
+          durability: 'in-memory',
+          canChange: false,
+        },
+      ];
+    }
+    const thread = this.sessionStore.findThreadByChannelId({
+      platformName: this.platformName,
+      platform: event.sessionKey.platform,
+      channelId: event.sessionKey.channelId,
+    });
+    const parentChannelId = thread?.parentChannelId ?? event.threadParentChannelId;
+    if (parentChannelId) {
+      const parentWorkingDir = this.sessionStore.getChannelWorkingDir({
+        platformName: this.platformName,
+        platform: event.sessionKey.platform,
+        channelId: parentChannelId,
+      });
+      if (parentWorkingDir) {
+        return [
+          bindingItem,
+          {
+            key: 'daemon.workingDir',
+            label: 'WorkingDir',
+            owner: 'daemon',
+            value: parentWorkingDir,
+            source: 'parent channel default',
+            durability: 'in-memory',
+            canChange: false,
+          },
+        ];
+      }
+    }
+    const agentSlot = route ? this.agents.get(route.agentName) : undefined;
+    return [
+      bindingItem,
+      {
+        key: 'daemon.workingDir',
+        label: 'WorkingDir',
+        owner: 'daemon',
+        value: agentSlot?.defaultSessionConfig.workingDir ?? '[unavailable]',
+        source: 'agent default',
+        durability: 'derived',
+        canChange: false,
+      },
+    ];
+  }
+
+  private settingsComponents(
+    items: readonly SettingsSnapshotItem[],
+    sessions: ReturnType<SessionStore['listForUser']>,
+  ): NonNullable<EventHandlerResult['commandResponse']>['components'] {
+    const components: NonNullable<EventHandlerResult['commandResponse']>['components'] = [];
+    const replyMode = items.find((item) => item.key === 'discord.replyMode');
+    if (replyMode?.canChange) {
+      components.push({
+        type: 'string-select',
+        customId: SETTINGS_REPLY_MODE_COMPONENT_ID,
+        placeholder: 'Change reply mode',
+        minValues: 1,
+        maxValues: 1,
+        options: [
+          {
+            label: 'mention',
+            value: 'mention',
+            description: 'Only replies when mentioned or slash commands are used',
+            default: replyMode.value === 'mention',
+          },
+          {
+            label: 'all',
+            value: 'all',
+            description: 'Replies to all allowed messages in the channel',
+            default: replyMode.value === 'all',
+          },
+        ],
+      });
+    }
+    const agentItem = items.find((item) => item.key === 'daemon.agent');
+    if (agentItem?.canChange) {
+      components.push({
+        type: 'string-select',
+        customId: SETTINGS_AGENT_COMPONENT_ID,
+        placeholder: 'Switch agent binding',
+        minValues: 1,
+        maxValues: 1,
+        options: [...this.agents.values()].map((agent) => ({
+          label: agent.agentName.slice(0, 100),
+          value: agent.agentName,
+          description: (agent.agentOwner ?? agent.agent.name()).slice(0, 100),
+          default: agent.agentName === agentItem.value,
+        })),
+      });
+    }
+    if (sessions.length > 0) {
+      components.push({
+        type: 'string-select',
+        customId: SETTINGS_RESUME_COMPONENT_ID,
+        placeholder: 'Resume a session',
+        minValues: 1,
+        maxValues: 1,
+        options: sessions.map((session) => ({
+          label: (session.title ?? session.channelId).slice(0, 100),
+          value: session.sessionId,
+          description: `${session.channelId} · ${session.agentSessionId}`.slice(0, 100),
+        })),
+      });
+    }
+    components.push({
+      type: 'button',
+      customId: SETTINGS_WORKING_DIR_COMPONENT_ID,
+      label: 'Set workingDir',
+      style: 'secondary',
+    });
+    if (
+      this.platform.capabilities().supportsThreadCreation &&
+      this.platform.createThread
+    ) {
+      components.push({
+        type: 'button',
+        customId: SETTINGS_NEW_THREAD_COMPONENT_ID,
+        label: 'Create thread',
+        style: 'primary',
+      });
+    }
+    return components;
+  }
+
+  private async dispatchInteraction(event: NormalizedEvent): Promise<EventHandlerResult | void> {
+    if (!this.checkAuth(event)) {
+      return this.commandResponse(COMMAND_NOT_ALLOWED_TEXT);
+    }
+    if (event.interaction?.customId === SESSION_RESUME_COMPONENT_ID) {
+      return this.handleSessionResumeInteraction(event);
+    }
+    if (event.interaction?.customId?.startsWith(QUEUE_COMPONENT_PREFIX)) {
+      return this.handleQueueInteraction(event);
+    }
+    if (event.interaction?.customId?.startsWith(SETTINGS_COMPONENT_PREFIX)) {
+      return this.handleSettingsInteraction(event);
+    }
+    if (event.interaction?.customId !== SESSION_RESUME_COMPONENT_ID) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          customId: event.interaction?.customId,
+        },
+        'interaction_handler_missing',
+      );
+      return this.commandResponse(COMMAND_NOT_READY_TEXT);
+    }
+    return this.handleSessionResumeInteraction(event);
+  }
+
+  private async handleQueueInteraction(
+    event: NormalizedEvent,
+  ): Promise<EventHandlerResult> {
+    const customId = event.interaction?.customId ?? '';
+    const key = queueKeyFromEvent(event, this.platformName);
+    if (customId === QUEUE_SELECT_COMPONENT_ID) {
+      const selectedId = event.interaction?.values[0];
+      return this.queueCommandResponse(event, undefined, selectedId);
+    }
+    if (customId === QUEUE_INSERT_COMPONENT_ID) {
+      return {
+        modalResponse: {
+          customId: QUEUE_INSERT_MODAL_ID,
+          title: 'Insert queued prompt',
+          textInputs: [
+            {
+              customId: QUEUE_PROMPT_FIELD_ID,
+              label: 'Prompt',
+              style: 'paragraph',
+              required: true,
+              placeholder: 'Ask Nexus to do this next',
+            },
+          ],
+        },
+      };
+    }
+    if (customId === QUEUE_NEXT_COMPONENT_ID) {
+      return this.handleQueueNextCommand(event);
+    }
+    if (customId === QUEUE_INSERT_MODAL_ID) {
+      const prompt = event.interaction?.fields?.[QUEUE_PROMPT_FIELD_ID]?.trim();
+      if (!prompt) {
+        return this.commandResponse('Prompt is required.');
+      }
+      return this.enqueueInsertedPrompt(event, prompt);
+    }
+    if (customId.startsWith(QUEUE_EDIT_COMPONENT_PREFIX)) {
+      const itemId = customId.slice(QUEUE_EDIT_COMPONENT_PREFIX.length);
+      const item = this.messageQueue
+        .snapshot(key)
+        .pending.find((candidate) => candidate.id === itemId);
+      if (!item || item.kind !== 'message') {
+        return this.queueCommandResponse(event, COMMAND_UNAVAILABLE_TEXT);
+      }
+      return {
+        modalResponse: {
+          customId: `${QUEUE_EDIT_MODAL_PREFIX}${itemId}`,
+          title: 'Edit queued prompt',
+          textInputs: [
+            {
+              customId: QUEUE_PROMPT_FIELD_ID,
+              label: 'Prompt',
+              style: 'paragraph',
+              required: true,
+              value: item.editableText ?? item.label,
+            },
+          ],
+        },
+      };
+    }
+    if (customId.startsWith(QUEUE_EDIT_MODAL_PREFIX)) {
+      const itemId = customId.slice(QUEUE_EDIT_MODAL_PREFIX.length);
+      const prompt = event.interaction?.fields?.[QUEUE_PROMPT_FIELD_ID]?.trim();
+      if (!prompt) {
+        return this.commandResponse('Prompt is required.');
+      }
+      const result = this.messageQueue.editPending(
+        key,
+        itemId,
+        prompt,
+        this.queueLabelForText(prompt, itemId),
+      );
+      if (result.status !== 'updated') {
+        return this.queueCommandResponse(event, COMMAND_UNAVAILABLE_TEXT);
+      }
+      return this.queueCommandResponse(
+        event,
+        `Updated: \`${result.item.label}\``,
+        itemId,
+      );
+    }
+    if (customId.startsWith(QUEUE_MOVE_UP_COMPONENT_PREFIX)) {
+      const itemId = customId.slice(QUEUE_MOVE_UP_COMPONENT_PREFIX.length);
+      const result = this.messageQueue.movePending(key, itemId, 'up');
+      return this.queueCommandResponse(
+        event,
+        result.status === 'not_found' ? COMMAND_UNAVAILABLE_TEXT : 'Moved up',
+        itemId,
+      );
+    }
+    if (customId.startsWith(QUEUE_MOVE_DOWN_COMPONENT_PREFIX)) {
+      const itemId = customId.slice(QUEUE_MOVE_DOWN_COMPONENT_PREFIX.length);
+      const result = this.messageQueue.movePending(key, itemId, 'down');
+      return this.queueCommandResponse(
+        event,
+        result.status === 'not_found' ? COMMAND_UNAVAILABLE_TEXT : 'Moved down',
+        itemId,
+      );
+    }
+    if (customId.startsWith(QUEUE_CANCEL_COMPONENT_PREFIX)) {
+      const itemId = customId.slice(QUEUE_CANCEL_COMPONENT_PREFIX.length);
+      const result = this.messageQueue.cancelPendingItem(key, itemId);
+      return this.queueCommandResponse(
+        event,
+        result.status === 'cancelled'
+          ? `Cancelled: \`${result.item.label}\``
+          : COMMAND_UNAVAILABLE_TEXT,
+      );
+    }
+    return this.commandResponse(COMMAND_NOT_READY_TEXT);
+  }
+
+  private enqueueInsertedPrompt(
+    event: NormalizedEvent,
+    prompt: string,
+  ): EventHandlerResult {
+    const route = this.route(event);
+    if (!route) {
+      return this.queueCommandResponse(event, COMMAND_UNAVAILABLE_TEXT);
+    }
+    const agentSlot = this.agents.get(route.agentName);
+    if (!agentSlot) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          agentName: route.agentName,
+          bindingName: route.bindingName,
+        },
+        'route_agent_missing',
+      );
+      return this.queueCommandResponse(event, COMMAND_UNAVAILABLE_TEXT);
+    }
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    const insertedEvent: NormalizedEvent & { sessionKey: SessionKey } = {
+      ...event,
+      eventId: `${event.eventId}:queue-insert:${randomUUID()}`,
+      type: 'message',
+      text: prompt,
+      command: undefined,
+      interaction: undefined,
+      messageId: undefined,
+      rawContentType: 'daemon:queue-insert',
+      receivedAt: new Date(),
+      sessionKey: routedSessionKey,
+    };
+    const key = queueKeyFromEvent(event, this.platformName);
+    const queuedMessage = { text: prompt };
+    let handle: { id: string; done: Promise<void> };
+    try {
+      handle = this.messageQueue.enqueueWithHandle({
+        key,
+        kind: 'message',
+        traceId: event.traceId,
+        label: this.queueLabelForText(prompt, event.eventId),
+        editableText: prompt,
+        position: 'front',
+        onEdit: (text) => {
+          queuedMessage.text = text;
+        },
+        run: () =>
+          this.dispatchImpl(
+            { ...insertedEvent, text: queuedMessage.text },
+            agentSlot,
+          ),
+      });
+    } catch (err) {
+      if (err instanceof QueueFullError) {
+        return this.queueCommandResponse(event, QUEUE_FULL_TEXT);
+      }
+      throw err;
+    }
+    void handle.done.catch((err: unknown) => {
+      if (err instanceof QueueItemCancelledError) {
+        this.logger.info(
+          { traceId: event.traceId, sessionKey: key },
+          'message_queue_cancelled',
+        );
+        return;
+      }
+      this.logger.error(
+        { traceId: event.traceId, sessionKey: key, err },
+        'inserted_queue_prompt_failed',
+      );
+    });
+    return this.queueCommandResponse(
+      event,
+      `Inserted next: \`${this.queueLabelForText(prompt, event.eventId)}\``,
+      handle.id,
+    );
+  }
+
+  private handleSessionResumeInteraction(event: NormalizedEvent): EventHandlerResult {
+    const sessionId = event.interaction?.values[0];
+    if (!sessionId) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT);
+    }
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    const sessionKeyStr = serializeSessionKey(routedSessionKey);
+    this.stopActiveSession(sessionKeyStr, event.traceId);
+    const rebound = this.sessionStore.bindExistingToKey(
+      routedSessionKey,
+      sessionId,
+      new Date(),
+    );
+    if (!rebound) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT);
+    }
+    return this.commandResponse(`[session resumed: ${rebound.agentSessionId}]`);
+  }
+
+  private async handleSettingsInteraction(
+    event: NormalizedEvent,
+  ): Promise<EventHandlerResult> {
+    const customId = event.interaction?.customId;
+    if (customId === SETTINGS_REPLY_MODE_COMPONENT_ID) {
+      const value = event.interaction?.values[0];
+      if (value !== 'mention' && value !== 'all') {
+        return this.commandResponse(COMMAND_UNAVAILABLE_TEXT);
+      }
+      const result = await this.platform.applySettingsAction?.({
+        action: 'discord.replyMode',
+        value,
+        userId: event.initiator.userId,
+        channelId: event.sessionKey.channelId,
+        ...(event.threadParentChannelId
+          ? { threadParentChannelId: event.threadParentChannelId }
+          : {}),
+      });
+      const message =
+        result?.message ??
+        (result?.status === 'unsupported'
+          ? COMMAND_UNAVAILABLE_TEXT
+          : `[reply mode requested: ${value}]`);
+      return this.handleSettingsCommand(event, message);
+    }
+    if (customId === SETTINGS_RESUME_COMPONENT_ID) {
+      const result = this.handleSessionResumeInteraction(event);
+      return this.handleSettingsCommand(
+        event,
+        result.commandResponse?.text ?? COMMAND_UNAVAILABLE_TEXT,
+      );
+    }
+    if (customId === SETTINGS_NEW_THREAD_COMPONENT_ID) {
+      const result = await this.handleNewThreadCommand(event);
+      return this.handleSettingsCommand(
+        event,
+        result.commandResponse?.text ?? COMMAND_UNAVAILABLE_TEXT,
+      );
+    }
+    if (customId === SETTINGS_WORKING_DIR_COMPONENT_ID) {
+      return {
+        modalResponse: {
+          customId: SETTINGS_WORKING_DIR_MODAL_ID,
+          title: 'Set working directory',
+          textInputs: [
+            {
+              customId: SETTINGS_WORKING_DIR_PATH_FIELD_ID,
+              label: 'Absolute path',
+              style: 'short',
+              required: true,
+              placeholder: '/workspace/project',
+            },
+          ],
+        },
+      };
+    }
+    if (customId === SETTINGS_WORKING_DIR_MODAL_ID) {
+      const result = await this.applySettingsWorkingDir(event);
+      return this.handleSettingsCommand(
+        event,
+        result.commandResponse?.text ?? COMMAND_UNAVAILABLE_TEXT,
+      );
+    }
+    if (customId === SETTINGS_AGENT_COMPONENT_ID) {
+      const result = this.applySettingsAgent(event);
+      return this.handleSettingsCommand(
+        event,
+        result.commandResponse?.text ?? COMMAND_UNAVAILABLE_TEXT,
+      );
+    }
+    return this.commandResponse(COMMAND_NOT_READY_TEXT);
+  }
+
+  private async applySettingsWorkingDir(
+    event: NormalizedEvent,
+  ): Promise<EventHandlerResult> {
+    const prepared = this.prepareWorkingDirUpdate(
+      event,
+      event.interaction?.fields?.[SETTINGS_WORKING_DIR_PATH_FIELD_ID],
+      undefined,
+    );
+    if (!prepared.ok) return this.commandResponse(prepared.message);
+    return this.enqueueWorkingDirUpdate(event, prepared);
+  }
+
+  private applySettingsAgent(event: NormalizedEvent): EventHandlerResult {
+    const agentName = event.interaction?.values[0];
+    if (!agentName || !this.agents.has(agentName)) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT);
+    }
+    const routedChannelId = this.routeEventForBinding(event).sessionKey.channelId;
+    this.agentOverridesByChannel.set(
+      this.channelOverrideKey(event.sessionKey.platform, routedChannelId),
+      agentName,
+    );
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    this.stopActiveSession(serializeSessionKey(routedSessionKey), event.traceId);
+    this.sessionStore.delete(routedSessionKey);
+    return this.commandResponse(`[agent binding: ${agentName}]`);
+  }
+
   private route(event: NormalizedEvent):
     | { bindingName: string; agentName: string }
     | undefined {
@@ -717,10 +1977,20 @@ export class Engine {
       return { bindingName: 'legacy', agentName: onlyAgent.agentName };
     }
     try {
+      const routingEvent = this.routeEventForBinding(event);
+      const overrideAgent = this.agentOverridesByChannel.get(
+        this.channelOverrideKey(
+          routingEvent.sessionKey.platform,
+          routingEvent.sessionKey.channelId,
+        ),
+      );
+      if (overrideAgent && this.agents.has(overrideAgent)) {
+        return { bindingName: 'settings-override', agentName: overrideAgent };
+      }
       return selectRoute(this.routingTable, {
         platformName: this.platformName,
         platformType: this.platformType,
-        event,
+        event: routingEvent,
       });
     } catch (err) {
       if (err instanceof RouteError) {
@@ -738,6 +2008,95 @@ export class Engine {
       }
       throw err;
     }
+  }
+
+  private channelOverrideKey(platform: string, channelId: string): string {
+    return `${this.platformName}:${platform}:${channelId}`;
+  }
+
+  private routeEventForBinding(event: NormalizedEvent): NormalizedEvent {
+    const thread = this.sessionStore.findThreadByChannelId({
+      platformName: this.platformName,
+      platform: event.sessionKey.platform,
+      channelId: event.sessionKey.channelId,
+    });
+    const parentChannelId = thread?.parentChannelId ?? event.threadParentChannelId;
+    if (!parentChannelId) return event;
+    return {
+      ...event,
+      sessionKey: {
+        ...event.sessionKey,
+        channelId: parentChannelId,
+      },
+    };
+  }
+
+  private renameThreadBestEffort(
+    event: NormalizedEvent & { sessionKey: SessionKey },
+    title: string | undefined,
+  ): void {
+    if (!title || !this.platform.updateThread) return;
+    const thread = this.sessionStore.findThreadByChannelId({
+      platformName: this.platformName,
+      platform: event.sessionKey.platform,
+      channelId: event.sessionKey.channelId,
+    });
+    if (!thread) return;
+    if (!thread.renameOnFirstPrompt) return;
+    Promise.resolve()
+      .then(() =>
+        this.platform.updateThread?.({
+          threadId: event.sessionKey.channelId,
+          title,
+          traceId: event.traceId,
+        }),
+      )
+      .catch((err) => {
+        this.logger.warn(
+          {
+            traceId: event.traceId,
+            platformName: this.platformName,
+            channelId: event.sessionKey.channelId,
+            err,
+          },
+          'thread_update_failed',
+        );
+      });
+    this.sessionStore.registerThread(event.sessionKey, {
+      ...thread,
+      renameOnFirstPrompt: false,
+    });
+  }
+
+  private resolveWorkingDirForSession(
+    event: NormalizedEvent & { sessionKey: SessionKey },
+    defaultWorkingDir: string,
+  ): string {
+    const nextWorkingDir = this.sessionStore.consumeNextWorkingDir(
+      event.sessionKey,
+    );
+    if (nextWorkingDir) return nextWorkingDir;
+    const currentChannelWorkingDir = this.sessionStore.getChannelWorkingDir({
+      platformName: this.platformName,
+      platform: event.sessionKey.platform,
+      channelId: event.sessionKey.channelId,
+    });
+    if (currentChannelWorkingDir) return currentChannelWorkingDir;
+    const thread = this.sessionStore.findThreadByChannelId({
+      platformName: this.platformName,
+      platform: event.sessionKey.platform,
+      channelId: event.sessionKey.channelId,
+    });
+    const parentChannelId = thread?.parentChannelId ?? event.threadParentChannelId;
+    if (parentChannelId) {
+      const parentChannelWorkingDir = this.sessionStore.getChannelWorkingDir({
+        platformName: this.platformName,
+        platform: event.sessionKey.platform,
+        channelId: parentChannelId,
+      });
+      if (parentChannelWorkingDir) return parentChannelWorkingDir;
+    }
+    return defaultWorkingDir;
   }
 
   private redactForOutbound(text: string, traceId: string): string {
@@ -1111,10 +2470,20 @@ export class Engine {
           if (e.type === 'session_started') {
             const agentSessionId = e.payload.agentSessionId;
             if (agentSessionId) {
+              const promptTitle = sessionTitleFromPrompt(prompt);
+              const thread = this.sessionStore.findThreadByChannelId({
+                platformName: this.platformName,
+                platform: event.sessionKey.platform,
+                channelId: event.sessionKey.channelId,
+              });
+              const title =
+                thread && !thread.renameOnFirstPrompt ? undefined : promptTitle;
               this.sessionStore.set(event.sessionKey, {
                 agentSessionId,
                 lastTurnAt: new Date(),
+                title,
               });
+              this.renameThreadBestEffort(event, title);
             }
             return;
           }
@@ -1289,6 +2658,7 @@ export class Engine {
       session = activeSession.session;
       activeSession.currentTurn = {
         eventId: event.eventId,
+        traceId: event.traceId,
         pending: new Set(),
         tail: Promise.resolve(),
         handle: handler,
@@ -1367,8 +2737,13 @@ export class Engine {
     const prevAgentSessionId = this.sessionStore.get(
       event.sessionKey,
     )?.agentSessionId;
+    const workingDir = this.resolveWorkingDirForSession(
+      event,
+      agentSlot.defaultSessionConfig.workingDir,
+    );
     const config: SessionConfig = {
       ...agentSlot.defaultSessionConfig,
+      workingDir,
       sessionId: randomUUID(),
       resumeFromAgentSessionId: prevAgentSessionId,
     };

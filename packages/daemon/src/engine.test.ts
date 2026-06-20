@@ -92,6 +92,10 @@ function makePlatform(capOverrides: Partial<CapabilitySet> = {}): PlatformAdapte
   edit: ReturnType<typeof vi.fn>;
   setTyping: ReturnType<typeof vi.fn>;
   clearTyping: ReturnType<typeof vi.fn>;
+  createThread: ReturnType<typeof vi.fn>;
+  updateThread: ReturnType<typeof vi.fn>;
+  settingsSnapshot: ReturnType<typeof vi.fn>;
+  applySettingsAction: ReturnType<typeof vi.fn>;
   start: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
 } {
@@ -112,6 +116,17 @@ function makePlatform(capOverrides: Partial<CapabilitySet> = {}): PlatformAdapte
     edit: vi.fn(async () => {}),
     delete: vi.fn(async () => {}),
     react: vi.fn(async () => {}),
+    createThread: vi.fn(async () => ({
+      threadId: 'T1',
+      parentChannelId: 'C1',
+      url: 'https://discord.com/channels/G1/T1',
+    })),
+    updateThread: vi.fn(async () => undefined),
+    settingsSnapshot: vi.fn(async () => ({ items: [] })),
+    applySettingsAction: vi.fn(async () => ({
+      status: 'handled',
+      message: '[reply mode changed]',
+    })),
     setTyping: vi.fn(async () => {}),
     clearTyping: vi.fn(async () => {}),
   };
@@ -360,6 +375,99 @@ const DAEMON_RELOAD_CONFIG_COMMAND: CommandDescriptor = {
   legacyNames: [],
 };
 
+const DAEMON_SESSIONS_COMMAND: CommandDescriptor = {
+  canonicalId: 'daemon:sessions',
+  owner: { type: 'daemon' },
+  localName: 'sessions',
+  summary: 'List resumable Nexus routing sessions',
+  options: [],
+  handlerKey: 'sessions',
+  applicability: {
+    requiredCapabilities: ['slash-command-registration', 'ephemeral-response'],
+  },
+  legacyNames: [],
+};
+
+const DAEMON_NEW_THREAD_COMMAND: CommandDescriptor = {
+  canonicalId: 'daemon:new-thread',
+  owner: { type: 'daemon' },
+  localName: 'new-thread',
+  summary: 'Create a Discord thread for a new Nexus routing session',
+  options: [
+    {
+      name: 'title',
+      type: 'string',
+      required: false,
+      description: 'Optional thread title',
+      choices: [],
+    },
+  ],
+  handlerKey: 'new-thread',
+  applicability: {
+    requiredCapabilities: ['slash-command-registration', 'ephemeral-response'],
+  },
+  legacyNames: [],
+};
+
+const DAEMON_WORKING_DIR_COMMAND: CommandDescriptor = {
+  canonicalId: 'daemon:working-dir',
+  owner: { type: 'daemon' },
+  localName: 'working-dir',
+  summary: 'Set the working directory for the next Nexus routing session',
+  options: [
+    {
+      name: 'path',
+      type: 'string',
+      required: true,
+      description: 'Absolute working directory path',
+      choices: [],
+    },
+  ],
+  handlerKey: 'working-dir',
+  applicability: {
+    requiredCapabilities: ['slash-command-registration', 'ephemeral-response'],
+  },
+  legacyNames: [],
+};
+
+const DAEMON_SETTINGS_COMMAND: CommandDescriptor = {
+  canonicalId: 'daemon:settings',
+  owner: { type: 'daemon' },
+  localName: 'settings',
+  summary: 'Show Nexus settings for this Discord channel',
+  options: [],
+  handlerKey: 'settings',
+  applicability: {
+    requiredCapabilities: ['slash-command-registration', 'ephemeral-response'],
+  },
+  legacyNames: [],
+};
+
+const DAEMON_QUEUE_COMMAND: CommandDescriptor = {
+  canonicalId: 'daemon:queue',
+  owner: { type: 'daemon' },
+  localName: 'queue',
+  summary: 'Show or clear the current Nexus queue',
+  options: [
+    {
+      name: 'action',
+      type: 'string',
+      required: false,
+      description: 'Queue action',
+      choices: [
+        { name: 'status', value: 'status' },
+        { name: 'clear', value: 'clear' },
+        { name: 'next', value: 'next' },
+      ],
+    },
+  ],
+  handlerKey: 'queue',
+  applicability: {
+    requiredCapabilities: ['slash-command-registration', 'ephemeral-response'],
+  },
+  legacyNames: [],
+};
+
 function makeCommandEvent(
   commandName: string,
   overrides: Partial<NormalizedEvent> = {},
@@ -377,6 +485,24 @@ function makeCommandEvent(
   });
 }
 
+function makeComponentEvent(
+  customId: string,
+  values: string[],
+  overrides: Partial<NormalizedEvent> = {},
+): NormalizedEvent {
+  return makeEvent('', {
+    type: 'interaction',
+    text: undefined,
+    interaction: {
+      customId,
+      componentType: 'string-select',
+      values,
+    },
+    rawContentType: 'discord:component-interaction',
+    ...overrides,
+  });
+}
+
 function makeActiveRegistry(
   extraDescriptors: readonly CommandDescriptor[] = [],
 ): ActiveCommandRegistry {
@@ -389,7 +515,11 @@ function makeActiveRegistry(
       ...extraDescriptors,
     ],
     scope: COMMAND_SCOPE,
-    capabilities: { ...platformCaps, supportsSlashCommands: true },
+    capabilities: {
+      ...platformCaps,
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    },
     policy: DEFAULT_COMMAND_NAME_POLICY,
     agentOwnersInScope: ['codex'],
     generation: 'g-command',
@@ -431,6 +561,7 @@ describe('Engine', () => {
     expect(cfg.sessionId).toBeTruthy();
 
     expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-123');
+    expect(store.get(ROUTED_SESSION_KEY)?.title).toBe('hello');
 
     expect(platform.send).toHaveBeenCalledTimes(1);
     const sendArgs = platform.send.mock.calls[0]!;
@@ -966,6 +1097,7 @@ describe('Engine', () => {
   it('routingTable 多重命中：打 route_ambiguous 且不调用任何 agent', async () => {
     const platform = makePlatform();
     const codex = makeAgent();
+    const claude = makeAgent();
     const store = new SessionStore();
     const mockLogger = makeMockLogger();
     const routingTable: RoutingEntry[] = [
@@ -1050,6 +1182,7 @@ describe('Engine', () => {
   it('routing 命中后 user 不在 platform auth allowlist 时 auth_denied 且不调用 agent / 不创建 session', async () => {
     const platform = makePlatform();
     const codex = makeAgent();
+    const claude = makeAgent();
     const store = new SessionStore();
     const mockLogger = makeMockLogger();
     const routingTable: RoutingEntry[] = [
@@ -1110,6 +1243,358 @@ describe('Engine', () => {
       userId: 'U-denied',
       reason: 'user_not_allowed',
     });
+  });
+
+  it('daemon-created thread messages route and authorize through the parent channel for the owner', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const store = new SessionStore();
+    store.set(
+      {
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'T1',
+        initiatorUserId: 'U1',
+      },
+      {
+        lastTurnAt: new Date(0),
+        title: 'Thread shell',
+      },
+    );
+    store.registerThread(
+      {
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'T1',
+        initiatorUserId: 'U1',
+      },
+      {
+        parentChannelId: 'C1',
+        ownerUserId: 'U1',
+        autoArchiveDurationMinutes: 1440,
+        renameOnFirstPrompt: true,
+      },
+    );
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      platformAuth: {
+        allowlist: {
+          userIds: ['U1'],
+          roleIds: [],
+          allowedGuildIds: [],
+          allowedChannelIds: ['C1'],
+          allowDM: false,
+          requireMentionOrSlash: true,
+        },
+      },
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-thread' }),
+      ev('text_final', { text: 'thread reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('hello from thread', {
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'T1',
+        initiatorUserId: 'U1',
+      },
+      guildId: 'G1',
+      threadParentChannelId: 'C1',
+    }));
+
+    expect(codex.startSession).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    expect(platform.updateThread).toHaveBeenCalledWith({
+      threadId: 'T1',
+      title: 'hello from thread',
+      traceId: 't-1',
+    });
+    expect(store.get({
+      platformName: 'discord-main',
+      platform: 'discord',
+      channelId: 'T1',
+      initiatorUserId: 'U1',
+    })).toMatchObject({
+      agentSessionId: 'sid-thread',
+    });
+    expect(store.findThreadByChannelId({
+      platformName: 'discord-main',
+      platform: 'discord',
+      channelId: 'T1',
+    })).toMatchObject({
+      parentChannelId: 'C1',
+      ownerUserId: 'U1',
+      renameOnFirstPrompt: false,
+    });
+  });
+
+  it('daemon-created thread with an existing title does not rename on first prompt', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const store = new SessionStore();
+    store.set(
+      {
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'T1',
+        initiatorUserId: 'U1',
+      },
+      {
+        lastTurnAt: new Date(0),
+        title: 'Design auth flow',
+      },
+    );
+    store.registerThread(
+      {
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'T1',
+        initiatorUserId: 'U1',
+      },
+      {
+        parentChannelId: 'C1',
+        ownerUserId: 'U1',
+        autoArchiveDurationMinutes: 1440,
+        renameOnFirstPrompt: false,
+      },
+    );
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      platformAuth: {
+        allowlist: {
+          userIds: ['U1'],
+          roleIds: [],
+          allowedGuildIds: [],
+          allowedChannelIds: ['C1'],
+          allowDM: false,
+          requireMentionOrSlash: true,
+        },
+      },
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-thread' }),
+      ev('text_final', { text: 'thread reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('new implementation idea', {
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'T1',
+        initiatorUserId: 'U1',
+      },
+      guildId: 'G1',
+      threadParentChannelId: 'C1',
+    }));
+
+    expect(codex.startSession).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    expect(platform.updateThread).not.toHaveBeenCalled();
+    expect(store.get({
+      platformName: 'discord-main',
+      platform: 'discord',
+      channelId: 'T1',
+      initiatorUserId: 'U1',
+    })).toMatchObject({
+      agentSessionId: 'sid-thread',
+      title: 'Design auth flow',
+    });
+  });
+
+  it('daemon-created thread rejects messages from non-owner users', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const logger = makeMockLogger();
+    store.registerThread(
+      {
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'T1',
+        initiatorUserId: 'U1',
+      },
+      {
+        parentChannelId: 'C1',
+        ownerUserId: 'U1',
+        autoArchiveDurationMinutes: 1440,
+      },
+    );
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      platformAuth: {
+        allowlist: {
+          userIds: ['U1', 'U2'],
+          roleIds: [],
+          allowedGuildIds: [],
+          allowedChannelIds: ['C1'],
+          allowDM: false,
+          requireMentionOrSlash: true,
+        },
+      },
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      logger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello from another user', {
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'T1',
+        initiatorUserId: 'U2',
+      },
+      guildId: 'G1',
+      initiator: { userId: 'U2', displayName: 'U2', isBot: false },
+      threadParentChannelId: 'C1',
+    }));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    const authLog = (logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([, msg]) => msg === 'auth_denied',
+    );
+    expect(authLog?.[0]).toMatchObject({
+      channelId: 'T1',
+      userId: 'U2',
+      ownerUserId: 'U1',
+      reason: 'thread_owner_mismatch',
+    });
+  });
+
+  it('thread messages with parent channel metadata still work after in-memory placeholders are lost', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      platformAuth: {
+        allowlist: {
+          userIds: ['U1'],
+          roleIds: [],
+          allowedGuildIds: [],
+          allowedChannelIds: ['C1'],
+          allowDM: false,
+          requireMentionOrSlash: true,
+        },
+      },
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-thread' }),
+      ev('text_final', { text: 'thread reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('hello after restart', {
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'T1',
+        initiatorUserId: 'U1',
+      },
+      guildId: 'G1',
+      threadParentChannelId: 'C1',
+    }));
+
+    expect(codex.startSession).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    expect(platform.updateThread).not.toHaveBeenCalled();
+    expect(store.get({
+      platformName: 'discord-main',
+      platform: 'discord',
+      channelId: 'T1',
+      initiatorUserId: 'U1',
+    })).toMatchObject({
+      agentSessionId: 'sid-thread',
+    });
+    expect(store.findThreadByChannelId({
+      platformName: 'discord-main',
+      platform: 'discord',
+      channelId: 'T1',
+    })).toBeUndefined();
   });
 
   it('routing 命中后 guild 不在 platform auth allowlist 时 auth_denied 且不调用 agent / 不创建 session', async () => {
@@ -1304,8 +1789,12 @@ describe('Engine', () => {
   });
 
   it('command event 通过 active reverse map 路由 agent /new，不从 commandName 拆 owner', async () => {
-    const platform = makePlatform({ supportsSlashCommands: true });
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
     const codex = makeAgent();
+    const claude = makeAgent();
     const store = new SessionStore();
     const routingTable: RoutingEntry[] = [
       {
@@ -1325,6 +1814,18 @@ describe('Engine', () => {
           agentName: 'codex-dev',
           agentOwner: 'codex',
           agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+        {
+          agentName: 'claude-prod',
+          agentOwner: 'claudecode',
+          agent: claude.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+        {
+          agentName: 'claude-prod',
+          agentOwner: 'claudecode',
+          agent: claude.runtime,
           defaultSessionConfig: DEFAULT_CFG,
         },
       ],
@@ -1356,7 +1857,10 @@ describe('Engine', () => {
   });
 
   it('agent /stop 立即转发给 route 命中的 runtime，不等待当前 turn 完成', async () => {
-    const platform = makePlatform({ supportsSlashCommands: true });
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
     const codex = makeAgent();
     const store = new SessionStore();
     const routingTable: RoutingEntry[] = [
@@ -1479,6 +1983,404 @@ describe('Engine', () => {
         handlerKey: 'new',
       }),
     );
+  });
+
+  it('/nexus-queue status shows and clear cancels only current pending messages', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const idempotencyStore = new InMemoryIdempotencyStore();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_QUEUE_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'queue'],
+      idempotencyStore,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    codex.queueEventsAfter(
+      [
+        ev('text_final', { text: 'first done' }),
+        ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+      ],
+      30,
+    );
+    const runningTurn = dispatchHandler(makeEvent('running', {
+      eventId: 'e-running',
+      messageId: 'm-running',
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    const pendingTurn = dispatchHandler(makeEvent('pending', {
+      eventId: 'e-pending',
+      messageId: 'm-pending',
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    const status = await dispatchHandler(
+      makeCommandEvent('nexus-queue', {
+        command: {
+          name: 'nexus-queue',
+          args: { action: 'status' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+    expect(status?.commandResponse?.text).toContain('Pending: `1 / 20`');
+
+    const clear = await dispatchHandler(
+      makeCommandEvent('nexus-queue', {
+        command: {
+          name: 'nexus-queue',
+          args: { action: 'clear' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+    expect(clear?.commandResponse?.text).toContain('Cancelled: `1`');
+    expect(clear?.commandResponse?.text).toContain('Pending: `0 / 20`');
+
+    await pendingTurn;
+    await runningTurn;
+
+    expect(codex.sendInput).toHaveBeenCalledTimes(1);
+    expect(idempotencyStore.checkAndSet(
+      withPlatformName(SESSION_KEY, 'discord-main'),
+      'm-pending',
+    )).toEqual({
+      kind: 'hit',
+      status: 'cancelled',
+    });
+  });
+
+  it('/nexus-queue next interrupts the running turn and preserves pending messages', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_QUEUE_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'queue'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+    store.set(withPlatformName(SESSION_KEY, 'discord-main'), {
+      agentSessionId: 'sid-existing',
+      lastTurnAt: new Date(0),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    codex.queueEventsAfter(
+      [
+        ev('session_started', { agentSessionId: 'sid-1' }),
+        ev('turn_finished', { reason: 'user_interrupt', turnSequence: 1 }),
+      ],
+      30,
+    );
+    const runningTurn = dispatchHandler(
+      makeEvent('running', { traceId: 't-running' }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    codex.queueEvents([
+      ev('text_final', { text: 'pending done' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 2 }),
+    ]);
+    const pendingTurn = dispatchHandler(
+      makeEvent('pending', { traceId: 't-pending' }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    const next = await dispatchHandler(
+      makeCommandEvent('nexus-queue', {
+        traceId: 't-next',
+        command: {
+          name: 'nexus-queue',
+          args: { action: 'next' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+
+    expect(next?.commandResponse?.text).toContain(
+      'Interrupted current turn; next queued item will run.',
+    );
+    expect(codex.runtime.interrupt).toHaveBeenCalledTimes(1);
+    expect(store.get(withPlatformName(SESSION_KEY, 'discord-main'))).toMatchObject({
+      agentSessionId: 'sid-existing',
+    });
+
+    const duplicateNext = await dispatchHandler(
+      makeCommandEvent('nexus-queue', {
+        traceId: 't-next-duplicate',
+        command: {
+          name: 'nexus-queue',
+          args: { action: 'next' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+    expect(duplicateNext?.commandResponse?.text).toContain(
+      'Run next already requested.',
+    );
+    expect(codex.runtime.interrupt).toHaveBeenCalledTimes(1);
+
+    await Promise.all([runningTurn, pendingTurn]);
+
+    const inputTexts = codex.sendInput.mock.calls.map(
+      (call) => (call[1] as AgentInput).text,
+    );
+    expect(inputTexts).toEqual(['running', 'pending']);
+  });
+
+  it('/nexus-queue lets the user edit and reorder pending message items', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_QUEUE_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'queue'],
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    codex.queueEventsAfter([], 30);
+    const runningTurn = dispatchHandler(makeEvent('running'));
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    codex.queueEvents([]);
+    const alphaTurn = dispatchHandler(makeEvent('alpha'));
+    codex.queueEvents([]);
+    const betaTurn = dispatchHandler(makeEvent('beta'));
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    const status = await dispatchHandler(
+      makeCommandEvent('nexus-queue', {
+        command: {
+          name: 'nexus-queue',
+          args: { action: 'status' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+    const select = status?.commandResponse?.components?.find(
+      (component) => component.type === 'string-select',
+    );
+    expect(select).toMatchObject({
+      customId: 'nexus:queue:select',
+      options: [
+        expect.objectContaining({ label: expect.stringContaining('alpha') }),
+        expect.objectContaining({ label: expect.stringContaining('beta') }),
+      ],
+    });
+    const alphaId = select?.type === 'string-select' ? select.options[0]!.value : '';
+    const betaId = select?.type === 'string-select' ? select.options[1]!.value : '';
+
+    const selectedPanel = await dispatchHandler(
+      makeComponentEvent('nexus:queue:select', [alphaId]),
+    );
+    const selectedCustomIds = selectedPanel?.commandResponse?.components?.map(
+      (component) => component.customId,
+    );
+    expect(selectedPanel?.commandResponse?.components?.length).toBeLessThanOrEqual(5);
+    expect(selectedCustomIds).toEqual([
+      'nexus:queue:select',
+      `nexus:queue:up:${alphaId}`,
+      `nexus:queue:down:${alphaId}`,
+      `nexus:queue:edit:${alphaId}`,
+      `nexus:queue:cancel:${alphaId}`,
+    ]);
+
+    const editModal = await dispatchHandler(
+      makeComponentEvent(`nexus:queue:edit:${alphaId}`, [], {
+        interaction: {
+          customId: `nexus:queue:edit:${alphaId}`,
+          componentType: 'button',
+          values: [],
+        },
+      }),
+    );
+    expect(editModal).toMatchObject({
+      modalResponse: {
+        customId: `nexus:queue:edit-modal:${alphaId}`,
+      },
+    });
+    const edited = await dispatchHandler(
+      makeComponentEvent(`nexus:queue:edit-modal:${alphaId}`, [], {
+        interaction: {
+          customId: `nexus:queue:edit-modal:${alphaId}`,
+          componentType: 'modal-submit',
+          values: [],
+          fields: { prompt: 'alpha edited' },
+        },
+      }),
+    );
+    expect(edited?.commandResponse?.text).toContain('Updated: `alpha edited`');
+
+    const moved = await dispatchHandler(
+      makeComponentEvent(`nexus:queue:up:${betaId}`, [], {
+        interaction: {
+          customId: `nexus:queue:up:${betaId}`,
+          componentType: 'button',
+          values: [],
+        },
+      }),
+    );
+    expect(moved?.commandResponse?.text).toContain('Moved up');
+
+    await Promise.all([runningTurn, betaTurn, alphaTurn]);
+
+    const inputTexts = codex.sendInput.mock.calls.map(
+      (call) => (call[1] as AgentInput).text,
+    );
+    expect(inputTexts).toEqual(['running', 'beta', 'alpha edited']);
+  });
+
+  it('/nexus-queue insert modal inserts a prompt before existing pending messages', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_QUEUE_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'queue'],
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    codex.queueEventsAfter([], 30);
+    const runningTurn = dispatchHandler(makeEvent('running'));
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    codex.queueEvents([]);
+    const pendingTurn = dispatchHandler(makeEvent('pending'));
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    const insertModal = await dispatchHandler(
+      makeComponentEvent('nexus:queue:insert', [], {
+        interaction: {
+          customId: 'nexus:queue:insert',
+          componentType: 'button',
+          values: [],
+        },
+      }),
+    );
+    expect(insertModal).toMatchObject({
+      modalResponse: { customId: 'nexus:queue:insert-modal' },
+    });
+    codex.queueEvents([]);
+    const inserted = await dispatchHandler(
+      makeComponentEvent('nexus:queue:insert-modal', [], {
+        interaction: {
+          customId: 'nexus:queue:insert-modal',
+          componentType: 'modal-submit',
+          values: [],
+          fields: { prompt: 'inserted prompt' },
+        },
+      }),
+    );
+    expect(inserted?.commandResponse?.text).toContain('Inserted next: `inserted prompt`');
+
+    await Promise.all([runningTurn, pendingTurn]);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    const inputTexts = codex.sendInput.mock.calls.map(
+      (call) => (call[1] as AgentInput).text,
+    );
+    expect(inputTexts).toEqual(['running', 'inserted prompt', 'pending']);
   });
 
   it('agent /new 清除 inactive active handle，下一条消息重新 startSession', async () => {
@@ -1655,6 +2557,70 @@ describe('Engine', () => {
     );
   });
 
+  it('agent command in a thread inherits the parent channel binding for dispatch', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: {
+        allowlist: {
+          userIds: ['U1'],
+          roleIds: [],
+          allowedGuildIds: [],
+          allowedChannelIds: ['C1'],
+          allowDM: false,
+          requireMentionOrSlash: true,
+        },
+      },
+      commandRegistry: makeActiveRegistry(),
+      daemonCommandHandlerKeys: ['kill'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeCommandEvent('codex-stop', {
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'T1',
+        initiatorUserId: 'U1',
+      },
+      guildId: 'G1',
+      threadParentChannelId: 'C1',
+    }));
+
+    expect(codex.handleCommand).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        canonicalId: 'agent:codex:stop',
+        routingSession: expect.objectContaining({
+          channelId: 'T1',
+        }),
+      }),
+    );
+  });
+
   it('daemon /nexus-kill 停止活跃 session 并清除 resume store', async () => {
     const platform = makePlatform({ supportsSlashCommands: true });
     const codex = makeAgent();
@@ -1711,6 +2677,1209 @@ describe('Engine', () => {
       expect.objectContaining({ platformName: 'discord-main' }),
       expect.objectContaining({ text: '[session killed]' }),
     );
+  });
+
+  it('daemon /nexus-sessions 返回当前用户可恢复 session 的 select 组件', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const claude = makeAgent();
+    const store = new SessionStore();
+    store.set(
+      {
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'C-old',
+        initiatorUserId: 'U1',
+      },
+      {
+        agentSessionId: 'sid-old',
+        lastTurnAt: new Date(10),
+        title: 'Investigate failing tests',
+      },
+    );
+    store.set(
+      {
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'C-other-user',
+        initiatorUserId: 'U2',
+      },
+      { agentSessionId: 'sid-other', lastTurnAt: new Date(20) },
+    );
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1', 'C-old'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_SESSIONS_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'sessions'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('nexus-sessions'));
+
+    expect(result).toMatchObject({
+      commandResponse: {
+        text: 'Select a session to resume.',
+        ephemeral: true,
+        components: [
+          {
+            type: 'string-select',
+            customId: 'nexus:sessions:resume',
+            options: [
+              {
+                label: 'Investigate failing tests',
+                description: 'C-old · sid-old',
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
+  it('session select interaction binds selected session id to current key and next message resumes it', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const claude = makeAgent();
+    const store = new SessionStore();
+    store.set(
+      {
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'C-old',
+        initiatorUserId: 'U1',
+      },
+      {
+        agentSessionId: 'sid-old',
+        lastTurnAt: new Date(10),
+        title: 'Continue deployment work',
+      },
+    );
+    const [oldSession] = store.listForUser({
+      platformName: 'discord-main',
+      platform: 'discord',
+      initiatorUserId: 'U1',
+      limit: 10,
+    });
+    expect(oldSession).toBeDefined();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1', 'C-old'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_SESSIONS_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'sessions'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(
+      makeComponentEvent('nexus:sessions:resume', [oldSession!.sessionId]),
+    );
+
+    expect(result).toEqual({
+      commandResponse: {
+        text: '[session resumed: sid-old]',
+        ephemeral: true,
+      },
+    });
+    expect(store.get({
+      platformName: 'discord-main',
+      platform: 'discord',
+      channelId: 'C1',
+      initiatorUserId: 'U1',
+    })).toMatchObject({
+      agentSessionId: 'sid-old',
+      title: 'Continue deployment work',
+    });
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-resumed' }),
+      ev('text_final', { text: 'resumed reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('continue'));
+
+    expect(codex.startSession).toHaveBeenCalledTimes(1);
+    expect(codex.startSession.mock.calls[0]![1]).toMatchObject({
+      resumeFromAgentSessionId: 'sid-old',
+    });
+  });
+
+  it('daemon /nexus-settings returns a user-scoped settings snapshot with actions', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+      supportsThreadCreation: true,
+    });
+    platform.settingsSnapshot.mockResolvedValueOnce({
+      items: [
+        {
+          key: 'discord.replyMode',
+          label: 'Reply mode',
+          owner: 'platform',
+          value: 'mention',
+          source: 'discord state',
+          durability: 'durable',
+          canChange: true,
+        },
+      ],
+    });
+    const codex = makeAgent();
+    const claude = makeAgent();
+    const store = new SessionStore();
+    store.set(
+      {
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'C-old',
+        initiatorUserId: 'U1',
+      },
+      {
+        agentSessionId: 'sid-old',
+        lastTurnAt: new Date(10),
+        title: 'Investigate settings',
+      },
+    );
+    store.setChannelWorkingDir(
+      {
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'C1',
+      },
+      '/tmp/channel',
+    );
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+        {
+          agentName: 'claude-prod',
+          agentOwner: 'claudecode',
+          agent: claude.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1', 'C-old'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'settings'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('nexus-settings'));
+
+    expect(platform.settingsSnapshot).toHaveBeenCalledWith({
+      userId: 'U1',
+      channelId: 'C1',
+    });
+    expect(result).toMatchObject({
+      commandResponse: {
+        ephemeral: true,
+        components: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'string-select',
+            customId: 'nexus:settings:reply-mode',
+          }),
+          expect.objectContaining({
+            type: 'string-select',
+            customId: 'nexus:settings:resume',
+          }),
+          expect.objectContaining({
+            type: 'button',
+            customId: 'nexus:settings:new-thread',
+          }),
+          expect.objectContaining({
+            type: 'button',
+            customId: 'nexus:settings:working-dir',
+          }),
+          expect.objectContaining({
+            type: 'string-select',
+            customId: 'nexus:settings:agent',
+          }),
+        ]),
+      },
+    });
+    expect(result?.commandResponse?.text).toContain('**Nexus settings**');
+    expect(result?.commandResponse?.text).toContain('**Current state**');
+    expect(result?.commandResponse?.text).toContain('Reply mode: `mention` · discord state · durable');
+    expect(result?.commandResponse?.text).toContain('WorkingDir: `/tmp/channel` · channel default · in-memory');
+    expect(result?.commandResponse?.text).toContain('Resumable sessions: `1`');
+    expect(result?.commandResponse?.text).toContain('Values marked `in-memory` reset when the daemon restarts.');
+  });
+
+  it('settings reply-mode interaction dispatches to the platform owner and returns a fresh snapshot', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    platform.settingsSnapshot.mockResolvedValue({
+      items: [
+        {
+          key: 'discord.replyMode',
+          label: 'Reply mode',
+          owner: 'platform',
+          value: 'all',
+          source: 'discord state',
+          durability: 'durable',
+          canChange: true,
+        },
+      ],
+    });
+    const codex = makeAgent();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'settings'],
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(
+      makeComponentEvent('nexus:settings:reply-mode', ['all']),
+    );
+
+    expect(platform.applySettingsAction).toHaveBeenCalledWith({
+      action: 'discord.replyMode',
+      value: 'all',
+      userId: 'U1',
+      channelId: 'C1',
+    });
+    expect(result?.commandResponse?.text).toContain('Result: [reply mode changed]');
+    expect(result?.commandResponse?.text).toContain('Reply mode: `all` · discord state · durable');
+    expect(result?.commandResponse?.components).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'string-select',
+          customId: 'nexus:settings:reply-mode',
+        }),
+      ]),
+    );
+  });
+
+  it('settings resume interaction reuses daemon session resume and returns a fresh snapshot', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    store.set(
+      {
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'C-old',
+        initiatorUserId: 'U1',
+      },
+      {
+        agentSessionId: 'sid-old',
+        lastTurnAt: new Date(10),
+        title: 'Resume from settings',
+      },
+    );
+    const [oldSession] = store.listForUser({
+      platformName: 'discord-main',
+      platform: 'discord',
+      initiatorUserId: 'U1',
+      limit: 10,
+    });
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1', 'C-old'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'settings'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(
+      makeComponentEvent('nexus:settings:resume', [oldSession!.sessionId]),
+    );
+
+    expect(store.get({
+      platformName: 'discord-main',
+      platform: 'discord',
+      channelId: 'C1',
+      initiatorUserId: 'U1',
+    })).toMatchObject({
+      agentSessionId: 'sid-old',
+      title: 'Resume from settings',
+    });
+    expect(result?.commandResponse?.text).toContain('[session resumed: sid-old]');
+    expect(result?.commandResponse?.text).toContain('Resumable sessions: `2`');
+  });
+
+  it('settings workingDir button opens a modal and modal submit changes the channel default', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'settings'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const modal = await dispatchHandler(
+      makeComponentEvent('nexus:settings:working-dir', [], {
+        interaction: {
+          customId: 'nexus:settings:working-dir',
+          componentType: 'button',
+          values: [],
+        },
+      }),
+    );
+
+    expect(modal).toEqual({
+      modalResponse: {
+        customId: 'nexus:settings:working-dir-modal',
+        title: 'Set working directory',
+        textInputs: [
+          expect.objectContaining({
+            customId: 'path',
+            label: 'Absolute path',
+          }),
+        ],
+      },
+    });
+
+    const result = await dispatchHandler(
+      makeComponentEvent('nexus:settings:working-dir-modal', [], {
+        interaction: {
+          customId: 'nexus:settings:working-dir-modal',
+          componentType: 'modal-submit',
+          values: [],
+          fields: { path: '/tmp/settings' },
+        },
+      }),
+    );
+
+    expect(store.getChannelWorkingDir({
+      platformName: 'discord-main',
+      platform: 'discord',
+      channelId: 'C1',
+    })).toBe('/tmp/settings');
+    expect(result?.commandResponse?.text).toContain('[channel workingDir: /tmp/settings]');
+    expect(result?.commandResponse?.text).toContain('WorkingDir: `/tmp/settings` · channel default · in-memory');
+  });
+
+  it('settings agent binding select changes the channel route for subsequent messages', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const claude = makeAgent();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+        {
+          agentName: 'claude-prod',
+          agentOwner: 'claudecode',
+          agent: claude.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'settings'],
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(
+      makeComponentEvent('nexus:settings:agent', ['claude-prod']),
+    );
+
+    expect(result?.commandResponse?.text).toContain('[agent binding: claude-prod]');
+    expect(result?.commandResponse?.text).toContain('Agent: `claude-prod` · channel override · in-memory');
+
+    claude.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-claude' }),
+      ev('text_final', { text: 'claude reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('hello after binding'));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(claude.startSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('daemon /nexus-new-thread creates a private thread placeholder without starting an agent', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+      supportsThreadCreation: true,
+    });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_NEW_THREAD_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'new-thread'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(
+      makeCommandEvent('nexus-new-thread', {
+        command: {
+          name: 'nexus-new-thread',
+          args: { title: 'Design auth flow' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+
+    expect(platform.createThread).toHaveBeenCalledWith({
+      parentChannelId: 'C1',
+      initiatorUserId: 'U1',
+      title: 'Design auth flow',
+      visibility: 'private',
+      autoArchiveDurationMinutes: 1440,
+      initialMessage: '[new Nexus session: Design auth flow]',
+      traceId: 't-1',
+    });
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      commandResponse: {
+        text: '[thread created] https://discord.com/channels/G1/T1',
+        ephemeral: true,
+      },
+    });
+    expect(
+      store.get({
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'T1',
+        initiatorUserId: 'U1',
+      }),
+    ).toMatchObject({
+      title: 'Design auth flow',
+    });
+    expect(
+      store.findThreadByChannelId({
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'T1',
+      }),
+    ).toMatchObject({
+      parentChannelId: 'C1',
+      ownerUserId: 'U1',
+      autoArchiveDurationMinutes: 1440,
+      renameOnFirstPrompt: false,
+    });
+    expect(
+      store.listForUser({
+        platformName: 'discord-main',
+        platform: 'discord',
+        initiatorUserId: 'U1',
+        limit: 10,
+      }),
+    ).toEqual([]);
+  });
+
+  it('daemon /nexus-new-thread returns an actionable failure and does not create a store entry', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+      supportsThreadCreation: true,
+    });
+    platform.createThread.mockRejectedValueOnce(new Error('Missing Permissions'));
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_NEW_THREAD_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'new-thread'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('nexus-new-thread'));
+
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'Could not create a thread. Check bot permissions and try again.',
+        ephemeral: true,
+      },
+    });
+    expect(store.size).toBe(0);
+    expect(codex.startSession).not.toHaveBeenCalled();
+  });
+
+  it('daemon /nexus-working-dir queues mutation behind the current turn', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_WORKING_DIR_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'working-dir'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    codex.queueEventsAfter(
+      [
+        ev('session_started', { agentSessionId: 'sid-running' }),
+        ev('text_final', { text: 'running done' }),
+        ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+      ],
+      30,
+    );
+    const runningTurn = dispatchHandler(makeEvent('running'));
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    const result = await dispatchHandler(
+      makeCommandEvent('nexus-working-dir', {
+        command: {
+          name: 'nexus-working-dir',
+          args: { path: '/tmp/channel' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+
+    expect(result).toEqual({
+      commandResponse: {
+        text: '[workingDir update queued: /tmp/channel]',
+        ephemeral: true,
+      },
+    });
+    expect(store.getChannelWorkingDir({
+      platformName: 'discord-main',
+      platform: 'discord',
+      channelId: 'C1',
+    })).toBeUndefined();
+    expect(codex.startSession.mock.calls[0]![1]).toMatchObject({
+      workingDir: DEFAULT_CFG.workingDir,
+    });
+
+    await runningTurn;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(store.getChannelWorkingDir({
+      platformName: 'discord-main',
+      platform: 'discord',
+      channelId: 'C1',
+    })).toBe('/tmp/channel');
+    expect(platform.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'C1',
+      }),
+      expect.objectContaining({ text: '[channel workingDir: /tmp/channel]' }),
+    );
+  });
+
+  it('daemon /nexus-working-dir rejects non-absolute paths', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_WORKING_DIR_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'working-dir'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(
+      makeCommandEvent('nexus-working-dir', {
+        command: {
+          name: 'nexus-working-dir',
+          args: { path: 'relative/path' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'Working directory must be an absolute path.',
+        ephemeral: true,
+      },
+    });
+    expect(store.size).toBe(0);
+  });
+
+  it('daemon /nexus-working-dir rejects paths outside the bound agent workingDir root', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_WORKING_DIR_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'working-dir'],
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(
+      makeCommandEvent('nexus-working-dir', {
+        command: {
+          name: 'nexus-working-dir',
+          args: { path: '/workspace/other' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'Working directory must be inside the configured root: /tmp',
+        ephemeral: true,
+      },
+    });
+  });
+
+  it('daemon /nexus-working-dir in a thread affects only that thread next session', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: {
+        allowlist: {
+          userIds: ['U1'],
+          roleIds: [],
+          allowedGuildIds: [],
+          allowedChannelIds: ['C1'],
+          allowDM: false,
+          requireMentionOrSlash: true,
+        },
+      },
+      commandRegistry: makeActiveRegistry([DAEMON_WORKING_DIR_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'working-dir'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(
+      makeCommandEvent('nexus-working-dir', {
+        sessionKey: {
+          platform: 'discord',
+          channelId: 'T1',
+          initiatorUserId: 'U1',
+        },
+        guildId: 'G1',
+        threadParentChannelId: 'C1',
+        command: {
+          name: 'nexus-working-dir',
+          args: { path: '/tmp/thread', scope: 'session' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+
+    expect(result).toEqual({
+      commandResponse: {
+        text: '[next session workingDir: /tmp/thread]',
+        ephemeral: true,
+      },
+    });
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-parent' }),
+      ev('text_final', { text: 'parent reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('parent prompt', {
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'C1',
+        initiatorUserId: 'U1',
+      },
+      guildId: 'G1',
+    }));
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-thread' }),
+      ev('text_final', { text: 'thread reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('thread prompt', {
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'T1',
+        initiatorUserId: 'U1',
+      },
+      guildId: 'G1',
+      threadParentChannelId: 'C1',
+    }));
+
+    expect(codex.startSession).toHaveBeenCalledTimes(2);
+    expect(codex.startSession.mock.calls[0]![1]).toMatchObject({
+      workingDir: DEFAULT_CFG.workingDir,
+    });
+    expect(codex.startSession.mock.calls[1]![1]).toMatchObject({
+      workingDir: '/tmp/thread',
+    });
+  });
+
+  it('thread sessions inherit the parent channel workingDir default', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_WORKING_DIR_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'working-dir'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(
+      makeCommandEvent('nexus-working-dir', {
+        command: {
+          name: 'nexus-working-dir',
+          args: { path: '/tmp/channel' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+
+    expect(result).toEqual({
+      commandResponse: {
+        text: '[channel workingDir: /tmp/channel]',
+        ephemeral: true,
+      },
+    });
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-thread' }),
+      ev('text_final', { text: 'thread reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('thread prompt', {
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'T1',
+        initiatorUserId: 'U1',
+      },
+      guildId: 'G1',
+      threadParentChannelId: 'C1',
+    }));
+
+    expect(codex.startSession).toHaveBeenCalledTimes(1);
+    expect(codex.startSession.mock.calls[0]![1]).toMatchObject({
+      workingDir: '/tmp/channel',
+    });
+  });
+
+  it('thread channel workingDir default overrides the inherited parent channel default', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: {
+        allowlist: {
+          userIds: ['U1'],
+          roleIds: [],
+          allowedGuildIds: [],
+          allowedChannelIds: ['C1'],
+          allowDM: false,
+          requireMentionOrSlash: true,
+        },
+      },
+      commandRegistry: makeActiveRegistry([DAEMON_WORKING_DIR_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'working-dir'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(
+      makeCommandEvent('nexus-working-dir', {
+        command: {
+          name: 'nexus-working-dir',
+          args: { path: '/tmp/channel' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+    await dispatchHandler(
+      makeCommandEvent('nexus-working-dir', {
+        sessionKey: {
+          platform: 'discord',
+          channelId: 'T1',
+          initiatorUserId: 'U1',
+        },
+        guildId: 'G1',
+        threadParentChannelId: 'C1',
+        command: {
+          name: 'nexus-working-dir',
+          args: { path: '/tmp/thread' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-thread' }),
+      ev('text_final', { text: 'thread reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('thread prompt', {
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'T1',
+        initiatorUserId: 'U1',
+      },
+      guildId: 'G1',
+      threadParentChannelId: 'C1',
+    }));
+
+    expect(codex.startSession).toHaveBeenCalledTimes(1);
+    expect(codex.startSession.mock.calls[0]![1]).toMatchObject({
+      workingDir: '/tmp/thread',
+    });
   });
 
   it('daemon /nexus-reload-config 把注入 reloader 的成功结果作为 ephemeral response 返回', async () => {

@@ -12,7 +12,9 @@ import type {
 import { serializeSessionKey, withPlatformName } from '@agent-nexus/protocol';
 import { checkPlatformAuth } from './auth.js';
 import type { PlatformAuthConfig, ToolMessageMode } from './config.js';
+import type { IdempotencyStore } from './idempotency.js';
 import type { Logger } from './logger.js';
+import { BasicRedactor, type Redactor } from './redaction.js';
 import { RouteError, selectRoute, type RoutingEntry } from './router.js';
 import type { SessionStore } from './session-store.js';
 
@@ -33,6 +35,8 @@ export interface EngineDeps {
   agents?: readonly EngineAgent[];
   routingTable?: readonly RoutingEntry[];
   platformAuth?: PlatformAuthConfig;
+  idempotencyStore?: IdempotencyStore;
+  redactor?: Redactor;
   logger: Logger;
   sessionStore: SessionStore;
   /** 每轮 sessionId 由 Engine 生成；resumeFromAgentSessionId 由 store 决定 */
@@ -88,10 +92,11 @@ function renderToolStart(toolName: string, inputSummary: string): string {
  * Engine：把 platform 入站事件路由到 agent，并把 agent 输出回送 platform。
  *
  * MVP 跳过的横切能力——下一批 PR 逐个补：
- * - 持久化幂等 / auth ordering → docs/dev/spec/infra/idempotency.md
- *   （进程内 eventId LRU 已落，详见 seenEventIds 字段）
+ * - 持久化 SQLite 幂等 → docs/dev/spec/infra/idempotency.md
+ *   （Engine 支持注入 IdempotencyStore；进程内 eventId LRU 仍作纵深防御）
+ * - 日志 sink / transcript 全出口脱敏 → docs/dev/spec/security/redaction.md
+ *   （Engine 已对 IM outbound 应用 Redactor）
  * - 限流 / 预算 → docs/dev/spec/infra/cost-and-limits.md
- * - 出口脱敏 → docs/dev/spec/security/redaction.md
  * - sessionStore 持久化 + 状态机 → docs/dev/architecture/session-model.md
  */
 export class Engine {
@@ -99,6 +104,8 @@ export class Engine {
   private readonly platformName: string;
   private readonly platformType: 'discord';
   private readonly platformAuth?: PlatformAuthConfig;
+  private readonly idempotencyStore?: IdempotencyStore;
+  private readonly redactor: Redactor;
   private readonly agents: Map<string, EngineAgent>;
   private readonly routingTable?: readonly RoutingEntry[];
   private readonly logger: Logger;
@@ -131,6 +138,8 @@ export class Engine {
       throw new Error('Engine with routingTable requires platformAuth');
     }
     this.platformAuth = deps.platformAuth;
+    this.idempotencyStore = deps.idempotencyStore;
+    this.redactor = deps.redactor ?? new BasicRedactor();
     this.routingTable = deps.routingTable;
     this.agents = new Map();
     if (deps.agents) {
@@ -170,6 +179,7 @@ export class Engine {
     }
     this.agentSessions.clear();
     this.sessionStore.clearAll();
+    this.idempotencyStore?.clearAll();
   }
 
   private dispatch(event: NormalizedEvent): Promise<void> {
@@ -210,6 +220,33 @@ export class Engine {
       );
       return Promise.resolve();
     }
+    const idempotencyMessageId = event.messageId;
+    if (this.idempotencyStore && idempotencyMessageId) {
+      const decision = this.idempotencyStore.checkAndSet(
+        routedSessionKey,
+        idempotencyMessageId,
+      );
+      if (decision.kind === 'hit') {
+        this.logger.info(
+          {
+            traceId: event.traceId,
+            sessionKey: serializeSessionKey(routedSessionKey),
+            messageId: idempotencyMessageId,
+            status: decision.status,
+          },
+          'idempotency_hit',
+        );
+        return Promise.resolve();
+      }
+      this.logger.info(
+        {
+          traceId: event.traceId,
+          sessionKey: serializeSessionKey(routedSessionKey),
+          messageId: idempotencyMessageId,
+        },
+        'idempotency_insert',
+      );
+    }
     const keyStr = serializeSessionKey(routedSessionKey);
     const prev = this.inflight.get(keyStr) ?? Promise.resolve();
     // 链式 await：上一条 settle 后再跑当前这条。前一条若 reject 不影响后续——
@@ -217,7 +254,25 @@ export class Engine {
     // 链上某条 throw 把整条链 poison 掉。
     const next = prev
       .catch(() => {})
-      .then(() => this.dispatchImpl(routedEvent, agentSlot));
+      .then(async () => {
+        try {
+          await this.dispatchImpl(routedEvent, agentSlot);
+          if (this.idempotencyStore && idempotencyMessageId) {
+            this.idempotencyStore.markProcessed(
+              routedSessionKey,
+              idempotencyMessageId,
+            );
+          }
+        } catch (err) {
+          if (this.idempotencyStore && idempotencyMessageId) {
+            this.idempotencyStore.markFailed(
+              routedSessionKey,
+              idempotencyMessageId,
+            );
+          }
+          throw err;
+        }
+      });
     this.inflight.set(keyStr, next);
     // 链尾 cleanup：当前这条就是最末时清掉 map 项，避免长期累积空 promise。
     void next.finally(() => {
@@ -263,6 +318,15 @@ export class Engine {
         return undefined;
       }
       throw err;
+    }
+  }
+
+  private redactForOutbound(text: string, traceId: string): string {
+    try {
+      return this.redactor.redact(text);
+    } catch (err) {
+      this.logger.error({ traceId, err }, 'redaction_failed');
+      return '[redacted output unavailable]';
     }
   }
 
@@ -352,8 +416,9 @@ export class Engine {
 
       const safeSend = async (text: string): Promise<MessageRef | undefined> => {
         try {
+          const outboundText = this.redactForOutbound(text, event.traceId);
           return await this.platform.send(event.sessionKey, {
-            text,
+            text: outboundText,
             traceId: event.traceId,
             sessionKey: event.sessionKey,
           });
@@ -375,8 +440,9 @@ export class Engine {
         text: string,
       ): Promise<void> => {
         try {
+          const outboundText = this.redactForOutbound(text, event.traceId);
           await this.platform.edit(ref, {
-            text,
+            text: outboundText,
             traceId: event.traceId,
             sessionKey: event.sessionKey,
           });
@@ -506,6 +572,7 @@ export class Engine {
           return;
         }
         const text = buf.length > 0 ? buf : '[empty response]';
+        const outboundText = this.redactForOutbound(text, event.traceId);
         if (platformCaps.supportsEdit) {
           await flushEdit(text);
         } else {
@@ -515,7 +582,7 @@ export class Engine {
           {
             traceId: event.traceId,
             sessionKey: sessionKeyStr,
-            length: text.length,
+            length: outboundText.length,
           },
           'outbound',
         );
@@ -523,7 +590,7 @@ export class Engine {
           {
             traceId: event.traceId,
             sessionKey: sessionKeyStr,
-            text,
+            text: outboundText,
           },
           'outbound',
         );

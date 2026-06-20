@@ -27,6 +27,13 @@ export interface Attachment {
   platformId?: string;
 }
 
+export interface ComponentInteractionPayload {
+  customId: string;
+  componentType: 'button' | 'string-select' | 'modal-submit';
+  values: string[];
+  fields?: Record<string, string>;
+}
+
 /**
  * 平台入站事件的归一化形态。Adapter 构造，daemon 消费。
  * 字段对齐 docs/dev/spec/message-protocol.md §NormalizedEvent。
@@ -42,6 +49,7 @@ export interface NormalizedEvent {
 
   text?: string;
   command?: CommandPayload;
+  interaction?: ComponentInteractionPayload;
   attachments?: Attachment[];
 
   rawPayload: unknown;
@@ -51,6 +59,7 @@ export interface NormalizedEvent {
   platformTimestamp?: Date;
   guildId?: string;
   initiatorRoleIds?: string[];
+  threadParentChannelId?: string;
 
   initiator: Initiator;
 }

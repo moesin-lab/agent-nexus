@@ -28,6 +28,18 @@ describe('InMemoryIdempotencyStore', () => {
     });
   });
 
+  it('records cancelled as a terminal replay status', () => {
+    const store = new InMemoryIdempotencyStore();
+
+    expect(store.checkAndSet(sessionKey, 'm-1')).toEqual({ kind: 'inserted' });
+    store.markCancelled(sessionKey, 'm-1');
+
+    expect(store.checkAndSet(sessionKey, 'm-1')).toEqual({
+      kind: 'hit',
+      status: 'cancelled',
+    });
+  });
+
   it('keys records by the routed session key and messageId pair', () => {
     const store = new InMemoryIdempotencyStore();
     const otherSessionKey = withPlatformName(

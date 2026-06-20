@@ -1,6 +1,6 @@
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   parseDiscordBindingMatchConfig,
   parseDiscordPlatformConfig,
@@ -96,8 +96,57 @@ const DEFAULT_LOG_LEVEL = 'info' as const;
 const BACKENDS = ['claudecode', 'codex'] as const;
 const PLATFORM_TYPES = ['discord'] as const;
 const LEGACY_TOP_LEVEL_KEYS = ['discord', 'agent', 'claudeCode', 'codex'] as const;
+export const AGENT_NEXUS_HOME_ENV = 'AGENT_NEXUS_HOME' as const;
+
+function expandHomePath(path: string): string {
+  if (path === '~') return homedir();
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
+  return path;
+}
+
+function normalizeConfigRoot(path: string): string {
+  const trimmed = path.trim();
+  if (trimmed.length === 0) {
+    throw new ConfigError(`${AGENT_NEXUS_HOME_ENV} / --home 不能是空路径`);
+  }
+  return resolve(expandHomePath(trimmed));
+}
+
+export function applyConfigHomeArgv(args: readonly string[]): void {
+  let home: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (arg === '--home') {
+      const value = args[index + 1];
+      if (!value) {
+        throw new ConfigError('参数 --home 需要一个路径');
+      }
+      if (home !== undefined) {
+        throw new ConfigError('参数 --home 只能指定一次');
+      }
+      home = value;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--home=')) {
+      if (home !== undefined) {
+        throw new ConfigError('参数 --home 只能指定一次');
+      }
+      home = arg.slice('--home='.length);
+      continue;
+    }
+    throw new ConfigError(`未知 CLI 参数 ${arg}`);
+  }
+  if (home !== undefined) {
+    process.env[AGENT_NEXUS_HOME_ENV] = normalizeConfigRoot(home);
+  }
+}
 
 export function configRoot(): string {
+  const configuredRoot = process.env[AGENT_NEXUS_HOME_ENV];
+  if (configuredRoot && configuredRoot.trim().length > 0) {
+    return normalizeConfigRoot(configuredRoot);
+  }
   return join(homedir(), '.agent-nexus');
 }
 

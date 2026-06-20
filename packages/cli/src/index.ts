@@ -21,6 +21,7 @@ import {
   type ConfigReloadTarget,
 } from './config-reload.js';
 import {
+  applyConfigHomeArgv,
   ConfigError,
   SecretsPermissionError,
   buildRoutingTable,
@@ -32,6 +33,7 @@ async function main(): Promise<void> {
   let config;
   const tokensByRef = new Map<string, string>();
   try {
+    applyConfigHomeArgv(process.argv.slice(2));
     config = await loadConfig();
     for (const platform of config.platforms) {
       if (!tokensByRef.has(platform.tokenRef)) {

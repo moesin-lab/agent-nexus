@@ -59,6 +59,7 @@ NormalizedEvent {
     platformTimestamp: timestamp?            // 平台时间戳（如 Discord snowflake 解出的时间）
     guildId: string?                         // guild 事件所属 guild；DM 缺省
     initiatorRoleIds: string[]?              // guild 内发起者角色 ID；DM 缺省/空
+    threadParentChannelId: string?           // thread 消息的父 channel；非 thread 缺省
 
     // 用户信息
     initiator: {
@@ -137,9 +138,10 @@ CommandRegistrationScope {
 }
 
 InteractionPayload {
-    componentId: string
-    kind: "button" | "select" | "modal_submit"
-    values: string[]              // select 的选中项 / modal 字段
+    customId: string
+    componentType: "button" | "string-select" | "modal-submit"
+    values: string[]              // string-select 的选中项；button 为空数组
+    fields: map[string]string?    // modal-submit 的 text input 值，key 为 field custom_id
 }
 
 ReactionPayload {
@@ -150,6 +152,19 @@ ReactionPayload {
 ```
 
 `CommandPayload.name` 不承载 canonical id。daemon 必须按 [`command-registry.md`](command-registry.md) 的 active reverse map 从平台可见 name 解析到 canonical command；不得从 `name` 字符串拆 owner 或 handler。
+
+`/nexus-settings` 的组件 custom id 使用 `nexus:settings:<action>` 命名空间，daemon 按 action 表驱动分发。`/nexus-queue` 的组件 custom id 使用 `nexus:queue:<action>` 命名空间；item 级 button 可在 custom id 末尾携带 pending item id，目标 SessionKey 仍从 interaction 的 channel/user 上下文推导。v1 不把 channel id / SessionKey 等长上下文编码进 `customId`。workingDir 与 queue prompt 的直接编辑使用 modal submit；workingDir 路径校验与 `/nexus-working-dir` 共用 root-jail 规则。
+
+`/nexus-queue` 当前保留的 action id：
+
+- `nexus:queue:select`
+- `nexus:queue:insert` / `nexus:queue:insert-modal`
+- `nexus:queue:edit:<itemId>` / `nexus:queue:edit-modal:<itemId>`
+- `nexus:queue:up:<itemId>`
+- `nexus:queue:down:<itemId>`
+- `nexus:queue:cancel:<itemId>`
+
+`itemId` 是 daemon 内存队列里的 pending item id，只在当前进程内有效；不能作为持久引用或跨 channel/user 的授权依据。
 
 ## 幂等
 

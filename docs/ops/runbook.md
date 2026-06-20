@@ -22,6 +22,7 @@ related:
 - `pnpm --version` 可运行。
 - `claude --version` 可运行。
 - 首次运行会自动创建 `~/.agent-nexus/config.json` 与 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN`；后续启动会把模板新增但本地缺失的配置字段补回 `config.json`。编辑后确认两者权限为 `0600`。
+- 多实例运行时用 `--home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；配置、密钥与状态文件都会从该目录派生。
 - Discord bot 已开启 `MESSAGE CONTENT INTENT`，并在目标 server / channel 有读写消息权限。
 
 ## 手动启动
@@ -30,6 +31,7 @@ related:
 
 ```bash
 pnpm dev
+corepack pnpm --filter @agent-nexus/cli dev -- --home ~/.agent-nexus-dev
 ```
 
 构建并安装本地 npm bin 后运行：
@@ -39,6 +41,7 @@ pnpm build
 pnpm pack:cli
 npm install -g packages/cli/agent-nexus-cli-*.tgz
 agent-nexus
+agent-nexus --home ~/.agent-nexus-stable
 ```
 
 启动成功的关键信号：
@@ -56,13 +59,13 @@ agent-nexus
 
 | 路径 | 用途 | 权限 |
 |---|---|---|
-| `~/.agent-nexus/config.json` | 主配置 | `0600` |
-| `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` | Discord bot token | `0600` |
-| `~/.agent-nexus/state/discord.json` | Discord reply mode 状态 | 目录 `0700` |
+| `<home>/config.json` | 主配置 | `0600` |
+| `<home>/secrets/DISCORD_BOT_TOKEN` | Discord bot token | `0600` |
+| `<home>/state/discord-<platformName>.json` | Discord reply mode 状态 | 目录 `0700` |
 
 首次运行会创建前两个文件的模板 / 空文件，但不会替你填真实 bot id、allowlist、working directory 或 token。
 
-`config.json` 变更后需要重启进程。`daemon.commandRegistry.*` 控制 slash command 注册、alias 与 `@bot /new` 文本前缀；`discord.json` 由 `/discord-reply-mode` 或 legacy `/reply-mode` 写入，通常不手动改。
+默认 `<home>` 是 `~/.agent-nexus`。`config.json` 变更后需要重启进程。`daemon.commandRegistry.*` 控制 slash command 注册、alias 与 `@bot /new` 文本前缀；`state/discord-<platformName>.json` 由 `/discord-reply-mode` 或 legacy `/reply-mode` 写入，通常不手动改。
 
 ## 常见故障
 

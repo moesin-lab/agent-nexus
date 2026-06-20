@@ -69,6 +69,8 @@ pnpm typecheck     # 仅 tsc --build；不生成 npm bin bundle
 - `~/.agent-nexus/config.json` 模板，权限为 0600
 - `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` 空文件，权限为 0600
 
+需要跑 stable / dev 等多个实例时，用 `--home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；`config.json`、`secrets/`、`state/` 都会从这个根目录派生。
+
 之后每次启动都会检查 `config.json`，把模板中新增但本地缺失的字段自动补齐到文件中；已有字段不会被覆盖。没有安全默认值的必填字段只会补占位值，仍需手动填写。
 
 编辑 `~/.agent-nexus/config.json`（至少填 `platforms[].botUserId`、`platforms[].auth.allowlist.userIds` 或 `roleIds`、`agents[].claudeCode.workingDir`，并给 binding 填 channel id）：
@@ -194,6 +196,7 @@ chmod 600 ~/.agent-nexus/secrets/DISCORD_BOT_TOKEN
 
 ```bash
 pnpm dev
+corepack pnpm --filter @agent-nexus/cli dev -- --home ~/.agent-nexus-dev
 ```
 
 构建后跑（生产模式）：
@@ -203,6 +206,7 @@ pnpm build
 pnpm pack:cli
 npm install -g packages/cli/agent-nexus-cli-*.tgz
 agent-nexus
+agent-nexus --home ~/.agent-nexus-stable
 ```
 
 启动会先跑 CC CLI 兼容性 probe（版本、`--print` JSON、长驻 `stream-json`、工具权限检查），失败直接 `exit 1`；通过后连 Discord，看到 `discord_ready` / `engine_started` 日志即可在频道里 `@bot ping`。
@@ -216,6 +220,11 @@ agent-nexus
 - `/claudecode-stop` / `/codex-stop`：按绑定到当前频道的 agent owner 路由给对应 agent package；具体停止语义由该 agent runtime 决定
 - `/new` / `/stop`：仅在同一个 Discord 注册 scope 里只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时作为便捷 alias 出现
 - `/nexus-kill`：daemon 直接终止当前 RoutingSession，并清除 resume 记录
+- `/nexus-sessions`：daemon 以仅调用方可见的下拉菜单列出内存态可恢复 session；每项用第一条用户消息做标题，选择后当前 channel/user 切到对应 agent conversation，下一条消息 resume
+- `/nexus-new-thread`：daemon 在当前 Discord channel 下创建 private thread，默认把调用者加入；thread 内第一条用户消息启动新的 agent session。只有创建时未传标题、仍使用默认占位标题时，才会自动把 thread 名改成第一条消息生成的标题
+- `/nexus-working-dir path:<absolute-path> [scope:<channel|session>]`：默认设置当前 channel/thread 的 workingDir default；thread 未设置时继承父 channel default；`scope=session` 设置当前 channel/thread + user 下一次新 agent session 的一次性 override。路径必须在当前 binding 目标 agent 的默认 `workingDir` 内，不会影响当前已活跃 session
+- `/nexus-settings`：daemon 返回仅调用方可见的 settings 面板，展示/修改 reply-mode、effective workingDir、channel agent binding、可恢复 session 和 thread 创建入口；面板操作每次返回一条新的 ephemeral 最新快照。workingDir 直接用 modal 输入路径，binding 是当前进程内的 channel override
+- `/nexus-queue [action:<status|clear|next>]`：打开当前 channel/thread + user 的 daemon queue 面板；可选择 pending item 后上移、下移、编辑 prompt、取消，也可插入一条 next prompt；`next` 中断当前 running turn 并让下一条 pending item 继续执行；`clear` 只取消 pending items，不中断 running turn
 - `/nexus-reload-config`：daemon 重新加载 `config.json` 并热应用 bindings / auth / ui / textPrefixes；解析失败保留旧配置并返回错误，其余字段变更需重启生效
 - `/discord-reply-mode mode:<mention|all>`：在 allowlist 内切换 Discord 消息触发模式
 - `/reply-mode mode:<mention|all>`：legacy alias；`daemon.commandRegistry.aliases.legacy.replyMode=true` 时注册
@@ -224,7 +233,7 @@ agent-nexus
 
 - 默认只响应**显式 @ 本机器人**的消息；切到 `all` 后仍只响应 `allowedUserIds` 内用户
 - 只剥本 bot 的 mention，其他 `@<user>` 保留给 CC 看到原文
-- threads、附件、按钮、reaction、delete 暂未支持；长回复会按切片发送 / edit
+- 附件、reaction、delete 暂未支持；Discord thread 可作为会话容器，并支持 `/nexus-new-thread` 创建；长回复会按切片发送 / edit
 
 ## 文档入口
 

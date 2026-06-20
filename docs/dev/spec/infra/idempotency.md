@@ -48,25 +48,33 @@ adapter 归一化 NormalizedEvent
            ├─ daemon.idempotency.checkAndSet(sessionKey, messageId)
            │     ├─ 命中 "processed" → 丢弃事件（已经处理过）
            │     ├─ 命中 "processing" → 跳过（上一次还在进行中）
-           │     ├─ 命中 "failed" 且在可重试窗口内 → 重试（标回 "processing"）
+           │     ├─ 命中 "failed" → 丢弃事件（失败终态已记录）
+           │     ├─ 命中 "cancelled" → 丢弃事件（用户已取消 pending item）
            │     └─ 未命中 → 插入 "processing"，继续
            │
            ├─ daemon 限流/预算检查（见 cost-and-limits.md）
            │
            ├─ 投递到 session 的 FIFO 队列
            │
-           └─ 处理完成 → 更新 status 为 "processed"（或 "failed"）
+           └─ 处理完成 → 更新 status 为 "processed"（或 "failed"）；
+              `/nexus-queue clear` 取消 pending 时更新为 "cancelled"
 ```
 
 ## 存储
 
 - 表：`idempotency`（见 [`persistence.md`](persistence.md) §idempotency）
 - 主键：`(session_key, message_id)`
-- 字段：`firstSeenAt`, `status: "processing" | "processed" | "failed"`, `result?`, `expires_at`
+- 字段：`firstSeenAt`, `status: "processing" | "processed" | "failed" | "cancelled"`, `result?`, `expires_at`
 - TTL 写入 `expires_at`，后台 GC 清理
 - 内存 LRU 缓存热数据加速
 
 幂等键使用路由层的 `session_key`，不使用持久化主键 `session_id`。会话分代与路由关系见 [`session-model.md`](../../architecture/session-model.md)。
+
+`/nexus-queue` 对幂等的影响：
+
+- 编辑 pending `message` item 只修改队列内即将投递给 agent 的 prompt，不改变原平台 `messageId` 或幂等键
+- 取消 pending `message` item 时，原 `(sessionKey, messageId)` 标为 `cancelled`，后续重放命中 terminal duplicate
+- `Insert next` 创建 synthetic `message` item，不对应平台 `messageId`，因此不写 idempotency store；它只受当前内存 queue 管理
 
 ## 后台 GC
 
@@ -82,7 +90,6 @@ adapter 归一化 NormalizedEvent
 ttlSeconds = 86400              # 24 小时
 gcIntervalMs = 300000           # 5 分钟
 gcBatchSize = 10000
-retryWindowAfterFailedMs = 30000  # "failed" 到允许重试的时间
 ```
 
 ## 合约测试
@@ -90,7 +97,8 @@ retryWindowAfterFailedMs = 30000  # "failed" 到允许重试的时间
 - **首次投递**：全新 (sessionKey, messageId) → 插入 `processing`；业务正常处理后标 `processed`
 - **重复投递**：同一 fixture 连发两次 → 第二次返回 "hit"，不转发给 session 队列；CC CLI 只被触发一次
 - **auth 拒绝不入表**：`auth_denied` 的事件 → idempotency 表**无该 messageId 记录**（防刷表）
-- **failed 重试**：第一次处理标 `failed` → 超过 `retryWindowAfterFailedMs` 后再投递相同 fixture → 正常处理
+- **pending 取消**：`/nexus-queue clear` 取消 pending item → 标 `cancelled`；同 messageId 重放命中 terminal duplicate，不重新入队
+- **失败终态**：第一次处理标 `failed` → 同 messageId 重放命中 terminal duplicate，不重新入队
 - **GC 基线**：插入 10000 条过期条目 → 一轮 GC 清空（在 `gcBatchSize` 之内）
 - **GC 失败降级**：mock SQLite 写入错误 → GC 跳过本轮 + 打 warn；业务不中断
 

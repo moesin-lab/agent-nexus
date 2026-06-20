@@ -413,10 +413,21 @@ Agent command 的远端可见性是 registration scope 粒度，binding 是 chan
 |---|---|
 | `daemon:kill` | `nexus-kill` |
 | `daemon:reload-config` | `nexus-reload-config` |
+| `daemon:sessions` | `nexus-sessions` |
+| `daemon:new-thread` | `nexus-new-thread` |
+| `daemon:working-dir` | `nexus-working-dir` |
+| `daemon:settings` | `nexus-settings` |
+| `daemon:queue` | `nexus-queue` |
 
 `kill` 的语义是 daemon 直接终止当前 `(platformName, channelId, userId)` 的 RoutingSession，并清除 daemon 持久化的 opaque agent conversation ref。它不经过 agent command route；若存在活跃 runtime handle，daemon 只调用通用 cleanup/close 入口释放资源，不解释 agent 内部 conversation 语义。
 
 `reload-config` 的语义是重新加载并应用 `config.json`。daemon 不拥有配置加载：handler 只调用组装层注入的 config reloader，并把 reloader 返回的结果文本作为 ephemeral command response 返回触发者；reloader 未注入时按 `command_handler_missing` fail-closed。热生效字段范围与失败 rollback 语义由 [`config-routing.md` §配置热重载](config-routing.md#配置热重载) 拥有。
+
+`working-dir` 是 daemon state command。路径校验同步执行；真正写入 channel default 或 next-session override 时进入当前 SessionKey 的 daemon FIFO。队列空闲时可立即返回最终结果；队列忙碌时先返回 queued ack，待排到队头后发送最终结果。
+
+`queue` 是 daemon 管理命令。v1 只管理当前 SessionKey：`action=status` 打开交互面板，展示 running / pending / recent 计数；pending item 可通过 select + button 上移、下移、取消，message item 还可用 modal 编辑 prompt；`Insert next` 用 modal 插入一条 message prompt 到当前 running 之后；`action=next` 对当前 active `AgentSession` 调用 `interrupt()`，不删除 RoutingSession 映射、不清空 pending，并在当前 running item 收尾后让下一条 pending 继续；`action=clear` 取消全部 pending items。
+
+`queue` 的 item 级操作只作用于 pending item。`message` item 可编辑 prompt；`agent-command` 与 `daemon-state-command` 可移动或取消，但不可编辑，因为它们的执行闭包不等价于一段用户文本。`Insert next` 创建 synthetic `message` item，不对应平台原始 `messageId`。所有 item 级 action 都从 interaction 的当前 channel/thread + user 推导 SessionKey；custom id 只携带 pending item id，不携带 channel id 或用户 id。
 
 不得把 Claude Code 或 Codex 自身 TTY slash commands 直接透传为首批 agent-nexus slash command。后端 CLI 私有命令若要暴露，必须先补对应 backend contract 和安全边界。
 
@@ -494,6 +505,8 @@ P3-P5 必须覆盖：
 - `/stop` 在 single-agent scope 作为 agent alias 路由到当前 backend，并以 agent command envelope 转发；daemon 不校验 agent 私有 handler、不映射为 runtime interrupt。
 - `/nexus-kill` 作为 daemon command 终止当前 RoutingSession 并清除 opaque agent conversation ref。
 - `/nexus-reload-config` 把注入的 config reloader 结果作为 ephemeral response 返回；reload 失败保留旧配置并把错误返回触发者。
+- `/nexus-settings` 作为 daemon command 拼装当前用户/channel 的 settings 快照；platform-owned 设置通过 `PlatformAdapter.settingsSnapshot` / `applySettingsAction` 回到 owner，不由 daemon 直接修改。
+- `/nexus-queue` 作为 daemon command 管理当前 SessionKey 的 daemon queue pending items，不提供跨用户/global scope。
 - `/discord-reply-mode` 与 `/reply-mode` 都路由到 `platform:discord:reply-mode`。
 - Claude Code / Codex descriptors 不 import platform package 或 platform naming utility。
 

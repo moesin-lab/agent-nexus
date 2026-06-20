@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApplicationCommandOptionType, type Message } from 'discord.js';
+import { readFile, rm } from 'node:fs/promises';
+import { ApplicationCommandOptionType, ChannelType, type Message } from 'discord.js';
 import {
   buildBotMentionRegex,
   buildSlices,
@@ -84,6 +85,7 @@ function makeMsg(overrides: {
   roleIds?: string[];
   id?: string;
   system?: boolean;
+  channel?: unknown;
 }): Message {
   const {
     content,
@@ -95,6 +97,7 @@ function makeMsg(overrides: {
     roleIds = [],
     id = 'm-1',
     system = false,
+    channel,
   } = overrides;
   // 只构造测试覆盖路径需要的字段；rawPayload 直接挂整个 mock。
   return {
@@ -114,6 +117,7 @@ function makeMsg(overrides: {
         cache: new Map(roleIds.map((roleId) => [roleId, { id: roleId }])),
       },
     },
+    ...(channel ? { channel } : {}),
   } as unknown as Message;
 }
 
@@ -235,6 +239,7 @@ describe('command registry integration', () => {
       createdAt: new Date(123),
       user: { id: OTHER_ID, username: 'alice', bot: false },
       member: { roles: { cache: new Map([['R1', { id: 'R1' }]]) } },
+      channel: { isThread: () => false },
       options: {
         data: [
           {
@@ -285,6 +290,41 @@ describe('command registry integration', () => {
     expect(event.traceId).toBeTruthy();
   });
 
+  it('thread slash command event carries the parent channel id', async () => {
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      testGuildId: 'G-dev',
+    });
+    const handler = vi.fn(async () => undefined);
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    await interactionCreate({
+      id: 'i-thread-command',
+      commandName: 'new',
+      channelId: 'T1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      channel: { isThread: () => true, parentId: 'C1' },
+      options: { data: [] },
+      deferReply: vi.fn(async () => undefined),
+      deleteReply: vi.fn(async () => undefined),
+      editReply: vi.fn(async () => undefined),
+      isChatInputCommand: () => true,
+    });
+
+    expect(handler.mock.calls[0]![0]).toMatchObject({
+      sessionKey: { channelId: 'T1' },
+      threadParentChannelId: 'C1',
+    });
+  });
+
   it('daemon 返回 commandResponse 时用 deferred ephemeral reply 展示反馈', async () => {
     const platform = createDiscordPlatform({
       token: 'test-token',
@@ -326,6 +366,350 @@ describe('command registry integration', () => {
       content: 'This command is not available in this channel.',
     });
     expect(deleteReply).not.toHaveBeenCalled();
+  });
+
+  it('daemon commandResponse 带 components 时传给 Discord deferred reply', async () => {
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      testGuildId: 'G-dev',
+    });
+    const handler = vi.fn(async () => ({
+      commandResponse: {
+        text: 'Select a session to resume.',
+        ephemeral: true,
+        components: [
+          {
+            type: 'string-select' as const,
+            customId: 'nexus:sessions:resume',
+            placeholder: 'Resume session',
+            options: [
+              {
+                label: 'C-old',
+                value: 'mem-1',
+                description: 'sid-old',
+              },
+            ],
+          },
+        ],
+      },
+    }));
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    const editReply = vi.fn(async () => undefined);
+    await interactionCreate({
+      id: 'i-components',
+      commandName: 'nexus-sessions',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      options: { data: [] },
+      deferReply: vi.fn(async () => undefined),
+      deleteReply: vi.fn(async () => undefined),
+      editReply,
+      isChatInputCommand: () => true,
+    });
+
+    expect(editReply).toHaveBeenCalledWith({
+      content: 'Select a session to resume.',
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 3,
+              custom_id: 'nexus:sessions:resume',
+              placeholder: 'Resume session',
+              options: [
+                {
+                  label: 'C-old',
+                  value: 'mem-1',
+                  description: 'sid-old',
+                },
+              ],
+              min_values: 1,
+              max_values: 1,
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('string select component interaction 转成 normalized interaction event 并展示 handler 反馈', async () => {
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      testGuildId: 'G-dev',
+    });
+    const handler = vi.fn(async () => ({
+      commandResponse: {
+        text: '[session resumed: sid-old]',
+        ephemeral: true,
+      },
+    }));
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    const deferReply = vi.fn(async () => undefined);
+    const editReply = vi.fn(async () => undefined);
+    await interactionCreate({
+      id: 'i-select',
+      customId: 'nexus:sessions:resume',
+      values: ['mem-1'],
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map([['R1', { id: 'R1' }]]) } },
+      channel: { isThread: () => true, parentId: 'C1' },
+      deferReply,
+      editReply,
+      isChatInputCommand: () => false,
+      isStringSelectMenu: () => true,
+      isButton: () => false,
+    });
+
+    expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0]![0]).toMatchObject({
+      eventId: 'i-select',
+      platform: 'discord',
+      type: 'interaction',
+      interaction: {
+        customId: 'nexus:sessions:resume',
+        componentType: 'string-select',
+        values: ['mem-1'],
+      },
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'C1',
+        initiatorUserId: OTHER_ID,
+      },
+      guildId: 'G-dev',
+      initiatorRoleIds: ['R1'],
+      threadParentChannelId: 'C1',
+      rawContentType: 'discord:component-interaction',
+    });
+    expect(editReply).toHaveBeenCalledWith({
+      content: '[session resumed: sid-old]',
+    });
+  });
+
+  it('settings workingDir button can open a Discord modal before defer', async () => {
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      testGuildId: 'G-dev',
+    });
+    const handler = vi.fn(async () => ({
+      modalResponse: {
+        customId: 'nexus:settings:working-dir-modal',
+        title: 'Set working directory',
+        textInputs: [
+          {
+            customId: 'path',
+            label: 'Absolute path',
+            style: 'short' as const,
+            required: true,
+          },
+        ],
+      },
+    }));
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    const deferReply = vi.fn(async () => undefined);
+    const showModal = vi.fn(async () => undefined);
+    await interactionCreate({
+      id: 'i-working-dir',
+      customId: 'nexus:settings:working-dir',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      channel: { isThread: () => false },
+      deferReply,
+      showModal,
+      isChatInputCommand: () => false,
+      isStringSelectMenu: () => false,
+      isButton: () => true,
+      isModalSubmit: () => false,
+    });
+
+    expect(deferReply).not.toHaveBeenCalled();
+    expect(showModal).toHaveBeenCalledWith({
+      custom_id: 'nexus:settings:working-dir-modal',
+      title: 'Set working directory',
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4,
+              custom_id: 'path',
+              label: 'Absolute path',
+              style: 1,
+              required: true,
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('modal submit 转成 normalized interaction fields 并展示 handler 反馈', async () => {
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      testGuildId: 'G-dev',
+    });
+    const handler = vi.fn(async () => ({
+      commandResponse: {
+        text: '[channel workingDir: /tmp/app]',
+        ephemeral: true,
+      },
+    }));
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    const deferReply = vi.fn(async () => undefined);
+    const editReply = vi.fn(async () => undefined);
+    await interactionCreate({
+      id: 'i-modal',
+      customId: 'nexus:settings:working-dir-modal',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      channel: { isThread: () => false },
+      fields: {
+        fields: new Map([['path', { customId: 'path' }]]),
+        getTextInputValue: vi.fn((customId: string) =>
+          customId === 'path' ? '/tmp/app' : '',
+        ),
+      },
+      deferReply,
+      editReply,
+      isChatInputCommand: () => false,
+      isStringSelectMenu: () => false,
+      isButton: () => false,
+      isModalSubmit: () => true,
+    });
+
+    expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'interaction',
+        interaction: {
+          customId: 'nexus:settings:working-dir-modal',
+          componentType: 'modal-submit',
+          values: [],
+          fields: { path: '/tmp/app' },
+        },
+      }),
+    );
+    expect(editReply).toHaveBeenCalledWith({
+      content: '[channel workingDir: /tmp/app]',
+    });
+  });
+
+  it('settingsSnapshot exposes reply-mode with user-scoped permission', async () => {
+    const statePath = '/tmp/agent-nexus-discord-settings-snapshot-test.json';
+    await rm(statePath, { force: true });
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath,
+      allowedUserIds: [OTHER_ID],
+      testGuildId: 'G-dev',
+    });
+
+    await platform.start(vi.fn());
+
+    expect(
+      await platform.settingsSnapshot!({ userId: OTHER_ID, channelId: 'C1' }),
+    ).toEqual({
+      items: [
+        {
+          key: 'discord.replyMode',
+          label: 'Reply mode',
+          owner: 'platform',
+          value: 'mention',
+          source: 'discord state',
+          durability: 'durable',
+          canChange: true,
+        },
+      ],
+    });
+    expect(
+      await platform.settingsSnapshot!({ userId: 'U-denied', channelId: 'C1' }),
+    ).toMatchObject({
+      items: [
+        {
+          key: 'discord.replyMode',
+          canChange: false,
+        },
+      ],
+    });
+  });
+
+  it('applySettingsAction changes reply-mode through the Discord owner state', async () => {
+    const statePath = '/tmp/agent-nexus-discord-settings-action-test.json';
+    await rm(statePath, { force: true });
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath,
+      allowedUserIds: [OTHER_ID],
+      testGuildId: 'G-dev',
+    });
+
+    await platform.start(vi.fn());
+    const result = await platform.applySettingsAction!({
+      action: 'discord.replyMode',
+      value: 'all',
+      userId: OTHER_ID,
+      channelId: 'C1',
+    });
+
+    expect(result).toEqual({
+      status: 'handled',
+      message: 'reply mode: `mention` -> `all`',
+    });
+    expect(
+      await platform.settingsSnapshot!({ userId: OTHER_ID, channelId: 'C1' }),
+    ).toMatchObject({
+      items: [
+        {
+          key: 'discord.replyMode',
+          value: 'all',
+          canChange: true,
+        },
+      ],
+    });
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual({
+      replyMode: 'all',
+    });
   });
 
   it('command registration plan 存在时用 plan scope 构造 command event', async () => {
@@ -605,6 +989,26 @@ function makeTextChannel(overrides: {
   };
 }
 
+function makeThreadParentChannel(overrides: {
+  create?: ReturnType<typeof vi.fn>;
+} = {}) {
+  return {
+    isTextBased: () => true,
+    isSendable: () => true,
+    threads: {
+      create:
+        overrides.create ??
+        vi.fn(async () => ({
+          id: 'T1',
+          guildId: 'G1',
+          members: { add: vi.fn(async () => undefined) },
+          send: vi.fn(async () => ({ id: 'm-thread' })),
+          delete: vi.fn(async () => undefined),
+        })),
+    },
+  };
+}
+
 describe('buildSlices', () => {
   it('empty string → single-element [""] (guarantees at least one message)', () => {
     expect(buildSlices('')).toEqual(['']);
@@ -755,7 +1159,95 @@ describe('edit / typing capabilities', () => {
       supportsEdit: true,
       supportsTypingIndicator: true,
       supportsSlashCommands: true,
+      supportsThreads: true,
+      supportsThreadCreation: true,
     });
+  });
+
+  it('createThread creates a private thread, adds the user, and posts the initial message', async () => {
+    const memberAdd = vi.fn(async () => undefined);
+    const send = vi.fn(async () => ({ id: 'm-thread' }));
+    const create = vi.fn(async () => ({
+      id: 'T1',
+      guildId: 'G1',
+      members: { add: memberAdd },
+      send,
+      delete: vi.fn(async () => undefined),
+    }));
+    discordMock.channelsFetch.mockResolvedValueOnce(makeThreadParentChannel({ create }));
+    const platform = makePlatform();
+
+    const result = await platform.createThread!({
+      parentChannelId: 'C1',
+      initiatorUserId: OTHER_ID,
+      title: 'Design auth flow',
+      visibility: 'private',
+      autoArchiveDurationMinutes: 1440,
+      initialMessage: '[new Nexus session: Design auth flow]',
+      traceId: 't-1',
+    });
+
+    expect(create).toHaveBeenCalledWith({
+      name: 'Design auth flow',
+      type: ChannelType.PrivateThread,
+      autoArchiveDuration: 1440,
+      invitable: false,
+      reason: 'agent-nexus new thread',
+    });
+    expect(memberAdd).toHaveBeenCalledWith(OTHER_ID);
+    expect(send).toHaveBeenCalledWith({
+      content: '[new Nexus session: Design auth flow]',
+      allowedMentions: { parse: [] },
+    });
+    expect(result).toEqual({
+      threadId: 'T1',
+      parentChannelId: 'C1',
+      url: 'https://discord.com/channels/G1/T1',
+    });
+  });
+
+  it('createThread deletes the created thread if member add fails', async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const create = vi.fn(async () => ({
+      id: 'T1',
+      guildId: 'G1',
+      members: { add: vi.fn(async () => Promise.reject(new Error('missing access'))) },
+      send: vi.fn(async () => ({ id: 'm-thread' })),
+      delete: cleanup,
+    }));
+    discordMock.channelsFetch.mockResolvedValueOnce(makeThreadParentChannel({ create }));
+    const platform = makePlatform();
+
+    await expect(
+      platform.createThread!({
+        parentChannelId: 'C1',
+        initiatorUserId: OTHER_ID,
+        title: 'Design auth flow',
+        visibility: 'private',
+        autoArchiveDurationMinutes: 1440,
+        traceId: 't-1',
+      }),
+    ).rejects.toThrow('missing access');
+    expect(cleanup).toHaveBeenCalledWith('agent-nexus thread setup failed');
+  });
+
+  it('updateThread renames the Discord thread', async () => {
+    const setName = vi.fn(async () => undefined);
+    discordMock.channelsFetch.mockResolvedValueOnce({
+      setName,
+    });
+    const platform = makePlatform();
+
+    await platform.updateThread!({
+      threadId: 'T1',
+      title: 'First user message',
+      traceId: 't-1',
+    });
+
+    expect(setName).toHaveBeenCalledWith(
+      'First user message',
+      'agent-nexus session title',
+    );
   });
 
   it('edit 单片消息：用 MessageManager.edit 更新已有 message id', async () => {
@@ -1161,6 +1653,21 @@ describe('parseInbound', () => {
     expect(ev.platform).toBe('discord');
     expect(ev.type).toBe('message');
     expect(ev.messageId).toBe('m-1');
+  });
+
+  it('thread message carries parent channel id when Discord exposes it', () => {
+    const msg = makeMsg({
+      content: `<@${BOT_ID}> ping`,
+      channelId: 'T42',
+      channel: {
+        isThread: () => true,
+        parentId: 'C42',
+      },
+    });
+    const ev = expectEvent(parseInbound(msg, BOT_ID, ALLOWED));
+
+    expect(ev.sessionKey.channelId).toBe('T42');
+    expect(ev.threadParentChannelId).toBe('C42');
   });
 
   it('@bot summarise what @alice said → 保留 @alice，不剥别人 mention（修 #7）', () => {

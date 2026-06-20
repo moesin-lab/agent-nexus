@@ -1,10 +1,34 @@
 import type { SessionKey } from './session-key.js';
 
+export type MessageComponent =
+  | {
+      type: 'button';
+      customId: string;
+      label: string;
+      style: 'primary' | 'secondary' | 'success' | 'danger';
+      disabled?: boolean;
+    }
+  | {
+      type: 'string-select';
+      customId: string;
+      placeholder?: string;
+      options: {
+        label: string;
+        value: string;
+        description?: string;
+        default?: boolean;
+      }[];
+      minValues?: number;
+      maxValues?: number;
+      disabled?: boolean;
+    };
+
 /** docs/dev/spec/platform-adapter.md §OutboundMessage */
 export interface OutboundMessage {
   text: string;
   traceId: string;
   sessionKey: SessionKey;
+  components?: MessageComponent[];
 }
 
 /** docs/dev/spec/platform-adapter.md §MessageRef */
@@ -34,7 +58,9 @@ export interface CapabilitySet {
   supportsReactions: boolean;
   supportsEmbeds: boolean;
   supportsButtons: boolean;
+  supportsStringSelects?: boolean;
   supportsThreads: boolean;
+  supportsThreadCreation?: boolean;
   supportsEphemeral: boolean;
   supportsAttachments: boolean;
   maxAttachmentsPerMessage: number;

@@ -1,7 +1,11 @@
 import type { SessionKey } from '@agent-nexus/protocol';
 import { serializeSessionKey } from '@agent-nexus/protocol';
 
-export type IdempotencyStatus = 'processing' | 'processed' | 'failed';
+export type IdempotencyStatus =
+  | 'processing'
+  | 'processed'
+  | 'failed'
+  | 'cancelled';
 
 export type IdempotencyDecision =
   | { kind: 'inserted' }
@@ -11,6 +15,8 @@ export interface IdempotencyStore {
   checkAndSet(sessionKey: SessionKey, messageId: string): IdempotencyDecision;
   markProcessed(sessionKey: SessionKey, messageId: string): void;
   markFailed(sessionKey: SessionKey, messageId: string): void;
+  markCancelled(sessionKey: SessionKey, messageId: string): void;
+  forget(sessionKey: SessionKey, messageId: string): void;
   clearAll(): void;
 }
 
@@ -35,6 +41,14 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
 
   markFailed(sessionKey: SessionKey, messageId: string): void {
     this.entries.set(keyFor(sessionKey, messageId), 'failed');
+  }
+
+  markCancelled(sessionKey: SessionKey, messageId: string): void {
+    this.entries.set(keyFor(sessionKey, messageId), 'cancelled');
+  }
+
+  forget(sessionKey: SessionKey, messageId: string): void {
+    this.entries.delete(keyFor(sessionKey, messageId));
   }
 
   clearAll(): void {

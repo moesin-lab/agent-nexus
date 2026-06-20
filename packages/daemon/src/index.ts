@@ -14,6 +14,16 @@ export {
   type IdempotencyStatus,
   type IdempotencyStore,
 } from './idempotency.js';
+export {
+  InMemoryMessageQueue,
+  QueueFullError,
+  QueueItemCancelledError,
+  queueKeyFromEvent,
+  type MessageQueueItemKind,
+  type MessageQueueItemStatus,
+  type MessageQueueItemView,
+  type MessageQueueSnapshot,
+} from './message-queue.js';
 export { BasicRedactor, redactText, type Redactor } from './redaction.js';
 export {
   RouteError,

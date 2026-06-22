@@ -127,7 +127,8 @@ export const DISCORD_CAPABILITIES: CapabilitySet = {
   supportsReactions: false,
   supportsEmbeds: false,
   supportsButtons: true,
-  supportsStringSelects: true,
+  supportsSelects: true,
+  supportsModals: true,
   supportsThreads: true,
   supportsThreadCreation: true,
   supportsEphemeral: true,
@@ -265,9 +266,9 @@ function discordMessageThreadParentId(msg: Message): string | undefined {
 
 function discordComponentType(
   interaction: Interaction,
-): 'button' | 'string-select' | undefined {
+): 'button' | 'select' | undefined {
   if (interaction.isButton()) return 'button';
-  if (interaction.isStringSelectMenu()) return 'string-select';
+  if (interaction.isStringSelectMenu()) return 'select';
   return undefined;
 }
 
@@ -379,8 +380,8 @@ function componentEventFromInteraction(interaction: Interaction): NormalizedEven
     traceId: randomUUID(),
     type: 'interaction',
     interaction: {
-      customId: interaction.customId,
-      componentType,
+      componentId: interaction.customId,
+      kind: componentType,
       values: componentValues(interaction),
     },
     rawPayload: interaction,
@@ -420,7 +421,6 @@ function modalEventFromInteraction(interaction: Interaction): NormalizedEvent {
           field.customId,
           interaction.fields.getTextInputValue(field.customId),
         ]);
-  const fields = Object.fromEntries(fieldEntries);
   return {
     eventId: interaction.id,
     platform: 'discord',
@@ -432,10 +432,9 @@ function modalEventFromInteraction(interaction: Interaction): NormalizedEvent {
     traceId: randomUUID(),
     type: 'interaction',
     interaction: {
-      customId: interaction.customId,
-      componentType: 'modal-submit',
-      values: [],
-      fields,
+      componentId: interaction.customId,
+      kind: 'modal_submit',
+      values: fieldEntries.map(([componentId, value]) => `${componentId}=${value}`),
     },
     rawPayload: interaction,
     rawContentType: 'discord:modal-submit',
@@ -456,7 +455,6 @@ function discordButtonStyle(
   style: Extract<MessageComponent, { type: 'button' }>['style'],
 ): number {
   if (style === 'primary') return 1;
-  if (style === 'success') return 3;
   if (style === 'danger') return 4;
   return 2;
 }
@@ -476,7 +474,7 @@ function discordMessageComponents(
     if (component.type === 'button') {
       buttonRow.push({
         type: 2,
-        custom_id: component.customId,
+        custom_id: component.componentId,
         label: component.label,
         style: discordButtonStyle(component.style),
         ...(component.disabled !== undefined
@@ -492,7 +490,7 @@ function discordMessageComponents(
       components: [
         {
           type: 3,
-          custom_id: component.customId,
+          custom_id: component.componentId,
           ...(component.placeholder ? { placeholder: component.placeholder } : {}),
           options: component.options.map((option) => ({
             label: option.label,
@@ -515,16 +513,16 @@ function discordMessageComponents(
 
 function discordModal(response: EventModalResponse): unknown {
   return {
-    custom_id: response.customId,
+    custom_id: response.modalId,
     title: response.title,
-    components: response.textInputs.slice(0, 5).map((input) => ({
+    components: response.inputs.slice(0, 5).map((input) => ({
       type: 1,
       components: [
         {
           type: 4,
-          custom_id: input.customId,
+          custom_id: input.componentId,
           label: input.label,
-          style: input.style === 'paragraph' ? 2 : 1,
+          style: input.kind === 'long_text' ? 2 : 1,
           required: input.required ?? true,
           ...(input.placeholder ? { placeholder: input.placeholder } : {}),
           ...(input.value ? { value: input.value } : {}),
@@ -540,13 +538,13 @@ function immediateModalForComponent(
   if (!interaction.isButton()) return undefined;
   if (interaction.customId === 'nexus:settings:working-dir') {
     return {
-      customId: 'nexus:settings:working-dir-modal',
+      modalId: 'nexus:settings:working-dir-modal',
       title: 'Set working directory',
-      textInputs: [
+      inputs: [
         {
-          customId: 'path',
+          componentId: 'path',
           label: 'Absolute path',
-          style: 'short',
+          kind: 'short_text',
           required: true,
         },
       ],
@@ -554,13 +552,13 @@ function immediateModalForComponent(
   }
   if (interaction.customId === 'nexus:queue:insert') {
     return {
-      customId: 'nexus:queue:insert-modal',
+      modalId: 'nexus:queue:insert-modal',
       title: 'Insert queued message',
-      textInputs: [
+      inputs: [
         {
-          customId: 'text',
+          componentId: 'text',
           label: 'Message',
-          style: 'paragraph',
+          kind: 'long_text',
           required: true,
         },
       ],
@@ -569,13 +567,13 @@ function immediateModalForComponent(
   if (interaction.customId.startsWith('nexus:queue:edit:')) {
     const queueItemId = interaction.customId.slice('nexus:queue:edit:'.length);
     return {
-      customId: `nexus:queue:edit-modal:${queueItemId}`,
+      modalId: `nexus:queue:edit-modal:${queueItemId}`,
       title: 'Edit queued message',
-      textInputs: [
+      inputs: [
         {
-          customId: 'text',
+          componentId: 'text',
           label: 'Message',
-          style: 'paragraph',
+          kind: 'long_text',
           required: true,
         },
       ],
@@ -977,7 +975,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
             await completeDeferredCommandReply(interaction, logger, event, result);
           } catch (err) {
             logger.error(
-              { err, traceId: event.traceId, customId: event.interaction?.customId },
+              { err, traceId: event.traceId, componentId: event.interaction?.componentId },
               'platform_handler_error',
             );
             await markDeferredCommandFailed(interaction, logger, event);
@@ -1017,7 +1015,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
             await completeDeferredCommandReply(interaction, logger, event, result);
           } catch (err) {
             logger.error(
-              { err, traceId: event.traceId, customId: event.interaction?.customId },
+              { err, traceId: event.traceId, componentId: event.interaction?.componentId },
               'platform_handler_error',
             );
             await markDeferredCommandFailed(interaction, logger, event);
@@ -1223,7 +1221,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
         create(options: {
           name: string;
           type: ChannelType.PrivateThread | ChannelType.PublicThread;
-          autoArchiveDuration: number;
+          autoArchiveDuration?: number;
           invitable?: boolean;
           reason?: string;
         }): Promise<{

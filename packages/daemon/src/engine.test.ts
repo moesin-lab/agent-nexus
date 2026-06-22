@@ -2553,10 +2553,9 @@ describe('Engine', () => {
       text: undefined,
       rawContentType: 'discord:modal-submit',
       interaction: {
-        customId: 'nexus:settings:working-dir-modal',
-        componentType: 'modal-submit',
-        values: [],
-        fields: { path: '/tmp/app' },
+        componentId: 'nexus:settings:working-dir-modal',
+        kind: 'modal_submit',
+        values: ['path=/tmp/app'],
       },
       initiator: { userId: 'U-denied', displayName: 'denied', isBot: false },
       sessionKey: {

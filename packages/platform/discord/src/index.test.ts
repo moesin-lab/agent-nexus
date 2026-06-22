@@ -383,8 +383,8 @@ describe('command registry integration', () => {
         ephemeral: true,
         components: [
           {
-            type: 'string-select' as const,
-            customId: 'nexus:sessions:resume',
+            type: 'select' as const,
+            componentId: 'nexus:sessions:resume',
             placeholder: 'Resume session',
             options: [
               {
@@ -495,8 +495,8 @@ describe('command registry integration', () => {
       platform: 'discord',
       type: 'interaction',
       interaction: {
-        customId: 'nexus:sessions:resume',
-        componentType: 'string-select',
+        componentId: 'nexus:sessions:resume',
+        kind: 'select',
         values: ['mem-1'],
       },
       sessionKey: {
@@ -657,10 +657,9 @@ describe('command registry integration', () => {
       expect.objectContaining({
         type: 'interaction',
         interaction: {
-          customId: 'nexus:settings:working-dir-modal',
-          componentType: 'modal-submit',
-          values: [],
-          fields: { path: '/tmp/app' },
+          componentId: 'nexus:settings:working-dir-modal',
+          kind: 'modal_submit',
+          values: ['path=/tmp/app'],
         },
       }),
     );

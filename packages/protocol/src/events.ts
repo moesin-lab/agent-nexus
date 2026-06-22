@@ -1,7 +1,8 @@
-import type { PlatformSessionKey } from './session-key.js';
 import type { CommandPayload } from './command.js';
+import type { MessageRef } from './outbound.js';
+import type { PlatformSessionKey } from './session-key.js';
 
-/** docs/dev/spec/message-protocol.md §EventType。MVP 仅实现 message。 */
+/** docs/dev/spec/message-protocol.md §EventType */
 export type EventType =
   | 'message'
   | 'command'
@@ -27,30 +28,26 @@ export interface Attachment {
   platformId?: string;
 }
 
-export interface ComponentInteractionPayload {
-  customId: string;
-  componentType: 'button' | 'string-select' | 'modal-submit';
+export interface InteractionPayload {
+  componentId: string;
+  kind: 'button' | 'select' | 'modal_submit';
   values: string[];
-  fields?: Record<string, string>;
 }
 
-/**
- * 平台入站事件的归一化形态。Adapter 构造，daemon 消费。
- * 字段对齐 docs/dev/spec/message-protocol.md §NormalizedEvent。
- */
-export interface NormalizedEvent {
+export interface ReactionPayload {
+  emoji: string;
+  action: 'add' | 'remove';
+  targetMessageId: string;
+}
+
+interface NormalizedEventBase {
   eventId: string;
   platform: string;
   sessionKey: PlatformSessionKey;
   messageId?: string;
   traceId: string;
 
-  type: EventType;
-
-  text?: string;
-  command?: CommandPayload;
-  interaction?: ComponentInteractionPayload;
-  attachments?: Attachment[];
+  replyTo?: MessageRef;
 
   rawPayload: unknown;
   rawContentType: string;
@@ -63,3 +60,62 @@ export interface NormalizedEvent {
 
   initiator: Initiator;
 }
+
+type MessageContent =
+  | {
+      text: string;
+      attachments?: Attachment[];
+    }
+  | {
+      text?: never;
+      attachments: Attachment[];
+    };
+
+export type NormalizedEvent =
+  | (NormalizedEventBase &
+      MessageContent & {
+        type: 'message';
+        command?: never;
+        interaction?: never;
+        reaction?: never;
+      })
+  | (NormalizedEventBase & {
+      type: 'command';
+      text?: never;
+      attachments?: never;
+      command: CommandPayload;
+      interaction?: never;
+      reaction?: never;
+    })
+  | (NormalizedEventBase & {
+      type: 'interaction';
+      text?: never;
+      attachments?: never;
+      command?: never;
+      interaction: InteractionPayload;
+      reaction?: never;
+    })
+  | (NormalizedEventBase & {
+      type: 'reaction';
+      text?: never;
+      attachments?: never;
+      command?: never;
+      interaction?: never;
+      reaction: ReactionPayload;
+    })
+  | (NormalizedEventBase & {
+      type: 'typing_start';
+      text?: never;
+      attachments?: never;
+      command?: never;
+      interaction?: never;
+      reaction?: never;
+    })
+  | (NormalizedEventBase & {
+      type: 'control';
+      text?: never;
+      attachments?: never;
+      command?: never;
+      interaction?: never;
+      reaction?: never;
+    });

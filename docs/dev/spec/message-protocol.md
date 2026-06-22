@@ -59,6 +59,7 @@ NormalizedEvent {
     platformTimestamp: timestamp?            // 平台时间戳（如 Discord snowflake 解出的时间）
     guildId: string?                         // guild 事件所属 guild；DM 缺省
     initiatorRoleIds: string[]?              // guild 内发起者角色 ID；DM 缺省/空
+    threadParentChannelId: string?           // thread 事件所属父 channel；非 thread 缺省
 
     // 用户信息
     initiator: {
@@ -139,7 +140,7 @@ CommandRegistrationScope {
 InteractionPayload {
     componentId: string
     kind: "button" | "select" | "modal_submit"
-    values: string[]              // select 的选中项 / modal 字段
+    values: string[]              // select 的选中项 / modal text input 值
 }
 
 ReactionPayload {
@@ -150,6 +151,21 @@ ReactionPayload {
 ```
 
 `CommandPayload.name` 不承载 canonical id。daemon 必须按 [`command-registry.md`](command-registry.md) 的 active reverse map 从平台可见 name 解析到 canonical command；不得从 `name` 字符串拆 owner 或 handler。
+
+### Payload 互斥约束
+
+`NormalizedEvent.type` 与 payload 字段必须互斥：
+
+| `type` | 必须有 | 不得有 |
+|---|---|---|
+| `message` | `text`（可为空字符串）或 `attachments` | `command` / `interaction` / `reaction` |
+| `command` | `command` | `text` / `attachments` / `interaction` / `reaction` |
+| `interaction` | `interaction` | `text` / `attachments` / `command` / `reaction` |
+| `reaction` | `reaction` | `text` / `attachments` / `command` / `interaction` |
+| `typing_start` / `control` | 无专属 payload | `text` / `attachments` / `command` / `interaction` / `reaction` |
+
+`InteractionPayload` 只使用平台中立字段名。平台私有字段（如 native custom id、callback
+data、interaction token）留在 `rawPayload`，不得升入通用 payload。
 
 ## 幂等
 

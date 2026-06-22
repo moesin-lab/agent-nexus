@@ -7,15 +7,17 @@ export {
 
 export type {
   Attachment,
-  ComponentInteractionPayload,
   EventType,
   Initiator,
+  InteractionPayload,
   NormalizedEvent,
+  ReactionPayload,
 } from './events.js';
 
 export type {
   CapabilitySet,
   MessageComponent,
+  MessageEmbed,
   MessageRef,
   OutboundMessage,
 } from './outbound.js';
@@ -73,14 +75,14 @@ export type {
 } from './agent.js';
 
 export type {
+  AgentEventHandler,
+  AgentRuntime,
   CreateThreadInput,
   CreateThreadResult,
-  UpdateThreadInput,
-  AgentEventHandler,
   EventCommandResponse,
-  EventModalResponse,
-  AgentRuntime,
   EventHandler,
   EventHandlerResult,
+  EventModalResponse,
   PlatformAdapter,
+  UpdateThreadInput,
 } from './interfaces.js';

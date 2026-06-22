@@ -31,12 +31,12 @@ export interface EventCommandResponse {
 }
 
 export interface EventModalResponse {
-  customId: string;
+  modalId: string;
   title: string;
-  textInputs: {
-    customId: string;
+  inputs: {
+    componentId: string;
     label: string;
-    style: 'short' | 'paragraph';
+    kind: 'short_text' | 'long_text';
     required?: boolean;
     placeholder?: string;
     value?: string;
@@ -53,7 +53,7 @@ export interface CreateThreadInput {
   initiatorUserId: string;
   title: string;
   visibility: 'private' | 'public';
-  autoArchiveDurationMinutes: 60 | 1440 | 4320 | 10080;
+  autoArchiveDurationMinutes?: number;
   initialMessage?: string;
   traceId: string;
 }

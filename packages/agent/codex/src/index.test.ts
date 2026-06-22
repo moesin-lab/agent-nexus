@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { execa } from 'execa';
 import type {
+  AgentCommandEnvelope,
   AgentEvent,
   AgentSession,
   SessionConfig,
@@ -141,6 +142,23 @@ function collectEvents(
   return events;
 }
 
+function commandEnvelope(handlerKey: string): AgentCommandEnvelope {
+  return {
+    canonicalId: `agent:codex:${handlerKey}`,
+    localName: handlerKey,
+    handlerKey,
+    args: {},
+    traceId: `trace-command-${handlerKey}`,
+    routingSession: {
+      sessionKey,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      channelId: 'C1',
+      userId: 'U1',
+    },
+  };
+}
+
 describe('createCodexRuntime', () => {
   beforeEach(() => {
     mockedExeca.mockReset();
@@ -161,6 +179,106 @@ describe('createCodexRuntime', () => {
       supportsToolCallEvents: true,
       supportsInterrupt: true,
       supportsStdinInterrupt: false,
+    });
+  });
+
+  it('handleCommand new 停止当前 session 并清除 opaque conversation ref', async () => {
+    const child = makeExecSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+    const runtime = makeRuntime();
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'long',
+      traceId: 'trace-new-active',
+    });
+    await nextTick();
+    child.emitLine(
+      JSON.stringify({ type: 'thread.started', thread_id: 'thread-new' }),
+    );
+    await nextTick();
+
+    const result = await runtime.handleCommand(session, commandEnvelope('new'));
+
+    expect(result).toEqual({
+      status: 'handled',
+      message: '[new session ready]',
+      updatedAgentSessionId: null,
+    });
+    expect(session.state).toBe('Stopped');
+    expect(runtime.isAlive(session)).toBe(false);
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(events.at(-1)).toMatchObject({
+      type: 'session_stopped',
+      traceId: 'trace-command-new',
+      payload: { reason: 'user_stop' },
+    });
+    await turn;
+  });
+
+  it('handleCommand stop 复用 interrupt 路径并返回明确结果', async () => {
+    vi.useFakeTimers();
+    const child = makeExecSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+    const runtime = makeRuntime();
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'long',
+      traceId: 'trace-stop-active',
+    });
+    await nextTick();
+    child.emitLine(
+      JSON.stringify({ type: 'thread.started', thread_id: 'thread-stop' }),
+    );
+    child.emitLine(
+      JSON.stringify({
+        type: 'item.started',
+        item: {
+          id: 'item_0',
+          type: 'command_execution',
+          command: "/bin/zsh -lc 'sleep 60'",
+          aggregated_output: '',
+          exit_code: null,
+          status: 'in_progress',
+        },
+      }),
+    );
+    await nextTick();
+
+    const result = await runtime.handleCommand(session, commandEnvelope('stop'));
+
+    expect(result).toEqual({ status: 'handled', message: '[stop requested]' });
+    expect(child.kill).toHaveBeenCalledWith('SIGINT');
+    await vi.advanceTimersByTimeAsync(20);
+    await turn;
+    await vi.advanceTimersByTimeAsync(30);
+
+    const terminal = events.find((event) => event.type === 'turn_finished');
+    expect(terminal).toMatchObject({
+      type: 'turn_finished',
+      payload: {
+        reason: 'user_interrupt',
+        source: 'runtime-synthesized',
+      },
+    });
+  });
+
+  it('handleCommand stop 没有 active turn 时返回 rejected', async () => {
+    const runtime = makeRuntime();
+    const session = runtime.startSession(sessionKey, sessionConfig);
+
+    await expect(runtime.handleCommand(undefined, commandEnvelope('stop'))).resolves.toEqual({
+      status: 'rejected',
+      message: '[no active output]',
+    });
+    await expect(runtime.handleCommand(session, commandEnvelope('stop'))).resolves.toEqual({
+      status: 'rejected',
+      message: '[no active output]',
     });
   });
 

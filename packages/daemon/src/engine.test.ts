@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
   AgentCapabilitySet,
+  AgentCommandEnvelope,
+  AgentCommandResult,
   AgentEvent,
   AgentEventHandler,
   AgentInput,
   AgentRuntime,
   AgentSession,
   CapabilitySet,
+  CommandDescriptor,
+  CommandRegistrationScope,
   EventHandler,
   MessageRef,
   NormalizedEvent,
@@ -17,6 +21,11 @@ import type {
   SessionKey,
 } from '@agent-nexus/protocol';
 import { withPlatformName } from '@agent-nexus/protocol';
+import {
+  ActiveCommandRegistry,
+  buildCommandRegistrationPlan,
+  DEFAULT_COMMAND_NAME_POLICY,
+} from './command-registry.js';
 import { Engine } from './engine.js';
 import { InMemoryIdempotencyStore } from './idempotency.js';
 import { createLogger, type Logger } from './logger.js';
@@ -37,6 +46,7 @@ const platformCaps: CapabilitySet = {
   supportsAttachments: false,
   maxAttachmentsPerMessage: 0,
   supportsTypingIndicator: false,
+  supportsSlashCommands: false,
 };
 
 const agentCaps: AgentCapabilitySet = {
@@ -152,7 +162,7 @@ function makeAgent() {
     handlers.delete(s);
   });
 
-  const isAlive = vi.fn(() => true);
+  const isAlive = vi.fn((s: AgentSession) => s.state !== 'Stopped');
 
   const onEvent = vi.fn((s: AgentSession, h: AgentEventHandler) => {
     const existing = handlers.get(s) ?? [];
@@ -183,6 +193,27 @@ function makeAgent() {
   });
 
   const interrupt = vi.fn(() => {});
+  const handleCommand = vi.fn(
+    async (
+      s: AgentSession | undefined,
+      command: AgentCommandEnvelope,
+    ): Promise<AgentCommandResult> => {
+      if (command.handlerKey === 'new') {
+        if (s) s.state = 'Stopped';
+        return {
+          status: 'handled',
+          message: '[new session ready]',
+          updatedAgentSessionId: null,
+        };
+      }
+      if (command.handlerKey === 'stop') {
+        if (!s) return { status: 'rejected', message: '[no active output]' };
+        interrupt(s);
+        return { status: 'handled', message: '[stop requested]' };
+      }
+      return { status: 'handled', message: `[${command.handlerKey} handled]` };
+    },
+  );
 
   const runtime: AgentRuntime = {
     name: () => 'mock-agent',
@@ -191,6 +222,7 @@ function makeAgent() {
     stopSession,
     isAlive,
     sendInput,
+    handleCommand,
     onEvent,
     interrupt,
   };
@@ -202,6 +234,7 @@ function makeAgent() {
     isAlive,
     onEvent,
     sendInput,
+    handleCommand,
     queueEvents(events: AgentEvent[]): void {
       queue.push({ events, delayMs: 0 });
     },
@@ -257,6 +290,113 @@ const PLATFORM_AUTH_ALLOW_U1 = {
     requireMentionOrSlash: true,
   },
 };
+
+const COMMAND_SCOPE: CommandRegistrationScope = {
+  platformName: 'discord-main',
+  platformType: 'discord',
+  nativeScope: { kind: 'global' },
+};
+
+const CODEX_NEW_COMMAND: CommandDescriptor = {
+  canonicalId: 'agent:codex:new',
+  owner: { type: 'agent', agentOwner: 'codex' },
+  localName: 'new',
+  summary: 'Start a new Codex conversation',
+  options: [],
+  handlerKey: 'new',
+  applicability: { requiredCapabilities: ['slash-command-registration'] },
+  legacyNames: [],
+};
+
+const CODEX_STOP_COMMAND: CommandDescriptor = {
+  canonicalId: 'agent:codex:stop',
+  owner: { type: 'agent', agentOwner: 'codex' },
+  localName: 'stop',
+  summary: 'Stop the current agent output',
+  options: [],
+  handlerKey: 'stop',
+  applicability: {
+    requiredCapabilities: ['slash-command-registration'],
+  },
+  legacyNames: [],
+};
+
+const CODEX_INSPECT_COMMAND: CommandDescriptor = {
+  canonicalId: 'agent:codex:inspect',
+  owner: { type: 'agent', agentOwner: 'codex' },
+  localName: 'inspect',
+  summary: 'Inspect through Codex',
+  options: [],
+  handlerKey: 'inspect',
+  applicability: {
+    requiredCapabilities: ['slash-command-registration'],
+  },
+  legacyNames: [],
+};
+
+const DAEMON_KILL_COMMAND: CommandDescriptor = {
+  canonicalId: 'daemon:kill',
+  owner: { type: 'daemon' },
+  localName: 'kill',
+  summary: 'Terminate the current Nexus routing session',
+  options: [],
+  handlerKey: 'kill',
+  applicability: {
+    requiredCapabilities: ['slash-command-registration'],
+  },
+  legacyNames: [],
+};
+
+const DAEMON_RELOAD_CONFIG_COMMAND: CommandDescriptor = {
+  canonicalId: 'daemon:reload-config',
+  owner: { type: 'daemon' },
+  localName: 'reload-config',
+  summary: 'Reload config.json and apply runtime-safe fields',
+  options: [],
+  handlerKey: 'reload-config',
+  applicability: {
+    requiredCapabilities: ['slash-command-registration'],
+  },
+  legacyNames: [],
+};
+
+function makeCommandEvent(
+  commandName: string,
+  overrides: Partial<NormalizedEvent> = {},
+): NormalizedEvent {
+  return makeEvent('', {
+    type: 'command',
+    text: undefined,
+    command: {
+      name: commandName,
+      args: {},
+      registrationScope: COMMAND_SCOPE,
+    },
+    rawContentType: 'discord:interaction',
+    ...overrides,
+  });
+}
+
+function makeActiveRegistry(
+  extraDescriptors: readonly CommandDescriptor[] = [],
+): ActiveCommandRegistry {
+  const registry = new ActiveCommandRegistry();
+  const plan = buildCommandRegistrationPlan({
+    descriptors: [
+      CODEX_NEW_COMMAND,
+      CODEX_STOP_COMMAND,
+      DAEMON_KILL_COMMAND,
+      ...extraDescriptors,
+    ],
+    scope: COMMAND_SCOPE,
+    capabilities: { ...platformCaps, supportsSlashCommands: true },
+    policy: DEFAULT_COMMAND_NAME_POLICY,
+    agentOwnersInScope: ['codex'],
+    generation: 'g-command',
+  });
+  registry.activate(plan, new Date(0));
+  return registry;
+}
 
 // ----- tests -----
 
@@ -438,6 +578,36 @@ describe('Engine', () => {
     expect(platform.send).toHaveBeenCalledTimes(1);
     const out = platform.send.mock.calls[0]![1] as OutboundMessage;
     expect(out.text).toBe('[new session ready]');
+  });
+
+  it('textPrefixes.newSession=false 时 /new 文本按普通 prompt 转给 agent', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+      textPrefixes: { newSession: false },
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-new' }),
+      ev('text_final', { text: 'answer' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('/new'));
+
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect(agent.startSession).toHaveBeenCalledTimes(1);
+    expect(agent.sendInput).toHaveBeenCalledTimes(1);
+    expect((agent.sendInput.mock.calls[0]![1] as AgentInput).text).toBe('/new');
   });
 
   it('同 SessionKey 并发：第二条 dispatch 必须串行在第一条之后，看到首轮 agentSessionId 作 resume', async () => {
@@ -1131,6 +1301,1208 @@ describe('Engine', () => {
         initiatorUserId: 'U1',
       })?.agentSessionId,
     ).toBe('claude-sid');
+  });
+
+  it('command event 通过 active reverse map 路由 agent /new，不从 commandName 拆 owner', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeCommandEvent('new'));
+
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      '[new session ready]',
+    );
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(codex.handleCommand).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        canonicalId: 'agent:codex:new',
+        localName: 'new',
+        handlerKey: 'new',
+      }),
+    );
+    expect(codex.sendInput).not.toHaveBeenCalled();
+  });
+
+  it('agent /stop 立即转发给 route 命中的 runtime，不等待当前 turn 完成', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      daemonCommandHandlerKeys: ['kill'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    codex.queueEventsAfter(
+      [
+        ev('text_final', { text: 'late reply' }),
+        ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+      ],
+      30,
+    );
+    const runningTurn = dispatchHandler(makeEvent('long task'));
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    await dispatchHandler(makeCommandEvent('stop'));
+
+    expect(codex.handleCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        canonicalId: 'agent:codex:stop',
+        localName: 'stop',
+        handlerKey: 'stop',
+      }),
+    );
+    expect(platform.send).toHaveBeenCalledWith(
+      expect.objectContaining({ platformName: 'discord-main' }),
+      expect.objectContaining({ text: '[stop requested]' }),
+    );
+
+    await runningTurn;
+  });
+
+  it('queued agent command 等待同 RoutingSession 当前 turn 完成', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    codex.queueEventsAfter(
+      [
+        ev('text_final', { text: 'done' }),
+        ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+      ],
+      30,
+    );
+    const runningTurn = dispatchHandler(makeEvent('long task'));
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    const queuedNew = dispatchHandler(makeCommandEvent('new'));
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    expect(codex.handleCommand).not.toHaveBeenCalled();
+
+    await runningTurn;
+    await queuedNew;
+
+    expect(codex.handleCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        canonicalId: 'agent:codex:new',
+        handlerKey: 'new',
+      }),
+    );
+  });
+
+  it('agent /new 清除 inactive active handle，下一条消息重新 startSession', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-before-new' }),
+      ev('text_final', { text: 'first' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('hello'));
+
+    await dispatchHandler(makeCommandEvent('new'));
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-after-new' }),
+      ev('text_final', { text: 'second' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('again'));
+
+    expect(codex.startSession).toHaveBeenCalledTimes(2);
+    expect(
+      store.get({
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'C1',
+        initiatorUserId: 'U1',
+      })?.agentSessionId,
+    ).toBe('sid-after-new');
+  });
+
+  it('immediate agent command without active session does not create a phantom AgentSession', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    const result = await dispatchHandler(makeCommandEvent('stop'));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(codex.handleCommand).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({ canonicalId: 'agent:codex:stop' }),
+    );
+    expect(platform.send).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      commandResponse: {
+        text: '[no active output]',
+        ephemeral: true,
+      },
+    });
+  });
+
+  it('agent command 不做 handler 校验，按 handlerKey 和参数转发给当前 backend', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([CODEX_INSPECT_COMMAND]),
+      daemonCommandHandlerKeys: ['kill'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeCommandEvent('codex-inspect', {
+      command: {
+        name: 'codex-inspect',
+        args: { target: 'src/index.ts' },
+        registrationScope: COMMAND_SCOPE,
+      },
+    }));
+
+    expect(codex.sendInput).not.toHaveBeenCalled();
+    expect(codex.handleCommand).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        canonicalId: 'agent:codex:inspect',
+        localName: 'inspect',
+        handlerKey: 'inspect',
+        args: { target: 'src/index.ts' },
+        routingSession: expect.objectContaining({
+          platformName: 'discord-main',
+          platformType: 'discord',
+          channelId: 'C1',
+          userId: 'U1',
+        }),
+      }),
+    );
+  });
+
+  it('daemon /nexus-kill 停止活跃 session 并清除 resume store', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      daemonCommandHandlerKeys: ['kill'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-123' }),
+      ev('text_final', { text: 'first' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('hello'));
+
+    await dispatchHandler(makeCommandEvent('nexus-kill'));
+
+    expect(codex.stopSession).toHaveBeenCalledTimes(1);
+    expect(store.get({
+      platformName: 'discord-main',
+      platform: 'discord',
+      channelId: 'C1',
+      initiatorUserId: 'U1',
+    })).toBeUndefined();
+    expect(platform.send).toHaveBeenCalledWith(
+      expect.objectContaining({ platformName: 'discord-main' }),
+      expect.objectContaining({ text: '[session killed]' }),
+    );
+  });
+
+  it('daemon /nexus-reload-config 把注入 reloader 的成功结果作为 ephemeral response 返回', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const configReloader = vi.fn(async () => ({
+      status: 'reloaded' as const,
+      message: '[config reloaded] applied: bindings, auth, ui, text prefixes',
+    }));
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_RELOAD_CONFIG_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'reload-config'],
+      configReloader,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('nexus-reload-config'));
+
+    expect(configReloader).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      commandResponse: {
+        text: '[config reloaded] applied: bindings, auth, ui, text prefixes',
+        ephemeral: true,
+      },
+    });
+    expect(platform.send).not.toHaveBeenCalled();
+  });
+
+  it('daemon /nexus-reload-config reloader 报失败时把错误文本返回触发者', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const configReloader = vi.fn(async () => ({
+      status: 'failed' as const,
+      message: '[config reload failed] previous config kept:\nconfig.json 不是合法 JSON',
+    }));
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_RELOAD_CONFIG_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'reload-config'],
+      configReloader,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('nexus-reload-config'));
+
+    expect(result).toEqual({
+      commandResponse: {
+        text: '[config reload failed] previous config kept:\nconfig.json 不是合法 JSON',
+        ephemeral: true,
+      },
+    });
+  });
+
+  it('daemon /nexus-reload-config reloader 抛错时返回通用失败反馈并记日志', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const mockLogger = makeMockLogger();
+    const configReloader = vi.fn(async () => {
+      throw new Error('boom');
+    });
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_RELOAD_CONFIG_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'reload-config'],
+      configReloader,
+      logger: mockLogger,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('nexus-reload-config'));
+
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'Command failed.',
+        ephemeral: true,
+      },
+    });
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    expect(errorCalls.find(([, msg]) => msg === 'config_reload_failed')).toBeDefined();
+  });
+
+  it('daemon /nexus-reload-config 未注入 reloader 时返回未就绪反馈', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const mockLogger = makeMockLogger();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_RELOAD_CONFIG_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'reload-config'],
+      logger: mockLogger,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('nexus-reload-config'));
+
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'Slash commands are not ready yet. Try again later.',
+        ephemeral: true,
+      },
+    });
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    expect(errorCalls.find(([, msg]) => msg === 'command_handler_missing')).toBeDefined();
+  });
+
+  it('applyRuntimeUpdate 生效后按新 routing table 与 auth 处理后续事件', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    engine.applyRuntimeUpdate({
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex-c2',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C2'] } },
+        },
+      ],
+      platformAuth: {
+        allowlist: {
+          userIds: ['U2'],
+          roleIds: [],
+          allowedGuildIds: [],
+          allowedChannelIds: [],
+          allowDM: true,
+          requireMentionOrSlash: true,
+        },
+      },
+      toolMessageMode: 'append',
+      newSessionTextPrefix: true,
+    });
+
+    // 旧表里 C1 的 U1：新 auth 不再放行
+    await dispatchHandler(makeEvent('hello'));
+    expect(codex.sendInput).not.toHaveBeenCalled();
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-1' }),
+      ev('text_final', { text: 'hi' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(
+      makeEvent('hello', {
+        sessionKey: { platform: 'discord', channelId: 'C2', initiatorUserId: 'U2' },
+        initiator: { userId: 'U2', displayName: 'U2', isBot: false },
+      }),
+    );
+    expect(codex.sendInput).toHaveBeenCalledTimes(1);
+  });
+
+  it('applyRuntimeUpdate 切到 role-only allowlist 后按 role 维度判定', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    engine.applyRuntimeUpdate({
+      routingTable,
+      platformAuth: {
+        allowlist: {
+          userIds: [],
+          roleIds: ['R1'],
+          allowedGuildIds: [],
+          allowedChannelIds: [],
+          allowDM: true,
+          requireMentionOrSlash: true,
+        },
+      },
+      toolMessageMode: 'append',
+      newSessionTextPrefix: true,
+    });
+
+    // 旧 userIds 用户、无 role：拒绝
+    await dispatchHandler(makeEvent('hello', { guildId: 'G1' }));
+    expect(codex.sendInput).not.toHaveBeenCalled();
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-1' }),
+      ev('text_final', { text: 'hi' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(
+      makeEvent('hello', {
+        guildId: 'G1',
+        initiatorRoleIds: ['R1'],
+        sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: 'U9' },
+        initiator: { userId: 'U9', displayName: 'U9', isBot: false },
+      }),
+    );
+    expect(codex.sendInput).toHaveBeenCalledTimes(1);
+  });
+
+  it('turn 进行中 applyRuntimeUpdate 切换 toolMessages 不影响当前 turn 渲染', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+      toolMessages: { mode: 'append' },
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    codex.queueEventsAfter(
+      [
+        ev('session_started', { agentSessionId: 'sid-1' }),
+        ev('tool_call_started', {
+          callId: 'tc-1',
+          toolName: 'Bash',
+          inputSummary: 'ls',
+        }),
+        ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+      ],
+      40,
+    );
+    const dispatchPromise = dispatchHandler(makeEvent('hello'));
+    // turn 已开始（snapshot 应已取），事件 40ms 后才到——窗口内切 compact
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    engine.applyRuntimeUpdate({
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      toolMessageMode: 'compact',
+      newSessionTextPrefix: true,
+    });
+    await dispatchPromise;
+
+    // 当前 turn 仍按 append 渲染：tool message 独立发送、不补 [empty response]
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    const texts = platform.send.mock.calls.map(
+      (call) => (call[1] as OutboundMessage).text,
+    );
+    expect(texts[0]).toContain('Bash');
+    expect(texts).not.toContain('[empty response]');
+  });
+
+  it('applyRuntimeUpdate 关闭 newSession text prefix 后 /new 文本按普通 prompt 转发', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    engine.applyRuntimeUpdate({
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      toolMessageMode: 'append',
+      newSessionTextPrefix: false,
+    });
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-1' }),
+      ev('text_final', { text: 'hi' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('/new'));
+
+    expect(codex.sendInput).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ text: '/new' }),
+    );
+  });
+
+  it('command event scope 与当前 Engine platform 不一致时 fail-closed', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('new', {
+      command: {
+        name: 'new',
+        args: {},
+        registrationScope: {
+          ...COMMAND_SCOPE,
+          platformName: 'discord-side',
+        },
+      },
+    }));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(platform.send).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'This command is not available in this channel.',
+        ephemeral: true,
+      },
+    });
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    expect(errorCalls.find(([, msg]) => msg === 'command_scope_mismatch')).toBeDefined();
+  });
+
+  it('command event 当前 channel 未命中 binding 时返回用户可见拒绝反馈', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('new', {
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'C2',
+        initiatorUserId: 'U1',
+      },
+    }));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(codex.handleCommand).not.toHaveBeenCalled();
+    expect(platform.send).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'This command is not available in this channel.',
+        ephemeral: true,
+      },
+    });
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    expect(errorCalls.find(([, msg]) => msg === 'command_agent_binding_miss')).toBeDefined();
+  });
+
+  it('command event 未命中 active reverse map 时返回用户可见拒绝反馈', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('discord-reply-mode'));
+
+    expect(codex.handleCommand).not.toHaveBeenCalled();
+    expect(platform.send).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'This command is not available in this channel.',
+        ephemeral: true,
+      },
+    });
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    expect(errorCalls.find(([, msg]) => msg === 'command_reverse_map_miss')).toBeDefined();
+  });
+
+  it('daemon command handler 缺失时返回用户可见未就绪反馈', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('nexus-kill'));
+
+    expect(codex.handleCommand).not.toHaveBeenCalled();
+    expect(platform.send).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'Slash commands are not ready yet. Try again later.',
+        ephemeral: true,
+      },
+    });
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    expect(errorCalls.find(([, msg]) => msg === 'command_handler_missing')).toBeDefined();
+  });
+
+  it('agent command handler 抛错时返回用户可见失败反馈', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    codex.handleCommand.mockRejectedValueOnce(new Error('boom'));
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('new'));
+
+    expect(platform.send).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'Command failed.',
+        ephemeral: true,
+      },
+    });
+    const errorCalls = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls;
+    expect(errorCalls.find(([, msg]) => msg === 'agent_command_failed')).toBeDefined();
+  });
+
+  it('command event user 不在 platform auth allowlist 时 auth_denied 且不调用 agent command', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: {
+        allowlist: {
+          userIds: ['U-allowed'],
+          roleIds: [],
+          allowedGuildIds: [],
+          allowedChannelIds: [],
+          allowDM: true,
+          requireMentionOrSlash: true,
+        },
+      },
+      commandRegistry: makeActiveRegistry(),
+      logger: mockLogger,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('new', {
+      initiator: { userId: 'U-denied', displayName: 'denied', isBot: false },
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'C1',
+        initiatorUserId: 'U-denied',
+      },
+    }));
+
+    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(codex.sendInput).not.toHaveBeenCalled();
+    expect(codex.handleCommand).not.toHaveBeenCalled();
+    expect(platform.send).not.toHaveBeenCalled();
+    expect(store.size).toBe(0);
+    expect(result).toEqual({
+      commandResponse: {
+        text: 'You are not allowed to use this command.',
+        ephemeral: true,
+      },
+    });
+    const infoCalls = (mockLogger.info as ReturnType<typeof vi.fn>).mock.calls;
+    const authLog = infoCalls.find(([, msg]) => msg === 'auth_denied');
+    expect(authLog).toBeDefined();
+    expect(authLog![0]).toMatchObject({
+      platformName: 'discord-main',
+      channelId: 'C1',
+      userId: 'U-denied',
+      reason: 'user_not_allowed',
+    });
   });
 
   it('两个同 type Engine 共享 SessionStore 时，同 channel/user 仍按 platformName 隔离', async () => {

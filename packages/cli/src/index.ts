@@ -2,17 +2,28 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
+  ActiveCommandRegistry,
   Engine,
   InMemoryIdempotencyStore,
   SessionStore,
   createLogger,
+  daemonCommandDescriptors,
   type RoutingEntry,
 } from '@agent-nexus/daemon';
-import { createDiscordPlatform } from '@agent-nexus/platform-discord';
+import {
+  DISCORD_CAPABILITIES,
+  createDiscordPlatform,
+} from '@agent-nexus/platform-discord';
 import { createAgentRegistry } from './agent.js';
+import { buildCliCommandRegistrationPlan } from './command-registry.js';
+import {
+  createConfigReloader,
+  type ConfigReloadTarget,
+} from './config-reload.js';
 import {
   ConfigError,
   SecretsPermissionError,
+  buildRoutingTable,
   loadConfig,
   loadSecret,
 } from './config.js';
@@ -58,24 +69,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const platformsByName = new Map(
-    config.platforms.map((platform) => [platform.name, platform]),
-  );
-  const routingTable: RoutingEntry[] = config.bindings.map((binding) => {
-    const platform = platformsByName.get(binding.platformName);
-    if (!platform) {
-      throw new ConfigError(
-        `binding "${binding.name}" 引用了不存在的 platform "${binding.platformName}"`,
-      );
-    }
-    return {
-      bindingName: binding.name,
-      platformName: binding.platformName,
-      platformType: platform.type,
-      agentName: binding.agentName,
-      match: binding.match,
-    };
-  });
+  const routingTable: RoutingEntry[] = buildRoutingTable(config);
   logger.info(
     {
       platforms: config.platforms.map((platform) => platform.name),
@@ -86,8 +80,18 @@ async function main(): Promise<void> {
   );
 
   const sessionStore = new SessionStore();
+  const commandRegistry = new ActiveCommandRegistry();
   const idempotencyStore = new InMemoryIdempotencyStore();
   const engines: Engine[] = [];
+  // targets 在下面循环里随 engine 创建逐个填充；reloader 调用时才读取
+  const configReloadTargets: ConfigReloadTarget[] = [];
+  const configReloader = createConfigReloader({
+    initialConfig: config,
+    load: loadConfig,
+    targets: configReloadTargets,
+    runningAgentNames: agents.map((agent) => agent.agentName),
+    logger,
+  });
 
   for (const platformConfig of config.platforms) {
     logger.info(
@@ -124,6 +128,14 @@ async function main(): Promise<void> {
     if (!token) {
       throw new ConfigError(`secret ref "${platformConfig.tokenRef}" 未加载`);
     }
+    const commandPlan = buildCliCommandRegistrationPlan({
+      config,
+      agents,
+      platformName: platformConfig.name,
+      capabilities: DISCORD_CAPABILITIES,
+      generation: `${platformConfig.name}:${Date.now()}`,
+    });
+    const commandRegistrationConfig = config.daemon.commandRegistry.registration;
     const platform = createDiscordPlatform({
       token,
       botUserId: platformConfig.botUserId,
@@ -132,24 +144,55 @@ async function main(): Promise<void> {
       inboundAllowedUserIds: null,
       testGuildId: platformConfig.testGuildId,
       logger,
+      commandRegistration: {
+        plan: commandPlan,
+        apply: (port, plan) =>
+          commandRegistry.applyRegistrationPlan(plan, {
+            port,
+            logger,
+            activatedAt: new Date(),
+            enabled: commandRegistrationConfig.enabled,
+            timeoutMs: commandRegistrationConfig.applyTimeoutMs,
+            retry: commandRegistrationConfig.retry,
+          }),
+      },
     });
 
-    engines.push(
-      new Engine({
-        platform,
-        platformName: platformConfig.name,
-        platformType: platformConfig.type,
-        platformAuth: platformConfig.auth,
-        agents,
-        routingTable,
-        idempotencyStore,
-        logger,
-        sessionStore,
-        toolMessages: {
-          mode: config.ui.toolMessages,
-        },
-      }),
-    );
+    const engine = new Engine({
+      platform,
+      platformName: platformConfig.name,
+      platformType: platformConfig.type,
+      platformAuth: platformConfig.auth,
+      commandRegistry,
+      daemonCommandHandlerKeys: daemonCommandDescriptors.map(
+        (descriptor) => descriptor.handlerKey,
+      ),
+      configReloader,
+      agents,
+      routingTable,
+      idempotencyStore,
+      logger,
+      sessionStore,
+      toolMessages: {
+        mode: config.ui.toolMessages,
+      },
+      textPrefixes: {
+        newSession: config.daemon.commandRegistry.textPrefixes.newSession,
+      },
+    });
+    engines.push(engine);
+    configReloadTargets.push({
+      platformName: platformConfig.name,
+      applyRuntimeUpdate: (update) => {
+        engine.applyRuntimeUpdate(update);
+        // adapter 内部命令（/discord-reply-mode）授权跟随热替换；
+        // chat 授权由 daemon platform auth 全维度判定（null = inbound guard 关闭，与启动语义一致）
+        platform.updateAuth({
+          allowedUserIds: update.platformAuth.allowlist.userIds,
+          inboundAllowedUserIds: null,
+        });
+      },
+    });
   }
 
   await Promise.all(engines.map((engine) => engine.start()));

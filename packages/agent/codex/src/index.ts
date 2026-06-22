@@ -1,4 +1,7 @@
 export {
+  codexCommandDescriptors,
+} from './command-descriptors.js';
+export {
   CodexConfigError,
   DEFAULT_BIN,
   DEFAULT_SANDBOX,
@@ -16,6 +19,8 @@ export {
 } from './probe.js';
 
 import type {
+  AgentCommandEnvelope,
+  AgentCommandResult,
   AgentCapabilitySet,
   AgentEvent,
   AgentEventHandler,
@@ -612,6 +617,21 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
     });
   }
 
+  function requestInterrupt(session: AgentSession): boolean {
+    const state = getState(session);
+    const turn = state.currentTurn;
+    const proc = state.proc;
+    if (!proc || !turn || turn.terminalEmitted) {
+      logger.debug({ sessionKey: session.key }, 'codex_interrupt_no_inflight');
+      return false;
+    }
+    const signaled = proc.kill('SIGINT');
+    if (!signaled) return false;
+    finishTurn(state, 'user_interrupt', 'runtime-synthesized');
+    beginCleanupTimers(session, state, proc);
+    return true;
+  }
+
   return {
     name(): string {
       return 'codex';
@@ -693,6 +713,44 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
       await work;
     },
 
+    async handleCommand(
+      session: AgentSession | undefined,
+      command: AgentCommandEnvelope,
+    ): Promise<AgentCommandResult> {
+      if (command.handlerKey === 'new') {
+        if (session) {
+          const state = getState(session);
+          state.stopped = true;
+          session.state = 'Stopped';
+          state.proc?.kill('SIGTERM');
+          clearCleanupTimers(state);
+          if (state.currentTurn && !state.currentTurn.terminalEmitted) {
+            finishTurn(state, 'user_interrupt', 'runtime-synthesized');
+          }
+          emitEvent(state, 'session_stopped', command.traceId, {
+            reason: 'user_stop',
+          });
+          cleanupAfterTurn(session, state);
+        }
+        return {
+          status: 'handled',
+          message: '[new session ready]',
+          updatedAgentSessionId: null,
+        };
+      }
+
+      if (command.handlerKey === 'stop') {
+        if (!session) {
+          return { status: 'rejected', message: '[no active output]' };
+        }
+        return requestInterrupt(session)
+          ? { status: 'handled', message: '[stop requested]' }
+          : { status: 'rejected', message: '[no active output]' };
+      }
+
+      return { status: 'unsupported', message: '[unsupported command]' };
+    },
+
     onEvent(session: AgentSession, handler: AgentEventHandler): void {
       const state = getState(session);
       state.emitter.on('event', (event: AgentEvent) => {
@@ -710,17 +768,7 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
     },
 
     interrupt(session: AgentSession): void {
-      const state = getState(session);
-      const turn = state.currentTurn;
-      const proc = state.proc;
-      if (!proc || !turn || turn.terminalEmitted) {
-        logger.debug({ sessionKey: session.key }, 'codex_interrupt_no_inflight');
-        return;
-      }
-      const signaled = proc.kill('SIGINT');
-      if (!signaled) return;
-      finishTurn(state, 'user_interrupt', 'runtime-synthesized');
-      beginCleanupTimers(session, state, proc);
+      requestInterrupt(session);
     },
   };
 }

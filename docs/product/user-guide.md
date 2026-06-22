@@ -92,6 +92,29 @@ npm install -g packages/cli/agent-nexus-cli-*.tgz
       }
     }
   ],
+  "daemon": {
+    "commandRegistry": {
+      "registration": {
+        "enabled": true,
+        "applyTimeoutMs": 30000,
+        "retry": {
+          "maxAttempts": 3,
+          "backoffMs": 1000
+        }
+      },
+      "aliases": {
+        "singleAgent": {
+          "enabled": true
+        },
+        "legacy": {
+          "replyMode": true
+        }
+      },
+      "textPrefixes": {
+        "newSession": true
+      }
+    }
+  },
   "ui": {
     "toolMessages": "append"
   },
@@ -117,7 +140,7 @@ chmod 600 ~/.agent-nexus/config.json
 | `platforms[].auth.allowlist.allowedGuildIds` | 否 | 限定可用 server/guild；`[]` 表示不按 guild 收窄 |
 | `platforms[].auth.allowlist.allowedChannelIds` | 否 | 限定可用 channel/thread；`[]` 表示不按 channel 收窄 |
 | `platforms[].auth.allowlist.allowDM` | 否 | 默认 `true`；DM 仍必须命中 `userIds` |
-| `platforms[].testGuildId` | 否 | 开发时把 `/reply-mode` 限定注册到一个 guild，避免全局 slash command 缓存延迟 |
+| `platforms[].testGuildId` | 否 | 开发时把 slash command 限定注册到一个 guild，避免全局 slash command 缓存延迟 |
 | `agents[].name` | 是 | agent 配置稳定名称；binding 用它引用该 agent |
 | `agents[].backend` | 是 | `claudecode` 或 `codex` |
 | `agents[].claudeCode.workingDir` | backend 为 `claudecode` 时是 | Claude Code 默认工作目录 |
@@ -133,6 +156,12 @@ chmod 600 ~/.agent-nexus/config.json
 | `bindings[].platformName` | 是 | 引用 `platforms[].name` |
 | `bindings[].agentName` | 是 | 引用 `agents[].name` |
 | `bindings[].match.discord.channelIds` | 是 | 该 binding 匹配的 Discord channel/thread id 列表 |
+| `daemon.commandRegistry.registration.enabled` | 否 | 默认 `true`；设为 `false` 时不 apply 远端 slash command 注册计划，本地 command dispatch 保持 fail-closed |
+| `daemon.commandRegistry.registration.applyTimeoutMs` | 否 | 默认 `30000`；注册计划 apply 超时毫秒数 |
+| `daemon.commandRegistry.registration.retry.maxAttempts` / `backoffMs` | 否 | 默认 `3` / `1000`；启动时注册计划 apply 的重试策略 |
+| `daemon.commandRegistry.aliases.singleAgent.enabled` | 否 | 默认 `true`；控制裸 `/new` / `/stop` single-agent slash alias，不影响 `/codex-new` / `/codex-stop` / `/claudecode-new` / `/claudecode-stop` |
+| `daemon.commandRegistry.aliases.legacy.replyMode` | 否 | 默认 `true`；控制 legacy `/reply-mode` 是否注册，不影响 `/discord-reply-mode` |
+| `daemon.commandRegistry.textPrefixes.newSession` | 否 | 默认 `true`；控制 `@bot /new` 文本前缀，不影响 slash command |
 | `ui.toolMessages` | 否 | 默认 `append`；工具调用追加为独立消息并在结果到达时编辑该工具消息。设为 `compact` 可回到旧式紧凑显示 |
 | `log.level` | 否 | `trace` / `debug` / `info` / `warn` / `error` / `fatal`，默认 `info` |
 
@@ -255,23 +284,52 @@ agent-nexus
 @bot 请读一下 README，概括当前项目怎么运行
 ```
 
-会话按 `(channelId, userId)` 隔离。同一个用户在同一个频道里继续 `@bot` 会复用活跃 Claude Code session。
+会话按 `(channelId, userId)` 隔离。同一个用户在同一个频道里继续 `@bot` 会复用 daemon RoutingSession；具体 agent conversation 如何延续由绑定的 agent package 处理。
 
 重置会话：
 
 ```text
 @bot /new
 @bot /new 从这个问题重新开始
+/claudecode-new  # 路由给 Claude Code agent package
+/codex-new       # 路由给 Codex agent package
 ```
+
+`/claudecode-new` 和 `/codex-new` 是 agent slash command 的稳定名称，按当前频道 binding 路由到对应 backend。每个 `-new` 命令只在对应 backend 已配置且在该 Discord 注册 scope 有 binding 时注册；只启用一个 backend 时只会看到对应的那一个。`/new` 只有在同一个 Discord 注册 scope 里只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时才会作为 slash command alias 出现；多 backend 共用同一个 scope 时不会注册裸 `/new`，避免歧义。`@bot /new <prompt>` 是文本前缀形式，可以在重置后立即带 prompt 开新一轮；可用 `daemon.commandRegistry.textPrefixes.newSession=false` 禁用。
+
+中断和终止：
+
+```text
+/claudecode-stop  # 路由给 Claude Code agent package
+/codex-stop       # 路由给 Codex agent package
+/stop             # 单 agent scope 下的便捷 alias
+/nexus-kill       # daemon 直接终止当前 RoutingSession
+```
+
+`new` / `stop` 是 agent command，daemon 只完成鉴权、reverse-map、binding route 和 envelope 转发；重置、停止、排队或拒绝等具体语义由对应 agent package/runtime 决定。`/nexus-kill` 是 daemon command，会终止当前 RoutingSession，并清掉后续 resume 需要的 opaque agent conversation ref。
+
+当前除 `/discord-reply-mode` / `/reply-mode` 外，agent / daemon slash command 的成功 ack 会作为普通频道消息发送；如果 command registry 尚未激活、当前频道没有匹配 binding，或调用方未通过 allowlist，Discord 会显示一条仅调用方可见的 ephemeral 反馈。排障时看 daemon 日志中的 `command_*` / `auth_denied` / `command_registration_*` 事件。
 
 切换触发模式：
 
 ```text
+/discord-reply-mode mode:mention
+/discord-reply-mode mode:all
 /reply-mode mode:mention
 /reply-mode mode:all
 ```
 
+`/discord-reply-mode` 是稳定名称；`/reply-mode` 是迁移期 legacy alias，可用 `daemon.commandRegistry.aliases.legacy.replyMode=false` 停止注册。
+
 `all` 模式只影响消息触发条件，不绕过 `allowedUserIds`。不在 allowlist 里的用户仍不能驱动 bot。
+
+重载配置：
+
+```text
+/nexus-reload-config
+```
+
+`/nexus-reload-config` 是 daemon command，重新加载 `config.json` 并热应用 `bindings[]`、`platforms[].auth`、`ui.toolMessages` 和 `daemon.commandRegistry.textPrefixes`；解析或校验失败时保留当前生效配置，错误以 ephemeral 反馈返回调用方。`platforms[]` 其余字段、`agents[]`、`log` 等变更仍需重启进程生效，reload 成功反馈会带提示。完整语义见 [`config-routing.md` §配置热重载](../dev/spec/config-routing.md#配置热重载)。
 
 ## 工具与安全
 
@@ -281,6 +339,8 @@ agent-nexus
 - agent-nexus 是本机进程。它能访问的文件和网络能力取决于本机运行环境与 Claude Code 工作目录。
 
 ## 停止
+
+会话内 agent command 用 `/stop`、`/codex-stop` 或 `/claudecode-stop`；要直接终止当前 Nexus route 用 `/nexus-kill`。
 
 前台运行时按 `Ctrl-C`。进程收到 `SIGINT` / `SIGTERM` 后会调用 engine stop 并断开 Discord。
 

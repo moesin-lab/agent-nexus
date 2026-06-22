@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Message } from 'discord.js';
+import { ApplicationCommandOptionType, type Message } from 'discord.js';
 import {
   buildBotMentionRegex,
   buildSlices,
@@ -11,6 +11,7 @@ import {
 } from './index.js';
 
 const discordMock = vi.hoisted(() => ({
+  applicationCommands: undefined as undefined | { set: ReturnType<typeof vi.fn> },
   channelsFetch: vi.fn(),
   clientDestroy: vi.fn(async () => undefined),
   clientLogin: vi.fn(async () => 'logged-in'),
@@ -26,7 +27,7 @@ vi.mock('discord.js', async (importOriginal) => {
       destroy: discordMock.clientDestroy,
       login: discordMock.clientLogin,
       on: discordMock.clientOn,
-      application: { commands: undefined },
+      application: { commands: discordMock.applicationCommands },
       user: { id: '900000000000000001', tag: 'bot#0000' },
     })),
   };
@@ -50,6 +51,7 @@ const ALLOWED: readonly string[] = [OTHER_ID, 'U7', 'U-init', 'U_X'];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  discordMock.applicationCommands = undefined;
 });
 
 function makeLogger() {
@@ -62,6 +64,14 @@ function makeLogger() {
     fatal: vi.fn(),
     child: vi.fn(),
   };
+}
+
+function registeredHandler(eventName: string) {
+  const call = discordMock.clientOn.mock.calls.find(
+    ([name]) => name === eventName,
+  );
+  if (!call) throw new Error(`missing handler for ${eventName}`);
+  return call[1] as (...args: unknown[]) => unknown;
 }
 
 function makeMsg(overrides: {
@@ -116,6 +126,465 @@ function makePlatform() {
     allowedUserIds: ALLOWED,
   });
 }
+
+describe('command registry integration', () => {
+  it('ready 时用外部 command registration plan apply，而不是 adapter 内置 legacy 注册', async () => {
+    const set = vi.fn(async () => undefined);
+    discordMock.applicationCommands = { set };
+    const apply = vi.fn(async () => ({ status: 'applied' as const, generation: 'g1' }));
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      commandRegistration: {
+        plan: {
+          scope: {
+            platformName: 'discord-main',
+            platformType: 'discord',
+            nativeScope: { kind: 'global' },
+          },
+          commands: [],
+          reverseMap: { entries: {} },
+          generation: 'g1',
+        },
+        apply,
+      },
+    });
+
+    await platform.start(vi.fn());
+    const ready = registeredHandler('ready');
+    ready();
+    await Promise.resolve();
+
+    expect(apply).toHaveBeenCalledTimes(1);
+    const [port, plan] = apply.mock.calls[0]!;
+    expect(plan.generation).toBe('g1');
+    await port.applyCommandPlan(plan);
+    expect(set).toHaveBeenCalledWith([], undefined);
+  });
+
+  it('ready 时 command registration apply 返回 failed 会明确记录未激活', async () => {
+    const logger = makeLogger();
+    const apply = vi.fn(async () => ({
+      status: 'failed' as const,
+      error: {
+        code: 'command_registration_failed' as const,
+        message: 'remote failed',
+      },
+    }));
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger,
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      commandRegistration: {
+        plan: {
+          scope: {
+            platformName: 'discord-main',
+            platformType: 'discord',
+            nativeScope: { kind: 'global' },
+          },
+          commands: [],
+          reverseMap: { entries: {} },
+          generation: 'g1',
+        },
+        apply,
+      },
+    });
+
+    await platform.start(vi.fn());
+    const ready = registeredHandler('ready');
+    ready();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generation: 'g1',
+        errorCode: 'command_registration_failed',
+        errorMessage: 'remote failed',
+      }),
+      'command_registration_apply_failed',
+    );
+  });
+
+  it('把非 reply-mode chat input slash command 转成 normalized command event', async () => {
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      testGuildId: 'G-dev',
+    });
+    const handler = vi.fn(async () => undefined);
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    const deferReply = vi.fn(async () => undefined);
+    const deleteReply = vi.fn(async () => undefined);
+    const editReply = vi.fn(async () => undefined);
+    await interactionCreate({
+      id: 'i-1',
+      commandName: 'new',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map([['R1', { id: 'R1' }]]) } },
+      options: {
+        data: [
+          {
+            name: 'reason',
+            type: ApplicationCommandOptionType.String,
+            value: 'fresh',
+          },
+        ],
+      },
+      deferReply,
+      deleteReply,
+      editReply,
+      isChatInputCommand: () => true,
+    });
+
+    expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(deleteReply).toHaveBeenCalledTimes(1);
+    expect(editReply).not.toHaveBeenCalled();
+    const event = handler.mock.calls[0]![0];
+    expect(event).toMatchObject({
+      eventId: 'i-1',
+      platform: 'discord',
+      type: 'command',
+      command: {
+        name: 'new',
+        args: { reason: 'fresh' },
+        registrationScope: {
+          platformName: 'discord',
+          platformType: 'discord',
+          nativeScope: { kind: 'guild', guildId: 'G-dev' },
+        },
+      },
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'C1',
+        initiatorUserId: OTHER_ID,
+      },
+      guildId: 'G-dev',
+      initiatorRoleIds: ['R1'],
+      initiator: {
+        userId: OTHER_ID,
+        displayName: 'alice',
+        isBot: false,
+      },
+      rawContentType: 'discord:interaction',
+    });
+    expect(event.traceId).toBeTruthy();
+  });
+
+  it('daemon 返回 commandResponse 时用 deferred ephemeral reply 展示反馈', async () => {
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      testGuildId: 'G-dev',
+    });
+    const handler = vi.fn(async () => ({
+      commandResponse: {
+        text: 'This command is not available in this channel.',
+        ephemeral: true,
+      },
+    }));
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    const deferReply = vi.fn(async () => undefined);
+    const deleteReply = vi.fn(async () => undefined);
+    const editReply = vi.fn(async () => undefined);
+    await interactionCreate({
+      id: 'i-response',
+      commandName: 'new',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      options: { data: [] },
+      deferReply,
+      deleteReply,
+      editReply,
+      isChatInputCommand: () => true,
+    });
+
+    expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(editReply).toHaveBeenCalledWith({
+      content: 'This command is not available in this channel.',
+    });
+    expect(deleteReply).not.toHaveBeenCalled();
+  });
+
+  it('command registration plan 存在时用 plan scope 构造 command event', async () => {
+    const plan = {
+      scope: {
+        platformName: 'discord-main',
+        platformType: 'discord' as const,
+        nativeScope: { kind: 'guild' as const, guildId: 'G-dev' },
+      },
+      commands: [],
+      reverseMap: { entries: {} },
+      generation: 'g-scope',
+    };
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      commandRegistration: {
+        plan,
+        apply: vi.fn(async () => ({ status: 'applied' as const, generation: 'g-scope' })),
+      },
+    });
+    const handler = vi.fn(async () => undefined);
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    await interactionCreate({
+      id: 'i-scope',
+      commandName: 'new',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      options: { data: [] },
+      deferReply: vi.fn(async () => undefined),
+      deleteReply: vi.fn(async () => undefined),
+      editReply: vi.fn(async () => undefined),
+      isChatInputCommand: () => true,
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0]![0]).toMatchObject({
+      command: {
+        name: 'new',
+        registrationScope: plan.scope,
+      },
+    });
+  });
+
+  it('registration plan 未包含 legacy /reply-mode 时把它作为普通 command 事件交给 daemon', async () => {
+    const plan = {
+      scope: {
+        platformName: 'discord-main',
+        platformType: 'discord' as const,
+        nativeScope: { kind: 'global' as const },
+      },
+      commands: [],
+      reverseMap: {
+        entries: {
+          'discord-reply-mode': {
+            canonicalId: 'platform:discord:reply-mode',
+            aliasKind: 'stable' as const,
+            owner: { type: 'platform' as const, platformType: 'discord' },
+            handlerKey: 'reply-mode',
+          },
+        },
+      },
+      generation: 'g-no-legacy',
+    };
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      commandRegistration: {
+        plan,
+        apply: vi.fn(async () => ({ status: 'applied' as const, generation: 'g-no-legacy' })),
+      },
+    });
+    const handler = vi.fn(async () => undefined);
+    const deferReply = vi.fn(async () => undefined);
+    const deleteReply = vi.fn(async () => undefined);
+    const reply = vi.fn(async () => undefined);
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    await interactionCreate({
+      id: 'i-legacy-off',
+      commandName: 'reply-mode',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      options: { data: [], getString: vi.fn(() => null) },
+      deferReply,
+      deleteReply,
+      editReply: vi.fn(async () => undefined),
+      reply,
+      isChatInputCommand: () => true,
+    });
+
+    expect(reply).not.toHaveBeenCalled();
+    expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(deleteReply).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0]![0]).toMatchObject({
+      command: {
+        name: 'reply-mode',
+        registrationScope: plan.scope,
+      },
+    });
+  });
+
+  it('updateAuth 热替换后 reply-mode 授权立即按新 allowlist 判定', async () => {
+    const logger = makeLogger();
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger,
+      statePath: '/tmp/agent-nexus-missing-dir/reply-mode-auth.json',
+      allowedUserIds: ['U-old'],
+      commandRegistration: {
+        plan: {
+          scope: {
+            platformName: 'discord-main',
+            platformType: 'discord' as const,
+            nativeScope: { kind: 'global' as const },
+          },
+          commands: [],
+          reverseMap: {
+            entries: {
+              'discord-reply-mode': {
+                canonicalId: 'platform:discord:reply-mode',
+                aliasKind: 'stable' as const,
+                owner: { type: 'platform' as const, platformType: 'discord' },
+                handlerKey: 'reply-mode',
+              },
+            },
+          },
+          generation: 'g-auth-update',
+        },
+        apply: vi.fn(async () => ({
+          status: 'applied' as const,
+          generation: 'g-auth-update',
+        })),
+      },
+    });
+
+    await platform.start(vi.fn());
+    const interactionCreate = registeredHandler('interactionCreate');
+    const makeReplyModeInteraction = (
+      userId: string,
+      reply: ReturnType<typeof vi.fn>,
+    ) => ({
+      id: `i-auth-${userId}`,
+      commandName: 'discord-reply-mode',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: userId, username: 'u', bot: false },
+      member: { roles: { cache: new Map() } },
+      options: { data: [], getString: vi.fn(() => null) },
+      reply,
+      isChatInputCommand: () => true,
+    });
+
+    const replyBefore = vi.fn(async () => undefined);
+    await interactionCreate(makeReplyModeInteraction('U-new', replyBefore));
+    expect(replyBefore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('Permission denied'),
+      }),
+    );
+
+    platform.updateAuth({ allowedUserIds: ['U-new'], inboundAllowedUserIds: null });
+
+    const replyAfter = vi.fn(async () => undefined);
+    await interactionCreate(makeReplyModeInteraction('U-new', replyAfter));
+    expect(replyAfter).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('current reply mode'),
+      }),
+    );
+
+    const replyRemoved = vi.fn(async () => undefined);
+    await interactionCreate(makeReplyModeInteraction('U-old', replyRemoved));
+    expect(replyRemoved).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('Permission denied'),
+      }),
+    );
+  });
+
+  it('stable /discord-reply-mode 内部失败时仍回复 ephemeral 错误，避免 Discord 显示未响应', async () => {
+    const logger = makeLogger();
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger,
+      statePath: '/tmp/agent-nexus-missing-dir/reply-mode.json',
+      allowedUserIds: ALLOWED,
+      commandRegistration: {
+        plan: {
+          scope: {
+            platformName: 'discord-main',
+            platformType: 'discord' as const,
+            nativeScope: { kind: 'global' as const },
+          },
+          commands: [],
+          reverseMap: {
+            entries: {
+              'discord-reply-mode': {
+                canonicalId: 'platform:discord:reply-mode',
+                aliasKind: 'stable' as const,
+                owner: { type: 'platform' as const, platformType: 'discord' },
+                handlerKey: 'reply-mode',
+              },
+            },
+          },
+          generation: 'g-stable-reply-mode',
+        },
+        apply: vi.fn(async () => ({
+          status: 'applied' as const,
+          generation: 'g-stable-reply-mode',
+        })),
+      },
+    });
+    const reply = vi.fn(async () => undefined);
+
+    await platform.start(vi.fn());
+    const interactionCreate = registeredHandler('interactionCreate');
+    await interactionCreate({
+      id: 'i-stable-reply-mode-fail',
+      commandName: 'discord-reply-mode',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      options: { data: [], getString: vi.fn(() => 'all') },
+      reply,
+      isChatInputCommand: () => true,
+    });
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ commandName: 'discord-reply-mode' }),
+      'discord_interaction_handler_error',
+    );
+    expect(reply).toHaveBeenCalledWith({
+      content: 'Command failed. Try again later.',
+      ephemeral: true,
+    });
+  });
+});
 
 function makeTextChannel(overrides: {
   edit?: ReturnType<typeof vi.fn>;
@@ -285,6 +754,7 @@ describe('edit / typing capabilities', () => {
     expect(platform.capabilities()).toMatchObject({
       supportsEdit: true,
       supportsTypingIndicator: true,
+      supportsSlashCommands: true,
     });
   });
 
@@ -856,6 +1326,58 @@ describe('parseInbound: 用户白名单（fail-closed）', () => {
     expect(
       parseInbound(makeMsg({ content: 's', authorId: BOT_ID }), BOT_ID, [BOT_ID]),
     ).toEqual({ kind: 'drop', reason: 'noise' });
+  });
+});
+
+describe('createDiscordPlatform: inboundAllowedUserIds 接线', () => {
+  it('显式传 null 时 chat 不做 adapter guard，事件交给 daemon 判定', async () => {
+    const logger = makeLogger();
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger,
+      statePath: '/tmp/agent-nexus-missing-dir/inbound-null-guard.json',
+      allowedUserIds: ['U-only'],
+      inboundAllowedUserIds: null,
+    });
+    const handler = vi.fn(async () => undefined);
+    await platform.start(handler);
+    const messageCreate = registeredHandler('messageCreate');
+
+    await messageCreate(
+      makeMsg({ content: `<@${BOT_ID}> hi`, authorId: 'U-stranger' }),
+    );
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    // updateAuth 传 null 同语义：guard 保持关闭
+    platform.updateAuth({ allowedUserIds: ['U-other'], inboundAllowedUserIds: null });
+    await messageCreate(
+      makeMsg({ content: `<@${BOT_ID}> hi again`, authorId: 'U-stranger-2', id: 'm-2' }),
+    );
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it('缺省（undefined）时沿用 allowedUserIds 做 chat guard', async () => {
+    const logger = makeLogger();
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger,
+      statePath: '/tmp/agent-nexus-missing-dir/inbound-default-guard.json',
+      allowedUserIds: ['U-only'],
+    });
+    const handler = vi.fn(async () => undefined);
+    await platform.start(handler);
+    const messageCreate = registeredHandler('messageCreate');
+
+    await messageCreate(
+      makeMsg({ content: `<@${BOT_ID}> hi`, authorId: 'U-stranger' }),
+    );
+    expect(handler).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'U-stranger' }),
+      'discord_inbound_unauthorized',
+    );
   });
 });
 

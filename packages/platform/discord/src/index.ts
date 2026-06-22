@@ -8,6 +8,11 @@ export {
   type DiscordPlatformConfig,
   type DiscordPublicChannelMode,
 } from './config.js';
+export {
+  createDiscordCommandRegistrationPort,
+  plannedCommandToSlashCommandSpec,
+} from './commands.js';
+export { discordReplyModeCommandDescriptor } from './reply-mode.js';
 
 // TODO MVP 跳过：
 // - DM 消息（intents 没开 DirectMessages）
@@ -19,12 +24,19 @@ import { randomUUID } from 'node:crypto';
 import {
   Client,
   GatewayIntentBits,
+  type ChatInputCommandInteraction,
   type Interaction,
   type Message,
 } from 'discord.js';
 import type {
   CapabilitySet,
+  CommandArgValue,
+  CommandRegistrationPlan,
+  CommandRegistrationPort,
+  CommandRegistrationResult,
+  CommandRegistrationScope,
   EventHandler,
+  EventHandlerResult,
   MessageRef,
   NormalizedEvent,
   OutboundMessage,
@@ -40,10 +52,22 @@ import {
 } from './state.js';
 import {
   assertBotUserIdMatch,
+  discordReplyModeCommandDescriptor,
   handleReplyModeInteraction,
-  replyModeCommandDefinition,
 } from './reply-mode.js';
-import { registerSlashCommands } from './commands.js';
+import {
+  createDiscordCommandRegistrationPort,
+  plannedCommandToSlashCommandSpec,
+  registerSlashCommands,
+} from './commands.js';
+
+export interface DiscordCommandRegistration {
+  plan: CommandRegistrationPlan;
+  apply(
+    port: CommandRegistrationPort,
+    plan: CommandRegistrationPlan,
+  ): Promise<CommandRegistrationResult>;
+}
 
 export interface DiscordPlatformOptions {
   token: string;
@@ -71,6 +95,17 @@ export interface DiscordPlatformOptions {
    * 详见 spec/platform-adapter.md §"注册作用域"。
    */
   testGuildId?: string;
+  commandRegistration?: DiscordCommandRegistration;
+}
+
+/** 配置热重载时替换 adapter 内部授权数据；字段语义同 DiscordPlatformOptions 同名字段 */
+export interface DiscordAuthUpdate {
+  allowedUserIds: readonly string[];
+  inboundAllowedUserIds?: readonly string[] | null;
+}
+
+export interface DiscordPlatformAdapter extends PlatformAdapter {
+  updateAuth(update: DiscordAuthUpdate): void;
 }
 
 /**
@@ -79,6 +114,21 @@ export interface DiscordPlatformOptions {
  * UTF-16 取 1900。
  */
 export const SLICE_SIZE = 1900;
+
+export const DISCORD_CAPABILITIES: CapabilitySet = {
+  maxTextLength: 2000,
+  supportsEdit: true,
+  supportsDelete: false,
+  supportsReactions: false,
+  supportsEmbeds: false,
+  supportsButtons: false,
+  supportsThreads: false,
+  supportsEphemeral: true,
+  supportsAttachments: false,
+  maxAttachmentsPerMessage: 0,
+  supportsTypingIndicator: true,
+  supportsSlashCommands: true,
+};
 
 export type { ReplyMode } from './state.js';
 
@@ -169,6 +219,181 @@ function discordMemberRoleIds(msg: Message): string[] {
   return [...cache.keys()];
 }
 
+function discordInteractionRoleIds(interaction: ChatInputCommandInteraction): string[] {
+  const roles = interaction.member?.roles;
+  if (Array.isArray(roles)) return roles;
+  const cache =
+    roles && typeof roles === 'object' && 'cache' in roles
+      ? roles.cache
+      : undefined;
+  if (cache && typeof cache.keys === 'function') return [...cache.keys()];
+  return [];
+}
+
+function commandArgValue(value: unknown): CommandArgValue | undefined {
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value === null
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function commandArgs(
+  interaction: ChatInputCommandInteraction,
+): Record<string, CommandArgValue> {
+  const args: Record<string, CommandArgValue> = {};
+  for (const option of interaction.options.data) {
+    const value = commandArgValue(option.value ?? null);
+    if (value !== undefined) args[option.name] = value;
+  }
+  return args;
+}
+
+function commandScope(testGuildId?: string): CommandRegistrationScope {
+  return {
+    platformName: 'discord',
+    platformType: 'discord',
+    nativeScope: testGuildId
+      ? { kind: 'guild', guildId: testGuildId }
+      : { kind: 'global' },
+  };
+}
+
+function replyModeCommandNames(
+  commandRegistration: DiscordCommandRegistration | undefined,
+): Set<string> {
+  if (!commandRegistration) {
+    return new Set(['reply-mode', 'discord-reply-mode']);
+  }
+  const names = new Set<string>();
+  for (const [name, route] of Object.entries(
+    commandRegistration.plan.reverseMap.entries,
+  )) {
+    if (route.canonicalId === discordReplyModeCommandDescriptor.canonicalId) {
+      names.add(name);
+    }
+  }
+  return names;
+}
+
+function commandEventFromInteraction(
+  interaction: ChatInputCommandInteraction,
+  scope: CommandRegistrationScope,
+): NormalizedEvent {
+  return {
+    eventId: interaction.id,
+    platform: 'discord',
+    sessionKey: {
+      platform: 'discord',
+      channelId: interaction.channelId,
+      initiatorUserId: interaction.user.id,
+    },
+    traceId: randomUUID(),
+    type: 'command',
+    command: {
+      name: interaction.commandName,
+      args: commandArgs(interaction),
+      registrationScope: scope,
+    },
+    rawPayload: interaction,
+    rawContentType: 'discord:interaction',
+    receivedAt: new Date(),
+    platformTimestamp: interaction.createdAt,
+    ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
+    initiatorRoleIds: discordInteractionRoleIds(interaction),
+    initiator: {
+      userId: interaction.user.id,
+      displayName: interaction.user.username,
+      isBot: interaction.user.bot,
+    },
+  };
+}
+
+async function deferCommandInteraction(
+  interaction: ChatInputCommandInteraction,
+  logger: Logger,
+): Promise<boolean> {
+  try {
+    await interaction.deferReply({ ephemeral: true });
+    return true;
+  } catch (err) {
+    logger.error(
+      { err, interactionId: interaction.id, commandName: interaction.commandName },
+      'discord_command_ack_failed',
+    );
+    return false;
+  }
+}
+
+async function deleteDeferredCommandReply(
+  interaction: ChatInputCommandInteraction,
+  logger: Logger,
+  event: NormalizedEvent,
+): Promise<void> {
+  try {
+    await interaction.deleteReply();
+  } catch (err) {
+    logger.error(
+      {
+        err,
+        traceId: event.traceId,
+        interactionId: interaction.id,
+        commandName: interaction.commandName,
+      },
+      'discord_command_ack_cleanup_failed',
+    );
+  }
+}
+
+async function completeDeferredCommandReply(
+  interaction: ChatInputCommandInteraction,
+  logger: Logger,
+  event: NormalizedEvent,
+  result: EventHandlerResult | void,
+): Promise<void> {
+  if (result?.commandResponse) {
+    try {
+      await interaction.editReply({ content: result.commandResponse.text });
+    } catch (err) {
+      logger.error(
+        {
+          err,
+          traceId: event.traceId,
+          interactionId: interaction.id,
+          commandName: interaction.commandName,
+        },
+        'discord_command_response_update_failed',
+      );
+    }
+    return;
+  }
+  await deleteDeferredCommandReply(interaction, logger, event);
+}
+
+async function markDeferredCommandFailed(
+  interaction: ChatInputCommandInteraction,
+  logger: Logger,
+  event: NormalizedEvent,
+): Promise<void> {
+  try {
+    await interaction.editReply({ content: 'Command failed.' });
+  } catch (err) {
+    logger.error(
+      {
+        err,
+        traceId: event.traceId,
+        interactionId: interaction.id,
+        commandName: interaction.commandName,
+      },
+      'discord_command_ack_failure_update_failed',
+    );
+  }
+}
+
 /**
  * `parseInbound` 的返回形态——tagged union，让 caller 拿到"为什么被丢"。
  * `drop.reason` 只用于决定上层日志策略，不参与业务逻辑。
@@ -251,9 +476,22 @@ export function parseInbound(
   return { kind: 'event', event };
 }
 
-export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAdapter {
-  const { token, botUserId, logger, statePath, allowedUserIds, testGuildId } = opts;
-  const inboundAllowedUserIds = opts.inboundAllowedUserIds ?? allowedUserIds;
+export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlatformAdapter {
+  const {
+    token,
+    botUserId,
+    logger,
+    statePath,
+    testGuildId,
+    commandRegistration,
+  } = opts;
+  // 可被 updateAuth 热替换；reply-mode ctx 与 inbound guard 每次调用时读取。
+  // null 必须保留（语义：chat guard 交给 daemon platform auth）——不能用 ?? 吞掉
+  let allowedUserIds = opts.allowedUserIds;
+  let inboundAllowedUserIds =
+    opts.inboundAllowedUserIds === undefined
+      ? opts.allowedUserIds
+      : opts.inboundAllowedUserIds;
 
   const client = new Client({
     intents: [
@@ -267,6 +505,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
   let stopped = false;
   // 启动时从 state 文件读，缺省 'mention'。运行时由 /reply-mode 切换更新。
   let replyMode: ReplyMode = 'mention';
+  const replyModeNames = replyModeCommandNames(commandRegistration);
   const editLocks = new WeakMap<MessageRef, Promise<void>>();
 
   const runSerializedEdit = async (
@@ -291,19 +530,23 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
     },
 
     capabilities(): CapabilitySet {
-      return {
-        maxTextLength: 2000,
-        supportsEdit: true,
-        supportsDelete: false,
-        supportsReactions: false,
-        supportsEmbeds: false,
-        supportsButtons: false,
-        supportsThreads: false,
-        supportsEphemeral: false,
-        supportsAttachments: false,
-        maxAttachmentsPerMessage: 0,
-        supportsTypingIndicator: true,
-      };
+      return DISCORD_CAPABILITIES;
+    },
+
+    updateAuth(update: DiscordAuthUpdate): void {
+      allowedUserIds = update.allowedUserIds;
+      // 与构造时同语义：undefined → 复用 allowedUserIds；null → chat guard 交给 daemon
+      inboundAllowedUserIds =
+        update.inboundAllowedUserIds === undefined
+          ? update.allowedUserIds
+          : update.inboundAllowedUserIds;
+      logger.info(
+        {
+          allowedUserCount: allowedUserIds.length,
+          inboundGuardEnabled: inboundAllowedUserIds !== null,
+        },
+        'discord_auth_updated',
+      );
     },
 
     async start(handler: EventHandler): Promise<void> {
@@ -328,17 +571,71 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
           tag: client.user?.tag,
           logger,
         });
-        void registerSlashCommands(
-          client.application?.commands,
-          [{ name: 'reply-mode', data: replyModeCommandDefinition() }],
-          logger,
-          testGuildId,
-        );
+        if (commandRegistration) {
+          void commandRegistration.apply(
+            createDiscordCommandRegistrationPort(client.application?.commands, logger),
+            commandRegistration.plan,
+          ).then((result) => {
+            if (result.status === 'failed') {
+              if (result.error.code === 'command_registration_disabled') return;
+              logger.error(
+                {
+                  generation: commandRegistration.plan.generation,
+                  errorCode: result.error.code,
+                  errorMessage: result.error.message,
+                },
+                'command_registration_apply_failed',
+              );
+            }
+          }).catch((err) => {
+            logger.error(
+              { err, generation: commandRegistration.plan.generation },
+              'command_registration_apply_failed',
+            );
+          });
+        } else {
+          void registerSlashCommands(
+            client.application?.commands,
+            [
+              plannedCommandToSlashCommandSpec({
+                commandName: 'discord-reply-mode',
+                canonicalId: discordReplyModeCommandDescriptor.canonicalId,
+                aliasKind: 'stable',
+                descriptor: discordReplyModeCommandDescriptor,
+              }),
+              plannedCommandToSlashCommandSpec({
+                commandName: 'reply-mode',
+                canonicalId: discordReplyModeCommandDescriptor.canonicalId,
+                aliasKind: 'legacy',
+                descriptor: discordReplyModeCommandDescriptor,
+              }),
+            ],
+            logger,
+            testGuildId,
+          );
+        }
       });
 
       client.on('interactionCreate', async (interaction: Interaction) => {
         if (!interaction.isChatInputCommand()) return;
-        if (interaction.commandName !== 'reply-mode') return;
+        if (!replyModeNames.has(interaction.commandName)) {
+          if (!(await deferCommandInteraction(interaction, logger))) return;
+          const event = commandEventFromInteraction(
+            interaction,
+            commandRegistration?.plan.scope ?? commandScope(testGuildId),
+          );
+          try {
+            const result = await handler(event);
+            await completeDeferredCommandReply(interaction, logger, event, result);
+          } catch (err) {
+            logger.error(
+              { err, traceId: event.traceId, commandName: interaction.commandName },
+              'platform_handler_error',
+            );
+            await markDeferredCommandFailed(interaction, logger, event);
+          }
+          return;
+        }
         try {
           await handleReplyModeInteraction(interaction, {
             allowedUserIds,
@@ -354,6 +651,17 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): PlatformAda
             { err, commandName: interaction.commandName },
             'discord_interaction_handler_error',
           );
+          try {
+            await interaction.reply({
+              content: 'Command failed. Try again later.',
+              ephemeral: true,
+            });
+          } catch (replyErr) {
+            logger.error(
+              { err: replyErr, commandName: interaction.commandName },
+              'discord_interaction_error_reply_failed',
+            );
+          }
         }
       });
 

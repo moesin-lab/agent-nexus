@@ -27,7 +27,7 @@ agent-nexus 让你在 IM（当前：Discord）里直接和本机 Claude Code 对
 **Discord + 本机 Claude Code CLI MVP** 已可端到端运行：
 
 - Discord `@mention` → daemon `Engine` → 长驻 Claude Code `stream-json` 子进程 → Discord 回复。
-- 同一 `(channelId, userId)` 复用活跃 session；`/new` 文本前缀重置该会话。
+- 同一 `(channelId, userId)` 复用 daemon RoutingSession；`/new`、`/stop` 等 agent slash command 会路由给对应 agent package 处理，`/nexus-kill` 终止当前 Nexus route 并清除 resume 记录。
 - IM 侧可看到工具调用状态、流式文本、typing 指示与原地 edit。
 - 白名单外工具会在执行前被拒绝；机制见 [`docs/dev/spec/security/tool-boundary.md`](docs/dev/spec/security/tool-boundary.md)。`Bash` 不在默认允许集。
 
@@ -118,6 +118,29 @@ pnpm typecheck     # 仅 tsc --build；不生成 npm bin bundle
       }
     }
   ],
+  "daemon": {
+    "commandRegistry": {
+      "registration": {
+        "enabled": true,
+        "applyTimeoutMs": 30000,
+        "retry": {
+          "maxAttempts": 3,
+          "backoffMs": 1000
+        }
+      },
+      "aliases": {
+        "singleAgent": {
+          "enabled": true
+        },
+        "legacy": {
+          "replyMode": true
+        }
+      },
+      "textPrefixes": {
+        "newSession": true
+      }
+    }
+  },
   "ui": {
     "toolMessages": "append"
   },
@@ -136,13 +159,18 @@ chmod 600 ~/.agent-nexus/config.json
 - `platforms[].botUserId`（必填）：bot 的 Discord user ID
 - `platforms[].auth.allowlist.userIds` / `roleIds`（必填其一）：允许使用 bot 的 Discord user 或 role ID
 - `platforms[].auth.allowlist.allowedGuildIds` / `allowedChannelIds`（可选）：进一步收窄允许的 guild / channel；空数组表示不按该维度收窄
-- `platforms[].testGuildId`（可选）：把 `/reply-mode` slash command 限定注册到某个测试 guild，开发时更快生效
+- `platforms[].testGuildId`（可选）：把 slash command 限定注册到某个测试 guild，开发时更快生效
 - `agents[].backend`（必填）：选择 `claudecode` 或 `codex`
 - `agents[].claudeCode.workingDir`（`backend=claudecode` 时必填）：CC 默认工作目录，per-session 可覆盖
 - `agents[].claudeCode.bin`（可选，默认 `claude`）：CC CLI 可执行路径
 - `agents[].claudeCode.permissionLevel`（可选，默认 `default`）：原样传给 Claude Code 子进程的 `--permission-mode`，允许 `default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan`
 - `agents[].claudeCode.allowedTools`（可选）：默认 `Read/Grep/Glob/Edit/Write`。**`Bash` 不在默认集**——启用须显式列出，启动会打 warn（参见 [`docs/dev/spec/security/tool-boundary.md`](docs/dev/spec/security/tool-boundary.md)）
 - `agents[].codex.workingDir`（`backend=codex` 时必填）：Codex 默认工作目录，传给 `--cd`
+- `daemon.commandRegistry.registration.enabled`（可选，默认 `true`）：设为 `false` 时不向 Discord apply slash command 注册计划，本地 command dispatch 保持 fail-closed
+- `daemon.commandRegistry.registration.applyTimeoutMs`（可选，默认 `30000`）：slash command 注册 apply 超时
+- `daemon.commandRegistry.aliases.singleAgent.enabled`（可选，默认 `true`）：控制裸 `/new` / `/stop` single-agent slash alias；稳定 `/codex-new` / `/codex-stop` / `/claudecode-new` / `/claudecode-stop` 不受影响
+- `daemon.commandRegistry.aliases.legacy.replyMode`（可选，默认 `true`）：控制 legacy `/reply-mode` 是否注册；稳定 `/discord-reply-mode` 不受影响
+- `daemon.commandRegistry.textPrefixes.newSession`（可选，默认 `true`）：控制 `@bot /new` 文本前缀；不影响 slash command
 - `bindings[].platformName` / `agentName`（必填）：把命名 platform bot 绑定到命名 agent
 - `bindings[].match.discord.channelIds`（必填）：该 binding 匹配的 Discord channel/thread id 列表
 - `codex.bin`（可选，默认 `codex`）：Codex CLI 可执行路径
@@ -182,9 +210,15 @@ agent-nexus
 ### 5. 使用
 
 - `@bot <prompt>`：发起一轮 CC 对话；同 `(channelId, userId)` 后续消息复用活跃 session
-- `@bot /new`：清当前 (channel, user) 的内存 session，回复 `[new session ready]`
-- `@bot /new <prompt>`：清 + 立即用 `<prompt>` 起新一轮
-- `/reply-mode mode:<mention|all>`：在 allowlist 内切换 Discord 消息触发模式
+- `@bot /new`：清当前 (channel, user) 的内存 session，回复 `[new session ready]`；可用 `daemon.commandRegistry.textPrefixes.newSession=false` 禁用
+- `@bot /new <prompt>`：清 + 立即用 `<prompt>` 起新一轮；同样受 `textPrefixes.newSession` 控制
+- `/claudecode-new` / `/codex-new`：按绑定到当前频道的 agent owner 路由给对应 agent package；只有对应 backend 已配置且在该 Discord 注册 scope 有 binding 时才会出现
+- `/claudecode-stop` / `/codex-stop`：按绑定到当前频道的 agent owner 路由给对应 agent package；具体停止语义由该 agent runtime 决定
+- `/new` / `/stop`：仅在同一个 Discord 注册 scope 里只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时作为便捷 alias 出现
+- `/nexus-kill`：daemon 直接终止当前 RoutingSession，并清除 resume 记录
+- `/nexus-reload-config`：daemon 重新加载 `config.json` 并热应用 bindings / auth / ui / textPrefixes；解析失败保留旧配置并返回错误，其余字段变更需重启生效
+- `/discord-reply-mode mode:<mention|all>`：在 allowlist 内切换 Discord 消息触发模式
+- `/reply-mode mode:<mention|all>`：legacy alias；`daemon.commandRegistry.aliases.legacy.replyMode=true` 时注册
 
 约束：
 

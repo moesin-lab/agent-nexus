@@ -5,6 +5,58 @@ export interface DaemonConfig {
   toolMessages: ToolMessageMode;
 }
 
+export interface DaemonRegistrationRetryConfig {
+  maxAttempts: number;
+  backoffMs: number;
+}
+
+export interface DaemonCommandRegistryConfig {
+  registration: {
+    enabled: boolean;
+    applyTimeoutMs: number;
+    retry: DaemonRegistrationRetryConfig;
+  };
+  aliases: {
+    singleAgent: {
+      enabled: boolean;
+    };
+    legacy: {
+      replyMode: boolean;
+    };
+  };
+  textPrefixes: {
+    newSession: boolean;
+  };
+}
+
+export interface DaemonRuntimeConfig {
+  commandRegistry: DaemonCommandRegistryConfig;
+}
+
+export const DEFAULT_DAEMON_RUNTIME_CONFIG: DaemonRuntimeConfig = {
+  commandRegistry: {
+    registration: {
+      enabled: true,
+      applyTimeoutMs: 30000,
+      retry: {
+        maxAttempts: 3,
+        backoffMs: 1000,
+      },
+    },
+    aliases: {
+      singleAgent: {
+        enabled: true,
+      },
+      legacy: {
+        replyMode: true,
+      },
+    },
+    textPrefixes: {
+      newSession: true,
+    },
+  },
+};
+
 export interface AllowlistConfig {
   userIds: string[];
   roleIds: string[];
@@ -71,6 +123,21 @@ function parseBoolean(
   if (value === undefined) return defaultValue;
   if (typeof value !== 'boolean') {
     throw new DaemonConfigError(`字段 ${path}.${key} 必须是布尔值`);
+  }
+  return value;
+}
+
+function parseInteger(
+  raw: Record<string, unknown>,
+  key: string,
+  path: string,
+  defaultValue: number,
+  min: number,
+): number {
+  const value = raw[key];
+  if (value === undefined) return defaultValue;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min) {
+    throw new DaemonConfigError(`字段 ${path}.${key} 必须是 >= ${min} 的整数`);
   }
   return value;
 }
@@ -152,5 +219,152 @@ export function parseDaemonConfig(raw: unknown): DaemonConfig {
   }
   return {
     toolMessages: (toolMessagesRaw as ToolMessageMode | undefined) ?? 'append',
+  };
+}
+
+export function parseDaemonRuntimeConfig(raw: unknown): DaemonRuntimeConfig {
+  const path = 'daemon';
+  if (raw !== undefined && !isRecord(raw)) {
+    throw new DaemonConfigError(`字段 ${path} 必须是对象`);
+  }
+  const daemon = (raw ?? {}) as Record<string, unknown>;
+  assertNoUnknownKeys(daemon, ['commandRegistry'], path);
+
+  const commandRegistryPath = `${path}.commandRegistry`;
+  const commandRegistry = isRecord(daemon['commandRegistry'])
+    ? daemon['commandRegistry']
+    : {};
+  if (
+    daemon['commandRegistry'] !== undefined &&
+    !isRecord(daemon['commandRegistry'])
+  ) {
+    throw new DaemonConfigError(`字段 ${commandRegistryPath} 必须是对象`);
+  }
+  assertNoUnknownKeys(
+    commandRegistry,
+    ['registration', 'aliases', 'textPrefixes'],
+    commandRegistryPath,
+  );
+
+  const registrationPath = `${commandRegistryPath}.registration`;
+  const registration = isRecord(commandRegistry['registration'])
+    ? commandRegistry['registration']
+    : {};
+  if (
+    commandRegistry['registration'] !== undefined &&
+    !isRecord(commandRegistry['registration'])
+  ) {
+    throw new DaemonConfigError(`字段 ${registrationPath} 必须是对象`);
+  }
+  assertNoUnknownKeys(
+    registration,
+    ['enabled', 'applyTimeoutMs', 'retry'],
+    registrationPath,
+  );
+
+  const retryPath = `${registrationPath}.retry`;
+  const retry = isRecord(registration['retry']) ? registration['retry'] : {};
+  if (registration['retry'] !== undefined && !isRecord(registration['retry'])) {
+    throw new DaemonConfigError(`字段 ${retryPath} 必须是对象`);
+  }
+  assertNoUnknownKeys(retry, ['maxAttempts', 'backoffMs'], retryPath);
+
+  const aliasesPath = `${commandRegistryPath}.aliases`;
+  const aliases = isRecord(commandRegistry['aliases'])
+    ? commandRegistry['aliases']
+    : {};
+  if (commandRegistry['aliases'] !== undefined && !isRecord(commandRegistry['aliases'])) {
+    throw new DaemonConfigError(`字段 ${aliasesPath} 必须是对象`);
+  }
+  assertNoUnknownKeys(aliases, ['singleAgent', 'legacy'], aliasesPath);
+
+  const singleAgentPath = `${aliasesPath}.singleAgent`;
+  const singleAgent = isRecord(aliases['singleAgent'])
+    ? aliases['singleAgent']
+    : {};
+  if (aliases['singleAgent'] !== undefined && !isRecord(aliases['singleAgent'])) {
+    throw new DaemonConfigError(`字段 ${singleAgentPath} 必须是对象`);
+  }
+  assertNoUnknownKeys(singleAgent, ['enabled'], singleAgentPath);
+
+  const legacyPath = `${aliasesPath}.legacy`;
+  const legacy = isRecord(aliases['legacy']) ? aliases['legacy'] : {};
+  if (aliases['legacy'] !== undefined && !isRecord(aliases['legacy'])) {
+    throw new DaemonConfigError(`字段 ${legacyPath} 必须是对象`);
+  }
+  assertNoUnknownKeys(legacy, ['replyMode'], legacyPath);
+
+  const textPrefixesPath = `${commandRegistryPath}.textPrefixes`;
+  const textPrefixes = isRecord(commandRegistry['textPrefixes'])
+    ? commandRegistry['textPrefixes']
+    : {};
+  if (
+    commandRegistry['textPrefixes'] !== undefined &&
+    !isRecord(commandRegistry['textPrefixes'])
+  ) {
+    throw new DaemonConfigError(`字段 ${textPrefixesPath} 必须是对象`);
+  }
+  assertNoUnknownKeys(textPrefixes, ['newSession'], textPrefixesPath);
+
+  return {
+    commandRegistry: {
+      registration: {
+        enabled: parseBoolean(
+          registration,
+          'enabled',
+          registrationPath,
+          DEFAULT_DAEMON_RUNTIME_CONFIG.commandRegistry.registration.enabled,
+        ),
+        applyTimeoutMs: parseInteger(
+          registration,
+          'applyTimeoutMs',
+          registrationPath,
+          DEFAULT_DAEMON_RUNTIME_CONFIG.commandRegistry.registration.applyTimeoutMs,
+          1,
+        ),
+        retry: {
+          maxAttempts: parseInteger(
+            retry,
+            'maxAttempts',
+            retryPath,
+            DEFAULT_DAEMON_RUNTIME_CONFIG.commandRegistry.registration.retry.maxAttempts,
+            1,
+          ),
+          backoffMs: parseInteger(
+            retry,
+            'backoffMs',
+            retryPath,
+            DEFAULT_DAEMON_RUNTIME_CONFIG.commandRegistry.registration.retry.backoffMs,
+            0,
+          ),
+        },
+      },
+      aliases: {
+        singleAgent: {
+          enabled: parseBoolean(
+            singleAgent,
+            'enabled',
+            singleAgentPath,
+            DEFAULT_DAEMON_RUNTIME_CONFIG.commandRegistry.aliases.singleAgent.enabled,
+          ),
+        },
+        legacy: {
+          replyMode: parseBoolean(
+            legacy,
+            'replyMode',
+            legacyPath,
+            DEFAULT_DAEMON_RUNTIME_CONFIG.commandRegistry.aliases.legacy.replyMode,
+          ),
+        },
+      },
+      textPrefixes: {
+        newSession: parseBoolean(
+          textPrefixes,
+          'newSession',
+          textPrefixesPath,
+          DEFAULT_DAEMON_RUNTIME_CONFIG.commandRegistry.textPrefixes.newSession,
+        ),
+      },
+    },
   };
 }

@@ -120,6 +120,9 @@ describe('config loader', () => {
     expect(configText).toMatch(/"channelIds"/);
     expect(configText).toMatch(/"auth"/);
     expect(configText).toMatch(/"allowlist"/);
+    expect(configText).toMatch(/"daemon"/);
+    expect(configText).toMatch(/"commandRegistry"/);
+    expect(configText).toMatch(/"applyTimeoutMs": 30000/);
     expect(configText).not.toMatch(/"agent"\s*:/);
     expect(
       Object.prototype.hasOwnProperty.call(JSON.parse(configText), 'discord'),
@@ -175,7 +178,80 @@ describe('config loader', () => {
       },
     ]);
     expect(cfg.ui.toolMessages).toBe('compact');
+    expect(cfg.daemon.commandRegistry.registration.enabled).toBe(true);
+    expect(cfg.daemon.commandRegistry.registration.applyTimeoutMs).toBe(30000);
+    expect(cfg.daemon.commandRegistry.aliases.singleAgent.enabled).toBe(true);
+    expect(cfg.daemon.commandRegistry.aliases.legacy.replyMode).toBe(true);
+    expect(cfg.daemon.commandRegistry.textPrefixes.newSession).toBe(true);
     expect(cfg.log.level).toBe('debug');
+  });
+
+  it('loadConfig 会把缺失的 daemon.commandRegistry 默认配置补回 config.json', async () => {
+    const path = join(tmp, '.agent-nexus', 'config.json');
+    await writeFile(path, JSON.stringify(validConfig()));
+
+    const cfg = await loadConfig();
+    const persisted = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+
+    expect(cfg.daemon.commandRegistry.registration.applyTimeoutMs).toBe(30000);
+    expect(persisted).toMatchObject({
+      daemon: {
+        commandRegistry: {
+          registration: {
+            enabled: true,
+            applyTimeoutMs: 30000,
+            retry: {
+              maxAttempts: 3,
+              backoffMs: 1000,
+            },
+          },
+          aliases: {
+            singleAgent: { enabled: true },
+            legacy: { replyMode: true },
+          },
+          textPrefixes: { newSession: true },
+        },
+      },
+    });
+  });
+
+  it('loadConfig 解析显式 daemon.commandRegistry 配置', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          daemon: {
+            commandRegistry: {
+              registration: {
+                enabled: false,
+                applyTimeoutMs: 5000,
+                retry: { maxAttempts: 2, backoffMs: 10 },
+              },
+              aliases: {
+                singleAgent: { enabled: false },
+                legacy: { replyMode: false },
+              },
+              textPrefixes: { newSession: false },
+            },
+          },
+        }),
+      ),
+    );
+
+    const cfg = await loadConfig();
+
+    expect(cfg.daemon.commandRegistry).toEqual({
+      registration: {
+        enabled: false,
+        applyTimeoutMs: 5000,
+        retry: { maxAttempts: 2, backoffMs: 10 },
+      },
+      aliases: {
+        singleAgent: { enabled: false },
+        legacy: { replyMode: false },
+      },
+      textPrefixes: { newSession: false },
+    });
   });
 
   it('legacy 顶层字段被清晰拒绝，不做自动迁移', async () => {

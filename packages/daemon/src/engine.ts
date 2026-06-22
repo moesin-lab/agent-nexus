@@ -1,8 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type {
   AgentEvent,
+  AgentCommandEnvelope,
+  AgentCommandResult,
   AgentRuntime,
   AgentSession,
+  CommandDescriptor,
+  CommandPayload,
+  EventHandlerResult,
   MessageRef,
   NormalizedEvent,
   PlatformAdapter,
@@ -11,6 +16,15 @@ import type {
 } from '@agent-nexus/protocol';
 import { serializeSessionKey, withPlatformName } from '@agent-nexus/protocol';
 import { checkPlatformAuth } from './auth.js';
+import {
+  ActiveCommandRegistry,
+  type CommandRegistryErrorCode,
+} from './command-registry.js';
+import {
+  dispatchCommandEvent,
+  isCommandDispatchFailure,
+} from './command-dispatch.js';
+import type { CommandDispatchDecision } from './command-dispatch.js';
 import type { PlatformAuthConfig, ToolMessageMode } from './config.js';
 import type { IdempotencyStore } from './idempotency.js';
 import type { Logger } from './logger.js';
@@ -21,10 +35,26 @@ import type { SessionStore } from './session-store.js';
 export interface EngineAgent {
   agent: AgentRuntime;
   agentName: string;
+  agentOwner?: string;
+  commandDescriptors?: readonly CommandDescriptor[];
   defaultSessionConfig: Omit<
     SessionConfig,
     'resumeFromAgentSessionId' | 'sessionId'
   >;
+}
+
+/** config reloader 由组装层注入；语义见 docs/dev/spec/config-routing.md §配置热重载 */
+export type DaemonConfigReloadResult =
+  | { status: 'reloaded'; message: string }
+  | { status: 'failed'; message: string };
+
+export type DaemonConfigReloader = () => Promise<DaemonConfigReloadResult>;
+
+export interface EngineRuntimeUpdate {
+  routingTable: readonly RoutingEntry[];
+  platformAuth: PlatformAuthConfig;
+  toolMessageMode: ToolMessageMode;
+  newSessionTextPrefix: boolean;
 }
 
 export interface EngineDeps {
@@ -35,6 +65,10 @@ export interface EngineDeps {
   agents?: readonly EngineAgent[];
   routingTable?: readonly RoutingEntry[];
   platformAuth?: PlatformAuthConfig;
+  commandRegistry?: ActiveCommandRegistry;
+  platformCommandHandlerKeys?: readonly string[];
+  daemonCommandHandlerKeys?: readonly string[];
+  configReloader?: DaemonConfigReloader;
   idempotencyStore?: IdempotencyStore;
   redactor?: Redactor;
   logger: Logger;
@@ -51,10 +85,17 @@ export interface EngineDeps {
   toolMessages?: {
     mode?: ToolMessageMode;
   };
+  textPrefixes?: {
+    newSession?: boolean;
+  };
 }
 
 const DEFAULT_STREAM_EDIT_THROTTLE_MS = 1500;
 const DEFAULT_TYPING_REFRESH_MS = 8000;
+const COMMAND_NOT_ALLOWED_TEXT = 'You are not allowed to use this command.';
+const COMMAND_NOT_READY_TEXT = 'Slash commands are not ready yet. Try again later.';
+const COMMAND_UNAVAILABLE_TEXT = 'This command is not available in this channel.';
+const COMMAND_FAILED_TEXT = 'Command failed.';
 
 interface ActiveAgentSession {
   agent: AgentRuntime;
@@ -103,16 +144,22 @@ export class Engine {
   private readonly platform: PlatformAdapter;
   private readonly platformName: string;
   private readonly platformType: 'discord';
-  private readonly platformAuth?: PlatformAuthConfig;
+  // applyRuntimeUpdate 热替换的四个字段；其余 deps 启动后不可变
+  private platformAuth?: PlatformAuthConfig;
+  private routingTable?: readonly RoutingEntry[];
+  private toolMessageMode: ToolMessageMode;
+  private newSessionTextPrefixEnabled: boolean;
+  private readonly commandRegistry?: ActiveCommandRegistry;
+  private readonly platformCommandHandlerKeys: readonly string[];
+  private readonly daemonCommandHandlerKeys: readonly string[];
+  private readonly configReloader?: DaemonConfigReloader;
   private readonly idempotencyStore?: IdempotencyStore;
   private readonly redactor: Redactor;
   private readonly agents: Map<string, EngineAgent>;
-  private readonly routingTable?: readonly RoutingEntry[];
   private readonly logger: Logger;
   private readonly sessionStore: SessionStore;
   private readonly streamEditThrottleMs: number;
   private readonly typingRefreshMs: number;
-  private readonly toolMessageMode: ToolMessageMode;
   private readonly agentSessions = new Map<string, ActiveAgentSession>();
   /**
    * Per-SessionKey 串行队列：同 key 的 dispatch 必须按到达序排队执行，
@@ -120,7 +167,7 @@ export class Engine {
    * 互相覆盖 sessionStore 里的 agentSessionId（ordering corruption）。
    * 不同 key 之间互不阻塞。
    */
-  private readonly inflight = new Map<string, Promise<void>>();
+  private readonly inflight = new Map<string, Promise<unknown>>();
 
   /**
    * eventId 内存去重：防 adapter 重投同一事件导致 agent 被重复触发（重复消耗 turn 预算）。
@@ -138,6 +185,10 @@ export class Engine {
       throw new Error('Engine with routingTable requires platformAuth');
     }
     this.platformAuth = deps.platformAuth;
+    this.commandRegistry = deps.commandRegistry;
+    this.platformCommandHandlerKeys = deps.platformCommandHandlerKeys ?? [];
+    this.daemonCommandHandlerKeys = deps.daemonCommandHandlerKeys ?? [];
+    this.configReloader = deps.configReloader;
     this.idempotencyStore = deps.idempotencyStore;
     this.redactor = deps.redactor ?? new BasicRedactor();
     this.routingTable = deps.routingTable;
@@ -162,10 +213,19 @@ export class Engine {
     this.typingRefreshMs =
       deps.streaming?.typingRefreshMs ?? DEFAULT_TYPING_REFRESH_MS;
     this.toolMessageMode = deps.toolMessages?.mode ?? 'append';
+    this.newSessionTextPrefixEnabled = deps.textPrefixes?.newSession ?? true;
   }
 
   async start(): Promise<void> {
     await this.platform.start(this.dispatch.bind(this));
+  }
+
+  /** 热替换运行期可安全更新的配置字段；语义见 docs/dev/spec/config-routing.md §配置热重载 */
+  applyRuntimeUpdate(update: EngineRuntimeUpdate): void {
+    this.routingTable = update.routingTable;
+    this.platformAuth = update.platformAuth;
+    this.toolMessageMode = update.toolMessageMode;
+    this.newSessionTextPrefixEnabled = update.newSessionTextPrefix;
   }
 
   async stop(): Promise<void> {
@@ -182,26 +242,38 @@ export class Engine {
     this.idempotencyStore?.clearAll();
   }
 
-  private dispatch(event: NormalizedEvent): Promise<void> {
+  private dispatch(event: NormalizedEvent): Promise<void | EventHandlerResult> {
+    if (event.type === 'command') {
+      return this.dispatchCommand(event);
+    }
     const route = this.route(event);
     if (!route) return Promise.resolve();
-    if (this.platformAuth) {
-      const decision = checkPlatformAuth(this.platformAuth, event);
-      if (!decision.allowed) {
-        this.logger.info(
-          {
-            traceId: event.traceId,
-            platformName: this.platformName,
-            guildId: event.guildId,
-            channelId: event.sessionKey.channelId,
-            userId: event.initiator.userId,
-            reason: decision.reason,
-          },
-          'auth_denied',
-        );
-        return Promise.resolve();
-      }
-    }
+    if (!this.checkAuth(event)) return Promise.resolve();
+    return this.dispatchToAgent(event, route);
+  }
+
+  private checkAuth(event: NormalizedEvent): boolean {
+    if (!this.platformAuth) return true;
+    const decision = checkPlatformAuth(this.platformAuth, event);
+    if (decision.allowed) return true;
+    this.logger.info(
+      {
+        traceId: event.traceId,
+        platformName: this.platformName,
+        guildId: event.guildId,
+        channelId: event.sessionKey.channelId,
+        userId: event.initiator.userId,
+        reason: decision.reason,
+      },
+      'auth_denied',
+    );
+    return false;
+  }
+
+  private dispatchToAgent(
+    event: NormalizedEvent,
+    route: { bindingName: string; agentName: string },
+  ): Promise<void> {
     const routedSessionKey = withPlatformName(
       event.sessionKey,
       this.platformName,
@@ -281,6 +353,375 @@ export class Engine {
       }
     });
     return next;
+  }
+
+  private commandResponse(text: string, traceId: string): EventHandlerResult {
+    return {
+      commandResponse: {
+        text: this.redactForOutbound(text, traceId),
+        ephemeral: true,
+      },
+    };
+  }
+
+  private commandFailureResponse(
+    code: CommandRegistryErrorCode,
+    traceId: string,
+  ): EventHandlerResult {
+    if (code === 'command_active_map_missing') {
+      return this.commandResponse(COMMAND_NOT_READY_TEXT, traceId);
+    }
+    if (code === 'command_handler_missing') {
+      return this.commandResponse(COMMAND_NOT_READY_TEXT, traceId);
+    }
+    if (code === 'command_descriptor_invalid') {
+      return this.commandResponse(COMMAND_NOT_READY_TEXT, traceId);
+    }
+    return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, traceId);
+  }
+
+  private dispatchCommand(event: NormalizedEvent): Promise<void | EventHandlerResult> {
+    if (!this.checkAuth(event)) {
+      return Promise.resolve(
+        this.commandResponse(COMMAND_NOT_ALLOWED_TEXT, event.traceId),
+      );
+    }
+    if (!this.commandRegistry || !this.routingTable) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          commandName: event.command?.name,
+        },
+        'command_handler_missing',
+      );
+      return Promise.resolve(
+        this.commandResponse(COMMAND_NOT_READY_TEXT, event.traceId),
+      );
+    }
+    if (!this.commandScopeMatchesEngine(event.command?.registrationScope)) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          platformType: this.platformType,
+          scope: event.command?.registrationScope,
+          commandName: event.command?.name,
+        },
+        'command_scope_mismatch',
+      );
+      return Promise.resolve(
+        this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId),
+      );
+    }
+
+    const decision = dispatchCommandEvent({
+      event,
+      registry: this.commandRegistry,
+      platformName: this.platformName,
+      platformType: this.platformType,
+      routingTable: this.routingTable,
+      agentTargets: [...this.agents.values()].map((agent) => ({
+        agentName: agent.agentName,
+        agentOwner: agent.agentOwner ?? agent.agent.name(),
+      })),
+      platformHandlerKeys: this.platformCommandHandlerKeys,
+      daemonHandlerKeys: this.daemonCommandHandlerKeys,
+      logger: this.logger,
+    });
+    if (isCommandDispatchFailure(decision)) {
+      return Promise.resolve(
+        this.commandFailureResponse(decision.code, event.traceId),
+      );
+    }
+    if (decision.ownerType === 'daemon') {
+      return this.handleDaemonCommand(event, decision);
+    }
+    if (decision.ownerType === 'platform') {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          commandName: decision.commandName,
+          canonicalId: decision.canonicalId,
+          handlerKey: decision.handlerKey,
+          ownerType: decision.ownerType,
+        },
+        'command_handler_missing',
+      );
+      return Promise.resolve(
+        this.commandResponse(COMMAND_NOT_READY_TEXT, event.traceId),
+      );
+    }
+    if (decision.dispatchMode === 'immediate') {
+      return this.handleAgentCommand(event, decision);
+    }
+    return this.dispatchQueuedAgentCommand(event, decision);
+  }
+
+  private commandScopeMatchesEngine(
+    scope: CommandPayload['registrationScope'] | undefined,
+  ): boolean {
+    return (
+      scope?.platformName === this.platformName &&
+      scope.platformType === this.platformType
+    );
+  }
+
+  private async sendCommandAck(
+    event: NormalizedEvent,
+    sessionKey: SessionKey,
+    text: string,
+  ): Promise<void> {
+    try {
+      const outboundText = this.redactForOutbound(text, event.traceId);
+      await this.platform.send(sessionKey, {
+        text: outboundText,
+        traceId: event.traceId,
+        sessionKey,
+      });
+    } catch (err) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          sessionKey: serializeSessionKey(sessionKey),
+          err,
+        },
+        'platform_send_failed',
+      );
+    }
+  }
+
+  private dispatchQueuedAgentCommand(
+    event: NormalizedEvent,
+    decision: Extract<CommandDispatchDecision, { ownerType: 'agent' }>,
+  ): Promise<void | EventHandlerResult> {
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    const keyStr = serializeSessionKey(routedSessionKey);
+    const prev = this.inflight.get(keyStr) ?? Promise.resolve();
+    const next = prev
+      .catch(() => {})
+      .then(() => this.handleAgentCommand(event, decision));
+    this.inflight.set(keyStr, next);
+    void next.finally(() => {
+      if (this.inflight.get(keyStr) === next) {
+        this.inflight.delete(keyStr);
+      }
+    });
+    return next;
+  }
+
+  private clearTypingBestEffort(
+    sessionKey: SessionKey,
+    traceId: string,
+  ): void {
+    Promise.resolve()
+      .then(() => this.platform.clearTyping(sessionKey))
+      .catch((err) => {
+        this.logger.debug(
+          {
+            traceId,
+            sessionKey: serializeSessionKey(sessionKey),
+            err,
+          },
+          'platform_typing_failed',
+        );
+      });
+  }
+
+  private async handleAgentCommand(
+    event: NormalizedEvent,
+    decision: Extract<CommandDispatchDecision, { ownerType: 'agent' }>,
+  ): Promise<void | EventHandlerResult> {
+    const command = event.command;
+    if (!command) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          commandName: decision.commandName,
+          canonicalId: decision.canonicalId,
+        },
+        'command_handler_missing',
+      );
+      return this.commandResponse(COMMAND_NOT_READY_TEXT, event.traceId);
+    }
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    const sessionKeyStr = serializeSessionKey(routedSessionKey);
+    const agentSlot = this.agents.get(decision.agentName);
+    if (!agentSlot) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          agentName: decision.agentName,
+          bindingName: decision.bindingName,
+        },
+        'route_agent_missing',
+      );
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+
+    const existing = this.agentSessions.get(sessionKeyStr);
+    const active =
+      existing && existing.agentName === agentSlot.agentName
+        ? existing
+        : undefined;
+    const envelope: AgentCommandEnvelope = {
+      canonicalId: decision.canonicalId,
+      localName: decision.localName,
+      handlerKey: decision.handlerKey,
+      args: command.args ?? {},
+      rawText: event.text,
+      traceId: event.traceId,
+      routingSession: {
+        sessionKey: routedSessionKey,
+        platformName: this.platformName,
+        platformType: this.platformType,
+        channelId: routedSessionKey.channelId,
+        userId: routedSessionKey.initiatorUserId,
+      },
+    };
+
+    let result: AgentCommandResult;
+    try {
+      result = await agentSlot.agent.handleCommand(active?.session, envelope);
+    } catch (err) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          sessionKey: sessionKeyStr,
+          canonicalId: decision.canonicalId,
+          handlerKey: decision.handlerKey,
+          err,
+        },
+        'agent_command_failed',
+      );
+      return this.commandResponse(COMMAND_FAILED_TEXT, event.traceId);
+    }
+    this.applyAgentCommandResult(routedSessionKey, sessionKeyStr, result);
+    if (result.status === 'rejected' || result.status === 'unsupported') {
+      return this.commandResponse(
+        result.message ?? COMMAND_FAILED_TEXT,
+        event.traceId,
+      );
+    }
+    if (result.message) {
+      await this.sendCommandAck(event, routedSessionKey, result.message);
+    }
+  }
+
+  private applyAgentCommandResult(
+    sessionKey: SessionKey,
+    sessionKeyStr: string,
+    result: AgentCommandResult,
+  ): void {
+    if (!Object.prototype.hasOwnProperty.call(result, 'updatedAgentSessionId')) {
+      return;
+    }
+    if (result.updatedAgentSessionId === null) {
+      this.sessionStore.delete(sessionKey);
+      const active = this.agentSessions.get(sessionKeyStr);
+      if (!active) return;
+      try {
+        if (!active.agent.isAlive(active.session)) {
+          this.agentSessions.delete(sessionKeyStr);
+        }
+      } catch (err) {
+        this.logger.warn(
+          { sessionKey: sessionKeyStr, err },
+          'agent_is_alive_failed',
+        );
+        this.agentSessions.delete(sessionKeyStr);
+      }
+      return;
+    }
+    if (typeof result.updatedAgentSessionId === 'string') {
+      this.sessionStore.set(sessionKey, {
+        agentSessionId: result.updatedAgentSessionId,
+        lastTurnAt: new Date(),
+      });
+    }
+  }
+
+  private async handleDaemonCommand(
+    event: NormalizedEvent,
+    decision: Extract<CommandDispatchDecision, { ownerType: 'daemon' }>,
+  ): Promise<void | EventHandlerResult> {
+    if (decision.handlerKey === 'reload-config' && this.configReloader) {
+      return this.handleReloadConfigCommand(event, decision);
+    }
+    if (decision.handlerKey !== 'kill') {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          commandName: decision.commandName,
+          canonicalId: decision.canonicalId,
+          handlerKey: decision.handlerKey,
+        },
+        'command_handler_missing',
+      );
+      return this.commandResponse(COMMAND_NOT_READY_TEXT, event.traceId);
+    }
+
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    const sessionKeyStr = serializeSessionKey(routedSessionKey);
+    const hadActiveSession = this.stopActiveSession(sessionKeyStr, event.traceId);
+    const hadStoredSession = this.sessionStore.get(routedSessionKey) !== undefined;
+    this.sessionStore.delete(routedSessionKey);
+    this.clearTypingBestEffort(routedSessionKey, event.traceId);
+    await this.sendCommandAck(
+      event,
+      routedSessionKey,
+      hadActiveSession || hadStoredSession
+        ? '[session killed]'
+        : '[no active session]',
+    );
+  }
+
+  private async handleReloadConfigCommand(
+    event: NormalizedEvent,
+    decision: Extract<CommandDispatchDecision, { ownerType: 'daemon' }>,
+  ): Promise<EventHandlerResult> {
+    if (!this.configReloader) {
+      return this.commandResponse(COMMAND_NOT_READY_TEXT, event.traceId);
+    }
+    let result: DaemonConfigReloadResult;
+    try {
+      result = await this.configReloader();
+    } catch (err) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          platformName: this.platformName,
+          commandName: decision.commandName,
+          canonicalId: decision.canonicalId,
+          err,
+        },
+        'config_reload_failed',
+      );
+      return this.commandResponse(COMMAND_FAILED_TEXT, event.traceId);
+    }
+    this.logger.info(
+      {
+        traceId: event.traceId,
+        platformName: this.platformName,
+        commandName: decision.commandName,
+        status: result.status,
+      },
+      'config_reload_result',
+    );
+    return this.commandResponse(result.message, event.traceId);
   }
 
   private route(event: NormalizedEvent):
@@ -374,14 +815,21 @@ export class Engine {
       const rawText = event.text ?? '';
       const trimmed = rawText.trim();
       let prompt: string;
-      if (trimmed === '/new' || trimmed.startsWith('/new ')) {
+      if (
+        this.newSessionTextPrefixEnabled &&
+        (trimmed === '/new' || trimmed.startsWith('/new '))
+      ) {
         this.stopActiveSession(sessionKeyStr, event.traceId);
         this.sessionStore.delete(event.sessionKey);
         const remainder = trimmed === '/new' ? '' : trimmed.slice(5).trim();
         if (remainder.length === 0) {
           try {
+            const outboundText = this.redactForOutbound(
+              '[new session ready]',
+              event.traceId,
+            );
             await this.platform.send(event.sessionKey, {
-              text: '[new session ready]',
+              text: outboundText,
               traceId: event.traceId,
               sessionKey: event.sessionKey,
             });
@@ -399,6 +847,9 @@ export class Engine {
       }
 
       const platformCaps = this.platform.capabilities();
+      // turn 级 snapshot：reload 切换 toolMessages 只影响后续 turn，
+      // 避免同一 turn 内前后段按不同模式混合渲染
+      const toolMessageMode = this.toolMessageMode;
       let session: AgentSession | undefined;
       let buf = '';
       let sawDelta = false;
@@ -565,7 +1016,7 @@ export class Engine {
       const finalizeReply = async (): Promise<void> => {
         cancelPendingEdit();
         if (
-          this.toolMessageMode === 'append' &&
+          toolMessageMode === 'append' &&
           toolMessages.size > 0 &&
           buf.length === 0
         ) {
@@ -734,7 +1185,7 @@ export class Engine {
               e.payload.toolName,
               e.payload.inputSummary,
             );
-            if (this.toolMessageMode === 'append') {
+            if (toolMessageMode === 'append') {
               await splitAssistantMessageBeforeTool();
               await upsertToolMessage(
                 e.payload.callId,
@@ -747,7 +1198,7 @@ export class Engine {
             return;
           }
           if (e.type === 'tool_call_progress') {
-            if (this.toolMessageMode === 'compact') {
+            if (toolMessageMode === 'compact') {
               await ensureToolVisible(`[tool: ${e.payload.callId}] running`);
             }
             return;
@@ -764,7 +1215,7 @@ export class Engine {
               },
               'tool_result',
             );
-            if (this.toolMessageMode === 'compact') {
+            if (toolMessageMode === 'compact') {
               await ensureToolVisible(`[tool: ${e.payload.callId}] result`);
             }
             return;
@@ -783,7 +1234,7 @@ export class Engine {
               },
               'tool_call_finished',
             );
-            if (this.toolMessageMode === 'compact') {
+            if (toolMessageMode === 'compact') {
               await ensureToolVisible(
                 `[tool: ${e.payload.toolName}] ${e.payload.status}`,
               );
@@ -821,6 +1272,13 @@ export class Engine {
           }
           if (e.type === 'turn_finished') {
             clearTyping();
+            if (
+              e.payload.reason === 'user_interrupt' &&
+              buf.length === 0 &&
+              toolMessages.size === 0
+            ) {
+              return;
+            }
             if (!errored) {
               await finalizeReply();
             }
@@ -989,9 +1447,9 @@ export class Engine {
     return activeSession;
   }
 
-  private stopActiveSession(sessionKeyStr: string, traceId: string): void {
+  private stopActiveSession(sessionKeyStr: string, traceId: string): boolean {
     const active = this.agentSessions.get(sessionKeyStr);
-    if (!active) return;
+    if (!active) return false;
     this.agentSessions.delete(sessionKeyStr);
     try {
       active.agent.stopSession(active.session);
@@ -1001,5 +1459,6 @@ export class Engine {
         'agent_stop_session_failed',
       );
     }
+    return true;
   }
 }

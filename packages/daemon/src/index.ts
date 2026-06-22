@@ -1,6 +1,13 @@
 export { createLogger, type Logger, type CreateLoggerOptions } from './logger.js';
 export { checkPlatformAuth, type AuthDecision } from './auth.js';
-export { Engine, type EngineAgent, type EngineDeps } from './engine.js';
+export {
+  Engine,
+  type DaemonConfigReloader,
+  type DaemonConfigReloadResult,
+  type EngineAgent,
+  type EngineDeps,
+  type EngineRuntimeUpdate,
+} from './engine.js';
 export {
   InMemoryIdempotencyStore,
   type IdempotencyDecision,
@@ -16,11 +23,35 @@ export {
   type RoutingEntry,
 } from './router.js';
 export {
+  ActiveCommandRegistry,
+  buildCommandRegistrationPlan,
+  CommandRegistryError,
+  DEFAULT_COMMAND_NAME_POLICY,
+  type BuildCommandRegistrationPlanInput,
+  type CommandNamePolicy,
+  type CommandRegistryErrorCode,
+} from './command-registry.js';
+export { daemonCommandDescriptors } from './command-descriptors.js';
+export {
+  dispatchCommandEvent,
+  resolveCommandDispatch,
+  type CommandDispatchAgentTarget,
+  type CommandDispatchDecision,
+  type CommandDispatchInput,
+  type CommandDispatchLogger,
+  type DispatchCommandEventInput,
+} from './command-dispatch.js';
+export {
+  DEFAULT_DAEMON_RUNTIME_CONFIG,
   parseDaemonConfig,
+  parseDaemonRuntimeConfig,
   parsePlatformAuthConfig,
   DaemonConfigError,
   type AllowlistConfig,
+  type DaemonCommandRegistryConfig,
   type DaemonConfig,
+  type DaemonRegistrationRetryConfig,
+  type DaemonRuntimeConfig,
   type PlatformAuthConfig,
   type ToolMessageMode,
 } from './config.js';

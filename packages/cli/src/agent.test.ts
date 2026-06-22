@@ -12,11 +12,13 @@ const createCodexRuntimeMock = vi.hoisted(() => vi.fn(() => codexRuntime));
 const runCodexProbeMock = vi.hoisted(() => vi.fn(async () => {}));
 
 vi.mock('@agent-nexus/agent-claudecode', () => ({
+  claudeCodeCommandDescriptors: [{ handlerKey: 'new' }],
   createClaudeCodeRuntime: createClaudeCodeRuntimeMock,
   runCompatibilityProbe: runClaudeProbeMock,
 }));
 
 vi.mock('@agent-nexus/agent-codex', () => ({
+  codexCommandDescriptors: [{ handlerKey: 'new' }],
   createCodexRuntime: createCodexRuntimeMock,
   runCompatibilityProbe: runCodexProbeMock,
 }));
@@ -173,10 +175,12 @@ describe('createAgentRegistry', () => {
     expect(registry).toHaveLength(2);
     expect(registry[0]).toMatchObject({
       agentName: 'codex-dev',
+      agentOwner: 'codex',
       agent: codexRuntime,
     });
     expect(registry[1]).toMatchObject({
       agentName: 'claude-prod',
+      agentOwner: 'claudecode',
       agent: claudeRuntime,
     });
   });

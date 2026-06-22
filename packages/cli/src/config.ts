@@ -19,10 +19,14 @@ import {
   CodexConfigError,
 } from '@agent-nexus/agent-codex';
 import {
+  DEFAULT_DAEMON_RUNTIME_CONFIG,
   parseDaemonConfig,
+  parseDaemonRuntimeConfig,
   parsePlatformAuthConfig,
   type DaemonConfig,
+  type DaemonRuntimeConfig,
   type PlatformAuthConfig,
+  type RoutingEntry,
   DaemonConfigError,
 } from '@agent-nexus/daemon';
 
@@ -58,6 +62,7 @@ export interface AgentNexusConfig {
   platforms: PlatformConfig[];
   agents: AgentConfig[];
   bindings: BindingConfig[];
+  daemon: DaemonRuntimeConfig;
   ui: DaemonConfig;
   log: {
     level: LogLevel;
@@ -184,6 +189,29 @@ const DEFAULT_CONFIG_TEMPLATE = `\
       }
     }
   ],
+  "daemon": {
+    "commandRegistry": {
+      "registration": {
+        "enabled": true,
+        "applyTimeoutMs": 30000,
+        "retry": {
+          "maxAttempts": 3,
+          "backoffMs": 1000
+        }
+      },
+      "aliases": {
+        "singleAgent": {
+          "enabled": true
+        },
+        "legacy": {
+          "replyMode": true
+        }
+      },
+      "textPrefixes": {
+        "newSession": true
+      }
+    }
+  },
   "log": {
     "_levelComment": "allowed: trace, debug, info, warn, error, fatal",
     "level": "info"
@@ -231,6 +259,44 @@ function assertNoUnknownKeys(
       throw new ConfigError(`未知字段 ${path}.${key}`);
     }
   }
+}
+
+function cloneDefaultDaemonConfig(): DaemonRuntimeConfig {
+  return JSON.parse(JSON.stringify(DEFAULT_DAEMON_RUNTIME_CONFIG)) as DaemonRuntimeConfig;
+}
+
+function mergeMissingObjectFields(
+  target: Record<string, unknown>,
+  defaults: Record<string, unknown>,
+): boolean {
+  let changed = false;
+  for (const [key, defaultValue] of Object.entries(defaults)) {
+    if (!(key in target)) {
+      target[key] = defaultValue;
+      changed = true;
+      continue;
+    }
+    if (isRecord(target[key]) && isRecord(defaultValue)) {
+      changed = mergeMissingObjectFields(
+        target[key] as Record<string, unknown>,
+        defaultValue,
+      ) || changed;
+    }
+  }
+  return changed;
+}
+
+function applyTemplateDefaultsIfMissing(
+  parsed: Record<string, unknown>,
+): boolean {
+  return mergeMissingObjectFields(parsed, {
+    daemon: cloneDefaultDaemonConfig(),
+  });
+}
+
+async function persistConfig(path: string, parsed: Record<string, unknown>): Promise<void> {
+  await writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`);
+  await chmod(path, 0o600);
 }
 
 async function createFileIfMissing(
@@ -512,7 +578,8 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     throw new ConfigError(`${path} 顶层必须是对象`);
   }
   rejectLegacyTopLevel(path, parsed);
-  assertNoUnknownKeys(parsed, ['platforms', 'agents', 'bindings', 'log', 'ui'], path);
+  assertNoUnknownKeys(parsed, ['platforms', 'agents', 'bindings', 'daemon', 'log', 'ui'], path);
+  const templateDefaultsChanged = applyTemplateDefaultsIfMissing(parsed);
 
   const platformsRaw = assertArray(parsed, 'platforms', path);
   const agentsRaw = assertArray(parsed, 'agents', path);
@@ -555,8 +622,10 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
   assertAgentReferences(bindings, agents);
 
   let ui: DaemonConfig;
+  let daemon: DaemonRuntimeConfig;
   try {
     ui = parseDaemonConfig(parsed['ui']);
+    daemon = parseDaemonRuntimeConfig(parsed['daemon']);
   } catch (err) {
     if (err instanceof DaemonConfigError) {
       throw new ConfigError(`${path} ${err.message}`);
@@ -564,13 +633,44 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     throw err;
   }
 
+  if (templateDefaultsChanged) {
+    try {
+      await persistConfig(path, parsed);
+    } catch {
+      // Parsed defaults are already applied in memory; a read-only config file
+      // must not make an otherwise valid legacy config fail to start.
+    }
+  }
+
   return {
     platforms,
     agents,
     bindings,
+    daemon,
     ui,
     log: parseLog(parsed['log']),
   };
+}
+
+export function buildRoutingTable(config: AgentNexusConfig): RoutingEntry[] {
+  const platformsByName = new Map(
+    config.platforms.map((platform) => [platform.name, platform]),
+  );
+  return config.bindings.map((binding) => {
+    const platform = platformsByName.get(binding.platformName);
+    if (!platform) {
+      throw new ConfigError(
+        `binding "${binding.name}" 引用了不存在的 platform "${binding.platformName}"`,
+      );
+    }
+    return {
+      bindingName: binding.name,
+      platformName: binding.platformName,
+      platformType: platform.type,
+      agentName: binding.agentName,
+      match: binding.match,
+    };
+  });
 }
 
 function assertValidSecretName(name: string): void {

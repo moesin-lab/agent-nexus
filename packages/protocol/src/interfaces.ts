@@ -5,11 +5,26 @@ import type {
   AgentCapabilitySet,
   SessionConfig,
 } from './agent.js';
+import type {
+  AgentCommandEnvelope,
+  AgentCommandResult,
+} from './command.js';
 import type { NormalizedEvent } from './events.js';
 import type { CapabilitySet, MessageRef, OutboundMessage } from './outbound.js';
 import type { SessionKey } from './session-key.js';
 
-export type EventHandler = (event: NormalizedEvent) => void | Promise<void>;
+export interface EventCommandResponse {
+  text: string;
+  ephemeral?: boolean;
+}
+
+export interface EventHandlerResult {
+  commandResponse?: EventCommandResponse;
+}
+
+export type EventHandler = (
+  event: NormalizedEvent,
+) => void | EventHandlerResult | Promise<void | EventHandlerResult>;
 export type AgentEventHandler = (event: AgentEvent) => void | Promise<void>;
 
 /** docs/dev/spec/platform-adapter.md §PlatformAdapter */
@@ -38,6 +53,10 @@ export interface AgentRuntime {
   isAlive(session: AgentSession): boolean;
 
   sendInput(session: AgentSession, input: AgentInput): Promise<void>;
+  handleCommand(
+    session: AgentSession | undefined,
+    command: AgentCommandEnvelope,
+  ): Promise<AgentCommandResult>;
 
   onEvent(session: AgentSession, handler: AgentEventHandler): void;
 

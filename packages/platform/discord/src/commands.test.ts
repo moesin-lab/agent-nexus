@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  createDiscordCommandRegistrationPort,
+  plannedCommandToSlashCommandSpec,
   registerSlashCommands,
   type SlashCommandRegistrar,
   type SlashCommandSpec,
 } from './commands.js';
+import { discordReplyModeCommandDescriptor } from './reply-mode.js';
+import type { CommandRegistrationPlan } from '@agent-nexus/protocol';
 
 function makeLogger() {
   return {
@@ -47,56 +51,60 @@ describe('registerSlashCommands', () => {
     );
   });
 
-  it('空 specs → 不调 create，不报错', async () => {
+  it('空 specs → bulk set 空数组，清理 registry 管理的远端命令', async () => {
     const logger = makeLogger();
-    const create = vi.fn(async () => ({}));
-    const registrar: SlashCommandRegistrar = { create };
+    const set = vi.fn(async () => ({}));
+    const registrar: SlashCommandRegistrar = { set };
     await registerSlashCommands(registrar, [], logger);
-    expect(create).not.toHaveBeenCalled();
+    expect(set).toHaveBeenCalledOnce();
+    expect(set).toHaveBeenCalledWith([], undefined);
     expect(logger.error).not.toHaveBeenCalled();
   });
 
-  it('单条成功（不传 guildId）→ create(data, undefined) + scope=global', async () => {
+  it('单条成功（不传 guildId）→ set([data], undefined) + scope=global', async () => {
     const logger = makeLogger();
-    const create = vi.fn(async () => ({}));
-    await registerSlashCommands({ create }, [FAKE_SPEC], logger);
-    expect(create).toHaveBeenCalledOnce();
-    expect(create).toHaveBeenCalledWith(FAKE_SPEC.data, undefined);
+    const set = vi.fn(async () => ({}));
+    await registerSlashCommands({ set }, [FAKE_SPEC], logger);
+    expect(set).toHaveBeenCalledOnce();
+    expect(set).toHaveBeenCalledWith([FAKE_SPEC.data], undefined);
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
-        command: 'reply-mode',
+        commands: ['reply-mode'],
+        commandCount: 1,
         scope: 'global',
         guildId: null,
       }),
-      'discord_slash_command_registered',
+      'discord_slash_commands_registered',
     );
   });
 
-  it('传 guildId → create(data, guildId) + scope=guild + 日志含 guildId', async () => {
+  it('传 guildId → set([data], guildId) + scope=guild + 日志含 guildId', async () => {
     const logger = makeLogger();
-    const create = vi.fn(async () => ({}));
-    await registerSlashCommands({ create }, [FAKE_SPEC], logger, 'GUILD123');
-    expect(create).toHaveBeenCalledOnce();
-    expect(create).toHaveBeenCalledWith(FAKE_SPEC.data, 'GUILD123');
+    const set = vi.fn(async () => ({}));
+    await registerSlashCommands({ set }, [FAKE_SPEC], logger, 'GUILD123');
+    expect(set).toHaveBeenCalledOnce();
+    expect(set).toHaveBeenCalledWith([FAKE_SPEC.data], 'GUILD123');
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
-        command: 'reply-mode',
+        commands: ['reply-mode'],
+        commandCount: 1,
         scope: 'guild',
         guildId: 'GUILD123',
       }),
-      'discord_slash_command_registered',
+      'discord_slash_commands_registered',
     );
   });
 
-  it('传 guildId 但 create reject（如 bot 不在该 guild）→ error 日志含 scope/guildId', async () => {
+  it('传 guildId 但 bulk set reject（如 bot 不在该 guild）→ error 日志含 scope/guildId', async () => {
     const logger = makeLogger();
-    const create = vi.fn(async () => {
+    const set = vi.fn(async () => {
       throw new Error('Missing Access');
     });
-    await registerSlashCommands({ create }, [FAKE_SPEC], logger, 'GUILD_NOT_JOINED');
+    await registerSlashCommands({ set }, [FAKE_SPEC], logger, 'GUILD_NOT_JOINED');
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({
-        command: 'reply-mode',
+        commands: ['reply-mode'],
+        commandCount: 1,
         scope: 'guild',
         guildId: 'GUILD_NOT_JOINED',
       }),
@@ -104,33 +112,220 @@ describe('registerSlashCommands', () => {
     );
   });
 
-  it('多条全部成功 → 顺序调用、各打 info', async () => {
+  it('多条全部成功 → 单次 bulk set，打一条批量成功日志', async () => {
     const logger = makeLogger();
-    const create = vi.fn(async () => ({}));
-    await registerSlashCommands({ create }, [FAKE_SPEC, ANOTHER_SPEC], logger);
-    expect(create).toHaveBeenCalledTimes(2);
-    expect(logger.info).toHaveBeenCalledTimes(2);
+    const set = vi.fn(async () => ({}));
+    await registerSlashCommands({ set }, [FAKE_SPEC, ANOTHER_SPEC], logger);
+    expect(set).toHaveBeenCalledOnce();
+    expect(set).toHaveBeenCalledWith(
+      [FAKE_SPEC.data, ANOTHER_SPEC.data],
+      undefined,
+    );
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commands: ['reply-mode', 'other'],
+        commandCount: 2,
+      }),
+      'discord_slash_commands_registered',
+    );
   });
 
-  it('某条 create reject → 记 error 但继续后续，整体不抛', async () => {
+  it('bulk set reject → 记 error、整体不抛且不记录原始错误内容', async () => {
     const logger = makeLogger();
-    const create = vi.fn(async (data: unknown) => {
-      if ((data as { name: string }).name === 'reply-mode') {
-        throw new Error('discord 5xx');
-      }
-      return {};
+    const set = vi.fn(async () => {
+      throw new Error('SECRET_PAYLOAD discord 5xx');
     });
     await expect(
-      registerSlashCommands({ create }, [FAKE_SPEC, ANOTHER_SPEC], logger),
+      registerSlashCommands({ set }, [FAKE_SPEC, ANOTHER_SPEC], logger),
     ).resolves.toBeUndefined();
-    expect(create).toHaveBeenCalledTimes(2);
+    expect(set).toHaveBeenCalledOnce();
     expect(logger.error).toHaveBeenCalledWith(
-      expect.objectContaining({ command: 'reply-mode' }),
+      expect.objectContaining({
+        commands: ['reply-mode', 'other'],
+        commandCount: 2,
+      }),
       'discord_slash_command_register_failed',
     );
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ command: 'other' }),
-      'discord_slash_command_registered',
+    expect(JSON.stringify(logger.error.mock.calls[0]![0])).not.toContain(
+      'SECRET_PAYLOAD',
     );
+  });
+});
+
+describe('createDiscordCommandRegistrationPort', () => {
+  it('maps a daemon registration plan to one Discord bulk replacement and returns applied generation', async () => {
+    const logger = makeLogger();
+    const set = vi.fn(async () => ({}));
+    const plan: CommandRegistrationPlan = {
+      scope: {
+        platformName: 'discord-main',
+        platformType: 'discord',
+        nativeScope: { kind: 'guild', guildId: 'GUILD123' },
+      },
+      commands: [
+        {
+          commandName: 'discord-reply-mode',
+          canonicalId: 'platform:discord:reply-mode',
+          aliasKind: 'stable',
+          descriptor: discordReplyModeCommandDescriptor,
+        },
+        {
+          commandName: 'reply-mode',
+          canonicalId: 'platform:discord:reply-mode',
+          aliasKind: 'legacy',
+          descriptor: discordReplyModeCommandDescriptor,
+        },
+      ],
+      reverseMap: { entries: {} },
+      generation: 'generation-1',
+    };
+
+    const port = createDiscordCommandRegistrationPort({ set }, logger);
+    const result = await port.applyCommandPlan(plan);
+
+    expect(result).toEqual({ status: 'applied', generation: 'generation-1' });
+    expect(set).toHaveBeenCalledOnce();
+    expect(set.mock.calls[0]![0]).toMatchObject([
+      { name: 'discord-reply-mode' },
+      { name: 'reply-mode' },
+    ]);
+    expect(set.mock.calls[0]![1]).toBe('GUILD123');
+  });
+
+  it('returns failed result when Discord bulk replacement fails', async () => {
+    const logger = makeLogger();
+    const set = vi.fn(async () => {
+      throw new Error('SECRET_PAYLOAD missing access');
+    });
+    const plan: CommandRegistrationPlan = {
+      scope: {
+        platformName: 'discord-main',
+        platformType: 'discord',
+        nativeScope: { kind: 'global' },
+      },
+      commands: [],
+      reverseMap: { entries: {} },
+      generation: 'generation-2',
+    };
+
+    const port = createDiscordCommandRegistrationPort({ set }, logger);
+    const result = await port.applyCommandPlan(plan);
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: {
+        code: 'command_registration_failed',
+        message: 'discord slash command bulk registration failed',
+      },
+    });
+    if (result.status === 'failed') {
+      expect(result.error).not.toHaveProperty('cause');
+    }
+    expect(JSON.stringify(logger.error.mock.calls[0]![0])).not.toContain(
+      'SECRET_PAYLOAD',
+    );
+  });
+
+  it('rejects non-discord scopes without calling Discord bulk replacement', async () => {
+    const logger = makeLogger();
+    const set = vi.fn(async () => ({}));
+    const plan: CommandRegistrationPlan = {
+      scope: {
+        platformName: 'chat-main',
+        platformType: 'telegram',
+        nativeScope: { kind: 'global' },
+      },
+      commands: [],
+      reverseMap: { entries: {} },
+      generation: 'generation-3',
+    };
+
+    const port = createDiscordCommandRegistrationPort({ set }, logger);
+    const result = await port.applyCommandPlan(plan);
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: {
+        code: 'command_registration_failed',
+        message: 'discord command registrar received a non-discord scope',
+      },
+    });
+    expect(set).not.toHaveBeenCalled();
+  });
+});
+
+describe('plannedCommandToSlashCommandSpec', () => {
+  it('maps stable descriptor commands to Discord slash command payloads', () => {
+    const spec = plannedCommandToSlashCommandSpec({
+      commandName: 'discord-reply-mode',
+      canonicalId: 'platform:discord:reply-mode',
+      aliasKind: 'stable',
+      descriptor: discordReplyModeCommandDescriptor,
+    });
+
+    expect(spec.name).toBe('discord-reply-mode');
+    expect(spec.data).toMatchObject({
+      name: 'discord-reply-mode',
+      description: 'Query or switch the bot reply trigger mode',
+      options: [
+        expect.objectContaining({
+          name: 'mode',
+          required: false,
+          choices: [
+            { name: 'mention', value: 'mention' },
+            { name: 'all', value: 'all' },
+          ],
+        }),
+      ],
+    });
+  });
+
+  it('maps the legacy /reply-mode alias to the same handler descriptor payload', () => {
+    const spec = plannedCommandToSlashCommandSpec({
+      commandName: 'reply-mode',
+      canonicalId: 'platform:discord:reply-mode',
+      aliasKind: 'legacy',
+      descriptor: discordReplyModeCommandDescriptor,
+    });
+
+    expect(spec.name).toBe('reply-mode');
+    expect(spec.data).toMatchObject({
+      name: 'reply-mode',
+      description: 'Query or switch the bot reply trigger mode',
+    });
+  });
+
+  it('omits empty choices so Discord does not reject boolean or empty-choice options', () => {
+    const spec = plannedCommandToSlashCommandSpec({
+      commandName: 'nexus-status',
+      canonicalId: 'daemon:status',
+      aliasKind: 'stable',
+      descriptor: {
+        canonicalId: 'daemon:status',
+        owner: { type: 'daemon' },
+        localName: 'status',
+        summary: 'Show daemon status',
+        options: [
+          {
+            name: 'verbose',
+            type: 'boolean',
+            required: false,
+            description: 'Show verbose status',
+            choices: [],
+          },
+        ],
+        handlerKey: 'status',
+        applicability: {
+          platformTypes: ['discord'],
+          requiredCapabilities: ['slash-command-registration'],
+        },
+        legacyNames: [],
+      },
+    });
+
+    expect(spec.data).toMatchObject({
+      options: [expect.not.objectContaining({ choices: expect.any(Array) })],
+    });
   });
 });

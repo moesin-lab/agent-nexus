@@ -2972,6 +2972,89 @@ describe('Engine', () => {
     expect(result?.commandResponse?.text).toContain('Values marked `in-memory` reset when the daemon restarts.');
   });
 
+  it('daemon /nexus-settings redacts text and visible component copy', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+      supportsThreadCreation: true,
+    });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    store.set(
+      {
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'C-secret',
+        initiatorUserId: 'U1',
+      },
+      {
+        agentSessionId: 'sk-ant-agent-secret',
+        lastTurnAt: new Date(10),
+        title: 'Inspect /home/node/private sk-ant-title-secret',
+      },
+    );
+    store.setChannelWorkingDir(
+      {
+        platformName: 'discord-main',
+        platform: 'discord',
+        channelId: 'C1',
+      },
+      '/home/node/private/project',
+    );
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1', 'C-secret'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'settings'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(makeCommandEvent('nexus-settings'));
+
+    const text = result?.commandResponse?.text ?? '';
+    expect(text).toContain('WorkingDir: `~/private/project` · channel default · in-memory');
+    expect(text).not.toContain('/home/node/private');
+    expect(text).not.toContain('sk-ant');
+    const resume = result?.commandResponse?.components?.find(
+      (component) =>
+        component.type === 'string-select' &&
+        component.customId === 'nexus:settings:resume',
+    );
+    expect(resume?.type).toBe('string-select');
+    if (!resume || resume.type !== 'string-select') {
+      throw new Error('expected settings resume select');
+    }
+    const option = resume.options[0];
+    expect(option?.label).toContain('~/private');
+    expect(option?.label).toContain('<redacted:secret>');
+    expect(option?.label).not.toContain('/home/node/private');
+    expect(option?.label).not.toContain('sk-ant');
+    expect(option?.description).toContain('<redacted:secret>');
+    expect(option?.description).not.toContain('sk-ant');
+  });
+
   it('settings reply-mode interaction dispatches to the platform owner and returns a fresh snapshot', async () => {
     const platform = makePlatform({
       supportsSlashCommands: true,
@@ -3351,6 +3434,64 @@ describe('Engine', () => {
         limit: 10,
       }),
     ).toEqual([]);
+  });
+
+  it('daemon /nexus-new-thread redacts title before thread creation', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+      supportsThreadCreation: true,
+    });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_NEW_THREAD_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'new-thread'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(
+      makeCommandEvent('nexus-new-thread', {
+        command: {
+          name: 'nexus-new-thread',
+          args: { title: 'Plan /home/node/private sk-ant-thread-secret' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+
+    expect(platform.createThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Plan ~/private <redacted:secret>',
+        initialMessage: '[new Nexus session: Plan ~/private <redacted:secret>]',
+      }),
+    );
+    expect(platform.createThread.mock.calls[0]![0].title).not.toContain('/home/node/private');
+    expect(platform.createThread.mock.calls[0]![0].title).not.toContain('sk-ant');
   });
 
   it('daemon /nexus-new-thread returns an actionable failure and does not create a store entry', async () => {

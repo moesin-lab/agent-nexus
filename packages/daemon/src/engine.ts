@@ -8,7 +8,9 @@ import type {
   AgentSession,
   CommandDescriptor,
   CommandPayload,
+  EventCommandResponse,
   EventHandlerResult,
+  MessageComponent,
   MessageRef,
   NormalizedEvent,
   PlatformAdapter,
@@ -564,11 +566,57 @@ export class Engine {
   }
 
   private commandResponse(text: string, traceId: string): EventHandlerResult {
+    return this.commandResponseResult({ text, ephemeral: true }, traceId);
+  }
+
+  private commandResponseResult(
+    response: EventCommandResponse,
+    traceId: string,
+  ): EventHandlerResult {
     return {
-      commandResponse: {
-        text: this.redactForOutbound(text, traceId),
-        ephemeral: true,
-      },
+      commandResponse: this.redactCommandResponse(response, traceId),
+    };
+  }
+
+  private redactCommandResponse(
+    response: EventCommandResponse,
+    traceId: string,
+  ): EventCommandResponse {
+    return {
+      ...response,
+      text: this.redactForOutbound(response.text, traceId),
+      ...(response.components
+        ? {
+            components: response.components.map((component) =>
+              this.redactMessageComponent(component, traceId),
+            ),
+          }
+        : {}),
+    };
+  }
+
+  private redactMessageComponent(
+    component: MessageComponent,
+    traceId: string,
+  ): MessageComponent {
+    if (component.type === 'button') {
+      return {
+        ...component,
+        label: this.redactForOutbound(component.label, traceId),
+      };
+    }
+    return {
+      ...component,
+      ...(component.placeholder
+        ? { placeholder: this.redactForOutbound(component.placeholder, traceId) }
+        : {}),
+      options: component.options.map((option) => ({
+        ...option,
+        label: this.redactForOutbound(option.label, traceId),
+        ...(option.description
+          ? { description: this.redactForOutbound(option.description, traceId) }
+          : {}),
+      })),
     };
   }
 
@@ -1005,8 +1053,8 @@ export class Engine {
     if (sessions.length === 0) {
       return this.commandResponse('[no resumable sessions]', event.traceId);
     }
-    return {
-      commandResponse: {
+    return this.commandResponseResult(
+      {
         text: 'Select a session to resume.',
         ephemeral: true,
         components: [
@@ -1024,7 +1072,8 @@ export class Engine {
           },
         ],
       },
-    };
+      event.traceId,
+    );
   }
 
   private async handleNewThreadCommand(
@@ -1040,15 +1089,16 @@ export class Engine {
       commandStringArg(event.command?.args, 'title') ?? '',
     );
     const title = requestedTitle ?? NEW_THREAD_DEFAULT_TITLE;
+    const outboundTitle = this.redactForOutbound(title, event.traceId);
     let result: Awaited<ReturnType<NonNullable<PlatformAdapter['createThread']>>>;
     try {
       result = await this.platform.createThread({
         parentChannelId: event.sessionKey.channelId,
         initiatorUserId: event.initiator.userId,
-        title,
+        title: outboundTitle,
         visibility: 'private',
         autoArchiveDurationMinutes: THREAD_AUTO_ARCHIVE_DURATION_MINUTES,
-        initialMessage: `[new Nexus session: ${title}]`,
+        initialMessage: `[new Nexus session: ${outboundTitle}]`,
         traceId: event.traceId,
       });
     } catch (err) {
@@ -1153,13 +1203,14 @@ export class Engine {
   ): EventHandlerResult {
     const key = queueKeyFromEvent(event, this.platformName);
     const snapshot = this.messageQueue.snapshot(key);
-    return {
-      commandResponse: {
+    return this.commandResponseResult(
+      {
         text: this.renderQueueStatus(key, prefix, selectedItemId),
         ephemeral: true,
         components: this.queueComponents(snapshot, selectedItemId),
       },
-    };
+      event.traceId,
+    );
   }
 
   private renderQueueStatus(
@@ -1400,9 +1451,10 @@ export class Engine {
     event: NormalizedEvent,
     prefix?: string,
   ): Promise<EventHandlerResult> {
-    return {
-      commandResponse: await this.buildSettingsResponse(event, prefix),
-    };
+    return this.commandResponseResult(
+      await this.buildSettingsResponse(event, prefix),
+      event.traceId,
+    );
   }
 
   private async buildSettingsResponse(
@@ -2078,7 +2130,7 @@ export class Engine {
       .then(() =>
         this.platform.updateThread?.({
           threadId: event.sessionKey.channelId,
-          title,
+          title: this.redactForOutbound(title, event.traceId),
           traceId: event.traceId,
         }),
       )

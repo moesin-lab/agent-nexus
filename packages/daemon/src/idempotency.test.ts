@@ -66,4 +66,21 @@ describe('InMemoryIdempotencyStore', () => {
 
     expect(store.checkAndSet(sessionKey, 'm-1')).toEqual({ kind: 'inserted' });
   });
+
+  it('forget drops one message replay state without clearing the session', () => {
+    const store = new InMemoryIdempotencyStore();
+
+    expect(store.checkAndSet(sessionKey, 'm-1')).toEqual({ kind: 'inserted' });
+    expect(store.checkAndSet(sessionKey, 'm-2')).toEqual({ kind: 'inserted' });
+    store.markProcessed(sessionKey, 'm-1');
+    store.markProcessed(sessionKey, 'm-2');
+
+    store.forget(sessionKey, 'm-1');
+
+    expect(store.checkAndSet(sessionKey, 'm-1')).toEqual({ kind: 'inserted' });
+    expect(store.checkAndSet(sessionKey, 'm-2')).toEqual({
+      kind: 'hit',
+      status: 'processed',
+    });
+  });
 });

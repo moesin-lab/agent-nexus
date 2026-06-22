@@ -46,6 +46,7 @@ export interface MessageQueueSnapshot {
 export interface MessageQueueOptions {
   maxPendingPerKey?: number;
   historyLimitPerKey?: number;
+  maxIdleStates?: number;
 }
 
 export interface MessageQueueEnqueueInput<T> {
@@ -80,6 +81,7 @@ interface QueueState {
   running?: MessageQueueItem<unknown>;
   pending: MessageQueueItem<unknown>[];
   recent: MessageQueueItemView[];
+  idleOrder?: number;
 }
 
 export class QueueItemCancelledError extends Error {
@@ -110,14 +112,22 @@ export class InMemoryMessageQueue {
   private readonly states = new Map<string, QueueState>();
   readonly maxPendingPerKey: number;
   private readonly historyLimitPerKey: number;
+  private readonly maxIdleStates: number;
+  private idleSequence = 0;
 
   constructor(options: MessageQueueOptions = {}) {
     this.maxPendingPerKey = options.maxPendingPerKey ?? 20;
     this.historyLimitPerKey = options.historyLimitPerKey ?? 50;
+    this.maxIdleStates = Math.max(0, options.maxIdleStates ?? 1000);
   }
 
+  /** Callers must await or catch the returned promise, including enqueue-time failures. */
   enqueue<T>(input: MessageQueueEnqueueInput<T>): Promise<T> {
-    return this.enqueueWithHandle(input).done;
+    try {
+      return this.enqueueWithHandle(input).done;
+    } catch (err) {
+      return Promise.reject(err);
+    }
   }
 
   enqueueWithHandle<T>(
@@ -127,6 +137,7 @@ export class InMemoryMessageQueue {
     if (state.pending.length >= this.maxPendingPerKey) {
       throw new QueueFullError(input.key, this.maxPendingPerKey);
     }
+    state.idleOrder = undefined;
 
     let resolve!: (value: T) => void;
     let reject!: (reason?: unknown) => void;
@@ -145,7 +156,9 @@ export class InMemoryMessageQueue {
         traceId: input.traceId,
         label: input.label,
         ...(input.eventId ? { eventId: input.eventId } : {}),
-        ...(input.editableText ? { editableText: input.editableText } : {}),
+        ...(input.editableText !== undefined
+          ? { editableText: input.editableText }
+          : {}),
         enqueuedAt: new Date(),
       },
       run: input.run,
@@ -196,27 +209,36 @@ export class InMemoryMessageQueue {
     for (const item of pending) {
       this.cancelItem(state, item);
     }
+    this.markIdle(key, state);
     return { cancelled: pending.length };
   }
 
   cancelPendingItem(
     key: string,
     itemId: string,
-  ): { status: 'cancelled'; item: MessageQueueItemView } | { status: 'not_found' } {
+  ):
+    | { status: 'cancelled'; item: MessageQueueItemView }
+    | { status: 'running'; item: MessageQueueItemView }
+    | { status: 'not_found' } {
     const state = this.states.get(key);
     if (!state) return { status: 'not_found' };
+    if (state.running?.view.id === itemId) {
+      return { status: 'running', item: { ...state.running.view } };
+    }
     const index = state.pending.findIndex((item) => item.view.id === itemId);
     if (index < 0) return { status: 'not_found' };
     const [item] = state.pending.splice(index, 1);
     this.cancelItem(state, item!);
+    this.markIdle(key, state);
     return { status: 'cancelled', item: { ...item!.view } };
   }
 
+  /** Edits queued text; omitting label keeps the current human-facing label. */
   editPending(
     key: string,
     itemId: string,
     text: string,
-    label = text,
+    label?: string,
   ):
     | { status: 'updated'; item: MessageQueueItemView }
     | { status: 'not_found' }
@@ -225,7 +247,9 @@ export class InMemoryMessageQueue {
     if (!item) return { status: 'not_found' };
     if (!item.onEdit) return { status: 'not_editable' };
     item.onEdit(text);
-    item.view.label = label;
+    if (label !== undefined) {
+      item.view.label = label;
+    }
     item.view.editableText = text;
     return { status: 'updated', item: { ...item.view } };
   }
@@ -253,7 +277,7 @@ export class InMemoryMessageQueue {
 
   clearAll(): { cancelled: number } {
     let cancelled = 0;
-    for (const key of this.states.keys()) {
+    for (const key of Array.from(this.states.keys())) {
       cancelled += this.clearPending(key).cancelled;
     }
     return { cancelled };
@@ -262,7 +286,11 @@ export class InMemoryMessageQueue {
   private schedule(key: string, state: QueueState): void {
     if (state.running) return;
     const item = state.pending.shift();
-    if (!item) return;
+    if (!item) {
+      this.markIdle(key, state);
+      return;
+    }
+    state.idleOrder = undefined;
     state.running = item;
     item.view.status = 'running';
     item.view.startedAt = new Date();
@@ -304,6 +332,27 @@ export class InMemoryMessageQueue {
     state.recent.push({ ...view });
     while (state.recent.length > this.historyLimitPerKey) {
       state.recent.shift();
+    }
+  }
+
+  private markIdle(key: string, state: QueueState): void {
+    if (state.running || state.pending.length > 0) return;
+    if (state.recent.length === 0 || this.maxIdleStates === 0) {
+      this.states.delete(key);
+      return;
+    }
+    state.idleOrder = ++this.idleSequence;
+    this.evictIdleStates();
+  }
+
+  private evictIdleStates(): void {
+    const idleStates = Array.from(this.states.entries())
+      .filter(([, state]) => state.idleOrder !== undefined)
+      .sort(([, a], [, b]) => a.idleOrder! - b.idleOrder!);
+    const evictCount = idleStates.length - this.maxIdleStates;
+    if (evictCount <= 0) return;
+    for (const [key] of idleStates.slice(0, evictCount)) {
+      this.states.delete(key);
     }
   }
 

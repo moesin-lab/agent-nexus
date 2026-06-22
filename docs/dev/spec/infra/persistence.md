@@ -89,7 +89,7 @@ contracts:
 | `session_key` | TEXT | 联合主键 |
 | `message_id` | TEXT | 联合主键 |
 | `first_seen_at` | TEXT NOT NULL | |
-| `status` | TEXT NOT NULL | `processing|processed|failed` |
+| `status` | TEXT NOT NULL | `processing|processed|failed|cancelled` |
 | `result_json` | TEXT | 处理结果摘要 |
 | `expires_at` | TEXT NOT NULL | 用于 TTL 清理 |
 
@@ -192,6 +192,8 @@ interface Store {
     checkAndSet(key, messageId) -> IdempotencyState
     markProcessed(key, messageId, result) -> void
     markFailed(key, messageId, errorKind) -> void
+    markCancelled(key, messageId) -> void
+    forget(key, messageId) -> void
     gc(now) -> int                           // 返回删除条数
 
     // messages（可选）

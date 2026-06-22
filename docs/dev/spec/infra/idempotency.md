@@ -48,6 +48,7 @@ adapter 归一化 NormalizedEvent
            ├─ daemon.idempotency.checkAndSet(sessionKey, messageId)
            │     ├─ 命中 "processed" → 丢弃事件（已经处理过）
            │     ├─ 命中 "processing" → 跳过（上一次还在进行中）
+           │     ├─ 命中 "cancelled" → 丢弃事件（上一次已在入队后、运行前取消）
            │     ├─ 命中 "failed" 且在可重试窗口内 → 重试（标回 "processing"）
            │     └─ 未命中 → 插入 "processing"，继续
            │
@@ -55,18 +56,48 @@ adapter 归一化 NormalizedEvent
            │
            ├─ 投递到 session 的 FIFO 队列
            │
-           └─ 处理完成 → 更新 status 为 "processed"（或 "failed"）
+           └─ 处理完成 → 更新 status 为 "processed"（或 "failed" / "cancelled"）
 ```
+
+## 状态语义
+
+| status | 语义 | 后续重复投递 |
+|---|---|---|
+| `processing` | 首次投递已通过 auth 和幂等检查，正在排队或运行 | 跳过 |
+| `processed` | 已完成处理 | 丢弃 |
+| `failed` | 处理失败；超过可重试窗口后允许重试 | 按可重试窗口判定 |
+| `cancelled` | 事件已入 session 队列，但在开始运行前被取消 | 丢弃 |
+
+取消只作用于 session 队列里尚未开始的 pending item。已经进入 running 的 item 不被队列取消打断，也不得把幂等状态标为 `cancelled`；它必须继续结算为 `processed` 或 `failed`。
+
+`markCancelled` 是状态写入接口，不负责判断队列项是否仍可取消。调用方只有在队列取消返回 `cancelled`（pending item 已移出队列且尚未开始运行）后才能调用；队列返回 `running` 或 `not_found` 时不得调用。
 
 ## 存储
 
 - 表：`idempotency`（见 [`persistence.md`](persistence.md) §idempotency）
 - 主键：`(session_key, message_id)`
-- 字段：`firstSeenAt`, `status: "processing" | "processed" | "failed"`, `result?`, `expires_at`
+- 字段：`firstSeenAt`, `status: "processing" | "processed" | "failed" | "cancelled"`, `result?`, `expires_at`
 - TTL 写入 `expires_at`，后台 GC 清理
 - 内存 LRU 缓存热数据加速
 
 幂等键使用路由层的 `session_key`，不使用持久化主键 `session_id`。会话分代与路由关系见 [`session-model.md`](../../architecture/session-model.md)。
+
+## 接口语义
+
+| 方法 | 语义 |
+|---|---|
+| `checkAndSet(sessionKey, messageId)` | 未命中时插入 `processing`；命中时返回现有 status |
+| `markProcessed(sessionKey, messageId)` | 处理完成后标 `processed` |
+| `markFailed(sessionKey, messageId)` | 处理失败后标 `failed` |
+| `markCancelled(sessionKey, messageId)` | pending item 被取消、且尚未开始运行时标 `cancelled` |
+| `forget(sessionKey, messageId)` | 删除单条幂等记录；用于显式恢复或测试隔离，不在普通 dispatch 路径调用 |
+| `clearAll()` | 清空内存态；用于进程内测试或重载场景，不对应持久化 GC |
+
+## 实现分层
+
+`InMemoryIdempotencyStore` 是进程内 baseline：只保存当前进程的 `(sessionKey, messageId) -> status`，提供 `checkAndSet`、状态标记、`forget` 与 `clearAll`。它不实现 TTL、后台 GC、`failed` 可重试窗口，也不跨进程保留状态。
+
+持久化 Store 必须实现本 spec 的 TTL、GC 与 `failed` 重试窗口；SQLite 字段见 [`persistence.md`](persistence.md) §idempotency。
 
 ## 后台 GC
 
@@ -90,7 +121,9 @@ retryWindowAfterFailedMs = 30000  # "failed" 到允许重试的时间
 - **首次投递**：全新 (sessionKey, messageId) → 插入 `processing`；业务正常处理后标 `processed`
 - **重复投递**：同一 fixture 连发两次 → 第二次返回 "hit"，不转发给 session 队列；CC CLI 只被触发一次
 - **auth 拒绝不入表**：`auth_denied` 的事件 → idempotency 表**无该 messageId 记录**（防刷表）
-- **failed 重试**：第一次处理标 `failed` → 超过 `retryWindowAfterFailedMs` 后再投递相同 fixture → 正常处理
+- **cancelled 终态**：pending item 取消后标 `cancelled` → 重复投递同一 messageId 返回 "hit"，不重新入队
+- **单条 forget**：删除一条 `(sessionKey, messageId)` 记录 → 同 session 其他 messageId 不受影响
+- **failed 重试（持久化 Store）**：第一次处理标 `failed` → 超过 `retryWindowAfterFailedMs` 后再投递相同 fixture → 正常处理
 - **GC 基线**：插入 10000 条过期条目 → 一轮 GC 清空（在 `gcBatchSize` 之内）
 - **GC 失败降级**：mock SQLite 写入错误 → GC 跳过本轮 + 打 warn；业务不中断
 

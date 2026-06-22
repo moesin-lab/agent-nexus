@@ -55,7 +55,9 @@ contracts:
 | `last_activity_at` | TEXT NOT NULL | RFC3339 |
 | `archived_at` | TEXT | |
 | `agent_backend` | TEXT NOT NULL | `"claudecode"` \| `"codex"` |
+| `agent_conversation_ref` | TEXT | opaque agent conversation ref；回传给 `SessionConfig.resumeFromAgentSessionId` |
 | `working_dir` | TEXT NOT NULL | |
+| `next_session_json` | TEXT | 一次性 next-session override；消费后置 NULL |
 | `transcript_path` | TEXT NOT NULL | 相对 `~/.agent-nexus/`，按 session_id 归属 |
 | `turns_used` | INTEGER NOT NULL DEFAULT 0 | 一等计量 |
 | `tool_calls_used` | INTEGER NOT NULL DEFAULT 0 | 一等计量 |
@@ -72,6 +74,13 @@ contracts:
 - `UNIQUE (session_key, generation)` — 同 key 的 generation 唯一
 
 **不变量**：任一时刻同 `session_key` 下非终态实例（`state ∉ {Archived}`）至多一个。核心插入前校验。
+
+字段更新语义：
+
+- `agent_conversation_ref` 对 daemon 是 opaque token，来源与 runtime 契约见 [`agent-runtime.md` §Agent command envelope](../agent-runtime.md#agent-command-envelope) / [`agent-runtime.md` §事件 payload 字段](../agent-runtime.md#事件-payload-字段)。
+  普通 metadata upsert 不携带该字段表示保留旧值；只有 runtime 给出新 ref 时覆盖，显式清除时置 NULL。
+- `next_session_json` 表示下一次 spawn 前的一次性 override，例如 pending `workingDir`。
+  普通 metadata upsert 不携带该字段表示保留旧值；消费后置 NULL；将现有 resumable session 绑定到新 SessionKey 时，它随 `agent_conversation_ref` 一起迁移。
 
 ### idempotency
 

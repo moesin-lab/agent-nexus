@@ -139,6 +139,16 @@ SessionKey 维度上的查询索引与唯一约束见 [`persistence.md`](../spec
 
 Agent-owned `/new`、`/stop`、`/steer` 等 command 不直接改写本状态机；daemon 只把它们按 command registry 路由给 agent package。若 agent command 结果要求更新 opaque agent conversation ref，daemon 只保存该 opaque ref，不解释 agent conversation 语义。Daemon-owned `/nexus-kill` 是 RoutingSession 级控制：清除当前 route 与 opaque ref，并释放当前 runtime handle。
 
+### 可恢复 AgentConversation 绑定
+
+RoutingSession 持有的 opaque agent conversation ref 与 live `AgentSession` handle 分离：
+前者是跨 turn / 跨进程恢复用的绑定，字段契约与更新语义见 [`persistence.md` §sessions](../spec/infra/persistence.md#sessions)；
+后者只是当前进程里的 runtime 句柄，接口契约见 [`agent-runtime.md`](../spec/agent-runtime.md#agentsession-与-session-的区分)。
+
+当同一 SessionKey 没有可复用的 live handle 但仍有 opaque ref 时，daemon 启动新的 `AgentSession`，并把该 ref 放进 `SessionConfig.resumeFromAgentSessionId`。
+
+用户把已有 resumable session 绑定到新的 SessionKey 时，daemon 迁移 opaque ref 和下一次 spawn 所需的一次性 override；平台 thread 拓扑仍归原 channel，不随 rebind 复制。
+
 ## 幂等
 
 ### 为什么需要

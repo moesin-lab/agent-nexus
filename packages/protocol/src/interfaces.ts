@@ -58,10 +58,15 @@ export interface CreateThreadInput {
   traceId: string;
 }
 
+export interface CreateThreadSetupWarning {
+  code: 'initial_message_failed';
+}
+
 export interface CreateThreadResult {
   threadId: string;
   parentChannelId: string;
   url?: string;
+  setupWarnings?: CreateThreadSetupWarning[];
 }
 
 export interface UpdateThreadInput {

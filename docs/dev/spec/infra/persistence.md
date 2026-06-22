@@ -20,24 +20,26 @@ contracts:
 
 ## 存储根路径
 
-默认：`~/.agent-nexus/`。
+默认实例根目录（下文写作 `<home>`）：`~/.agent-nexus/`
 
-当前实例根路径由 CLI 解析，优先级从高到低：
+`<home>` 的选择顺序：
 
-1. 启动参数 `--home <path>` 或 `--home=<path>`
+1. CLI 参数 `--home <path>` 或 `--home=<path>`：最高优先级；启动参数解析后写入当前进程的 `AGENT_NEXUS_HOME`
 2. 环境变量 `AGENT_NEXUS_HOME`
-3. 默认值 `~/.agent-nexus/`
+3. 默认 `~/.agent-nexus/`
 
-`--home` 与 `AGENT_NEXUS_HOME` 都接受 `~` 展开；空白路径必须 fail-closed。启动时创建不存在的根目录，权限 `0700`。
+`--home` 与 `AGENT_NEXUS_HOME` 表达同一个实例根目录，二者都接受 `~` 展开；空白路径必须 fail-closed。`config.json`、`secrets/`、`state/`、SQLite、transcript 与 log 都从该根目录派生。旧名 `AGENT_NEXUS_DATA_DIR` 不再是本项目契约；loader 不读取它，新文档和示例不得继续使用，旧部署必须迁移到 `AGENT_NEXUS_HOME` 或 `--home`。
 
-`AGENT_NEXUS_DATA_DIR` 是废弃旧名，不再作为运行时输入读取；旧部署必须迁移到 `AGENT_NEXUS_HOME` 或 `--home`。
+启动时创建不存在的目录，权限 `0700`。
 
 ## 目录结构
 
 ```
-<agent-nexus-home>/
+<home>/
 ├── config.json             # 用户配置（mode 0600）
 ├── state.db                # SQLite：sessions、idempotency、messages、budget
+├── state/
+│   └── discord-<encodedPlatformName>.json  # Discord reply mode 状态
 ├── transcripts/
 │   └── <sessionKey>/
 │       └── <date>.jsonl    # CC 原始输出 transcript（按日切片）
@@ -48,6 +50,8 @@ contracts:
 └── cache/
     └── attachments/        # 附件缓存（可清空）
 ```
+
+`<encodedPlatformName>` 是对 `platforms[].name` 执行 `encodeURIComponent` 后的结果，只作为单个文件名片段使用；CLI 不得把未编码的 platform name 拼成路径段。显式配置 `platforms[].statePath` 时，字段语义与重复路径校验见 [`config-routing.md`](../config-routing.md#platformconfig)。
 
 ## SQLite 表结构
 
@@ -66,7 +70,7 @@ contracts:
 | `agent_conversation_ref` | TEXT | opaque agent conversation ref；回传给 `SessionConfig.resumeFromAgentSessionId` |
 | `working_dir` | TEXT NOT NULL | |
 | `next_session_json` | TEXT | 一次性 next-session override；消费后置 NULL |
-| `transcript_path` | TEXT NOT NULL | 相对实例根路径，按 session_id 归属 |
+| `transcript_path` | TEXT NOT NULL | 相对 `<home>/`，按 session_id 归属 |
 | `turns_used` | INTEGER NOT NULL DEFAULT 0 | 一等计量 |
 | `tool_calls_used` | INTEGER NOT NULL DEFAULT 0 | 一等计量 |
 | `wall_clock_ms` | INTEGER NOT NULL DEFAULT 0 | 一等计量（累计） |
@@ -102,6 +106,8 @@ contracts:
 | `expires_at` | TEXT NOT NULL | 用于 TTL 清理 |
 
 主键 `(session_key, message_id)`。索引 `idx_idempotency_expires`。
+
+状态语义由 [`idempotency.md`](idempotency.md) 拥有；本表只承载落盘枚举。`processed` / `failed` / `cancelled` 都是 terminal duplicate 状态，后续同 `(session_key, message_id)` 重放不重新入队。
 
 ### messages（可选，用于历史查询）
 
@@ -174,7 +180,7 @@ contracts:
 
 1. **OS keychain**：macOS `Keychain`、Linux `secret-service`、Windows `Credential Manager`
 2. **环境变量**：例 `DISCORD_BOT_TOKEN`、`ANTHROPIC_API_KEY`
-3. **文件 fallback**：`<agent-nexus-home>/secrets/<name>`，mode `0600`
+3. **文件 fallback**：`<home>/secrets/<name>`，mode `0600`
 
 前一级可用则不读下一级。启动时在日志里记录**来源**（来源本身，不含值）。
 
@@ -199,9 +205,9 @@ interface Store {
     // idempotency
     checkAndSet(key, messageId) -> IdempotencyState
     markProcessed(key, messageId, result) -> void
-    markFailed(key, messageId, errorKind) -> void
+    markFailed(key, messageId) -> void
     markCancelled(key, messageId) -> void
-    forget(key, messageId) -> void
+    forget(key, messageId) -> void              // 插入 processing 后未实际入队时回滚幂等占位
     gc(now) -> int                           // 返回删除条数
 
     // messages（可选）
@@ -229,7 +235,7 @@ interface Store {
 
 ## 备份
 
-MVP 不内置备份功能。用户可自行备份实例根路径下的 `state.db` 与 `transcripts/`。
+MVP 不内置备份功能。用户可自行备份 `<home>/state.db` 与 `transcripts/`。
 
 未来若加备份/导出，发独立 ADR。
 

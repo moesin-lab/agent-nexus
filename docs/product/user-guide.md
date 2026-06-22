@@ -43,6 +43,8 @@ npm install -g packages/cli/agent-nexus-cli-*.tgz
 - `~/.agent-nexus/config.json` 模板，权限为 `0600`
 - `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` 空文件，权限为 `0600`
 
+默认实例根目录是 `~/.agent-nexus`。需要同时运行 stable / dev 等多个实例时，用 `agent-nexus --home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；配置、密钥与状态文件都会从该目录派生。
+
 后续启动会自动把模板中新增但本地缺失的字段补回 `config.json`；已有配置值不会被覆盖。必填字段如果没有真实默认值，只会补占位值并继续提示你填写。
 
 编辑 `~/.agent-nexus/config.json`：
@@ -284,7 +286,7 @@ agent-nexus
 @bot 请读一下 README，概括当前项目怎么运行
 ```
 
-会话按 `(channelId, userId)` 隔离。同一个用户在同一个频道里继续 `@bot` 会复用 daemon RoutingSession；具体 agent conversation 如何延续由绑定的 agent package 处理。
+会话按命名 platform bot、平台类型、channel/thread 和 user 隔离。同一个用户在同一个频道里继续 `@bot` 会复用 daemon RoutingSession；具体 agent conversation 如何延续由绑定的 agent package 处理。
 
 重置会话：
 
@@ -304,11 +306,32 @@ agent-nexus
 /codex-stop       # 路由给 Codex agent package
 /stop             # 单 agent scope 下的便捷 alias
 /nexus-kill       # daemon 直接终止当前 RoutingSession
+/nexus-sessions   # 列出可恢复 session，并用下拉菜单切换
+/nexus-new-thread # 在当前 Discord channel 下创建新的私有 thread 会话
+/nexus-working-dir path:/workspace/app
+/nexus-working-dir path:/workspace/app scope:session
+/nexus-settings   # 打开当前 channel/thread 的交互式 settings 面板
+/nexus-queue      # 打开当前会话队列面板；可移动、编辑、取消 pending、插入 next prompt，或让下一条接管
 ```
 
-`new` / `stop` 是 agent command，daemon 只完成鉴权、reverse-map、binding route 和 envelope 转发；重置、停止、排队或拒绝等具体语义由对应 agent package/runtime 决定。`/nexus-kill` 是 daemon command，会终止当前 RoutingSession，并清掉后续 resume 需要的 opaque agent conversation ref。
+`new` / `stop` 是 agent command，daemon 只完成鉴权、reverse-map、binding route 和 envelope 转发；重置、停止、排队或拒绝等具体语义由对应 agent package/runtime 决定。`/nexus-kill` 是 daemon command，会终止当前 RoutingSession，并清掉后续 resume 需要的 opaque agent conversation ref。`/nexus-sessions` 是内存态 session switcher：Discord 会显示仅调用方可见的下拉菜单，每项用该 session 的第一条用户消息做标题；选择某一项后当前 channel/user 会绑定到对应 agent conversation，下一条消息按该 conversation resume；进程重启后列表会丢失。`/nexus-new-thread` 会在当前 channel 下创建 private thread，默认把调用者加入；thread 中第一条用户消息启动一个新的 agent session；只有创建时未传标题、仍使用默认占位标题时，才会自动把 thread 名改成第一条消息生成的标题，不迁移父 channel 的当前会话。`/nexus-working-dir` 默认设置当前 channel/thread 的工作目录默认值；thread 未设置时继承父 channel 的默认值。传 `scope:session` 时才为当前 channel/thread + user 的下一次新 agent session 设置一次性 override。路径必须在当前 binding 目标 agent 的默认 `workingDir` 内。如果当前 session 正在运行，workingDir 变更会排到当前 turn 后面，不会影响当前进程。`/nexus-settings` 是统一入口：展示并修改当前 reply-mode、effective workingDir、channel agent binding、session resume 和 new-thread 操作；每次操作返回新的 ephemeral 快照。settings 里的 workingDir 直接用 modal 输入路径；agent binding 是当前进程内的 channel override，重启后回到配置文件 binding。`/nexus-queue` 打开当前 channel/thread + user 的 daemon queue 面板：用下拉选择 pending item，再用按钮上移、下移、编辑 message prompt 或取消；`Run next` / `action:next` 会中断当前 running turn，让下一条 pending item 接着执行；`Insert next` 会用 modal 插入一条排在当前 running 后面的 prompt；`action:clear` 只取消 pending items，不中断 running turn。
 
-当前除 `/discord-reply-mode` / `/reply-mode` 外，agent / daemon slash command 的成功 ack 会作为普通频道消息发送；如果 command registry 尚未激活、当前频道没有匹配 binding，或调用方未通过 allowlist，Discord 会显示一条仅调用方可见的 ephemeral 反馈。排障时看 daemon 日志中的 `command_*` / `auth_denied` / `command_registration_*` 事件。
+当前除 `/discord-reply-mode` / `/reply-mode` / `/nexus-sessions` / `/nexus-new-thread` / `/nexus-working-dir` / `/nexus-settings` / `/nexus-queue` 外，agent / daemon slash command 的成功 ack 会作为普通频道消息发送；如果 command registry 尚未激活、当前频道没有匹配 binding，或调用方未通过 allowlist，Discord 会显示一条仅调用方可见的 ephemeral 反馈。排障时看 daemon 日志中的 `command_*` / `auth_denied` / `command_registration_*` / `thread_create_failed` 事件。
+
+### 管理排队中的消息
+
+当你连续发了多条消息，而第一条还在执行时，后续消息会留在当前 channel/thread + user 的 queue 里。使用 `/nexus-queue` 打开面板：
+
+- 面板顶部显示当前 running item、pending 数量和最近 completed / failed / cancelled 计数
+- 用下拉菜单选择一条 pending item
+- `Up` / `Down` 调整它在 pending 列表里的顺序
+- `Edit` 修改 pending message prompt；这只改变即将发送给 agent 的文本，不会编辑 Discord 原消息
+- `Cancel` 取消选中的 pending item
+- `Insert next` 插入一条新的 prompt，排在当前 running 后面、已有 pending 前面
+- `Run next` 中断当前 running turn，让下一条 pending item 接着执行
+- `action:clear` 一次性取消全部 pending item
+
+running item 不能被 `/nexus-queue` 编辑或重排；要保留 pending 并尽快进入下一条，用 `/nexus-queue action:next`。要直接停止当前 agent 输出，用 agent 的 `/stop`；要清掉当前 RoutingSession 和 pending，用 daemon 的 `/nexus-kill`。
 
 切换触发模式：
 

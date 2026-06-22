@@ -48,15 +48,20 @@ adapter 归一化 NormalizedEvent
            ├─ daemon.idempotency.checkAndSet(sessionKey, messageId)
            │     ├─ 命中 "processed" → 丢弃事件（已经处理过）
            │     ├─ 命中 "processing" → 跳过（上一次还在进行中）
-           │     ├─ 命中 "cancelled" → 丢弃事件（上一次已在入队后、运行前取消）
-           │     ├─ 命中 "failed" 且在可重试窗口内 → 重试（标回 "processing"）
+           │     ├─ 命中 "failed" → 丢弃事件（失败终态已记录）
+           │     ├─ 命中 "cancelled" → 丢弃事件（用户已取消 pending item）
            │     └─ 未命中 → 插入 "processing"，继续
            │
            ├─ daemon 限流/预算检查（见 cost-and-limits.md）
+           │     ├─ 拒绝 → 删除 "processing" 占位，本次不入队
+           │     └─ 通过 → 继续
            │
            ├─ 投递到 session 的 FIFO 队列
+           │     ├─ 队列满 → 删除 "processing" 占位，本次不入队
+           │     └─ 入队成功 → 继续
            │
-           └─ 处理完成 → 更新 status 为 "processed"（或 "failed" / "cancelled"）
+           └─ 处理完成 → 更新 status 为 "processed"（或 "failed"）；
+              `/nexus-queue clear` 取消 pending 时更新为 "cancelled"
 ```
 
 ## 状态语义
@@ -65,7 +70,7 @@ adapter 归一化 NormalizedEvent
 |---|---|---|
 | `processing` | 首次投递已通过 auth 和幂等检查，正在排队或运行 | 跳过 |
 | `processed` | 已完成处理 | 丢弃 |
-| `failed` | 处理失败；超过可重试窗口后允许重试 | 按可重试窗口判定 |
+| `failed` | 事件已入队但处理失败 | 丢弃 |
 | `cancelled` | 事件已入 session 队列，但在开始运行前被取消 | 丢弃 |
 
 取消只作用于 session 队列里尚未开始的 pending item。已经进入 running 的 item 不被队列取消打断，也不得把幂等状态标为 `cancelled`；它必须继续结算为 `processed` 或 `failed`。
@@ -80,7 +85,22 @@ adapter 归一化 NormalizedEvent
 - TTL 写入 `expires_at`，后台 GC 清理
 - 内存 LRU 缓存热数据加速
 
+状态语义：
+
+- `processing`：事件已通过 auth 和幂等插入，正在等待或执行
+- `processed`：处理成功；后续同 `(sessionKey, messageId)` 重放作为 terminal duplicate 丢弃
+- `failed`：本次已进入队列但处理失败；后续同 `(sessionKey, messageId)` 重放作为 terminal duplicate 丢弃，用户重试必须产生新的平台 `messageId`
+- `cancelled`：pending `message` item 被用户取消；后续同 `(sessionKey, messageId)` 重放作为 terminal duplicate 丢弃
+
+如果 daemon 在插入 `processing` 后、事件被 queue 接受前遇到 transient 拒绝（例如限流/预算拒绝或队列满），必须删除该幂等占位；后续同一平台重放仍可重新尝试入队。事件一旦进入 queue，后续只能转为 `processed` / `failed` / `cancelled` 之一。
+
 幂等键使用路由层的 `session_key`，不使用持久化主键 `session_id`。会话分代与路由关系见 [`session-model.md`](../../architecture/session-model.md)。
+
+`/nexus-queue` 对幂等的影响：
+
+- 编辑 pending `message` item 只修改队列内即将投递给 agent 的 prompt，不改变原平台 `messageId` 或幂等键
+- 取消 pending `message` item 时，原 `(sessionKey, messageId)` 标为 `cancelled`，后续重放命中 terminal duplicate
+- `Insert next` 创建 synthetic `message` item，不对应平台 `messageId`，因此不写 idempotency store；它只受当前内存 queue 管理
 
 ## 接口语义
 
@@ -90,14 +110,14 @@ adapter 归一化 NormalizedEvent
 | `markProcessed(sessionKey, messageId)` | 处理完成后标 `processed` |
 | `markFailed(sessionKey, messageId)` | 处理失败后标 `failed` |
 | `markCancelled(sessionKey, messageId)` | pending item 被取消、且尚未开始运行时标 `cancelled` |
-| `forget(sessionKey, messageId)` | 删除单条幂等记录；用于显式恢复或测试隔离，不在普通 dispatch 路径调用 |
+| `forget(sessionKey, messageId)` | 删除单条幂等记录；用于插入 `processing` 后、queue 接受前的 transient 拒绝回滚，以及测试隔离 |
 | `clearAll()` | 清空内存态；用于进程内测试或重载场景，不对应持久化 GC |
 
 ## 实现分层
 
 `InMemoryIdempotencyStore` 是进程内 baseline：只保存当前进程的 `(sessionKey, messageId) -> status`，提供 `checkAndSet`、状态标记、`forget` 与 `clearAll`。它不实现 TTL、后台 GC、`failed` 可重试窗口，也不跨进程保留状态。
 
-持久化 Store 必须实现本 spec 的 TTL、GC 与 `failed` 重试窗口；SQLite 字段见 [`persistence.md`](persistence.md) §idempotency。
+持久化 Store 必须实现本 spec 的 TTL 与 GC；SQLite 字段见 [`persistence.md`](persistence.md) §idempotency。
 
 ## 后台 GC
 
@@ -113,7 +133,6 @@ adapter 归一化 NormalizedEvent
 ttlSeconds = 86400              # 24 小时
 gcIntervalMs = 300000           # 5 分钟
 gcBatchSize = 10000
-retryWindowAfterFailedMs = 30000  # "failed" 到允许重试的时间
 ```
 
 ## 合约测试
@@ -121,9 +140,10 @@ retryWindowAfterFailedMs = 30000  # "failed" 到允许重试的时间
 - **首次投递**：全新 (sessionKey, messageId) → 插入 `processing`；业务正常处理后标 `processed`
 - **重复投递**：同一 fixture 连发两次 → 第二次返回 "hit"，不转发给 session 队列；CC CLI 只被触发一次
 - **auth 拒绝不入表**：`auth_denied` 的事件 → idempotency 表**无该 messageId 记录**（防刷表）
-- **cancelled 终态**：pending item 取消后标 `cancelled` → 重复投递同一 messageId 返回 "hit"，不重新入队
+- **入队前拒绝回滚**：限流/预算拒绝或队列满发生在插入 `processing` 之后、queue 接受之前 → 调用 `forget` 删除占位；同 messageId 重放可重新插入 `processing` 并尝试入队
+- **pending 取消**：`/nexus-queue clear` 取消 pending item → 标 `cancelled`；同 messageId 重放命中 terminal duplicate，不重新入队
+- **失败终态**：第一次处理标 `failed` → 同 messageId 重放命中 terminal duplicate，不重新入队
 - **单条 forget**：删除一条 `(sessionKey, messageId)` 记录 → 同 session 其他 messageId 不受影响
-- **failed 重试（持久化 Store）**：第一次处理标 `failed` → 超过 `retryWindowAfterFailedMs` 后再投递相同 fixture → 正常处理
 - **GC 基线**：插入 10000 条过期条目 → 一轮 GC 清空（在 `gcBatchSize` 之内）
 - **GC 失败降级**：mock SQLite 写入错误 → GC 跳过本轮 + 打 warn；业务不中断
 

@@ -43,7 +43,7 @@ export { parseXxxConfig, type XxxConfig, XxxConfigError } from './config.js';
 ### 3. 默认值归属
 
 - **运行时无关默认值**（如 `DEFAULT_BIN = 'claude'`、`DEFAULT_ALLOWED_TOOLS`）：属于 owner 包，定义并导出在 `src/config.ts`
-- **环境相关路径默认值**（如实例根路径下的 state 文件）：属于 CLI，由 CLI 计算后作为 `ctx` 参数传入 owner parser
+- **环境相关路径默认值**（如 Discord reply-mode `statePath`）：属于 CLI，由 CLI 计算后作为 `ctx` 参数传入 owner parser；具体路径格式由 [`persistence.md`](../spec/infra/persistence.md#目录结构) 定义
 
 ### 4. 错误归属
 

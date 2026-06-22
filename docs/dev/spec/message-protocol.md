@@ -152,6 +152,19 @@ ReactionPayload {
 
 `CommandPayload.name` 不承载 canonical id。daemon 必须按 [`command-registry.md`](command-registry.md) 的 active reverse map 从平台可见 name 解析到 canonical command；不得从 `name` 字符串拆 owner 或 handler。
 
+`/nexus-settings` 的组件 `componentId` 使用 `nexus:settings:<action>` 命名空间，daemon 按 action 表驱动分发。`/nexus-queue` 的组件 `componentId` 使用 `nexus:queue:<action>` 命名空间；item 级 button 可在 componentId 末尾携带 pending item id，目标 SessionKey 仍从 interaction 的 channel/user 上下文推导。v1 不把 channel id / SessionKey 等长上下文编码进 `componentId`。workingDir 与 queue prompt 的直接编辑使用 modal submit；workingDir 路径校验与 `/nexus-working-dir` 共用 root-jail 规则。modal submit 的 `values` 以 `<componentId>=<value>` 表示 text input 值。
+
+`/nexus-queue` 当前保留的 action id：
+
+- `nexus:queue:select`
+- `nexus:queue:insert` / `nexus:queue:insert-modal`
+- `nexus:queue:edit:<itemId>` / `nexus:queue:edit-modal:<itemId>`
+- `nexus:queue:up:<itemId>`
+- `nexus:queue:down:<itemId>`
+- `nexus:queue:cancel:<itemId>`
+
+`itemId` 是 daemon 内存队列里的 pending item id，只在当前进程内有效；不能作为持久引用或跨 channel/user 的授权依据。
+
 ### Payload 互斥约束
 
 `NormalizedEvent.type` 与 payload 字段必须互斥：

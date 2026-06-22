@@ -10,6 +10,7 @@ import type {
   CommandPayload,
   EventCommandResponse,
   EventHandlerResult,
+  EventModalResponse,
   MessageComponent,
   MessageRef,
   NormalizedEvent,
@@ -578,6 +579,12 @@ export class Engine {
     };
   }
 
+  private modalResponse(response: EventModalResponse, traceId: string): EventHandlerResult {
+    return {
+      modalResponse: this.redactModalResponse(response, traceId),
+    };
+  }
+
   private redactCommandResponse(
     response: EventCommandResponse,
     traceId: string,
@@ -592,6 +599,26 @@ export class Engine {
             ),
           }
         : {}),
+    };
+  }
+
+  private redactModalResponse(
+    response: EventModalResponse,
+    traceId: string,
+  ): EventModalResponse {
+    return {
+      ...response,
+      title: this.redactForOutbound(response.title, traceId),
+      textInputs: response.textInputs.map((input) => ({
+        ...input,
+        label: this.redactForOutbound(input.label, traceId),
+        ...(input.placeholder !== undefined
+          ? { placeholder: this.redactForOutbound(input.placeholder, traceId) }
+          : {}),
+        ...(input.value !== undefined
+          ? { value: this.redactForOutbound(input.value, traceId) }
+          : {}),
+      })),
     };
   }
 
@@ -1707,18 +1734,15 @@ export class Engine {
     if (event.interaction?.customId?.startsWith(SETTINGS_COMPONENT_PREFIX)) {
       return this.handleSettingsInteraction(event);
     }
-    if (event.interaction?.customId !== SESSION_RESUME_COMPONENT_ID) {
-      this.logger.error(
-        {
-          traceId: event.traceId,
-          platformName: this.platformName,
-          customId: event.interaction?.customId,
-        },
-        'interaction_handler_missing',
-      );
-      return this.commandResponse(COMMAND_NOT_READY_TEXT, event.traceId);
-    }
-    return this.handleSessionResumeInteraction(event);
+    this.logger.error(
+      {
+        traceId: event.traceId,
+        platformName: this.platformName,
+        customId: event.interaction?.customId,
+      },
+      'interaction_handler_missing',
+    );
+    return this.commandResponse(COMMAND_NOT_READY_TEXT, event.traceId);
   }
 
   private async handleQueueInteraction(
@@ -1731,8 +1755,8 @@ export class Engine {
       return this.queueCommandResponse(event, undefined, selectedId);
     }
     if (customId === QUEUE_INSERT_COMPONENT_ID) {
-      return {
-        modalResponse: {
+      return this.modalResponse(
+        {
           customId: QUEUE_INSERT_MODAL_ID,
           title: 'Insert queued prompt',
           textInputs: [
@@ -1745,7 +1769,8 @@ export class Engine {
             },
           ],
         },
-      };
+        event.traceId,
+      );
     }
     if (customId === QUEUE_NEXT_COMPONENT_ID) {
       return this.handleQueueNextCommand(event);
@@ -1765,8 +1790,8 @@ export class Engine {
       if (!item || item.kind !== 'message') {
         return this.queueCommandResponse(event, COMMAND_UNAVAILABLE_TEXT);
       }
-      return {
-        modalResponse: {
+      return this.modalResponse(
+        {
           customId: `${QUEUE_EDIT_MODAL_PREFIX}${itemId}`,
           title: 'Edit queued prompt',
           textInputs: [
@@ -1779,7 +1804,8 @@ export class Engine {
             },
           ],
         },
-      };
+        event.traceId,
+      );
     }
     if (customId.startsWith(QUEUE_EDIT_MODAL_PREFIX)) {
       const itemId = customId.slice(QUEUE_EDIT_MODAL_PREFIX.length);
@@ -1787,11 +1813,21 @@ export class Engine {
       if (!prompt) {
         return this.commandResponse('Prompt is required.', event.traceId);
       }
+      const existing = this.messageQueue
+        .snapshot(key)
+        .pending.find((candidate) => candidate.id === itemId && candidate.kind === 'message');
+      const existingPrompt = existing?.editableText ?? existing?.label;
+      // Modal values are redacted for outbound display. With deterministic redaction,
+      // unchanged submissions keep the queued raw prompt; partial edits use submitted text.
+      const effectivePrompt =
+        existingPrompt && prompt === this.redactForOutbound(existingPrompt, event.traceId).trim()
+          ? existingPrompt
+          : prompt;
       const result = this.messageQueue.editPending(
         key,
         itemId,
-        prompt,
-        this.queueLabelForText(prompt, itemId),
+        effectivePrompt,
+        this.queueLabelForText(effectivePrompt, itemId),
       );
       if (result.status !== 'updated') {
         return this.queueCommandResponse(event, COMMAND_UNAVAILABLE_TEXT);
@@ -1981,8 +2017,8 @@ export class Engine {
       );
     }
     if (customId === SETTINGS_WORKING_DIR_COMPONENT_ID) {
-      return {
-        modalResponse: {
+      return this.modalResponse(
+        {
           customId: SETTINGS_WORKING_DIR_MODAL_ID,
           title: 'Set working directory',
           textInputs: [
@@ -1995,7 +2031,8 @@ export class Engine {
             },
           ],
         },
-      };
+        event.traceId,
+      );
     }
     if (customId === SETTINGS_WORKING_DIR_MODAL_ID) {
       const result = await this.applySettingsWorkingDir(event);

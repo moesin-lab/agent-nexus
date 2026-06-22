@@ -2307,6 +2307,101 @@ describe('Engine', () => {
     expect(inputTexts).toEqual(['running', 'beta', 'alpha edited']);
   });
 
+  it('/nexus-queue edit modal redacts default value and preserves raw prompt on unchanged submit', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const routingTable: RoutingEntry[] = [
+      {
+        bindingName: 'discord-main-codex',
+        platformName: 'discord-main',
+        platformType: 'discord',
+        agentName: 'codex-dev',
+        match: { discord: { channelIds: ['C1'] } },
+      },
+    ];
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_QUEUE_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'queue'],
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    codex.queueEventsAfter([], 30);
+    const runningTurn = dispatchHandler(makeEvent('running'));
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    codex.queueEvents([]);
+    const sensitivePrompt = '  inspect /home/node/private sk-ant-modal-secret  ';
+    const pendingTurn = dispatchHandler(makeEvent(sensitivePrompt));
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    const status = await dispatchHandler(
+      makeCommandEvent('nexus-queue', {
+        command: {
+          name: 'nexus-queue',
+          args: { action: 'status' },
+          registrationScope: COMMAND_SCOPE,
+        },
+      }),
+    );
+    const select = status?.commandResponse?.components?.find(
+      (component) => component.type === 'string-select',
+    );
+    if (!select || select.type !== 'string-select') {
+      throw new Error('expected queue select');
+    }
+    const itemId = select.options[0]!.value;
+
+    const editModal = await dispatchHandler(
+      makeComponentEvent(`nexus:queue:edit:${itemId}`, [], {
+        interaction: {
+          customId: `nexus:queue:edit:${itemId}`,
+          componentType: 'button',
+          values: [],
+        },
+      }),
+    );
+
+    const value = editModal?.modalResponse?.textInputs[0]?.value ?? '';
+    expect(value).toContain('~/private');
+    expect(value).toContain('<redacted:secret>');
+    expect(value).not.toContain('/home/node/private');
+    expect(value).not.toContain('sk-ant');
+
+    await dispatchHandler(
+      makeComponentEvent(`nexus:queue:edit-modal:${itemId}`, [], {
+        interaction: {
+          customId: `nexus:queue:edit-modal:${itemId}`,
+          componentType: 'modal-submit',
+          values: [],
+          fields: { prompt: value },
+        },
+      }),
+    );
+
+    await Promise.all([runningTurn, pendingTurn]);
+
+    const inputTexts = codex.sendInput.mock.calls.map(
+      (call) => (call[1] as AgentInput).text,
+    );
+    expect(inputTexts).toEqual(['running', sensitivePrompt]);
+  });
+
   it('/nexus-queue insert modal inserts a prompt before existing pending messages', async () => {
     const platform = makePlatform({ supportsSlashCommands: true });
     const codex = makeAgent();

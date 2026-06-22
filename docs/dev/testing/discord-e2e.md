@@ -192,7 +192,7 @@ E2E 禁止用固定 sleep 等待业务结果。harness 提供显式等待：
 
 当前实现状态与缺口：
 
-- `idempotency-replay` 需要按 spec 的 `(sessionKey, messageId)` 语义实现；当前已有可注入的内存 `IdempotencyStore`，但尚未覆盖 SQLite 持久化、TTL、GC 与 failed 重试窗口。
+- `idempotency-replay` 需要按 spec 的 `(sessionKey, messageId)` 语义实现；当前已有可注入的内存 `IdempotencyStore`，但尚未覆盖 SQLite 持久化、TTL、GC 与 terminal status replay。
 - `redaction` 当前覆盖 daemon 到 IM outbound 的基础文本脱敏；日志 sink、agent 子进程 transcript 等全出口脱敏仍需后续按 redaction spec 补齐。
 - `long-output-slicing` 当前 seed 通过 fake platform 的 `maxTextLength` 能力模拟证明 harness 能捕获多条 outbound；真实 Discord 仍由 adapter 的 `buildSlices` 维护切片与 `MessageRef.messageIds`，段落 / 代码块边界、续页标记的最终归属仍需后续收敛。
 - 若 session/idempotency 存储仍是内存实现，E2E 可以用 tmpdir state，但不能声称已覆盖 SQLite 持久化。

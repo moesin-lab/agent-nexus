@@ -112,7 +112,10 @@ ADR-0012 §PR-C 最小集成契约 的节流 edit / typing 周期数值：
 - `limits.maxConcurrentSessions`（默认 `3`）：全局活跃 CC 子进程数
 - `limits.maxConcurrentLlmCalls`（默认 `3`）：全局 in-flight LLM 调用数
 - `limits.globalMessagesPerSec`（默认 `5`）：全局入站消息限速
+- `limits.sessionQueueMaxPending`（当前实现默认 `20`）：单 SessionKey 内 pending message / queued command / daemon state command 数量上限；running item 不计入 pending
 - 超限行为：排队（最多 `limits.sessionQueueMaxWaitMs` = 30s）→ 仍超则拒绝 + 用户可见提示
+
+当前 daemon queue v1 强制 `sessionQueueMaxPending`；全局 running cap 属于 limits 目标约束，尚未由 in-memory queue 层强制。
 
 ### Session 生命周期 timeout
 
@@ -249,6 +252,7 @@ maxConcurrentSessions = 3
 maxConcurrentLlmCalls = 3
 globalMessagesPerSec = 5
 sessionQueueMaxWaitMs = 30000
+sessionQueueMaxPending = 20
 streamStallTimeoutMs = 60000            # L2 流中停滞
 syntheticTurnFinishedDeliveryMs = 250   # synthetic turn_finished 投递 SLA / warn 阈值
 gracefulInterruptMs = 5000              # cleanup (2.1)

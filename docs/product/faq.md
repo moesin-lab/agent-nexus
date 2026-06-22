@@ -28,7 +28,7 @@ related:
 
 ## 多个用户能共用一个 bot 吗？
 
-可以把多个 Discord user id 写进 `platforms[].auth.allowlist.userIds`，也可以用 `roleIds` 授权一组用户。daemon RoutingSession 按 `(platformName, channelId, userId)` 隔离，不同用户不会共享同一个 route；agent conversation 的内部复用由绑定的 agent package 处理。
+可以把多个 Discord user id 写进 `platforms[].auth.allowlist.userIds`，也可以用 `roleIds` 授权一组用户。daemon RoutingSession 按 `(platformName, platform, channelId, userId)` 隔离，不同用户不会共享同一个 route；agent conversation 的内部复用由绑定的 agent package 处理。
 
 ## 为什么 `allowedUserIds` 必填？
 
@@ -66,7 +66,7 @@ Codex CLI 当前没有 Claude Code 那种执行前工具审批。它的边界来
 
 - 配置：`~/.agent-nexus/config.json`
 - Discord token：`~/.agent-nexus/secrets/DISCORD_BOT_TOKEN`
-- Discord 运行状态：默认 `~/.agent-nexus/state/discord.json`
+- Discord 运行状态：默认 `~/.agent-nexus/state/discord-<encodedPlatformName>.json`，例如 `discord-discord-main.json`
 
 不要把 token 写进仓库、Issue、PR 或聊天截图。
 

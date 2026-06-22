@@ -53,15 +53,15 @@ contracts:
   │     通过 ↓
   ├─ daemon.idempotency.checkAndSet(sessionKey, messageId)
   │                                              (权威源：infra/idempotency.md §流程)
-  │     命中 "processed"  → 丢弃事件
+  │     命中 "processed" / "failed" / "cancelled" → 丢弃事件
   │     命中 "processing" → 跳过
-  │     命中 "failed" 在窗口内 → 重试，标 "processing"
   │     未命中 → 插入 "processing"，继续 ↓
   ├─ daemon 限流/预算检查                       (权威源：infra/cost-and-limits.md)
   │     拒绝 → 流程终止
   │     通过 ↓
   └─ 投递到 sessionKey 的 FIFO 队列              (权威源：architecture/session-model.md)
-                                                 处理完成后更新 status 为 "processed" / "failed"
+                                                 处理完成后更新 status 为 "processed" / "failed"；
+                                                 管理命令 clear pending 时更新为 "cancelled"
         │
         │  (3) AgentInput（按 sessionKey 串行出队，字段权威源：agent-runtime.md §AgentInput）
         ▼
@@ -154,9 +154,10 @@ Claude Code runtime 执行前 permission control
 | 出口位置 | 触发条件 | 行为 | 权威源 |
 |---|---|---|---|
 | auth 拒绝 | 身份不在 allowlist / 公开 channel 转私域失败 | 不插入幂等表，直接返回；打 `auth_denied` 日志 | [`security/auth.md`](security/auth.md) |
-| 幂等命中 "processed" | 重放已处理的 messageId | 静默丢弃事件 | [`infra/idempotency.md`](infra/idempotency.md) |
+| 幂等命中 "processed" / "failed" / "cancelled" | 重放已有终态的 messageId | 静默丢弃事件 | [`infra/idempotency.md`](infra/idempotency.md) |
 | 幂等命中 "processing" | 上一次还在进行中 | 跳过 | [`infra/idempotency.md`](infra/idempotency.md) |
 | 限流/预算拒绝 | 触发 turn / tool / wallclock / token 硬限或 $ 预算上限 | 流程终止；按策略产生用户提示 | [`infra/cost-and-limits.md`](infra/cost-and-limits.md) |
+| session queue 已满 | 当前 SessionKey pending queue 达到上限 | 拒绝入队并给用户可见提示；该 messageId 的幂等占位回滚 | [`infra/cost-and-limits.md`](infra/cost-and-limits.md) |
 | 工具白名单外 | agent 调用未授权工具 | adapter 不转发；产出 `AgentEvent{type: error}` | [`security/tool-boundary.md`](security/tool-boundary.md) §合约测试 |
 | `tool_limit` 命中 | maxToolCallsPerTurn 命中 | daemon 注入 `turn_finished{reason: "tool_limit"}` | [`agent-runtime.md`](agent-runtime.md) §TurnEndReason |
 | `wallclock_timeout` | perInputTimeoutMs 命中 | daemon 注入 `turn_finished{reason: "wallclock_timeout"}` | [`agent-runtime.md`](agent-runtime.md) §TurnEndReason |

@@ -57,6 +57,10 @@ SessionKey 维度上的查询索引与唯一约束见 [`persistence.md`](../spec
 
 该映射让 thread 作为独立会话容器参与同一套路由、队列与持久化组合。
 
+Daemon-owned `/nexus-new-thread` 是当前内存态 MVP：daemon 在当前 Discord channel 下创建 private thread，默认把调用者加入 thread，并在独立的内存 thread registry 里记录 `threadId -> parentChannelId / ownerUserId / renameOnFirstPrompt`。这份 registry 是 channel topology 元数据，不随 `/new`、`/nexus-kill` 或 `/nexus-sessions` rebind 复制到其它 SessionKey。用户在该 thread 中发送第一条消息时才启动 agent；`session_started` 后再写入 opaque agent conversation ref。只有创建时未传标题、仍使用默认占位标题的 managed thread，才会 best-effort 把 Discord thread 名称改为第一条用户消息生成的标题；已有标题不会被覆盖。已注册的 managed thread 内消息只允许创建者继续，并用父 channel 执行 binding route 与 channel allowlist 判定。
+
+Discord 上原生存在、但不是 `/nexus-new-thread` 创建或 registry 已丢失的 thread，只通过 `threadParentChannelId` 继承父 channel 的 route/auth；daemon 不会把首个发言者提升为 owner，也不会自动把该 thread 改名。进程重启会丢失内存 thread registry，因此 managed thread 会降级为 native thread fallback：仍可继承父频道 route/auth，但不再保留 owner-only 约束、自动改名能力或 session switcher 列表。
+
 ### 不在 SessionKey 里的东西
 
 - **不包含 messageId**：messageId 是消息级概念，不是会话级
@@ -149,6 +153,12 @@ RoutingSession 持有的 opaque agent conversation ref 与 live `AgentSession` h
 
 用户把已有 resumable session 绑定到新的 SessionKey 时，daemon 迁移 opaque ref 和下一次 spawn 所需的一次性 override；平台 thread 拓扑仍归原 channel，不随 rebind 复制。
 
+当前实现还未落地本文件描述的 SQLite lifecycle registry。内存态 MVP 支持 daemon-owned `/nexus-sessions`：按当前 platform instance + platform + user 列出最近可恢复的 opaque agent conversation ref，下拉项用该 session 的第一条用户消息生成标题；通过 Discord select 选择后，把当前 SessionKey 绑定到所选 `agentSessionId`；下一条消息使用 `SessionConfig.resumeFromAgentSessionId` 恢复。rebind 迁移 opaque ref、标题与下一次 spawn override，不复制 thread registry 或其它 channel topology 元数据。`/nexus-new-thread` 创建的 thread 占位在 agent session 启动前不出现在该列表里。
+
+workingDir 解析分三层：一次性 session override > channel workingDir default > agent config default。`/nexus-working-dir path:<absolute-path>` 默认设置当前 channel/thread 的 channel default；thread 若未设置自己的 default，则继承父 channel 的 default。`/nexus-working-dir ... scope:session` 才在当前原始 SessionKey（channel 或 thread + user）上保存一次性 `nextSession.workingDir`，仅在下一次真正 `startSession` 时消费。thread 继承父频道 binding 只影响 route/auth 与 channel default 读取，不会把 session override 写到父频道 key。所有 workingDir 设置都必须位于当前 binding 目标 agent 的默认 `workingDir` 之内。状态变更进入同 SessionKey 的 daemon queue：空闲时可立即完成；若当前 turn 正在运行，则先返回 queued ack，待排到队头后再写入并发送最终结果。由于 SessionKey 包含 platformName、platform、channelId 与 initiatorUserId，channel-scope workingDir 对同频道不同用户不提供全序保证。
+
+`/nexus-settings` 可设置当前 channel/thread 的 agent binding override。override 的路由契约由 [`config-routing.md`](../spec/config-routing.md#运行时-channel-agent-override) 拥有；本模型只依赖其组合结果：切换 agent owner 会清除触发者当前原始 SessionKey 上的 RoutingSession 映射与 opaque agent conversation ref，下一条消息按新 agent owner 启动或恢复。该列表、thread registry、channel default、agent binding override、一次性 override 与 daemon queue 都随进程重启丢失，不替代 Interrupted / Archived 的持久状态机。
+
 ## 幂等
 
 ### 为什么需要
@@ -169,13 +179,40 @@ Discord gateway 会重发事件（at-least-once）。同一条用户消息可能
 
 **严格串行**。agent 后端是有状态对话，同 session 并发输入会破坏上下文顺序。
 
-- daemon 为每个活跃 session 维护一个 FIFO 队列
-- 队列头任务完成前，后续事件排队
-- 用户在短时间内发多条消息 → 串行处理，前一条完成才处理下一条
+- daemon 为每个活跃 SessionKey 维护一个内存 FIFO 队列；key 是 `platformName + platform + channelId + initiatorUserId`
+- 队列覆盖 message、`dispatchMode: "queued"` 的 agent command，以及会影响 turn-visible state 的 daemon state command（当前为 workingDir mutation）
+- 队列头任务完成前，后续任务排队；用户在短时间内发多条消息 → 串行处理，前一条完成才处理下一条
+- `/nexus-queue` 管理当前 SessionKey 的 queue：面板展示 running / pending / recent 计数；用户可选择 pending item 后上移、下移、取消或编辑 message prompt，也可插入一条 next prompt；`next` 中断当前 running turn 并让下一条 pending item 继续执行；`clear` 取消所有 pending，不取消 running
+- `/nexus-kill` 不进入队列；它立即停止当前 runtime handle，取消当前 SessionKey 的 pending items，并删除当前 RoutingSession 映射
 
 ### 跨 session
 
-**并发**。不同 session 的任务可以并行（受全局并发上限限制，见 `spec/cost-and-limits.md`）。
+**并发**。不同 SessionKey 的任务可以并行。当前内存队列只做 per-key pending depth 限制；全局并发上限见 `spec/cost-and-limits.md` 的目标约束，不由 queue v1 强制。
+
+### Daemon queue v1
+
+队列是 daemon 内存态协作结构，不是持久 session lifecycle registry。队列 key 与 RoutingSession key 一致：`platformName + platform + channelId + initiatorUserId`。这意味着同一频道内不同用户各有自己的 queue；channel-level workingDir 这类共享状态只在同一 key 内有顺序保证，跨用户不提供全序。
+
+队列 item 类型：
+
+- `message`：用户消息或 `/nexus-queue` 插入的 next prompt；pending 状态下可编辑 prompt、上移、下移、取消
+- `agent-command`：`dispatchMode: "queued"` 的 agent command；pending 状态下可上移、下移、取消，但不支持编辑
+- `daemon-state-command`：会影响 turn-visible state 的 daemon 命令，当前为 workingDir mutation；pending 状态下可上移、下移、取消，但不支持编辑
+
+状态集合：
+
+- `queued`：等待执行；`/nexus-queue` 只管理这一类 pending item
+- `running`：正在执行；不能重排、编辑或 clear；可通过 `/nexus-queue action:next` 中断当前 turn 后继续 pending，也可通过 `/nexus-kill` 或 agent stop 类命令影响
+- `completed` / `failed` / `cancelled`：终态；只进入 recent 计数，不再接受操作
+
+管理操作：
+
+- `status`：返回当前 key 的 running、pending、recent 计数，并附带 pending item select
+- `clear`：取消当前 key 的全部 pending item；message item 的幂等状态进入 `cancelled`
+- `select`：选择一个 pending item 后显示 `Up` / `Down` / `Edit` / `Cancel`
+- `Edit`：只对 `message` item 开放，修改即将传给 agent 的 prompt；不改变原 Discord message
+- `Insert next`：通过 modal 新增一个 synthetic `message` item，插到当前 running 之后、已有 pending 之前；该 item 没有平台 `messageId`，因此不参与入站 messageId 幂等
+- `next`：daemon-owned queue 控制；对当前 active `AgentSession` 调用 `interrupt()`，不删除 RoutingSession 映射，不清空 pending items；当前 running item 收到 terminal 后由 queue 调度下一条 pending
 
 ### 并发上限
 

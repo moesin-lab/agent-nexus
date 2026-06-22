@@ -114,15 +114,19 @@ function normalizeConfigRoot(path: string): string {
 
 export function applyConfigHomeArgv(args: readonly string[]): void {
   let home: string | undefined;
+  // Only extract config home in this pre-pass; later CLI/help/harness handling owns other args.
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
+    if (arg === '--') {
+      break;
+    }
     if (arg === '--home') {
-      const value = args[index + 1];
-      if (!value) {
-        throw new ConfigError('参数 --home 需要一个路径');
-      }
       if (home !== undefined) {
         throw new ConfigError('参数 --home 只能指定一次');
+      }
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith('-')) {
+        throw new ConfigError('参数 --home 需要一个路径');
       }
       home = value;
       index += 1;
@@ -135,7 +139,6 @@ export function applyConfigHomeArgv(args: readonly string[]): void {
       home = arg.slice('--home='.length);
       continue;
     }
-    throw new ConfigError(`未知 CLI 参数 ${arg}`);
   }
   if (home !== undefined) {
     process.env[AGENT_NEXUS_HOME_ENV] = normalizeConfigRoot(home);
@@ -144,7 +147,7 @@ export function applyConfigHomeArgv(args: readonly string[]): void {
 
 export function configRoot(): string {
   const configuredRoot = process.env[AGENT_NEXUS_HOME_ENV];
-  if (configuredRoot && configuredRoot.trim().length > 0) {
+  if (configuredRoot !== undefined) {
     return normalizeConfigRoot(configuredRoot);
   }
   return join(homedir(), '.agent-nexus');

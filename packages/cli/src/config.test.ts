@@ -167,6 +167,77 @@ describe('config loader', () => {
     expect(configRoot()).toBe(root);
   });
 
+  it('applyConfigHomeArgv 解析 --home=value 并展开 ~', () => {
+    applyConfigHomeArgv(['--home=~/agent-nexus-flag-root']);
+
+    expect(process.env[AGENT_NEXUS_HOME_ENV]).toBe(
+      join(tmp, 'agent-nexus-flag-root'),
+    );
+    expect(configRoot()).toBe(join(tmp, 'agent-nexus-flag-root'));
+  });
+
+  it('AGENT_NEXUS_HOME 支持 ~ 展开，且 --home 优先级更高', () => {
+    const flagRoot = join(tmp, 'agent-nexus-flag-priority-root');
+    process.env[AGENT_NEXUS_HOME_ENV] = '~/agent-nexus-env-root';
+
+    expect(configRoot()).toBe(join(tmp, 'agent-nexus-env-root'));
+
+    applyConfigHomeArgv(['--home', flagRoot]);
+
+    expect(process.env[AGENT_NEXUS_HOME_ENV]).toBe(flagRoot);
+    expect(configRoot()).toBe(flagRoot);
+  });
+
+  it('applyConfigHomeArgv 跳过未知参数并继续解析 --home', () => {
+    const root = join(tmp, 'agent-nexus-unknown-args-root');
+
+    expect(() =>
+      applyConfigHomeArgv(['--version', '--log-level', 'debug', '--home', root]),
+    ).not.toThrow();
+
+    expect(process.env[AGENT_NEXUS_HOME_ENV]).toBe(root);
+  });
+
+  it('applyConfigHomeArgv 遇到 -- 后不再预解析 --home', () => {
+    const root = join(tmp, 'agent-nexus-passthrough-root');
+
+    applyConfigHomeArgv(['--', '--home', root]);
+
+    expect(process.env[AGENT_NEXUS_HOME_ENV]).toBeUndefined();
+    expect(configRoot()).toBe(join(tmp, '.agent-nexus'));
+  });
+
+  it('applyConfigHomeArgv 对 --home 缺值或重复指定 fail-closed', () => {
+    const root = join(tmp, 'agent-nexus-duplicate-root');
+
+    expect(() => applyConfigHomeArgv(['--home'])).toThrow(/--home.*路径/);
+    expect(() => applyConfigHomeArgv(['--home', '--version'])).toThrow(
+      /--home.*路径/,
+    );
+    expect(() => applyConfigHomeArgv(['--home', '-relative'])).toThrow(
+      /--home.*路径/,
+    );
+    expect(() => applyConfigHomeArgv(['--home', root, '--home=/other'])).toThrow(
+      /--home.*只能指定一次/,
+    );
+    expect(() => applyConfigHomeArgv(['--home=/first', '--home'])).toThrow(
+      /--home.*只能指定一次/,
+    );
+  });
+
+  it('AGENT_NEXUS_HOME 和 --home 空白路径都 fail-closed', () => {
+    process.env[AGENT_NEXUS_HOME_ENV] = '   ';
+
+    expect(() => configRoot()).toThrow(ConfigError);
+    expect(() => configRoot()).toThrow(/不能是空路径/);
+    expect(() => applyConfigHomeArgv(['--home=   '])).toThrow(ConfigError);
+    expect(() => applyConfigHomeArgv(['--home=   '])).toThrow(/不能是空路径/);
+    expect(() => applyConfigHomeArgv(['--home', '   '])).toThrow(ConfigError);
+    expect(() => applyConfigHomeArgv(['--home', '   '])).toThrow(/不能是空路径/);
+    expect(() => applyConfigHomeArgv(['--home='])).toThrow(ConfigError);
+    expect(() => applyConfigHomeArgv(['--home='])).toThrow(/不能是空路径/);
+  });
+
   it('loadConfig 解析 platforms[] / agents[] / bindings[] 新结构并应用 owner parser 默认值', async () => {
     await writeFile(
       join(tmp, '.agent-nexus', 'config.json'),

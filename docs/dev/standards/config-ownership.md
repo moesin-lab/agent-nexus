@@ -32,7 +32,8 @@ export { parseXxxConfig, type XxxConfig, XxxConfigError } from './config.js';
 
 `packages/cli/src/config.ts` 的职责：
 
-- 读取 `~/.agent-nexus/config.json`（文件 I/O、JSON 解析、顶层结构校验）
+- 读取实例根路径下的 `config.json`（文件 I/O、JSON 解析、顶层结构校验）
+- 解析 CLI 实例根路径入口（`--home` / `AGENT_NEXUS_HOME`），具体优先级与废弃环境变量关系见 [`../spec/infra/persistence.md`](../spec/infra/persistence.md#存储根路径)
 - 计算环境相关路径（如 `defaultStatePath`）并作为参数传入 owner parser
 - 调用各 owner 包的 parser，统一 catch owner 错误后包成 `ConfigError`（保持 CLI 是 `ConfigError` 的唯一 owner）
 - 不直接持有任何 owner 包的字段名
@@ -42,7 +43,7 @@ export { parseXxxConfig, type XxxConfig, XxxConfigError } from './config.js';
 ### 3. 默认值归属
 
 - **运行时无关默认值**（如 `DEFAULT_BIN = 'claude'`、`DEFAULT_ALLOWED_TOOLS`）：属于 owner 包，定义并导出在 `src/config.ts`
-- **环境相关路径默认值**（如 `~/.agent-nexus/state/discord.json`）：属于 CLI，由 CLI 计算后作为 `ctx` 参数传入 owner parser
+- **环境相关路径默认值**（如实例根路径下的 state 文件）：属于 CLI，由 CLI 计算后作为 `ctx` 参数传入 owner parser
 
 ### 4. 错误归属
 
@@ -65,4 +66,4 @@ owner 包只 throw 自己的错误子类（如 `DiscordConfigError`）；CLI 统
 - CLI 直接校验 owner 包字段（字段名硬编码在 CLI）
 - owner 包 import CLI 的 `ConfigError`
 - 字段校验测试只有 `cli/config.test.ts`，owner 包无测试
-- owner 包依赖 `~/.agent-nexus/` 目录布局（这是 CLI 层知识）
+- owner 包依赖实例根路径或目录布局（这是 CLI 层知识）

@@ -26,7 +26,9 @@ import {
 } from './command-dispatch.js';
 import type { CommandDispatchDecision } from './command-dispatch.js';
 import type { PlatformAuthConfig, ToolMessageMode } from './config.js';
+import type { IdempotencyStore } from './idempotency.js';
 import type { Logger } from './logger.js';
+import { BasicRedactor, type Redactor } from './redaction.js';
 import { RouteError, selectRoute, type RoutingEntry } from './router.js';
 import type { SessionStore } from './session-store.js';
 
@@ -67,6 +69,8 @@ export interface EngineDeps {
   platformCommandHandlerKeys?: readonly string[];
   daemonCommandHandlerKeys?: readonly string[];
   configReloader?: DaemonConfigReloader;
+  idempotencyStore?: IdempotencyStore;
+  redactor?: Redactor;
   logger: Logger;
   sessionStore: SessionStore;
   /** 每轮 sessionId 由 Engine 生成；resumeFromAgentSessionId 由 store 决定 */
@@ -129,10 +133,11 @@ function renderToolStart(toolName: string, inputSummary: string): string {
  * Engine：把 platform 入站事件路由到 agent，并把 agent 输出回送 platform。
  *
  * MVP 跳过的横切能力——下一批 PR 逐个补：
- * - 持久化幂等 / auth ordering → docs/dev/spec/infra/idempotency.md
- *   （进程内 eventId LRU 已落，详见 seenEventIds 字段）
+ * - 持久化 SQLite 幂等 → docs/dev/spec/infra/idempotency.md
+ *   （Engine 支持注入 IdempotencyStore；进程内 eventId LRU 仍作纵深防御）
+ * - 日志 sink / transcript 全出口脱敏 → docs/dev/spec/security/redaction.md
+ *   （Engine 已对 IM outbound 应用 Redactor）
  * - 限流 / 预算 → docs/dev/spec/infra/cost-and-limits.md
- * - 出口脱敏 → docs/dev/spec/security/redaction.md
  * - sessionStore 持久化 + 状态机 → docs/dev/architecture/session-model.md
  */
 export class Engine {
@@ -148,6 +153,8 @@ export class Engine {
   private readonly platformCommandHandlerKeys: readonly string[];
   private readonly daemonCommandHandlerKeys: readonly string[];
   private readonly configReloader?: DaemonConfigReloader;
+  private readonly idempotencyStore?: IdempotencyStore;
+  private readonly redactor: Redactor;
   private readonly agents: Map<string, EngineAgent>;
   private readonly logger: Logger;
   private readonly sessionStore: SessionStore;
@@ -182,6 +189,8 @@ export class Engine {
     this.platformCommandHandlerKeys = deps.platformCommandHandlerKeys ?? [];
     this.daemonCommandHandlerKeys = deps.daemonCommandHandlerKeys ?? [];
     this.configReloader = deps.configReloader;
+    this.idempotencyStore = deps.idempotencyStore;
+    this.redactor = deps.redactor ?? new BasicRedactor();
     this.routingTable = deps.routingTable;
     this.agents = new Map();
     if (deps.agents) {
@@ -230,6 +239,7 @@ export class Engine {
     }
     this.agentSessions.clear();
     this.sessionStore.clearAll();
+    this.idempotencyStore?.clearAll();
   }
 
   private dispatch(event: NormalizedEvent): Promise<void | EventHandlerResult> {
@@ -282,6 +292,33 @@ export class Engine {
       );
       return Promise.resolve();
     }
+    const idempotencyMessageId = event.messageId;
+    if (this.idempotencyStore && idempotencyMessageId) {
+      const decision = this.idempotencyStore.checkAndSet(
+        routedSessionKey,
+        idempotencyMessageId,
+      );
+      if (decision.kind === 'hit') {
+        this.logger.info(
+          {
+            traceId: event.traceId,
+            sessionKey: serializeSessionKey(routedSessionKey),
+            messageId: idempotencyMessageId,
+            status: decision.status,
+          },
+          'idempotency_hit',
+        );
+        return Promise.resolve();
+      }
+      this.logger.info(
+        {
+          traceId: event.traceId,
+          sessionKey: serializeSessionKey(routedSessionKey),
+          messageId: idempotencyMessageId,
+        },
+        'idempotency_insert',
+      );
+    }
     const keyStr = serializeSessionKey(routedSessionKey);
     const prev = this.inflight.get(keyStr) ?? Promise.resolve();
     // 链式 await：上一条 settle 后再跑当前这条。前一条若 reject 不影响后续——
@@ -289,7 +326,25 @@ export class Engine {
     // 链上某条 throw 把整条链 poison 掉。
     const next = prev
       .catch(() => {})
-      .then(() => this.dispatchImpl(routedEvent, agentSlot));
+      .then(async () => {
+        try {
+          await this.dispatchImpl(routedEvent, agentSlot);
+          if (this.idempotencyStore && idempotencyMessageId) {
+            this.idempotencyStore.markProcessed(
+              routedSessionKey,
+              idempotencyMessageId,
+            );
+          }
+        } catch (err) {
+          if (this.idempotencyStore && idempotencyMessageId) {
+            this.idempotencyStore.markFailed(
+              routedSessionKey,
+              idempotencyMessageId,
+            );
+          }
+          throw err;
+        }
+      });
     this.inflight.set(keyStr, next);
     // 链尾 cleanup：当前这条就是最末时清掉 map 项，避免长期累积空 promise。
     void next.finally(() => {
@@ -300,26 +355,36 @@ export class Engine {
     return next;
   }
 
-  private commandResponse(text: string): EventHandlerResult {
-    return { commandResponse: { text, ephemeral: true } };
+  private commandResponse(text: string, traceId: string): EventHandlerResult {
+    return {
+      commandResponse: {
+        text: this.redactForOutbound(text, traceId),
+        ephemeral: true,
+      },
+    };
   }
 
-  private commandFailureResponse(code: CommandRegistryErrorCode): EventHandlerResult {
+  private commandFailureResponse(
+    code: CommandRegistryErrorCode,
+    traceId: string,
+  ): EventHandlerResult {
     if (code === 'command_active_map_missing') {
-      return this.commandResponse(COMMAND_NOT_READY_TEXT);
+      return this.commandResponse(COMMAND_NOT_READY_TEXT, traceId);
     }
     if (code === 'command_handler_missing') {
-      return this.commandResponse(COMMAND_NOT_READY_TEXT);
+      return this.commandResponse(COMMAND_NOT_READY_TEXT, traceId);
     }
     if (code === 'command_descriptor_invalid') {
-      return this.commandResponse(COMMAND_NOT_READY_TEXT);
+      return this.commandResponse(COMMAND_NOT_READY_TEXT, traceId);
     }
-    return this.commandResponse(COMMAND_UNAVAILABLE_TEXT);
+    return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, traceId);
   }
 
   private dispatchCommand(event: NormalizedEvent): Promise<void | EventHandlerResult> {
     if (!this.checkAuth(event)) {
-      return Promise.resolve(this.commandResponse(COMMAND_NOT_ALLOWED_TEXT));
+      return Promise.resolve(
+        this.commandResponse(COMMAND_NOT_ALLOWED_TEXT, event.traceId),
+      );
     }
     if (!this.commandRegistry || !this.routingTable) {
       this.logger.error(
@@ -330,7 +395,9 @@ export class Engine {
         },
         'command_handler_missing',
       );
-      return Promise.resolve(this.commandResponse(COMMAND_NOT_READY_TEXT));
+      return Promise.resolve(
+        this.commandResponse(COMMAND_NOT_READY_TEXT, event.traceId),
+      );
     }
     if (!this.commandScopeMatchesEngine(event.command?.registrationScope)) {
       this.logger.error(
@@ -343,7 +410,9 @@ export class Engine {
         },
         'command_scope_mismatch',
       );
-      return Promise.resolve(this.commandResponse(COMMAND_UNAVAILABLE_TEXT));
+      return Promise.resolve(
+        this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId),
+      );
     }
 
     const decision = dispatchCommandEvent({
@@ -361,7 +430,9 @@ export class Engine {
       logger: this.logger,
     });
     if (isCommandDispatchFailure(decision)) {
-      return Promise.resolve(this.commandFailureResponse(decision.code));
+      return Promise.resolve(
+        this.commandFailureResponse(decision.code, event.traceId),
+      );
     }
     if (decision.ownerType === 'daemon') {
       return this.handleDaemonCommand(event, decision);
@@ -378,7 +449,9 @@ export class Engine {
         },
         'command_handler_missing',
       );
-      return Promise.resolve(this.commandResponse(COMMAND_NOT_READY_TEXT));
+      return Promise.resolve(
+        this.commandResponse(COMMAND_NOT_READY_TEXT, event.traceId),
+      );
     }
     if (decision.dispatchMode === 'immediate') {
       return this.handleAgentCommand(event, decision);
@@ -401,8 +474,9 @@ export class Engine {
     text: string,
   ): Promise<void> {
     try {
+      const outboundText = this.redactForOutbound(text, event.traceId);
       await this.platform.send(sessionKey, {
-        text,
+        text: outboundText,
         traceId: event.traceId,
         sessionKey,
       });
@@ -473,7 +547,7 @@ export class Engine {
         },
         'command_handler_missing',
       );
-      return this.commandResponse(COMMAND_NOT_READY_TEXT);
+      return this.commandResponse(COMMAND_NOT_READY_TEXT, event.traceId);
     }
     const routedSessionKey = withPlatformName(
       event.sessionKey,
@@ -491,7 +565,7 @@ export class Engine {
         },
         'route_agent_missing',
       );
-      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT);
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
     }
 
     const existing = this.agentSessions.get(sessionKeyStr);
@@ -529,11 +603,14 @@ export class Engine {
         },
         'agent_command_failed',
       );
-      return this.commandResponse(COMMAND_FAILED_TEXT);
+      return this.commandResponse(COMMAND_FAILED_TEXT, event.traceId);
     }
     this.applyAgentCommandResult(routedSessionKey, sessionKeyStr, result);
     if (result.status === 'rejected' || result.status === 'unsupported') {
-      return this.commandResponse(result.message ?? COMMAND_FAILED_TEXT);
+      return this.commandResponse(
+        result.message ?? COMMAND_FAILED_TEXT,
+        event.traceId,
+      );
     }
     if (result.message) {
       await this.sendCommandAck(event, routedSessionKey, result.message);
@@ -591,7 +668,7 @@ export class Engine {
         },
         'command_handler_missing',
       );
-      return this.commandResponse(COMMAND_NOT_READY_TEXT);
+      return this.commandResponse(COMMAND_NOT_READY_TEXT, event.traceId);
     }
 
     const routedSessionKey = withPlatformName(
@@ -617,7 +694,7 @@ export class Engine {
     decision: Extract<CommandDispatchDecision, { ownerType: 'daemon' }>,
   ): Promise<EventHandlerResult> {
     if (!this.configReloader) {
-      return this.commandResponse(COMMAND_NOT_READY_TEXT);
+      return this.commandResponse(COMMAND_NOT_READY_TEXT, event.traceId);
     }
     let result: DaemonConfigReloadResult;
     try {
@@ -633,7 +710,7 @@ export class Engine {
         },
         'config_reload_failed',
       );
-      return this.commandResponse(COMMAND_FAILED_TEXT);
+      return this.commandResponse(COMMAND_FAILED_TEXT, event.traceId);
     }
     this.logger.info(
       {
@@ -644,7 +721,7 @@ export class Engine {
       },
       'config_reload_result',
     );
-    return this.commandResponse(result.message);
+    return this.commandResponse(result.message, event.traceId);
   }
 
   private route(event: NormalizedEvent):
@@ -682,6 +759,15 @@ export class Engine {
         return undefined;
       }
       throw err;
+    }
+  }
+
+  private redactForOutbound(text: string, traceId: string): string {
+    try {
+      return this.redactor.redact(text);
+    } catch (err) {
+      this.logger.error({ traceId, err }, 'redaction_failed');
+      return '[redacted output unavailable]';
     }
   }
 
@@ -738,8 +824,12 @@ export class Engine {
         const remainder = trimmed === '/new' ? '' : trimmed.slice(5).trim();
         if (remainder.length === 0) {
           try {
+            const outboundText = this.redactForOutbound(
+              '[new session ready]',
+              event.traceId,
+            );
             await this.platform.send(event.sessionKey, {
-              text: '[new session ready]',
+              text: outboundText,
               traceId: event.traceId,
               sessionKey: event.sessionKey,
             });
@@ -777,8 +867,9 @@ export class Engine {
 
       const safeSend = async (text: string): Promise<MessageRef | undefined> => {
         try {
+          const outboundText = this.redactForOutbound(text, event.traceId);
           return await this.platform.send(event.sessionKey, {
-            text,
+            text: outboundText,
             traceId: event.traceId,
             sessionKey: event.sessionKey,
           });
@@ -800,8 +891,9 @@ export class Engine {
         text: string,
       ): Promise<void> => {
         try {
+          const outboundText = this.redactForOutbound(text, event.traceId);
           await this.platform.edit(ref, {
-            text,
+            text: outboundText,
             traceId: event.traceId,
             sessionKey: event.sessionKey,
           });
@@ -931,6 +1023,7 @@ export class Engine {
           return;
         }
         const text = buf.length > 0 ? buf : '[empty response]';
+        const outboundText = this.redactForOutbound(text, event.traceId);
         if (platformCaps.supportsEdit) {
           await flushEdit(text);
         } else {
@@ -940,7 +1033,7 @@ export class Engine {
           {
             traceId: event.traceId,
             sessionKey: sessionKeyStr,
-            length: text.length,
+            length: outboundText.length,
           },
           'outbound',
         );
@@ -948,7 +1041,7 @@ export class Engine {
           {
             traceId: event.traceId,
             sessionKey: sessionKeyStr,
-            text,
+            text: outboundText,
           },
           'outbound',
         );

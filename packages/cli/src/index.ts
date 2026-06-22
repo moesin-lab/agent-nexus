@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import {
   ActiveCommandRegistry,
   Engine,
+  InMemoryIdempotencyStore,
   SessionStore,
   createLogger,
   daemonCommandDescriptors,
@@ -80,6 +81,7 @@ async function main(): Promise<void> {
 
   const sessionStore = new SessionStore();
   const commandRegistry = new ActiveCommandRegistry();
+  const idempotencyStore = new InMemoryIdempotencyStore();
   const engines: Engine[] = [];
   // targets 在下面循环里随 engine 创建逐个填充；reloader 调用时才读取
   const configReloadTargets: ConfigReloadTarget[] = [];
@@ -168,6 +170,7 @@ async function main(): Promise<void> {
       configReloader,
       agents,
       routingTable,
+      idempotencyStore,
       logger,
       sessionStore,
       toolMessages: {

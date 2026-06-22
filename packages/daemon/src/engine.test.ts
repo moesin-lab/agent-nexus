@@ -27,6 +27,7 @@ import {
   DEFAULT_COMMAND_NAME_POLICY,
 } from './command-registry.js';
 import { Engine } from './engine.js';
+import { InMemoryIdempotencyStore } from './idempotency.js';
 import { createLogger, type Logger } from './logger.js';
 import type { RoutingEntry } from './router.js';
 import { SessionStore } from './session-store.js';
@@ -790,6 +791,91 @@ describe('Engine', () => {
     const dedupLog = infoCalls.find(([, msg]) => msg === 'dispatch_dedup');
     expect(dedupLog).toBeDefined();
     expect(dedupLog![0]).toMatchObject({ eventId: dup.eventId, traceId: 't-1' });
+  });
+
+  it('注入 IdempotencyStore 后同 session/messageId 重放不触发第二次 agent 调用', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = {
+      info: vi.fn(),
+      debug: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      trace: vi.fn(),
+      fatal: vi.fn(),
+      child: vi.fn(),
+    } as unknown as Logger;
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: mockLogger,
+      sessionStore: store,
+      idempotencyStore: new InMemoryIdempotencyStore(),
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    agent.queueEvents([
+      ev('text_final', { text: 'first' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('first', {
+      eventId: 'e-replay-1',
+      messageId: 'm-replay',
+    }));
+    await dispatchHandler(makeEvent('second', {
+      eventId: 'e-replay-2',
+      messageId: 'm-replay',
+    }));
+
+    expect(agent.sendInput).toHaveBeenCalledTimes(1);
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect((mockLogger.info as ReturnType<typeof vi.fn>).mock.calls).toEqual(
+      expect.arrayContaining([
+        expect.arrayContaining([expect.any(Object), 'idempotency_insert']),
+        expect.arrayContaining([expect.any(Object), 'idempotency_hit']),
+      ]),
+    );
+  });
+
+  it('auth_denied 不占用幂等键，后续同 messageId 授权事件仍可处理', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      idempotencyStore: new InMemoryIdempotencyStore(),
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    await dispatchHandler(makeEvent('denied', {
+      eventId: 'e-denied',
+      messageId: 'm-same',
+      initiator: { userId: 'U2', displayName: 'U2', isBot: false },
+      sessionKey: { ...SESSION_KEY, initiatorUserId: 'U2' },
+    }));
+
+    agent.queueEvents([
+      ev('text_final', { text: 'allowed' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('allowed', {
+      eventId: 'e-allowed',
+      messageId: 'm-same',
+    }));
+
+    expect(agent.sendInput).toHaveBeenCalledTimes(1);
+    expect(platform.send).toHaveBeenCalledTimes(1);
   });
 
   it('eventId 去重 cap 淘汰：最早 entry 被淘汰，最新 entry 仍被 dedup（非整表 clear）', async () => {
@@ -2578,6 +2664,83 @@ describe('Engine', () => {
     expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe('he');
     expect(platform.edit).toHaveBeenCalledTimes(1);
     expect((platform.edit.mock.calls[0]![1] as OutboundMessage).text).toBe('hello');
+  });
+
+  it('长回复 edit 交给 platform adapter 维护切片与 messageIds', async () => {
+    const platform = makePlatform({ supportsEdit: true, maxTextLength: 5 });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const initialRef: MessageRef = {
+      platform: 'discord',
+      channelId: 'C1',
+      messageId: 'out-1',
+      messageIds: ['out-1'],
+      sentAt: new Date(0),
+    };
+    platform.send.mockResolvedValue(initialRef);
+    platform.edit.mockImplementation(async (ref: MessageRef) => {
+      ref.messageIds = ['out-1', 'out-2'];
+      ref.messageId = 'out-2';
+    });
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+      streaming: { streamEditThrottleMs: 1000 },
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('text_delta', { text: 'ab' }),
+      ev('text_final', { text: 'abcdefghijkl' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect(platform.edit).toHaveBeenCalledTimes(1);
+    const editedRef = platform.edit.mock.calls[0]![0] as MessageRef;
+    expect((platform.edit.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      'abcdefghijkl',
+    );
+    expect(editedRef.messageIds).toEqual(['out-1', 'out-2']);
+    expect(editedRef.messageId).toBe('out-2');
+  });
+
+  it('outbound send 前会脱敏 secret 和用户 home 绝对路径', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('text_final', {
+        text: 'ANTHROPIC_API_KEY=sk-ant-abc123 path=/home/node/secret/file.ts',
+      }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('hello'));
+
+    const out = platform.send.mock.calls[0]![1] as OutboundMessage;
+    expect(out.text).toContain('ANTHROPIC_API_KEY=<redacted>');
+    expect(out.text).toContain('path=~/secret/file.ts');
+    expect(out.text).not.toContain('sk-ant-abc123');
+    expect(out.text).not.toContain('/home/node/secret');
   });
 
   it('默认 append：tool start 单独发送，tool_result 不编辑用户可见消息，final 追加新消息', async () => {

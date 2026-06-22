@@ -9,6 +9,13 @@ export {
   type EngineRuntimeUpdate,
 } from './engine.js';
 export {
+  InMemoryIdempotencyStore,
+  type IdempotencyDecision,
+  type IdempotencyStatus,
+  type IdempotencyStore,
+} from './idempotency.js';
+export { BasicRedactor, redactText, type Redactor } from './redaction.js';
+export {
   RouteError,
   selectRoute,
   type RouteContext,

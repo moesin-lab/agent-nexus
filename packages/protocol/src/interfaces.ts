@@ -10,16 +10,64 @@ import type {
   AgentCommandResult,
 } from './command.js';
 import type { NormalizedEvent } from './events.js';
-import type { CapabilitySet, MessageRef, OutboundMessage } from './outbound.js';
+import type {
+  CapabilitySet,
+  MessageComponent,
+  MessageRef,
+  OutboundMessage,
+} from './outbound.js';
 import type { SessionKey } from './session-key.js';
+import type {
+  PlatformSettingsActionInput,
+  PlatformSettingsActionResult,
+  PlatformSettingsSnapshot,
+  PlatformSettingsSnapshotInput,
+} from './settings.js';
 
 export interface EventCommandResponse {
   text: string;
   ephemeral?: boolean;
+  components?: MessageComponent[];
+}
+
+export interface EventModalResponse {
+  modalId: string;
+  title: string;
+  inputs: {
+    componentId: string;
+    label: string;
+    kind: 'short_text' | 'long_text';
+    required?: boolean;
+    placeholder?: string;
+    value?: string;
+  }[];
 }
 
 export interface EventHandlerResult {
   commandResponse?: EventCommandResponse;
+  modalResponse?: EventModalResponse;
+}
+
+export interface CreateThreadInput {
+  parentChannelId: string;
+  initiatorUserId: string;
+  title: string;
+  visibility: 'private' | 'public';
+  autoArchiveDurationMinutes?: number;
+  initialMessage?: string;
+  traceId: string;
+}
+
+export interface CreateThreadResult {
+  threadId: string;
+  parentChannelId: string;
+  url?: string;
+}
+
+export interface UpdateThreadInput {
+  threadId: string;
+  title?: string;
+  traceId: string;
 }
 
 export type EventHandler = (
@@ -39,6 +87,14 @@ export interface PlatformAdapter {
   edit(ref: MessageRef, message: OutboundMessage): Promise<void>;
   delete(ref: MessageRef): Promise<void>;
   react(ref: MessageRef, emoji: string): Promise<void>;
+  createThread?(input: CreateThreadInput): Promise<CreateThreadResult>;
+  updateThread?(input: UpdateThreadInput): Promise<void>;
+  settingsSnapshot?(
+    input: PlatformSettingsSnapshotInput,
+  ): PlatformSettingsSnapshot | Promise<PlatformSettingsSnapshot>;
+  applySettingsAction?(
+    input: PlatformSettingsActionInput,
+  ): PlatformSettingsActionResult | Promise<PlatformSettingsActionResult>;
   setTyping(sessionKey: SessionKey): Promise<void>;
   clearTyping(sessionKey: SessionKey): Promise<void>;
 }

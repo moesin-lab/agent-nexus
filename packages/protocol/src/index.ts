@@ -9,14 +9,27 @@ export type {
   Attachment,
   EventType,
   Initiator,
+  InteractionPayload,
   NormalizedEvent,
+  ReactionPayload,
 } from './events.js';
 
 export type {
   CapabilitySet,
+  MessageComponent,
+  MessageEmbed,
   MessageRef,
   OutboundMessage,
 } from './outbound.js';
+
+export type {
+  PlatformSettingsActionInput,
+  PlatformSettingsActionResult,
+  PlatformSettingsSnapshot,
+  PlatformSettingsSnapshotInput,
+  SettingsDurability,
+  SettingsSnapshotItem,
+} from './settings.js';
 
 export type {
   ActiveCommandMap,
@@ -63,9 +76,13 @@ export type {
 
 export type {
   AgentEventHandler,
-  EventCommandResponse,
   AgentRuntime,
+  CreateThreadInput,
+  CreateThreadResult,
+  EventCommandResponse,
   EventHandler,
   EventHandlerResult,
+  EventModalResponse,
   PlatformAdapter,
+  UpdateThreadInput,
 } from './interfaces.js';

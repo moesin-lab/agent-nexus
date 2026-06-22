@@ -4,6 +4,9 @@ import { serializeSessionKey } from '@agent-nexus/protocol';
 /**
  * 跨 turn 维护 SessionKey → agentSessionId 的最小内存映射。
  *
+ * 列表、绑定、next workingDir 相关方法是 daemon-owned session/thread
+ * command 接线的 store 层契约；业务路由保持在 Engine / command handler。
+ *
  * MVP 仅在进程内存活；进程重启即清空。持久化、状态机、TTL、并发竞态
  * 处理留给后续 PR——TODO docs/dev/architecture/session-model.md。
  */
@@ -26,22 +29,18 @@ export interface ThreadRegistryEntry {
 export interface ListedSessionEntry extends Omit<SessionEntry, 'agentSessionId'> {
   sessionId: string;
   key: SessionKey;
-  platformName?: string;
-  platform: string;
-  channelId: string;
-  initiatorUserId: string;
   agentSessionId: string;
 }
 
 export interface ListSessionsInput {
-  platformName?: string;
+  platformName: string;
   platform: string;
   initiatorUserId: string;
   limit: number;
 }
 
 export interface FindThreadInput {
-  platformName?: string;
+  platformName: string;
   platform: string;
   channelId: string;
 }
@@ -67,11 +66,24 @@ export class SessionStore {
       this.keysBySessionId.set(sessionId, { ...key });
     }
     const existing = this.map.get(keyStr);
-    this.map.set(keyStr, {
-      ...entry,
-      title: entry.title ?? existing?.title,
-      nextSession: entry.nextSession ?? existing?.nextSession,
-    });
+    const nextEntry: SessionEntry = { ...entry };
+    // set() 只保留/更新 resumable 绑定；显式清除必须走 delete()。
+    if (
+      nextEntry.agentSessionId === undefined &&
+      existing?.agentSessionId !== undefined
+    ) {
+      nextEntry.agentSessionId = existing.agentSessionId;
+    }
+    if (nextEntry.title === undefined && existing?.title !== undefined) {
+      nextEntry.title = existing.title;
+    }
+    if (
+      nextEntry.nextSession === undefined &&
+      existing?.nextSession !== undefined
+    ) {
+      nextEntry.nextSession = existing.nextSession;
+    }
+    this.map.set(keyStr, nextEntry);
   }
 
   delete(key: SessionKey): boolean {
@@ -109,14 +121,10 @@ export class SessionStore {
       entries.push({
         sessionId,
         key: { ...key },
-        platformName: key.platformName,
-        platform: key.platform,
-        channelId: key.channelId,
-        initiatorUserId: key.initiatorUserId,
         agentSessionId: entry.agentSessionId,
         lastTurnAt: entry.lastTurnAt,
         title: entry.title,
-        nextSession: entry.nextSession,
+        nextSession: entry.nextSession ? { ...entry.nextSession } : undefined,
       });
     }
     return entries
@@ -131,15 +139,25 @@ export class SessionStore {
   ): SessionEntry | undefined {
     const sourceKey = this.keysBySessionId.get(sessionId);
     if (!sourceKey) return undefined;
-    const source = this.map.get(serializeSessionKey(sourceKey));
+    const sourceKeyStr = serializeSessionKey(sourceKey);
+    const targetKeyStr = serializeSessionKey(targetKey);
+    const source = this.map.get(sourceKeyStr);
     if (!source?.agentSessionId) return undefined;
     const rebound = {
       agentSessionId: source.agentSessionId,
       lastTurnAt: now,
       title: source.title,
+      nextSession: source.nextSession,
     };
+    if (sourceKeyStr !== targetKeyStr) {
+      this.delete(targetKey);
+    }
     this.set(targetKey, rebound);
-    return rebound;
+    const stored = this.get(targetKey);
+    if (sourceKeyStr !== targetKeyStr) {
+      this.delete(sourceKey);
+    }
+    return stored ? cloneEntry(stored) : undefined;
   }
 
   findThreadByChannelId(input: FindThreadInput): ThreadRegistryEntry | undefined {
@@ -190,5 +208,11 @@ export class SessionStore {
 }
 
 function threadRegistryKey(input: FindThreadInput): string {
-  return `${input.platformName ?? ''}:${input.platform}:${input.channelId}`;
+  return `${input.platformName}:${input.platform}:${input.channelId}`;
+}
+
+function cloneEntry(entry: SessionEntry): SessionEntry {
+  const cloned = { ...entry };
+  if (entry.nextSession) cloned.nextSession = { ...entry.nextSession };
+  return cloned;
 }

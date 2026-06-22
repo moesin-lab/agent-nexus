@@ -36,6 +36,7 @@ import type {
   CommandRegistrationResult,
   CommandRegistrationScope,
   CreateThreadInput,
+  CreateThreadResult,
   EventHandler,
   EventHandlerResult,
   EventModalResponse,
@@ -533,13 +534,54 @@ function discordModal(response: EventModalResponse): unknown {
   };
 }
 
-function shouldHandleComponentBeforeDefer(interaction: Interaction): boolean {
-  if (!interaction.isButton()) return false;
-  return (
-    interaction.customId === 'nexus:settings:working-dir' ||
-    interaction.customId === 'nexus:queue:insert' ||
-    interaction.customId.startsWith('nexus:queue:edit:')
-  );
+function immediateModalForComponent(
+  interaction: Interaction,
+): EventModalResponse | undefined {
+  if (!interaction.isButton()) return undefined;
+  if (interaction.customId === 'nexus:settings:working-dir') {
+    return {
+      customId: 'nexus:settings:working-dir-modal',
+      title: 'Set working directory',
+      textInputs: [
+        {
+          customId: 'path',
+          label: 'Absolute path',
+          style: 'short',
+          required: true,
+        },
+      ],
+    };
+  }
+  if (interaction.customId === 'nexus:queue:insert') {
+    return {
+      customId: 'nexus:queue:insert-modal',
+      title: 'Insert queued message',
+      textInputs: [
+        {
+          customId: 'text',
+          label: 'Message',
+          style: 'paragraph',
+          required: true,
+        },
+      ],
+    };
+  }
+  if (interaction.customId.startsWith('nexus:queue:edit:')) {
+    const queueItemId = interaction.customId.slice('nexus:queue:edit:'.length);
+    return {
+      customId: `nexus:queue:edit-modal:${queueItemId}`,
+      title: 'Edit queued message',
+      textInputs: [
+        {
+          customId: 'text',
+          label: 'Message',
+          style: 'paragraph',
+          required: true,
+        },
+      ],
+    };
+  }
+  return undefined;
 }
 
 interface DeferredInteraction {
@@ -944,41 +986,19 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
         }
         if (!interaction.isChatInputCommand()) {
           if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
-          if (shouldHandleComponentBeforeDefer(interaction)) {
-            const event = componentEventFromInteraction(interaction);
+          const immediateModal = immediateModalForComponent(interaction);
+          if (immediateModal) {
             try {
-              const result = await handler(event);
-              if (result?.modalResponse) {
-                await interaction.showModal(
-                  discordModal(result.modalResponse) as Parameters<
-                    typeof interaction.showModal
-                  >[0],
-                );
-                return;
-              }
-              await interaction.reply({
-                content: result?.commandResponse?.text ?? 'Command failed.',
-                ephemeral: true,
-                ...(result?.commandResponse?.components
-                  ? { components: discordMessageComponents(result.commandResponse.components) }
-                  : {}),
-              } as Parameters<typeof interaction.reply>[0]);
+              await interaction.showModal(
+                discordModal(immediateModal) as Parameters<
+                  typeof interaction.showModal
+                >[0],
+              );
             } catch (err) {
               logger.error(
-                { err, traceId: event.traceId, customId: event.interaction?.customId },
-                'platform_handler_error',
+                { err, interactionId: interaction.id, customId: interaction.customId },
+                'discord_component_modal_ack_failed',
               );
-              try {
-                await interaction.reply({
-                  content: 'Command failed. Try again later.',
-                  ephemeral: true,
-                });
-              } catch (replyErr) {
-                logger.error(
-                  { err: replyErr, customId: interaction.customId },
-                  'discord_component_error_reply_failed',
-                );
-              }
             }
             return;
           }
@@ -1227,12 +1247,6 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
       });
       try {
         await thread.members.add(input.initiatorUserId);
-        if (input.initialMessage) {
-          await thread.send({
-            content: input.initialMessage,
-            allowedMentions: { parse: [] },
-          });
-        }
       } catch (err) {
         try {
           if (thread.delete) {
@@ -1252,9 +1266,29 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
         }
         throw err;
       }
+      const setupWarnings: CreateThreadResult['setupWarnings'] = [];
+      if (input.initialMessage) {
+        try {
+          await thread.send({
+            content: input.initialMessage,
+            allowedMentions: { parse: [] },
+          });
+        } catch (err) {
+          setupWarnings.push({ code: 'initial_message_failed' });
+          logger.error(
+            {
+              traceId: input.traceId,
+              threadId: thread.id,
+              err,
+            },
+            'discord_thread_initial_message_failed',
+          );
+        }
+      }
       return {
         threadId: thread.id,
         parentChannelId: input.parentChannelId,
+        ...(setupWarnings.length > 0 ? { setupWarnings } : {}),
         ...(thread.guildId
           ? { url: `https://discord.com/channels/${thread.guildId}/${thread.id}` }
           : {}),

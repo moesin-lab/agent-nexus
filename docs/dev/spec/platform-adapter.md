@@ -137,6 +137,12 @@ MessageEmbed 结构见本文件附录；Component 结构见下节 `MessageCompon
 
 Platform-native ack/defer/followup/update/rate-limit 编排归 adapter。daemon 不持有 Discord interaction token、Slack ack deadline 或 Telegram callback query 等平台私有状态；daemon 只通过 `OutboundMessage` 表达平台中立的回复意图。Adapter 必须在平台要求的时限内完成 native ack/defer，并把后续 `send` / `edit` / followup 映射到对应平台 API。
 
+Discord component / modal 的 ack 约束：
+
+- 不打开 modal 的 component interaction：adapter 必须先 native defer，再调用 `EventHandler`。
+- modal submit interaction：adapter 必须先 native defer，再调用 `EventHandler`。
+- 打开 modal 的 component interaction：`showModal` 本身是该 interaction 的 native ack，adapter 必须在进入 daemon handler 前完成；adapter 只拥有 native modal 展示字段，最终会改变状态的提交仍由后续 modal submit 归一化为 `NormalizedEvent`，并在 daemon auth 后由对应 owner 处理。
+
 `EventHandler` 可返回 `EventHandlerResult.commandResponse`，仅用于已被 adapter native defer/ack 的 command interaction 收尾。Discord adapter 对非 reply-mode slash command 先发 ephemeral deferred reply；daemon 若返回 `commandResponse.text`，adapter 必须用 `editReply` 展示该 ephemeral 反馈，否则清理 deferred reply。普通消息与 agent 成功输出仍走 `OutboundMessage`。
 
 `EventHandlerResult.modalResponse` 用于 native interaction 要求立即打开 modal 的平台。Adapter 负责把平台中立的 `EventModalResponse` 映射到平台 native modal；不能支持 modal 的 adapter 不得声明 `supportsModals`。
@@ -463,6 +469,23 @@ Adapter 在 `client.on('ready')` 比较 `client.user?.id` 与 config 的 `botUse
 | `replyTo` | message_reference |
 | `ephemeral` | Interaction response flags |
 | 超过 2000 字符 | 切片成多条（切片策略见 message-protocol） |
+
+### Thread 创建错误语义
+
+```text
+CreateThreadResult {
+    threadId: string
+    parentChannelId: string
+    url?: string
+    setupWarnings?: [{ code: "initial_message_failed" }]
+}
+```
+
+`createThread(input)` 创建 thread 后的 setup 分三段处理：
+
+- `threads.create` 失败：直接返回失败，未产生 thread。
+- `members.add(initiatorUserId)` 失败：thread 对发起者不可用；adapter 可 best-effort 删除或归档已创建 thread，然后返回失败。
+- `initialMessage` 发送失败：不得删除或归档已创建 thread；adapter 记录包含 `traceId` / `threadId` / 原始错误的结构化错误日志，并返回带 `setupWarnings[{ code: "initial_message_failed" }]` 的 `CreateThreadResult`，让上层后续消息仍可在已创建 thread 内继续或恢复。
 
 ## 测试契约（合约测试）
 

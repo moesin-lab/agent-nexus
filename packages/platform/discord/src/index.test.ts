@@ -464,6 +464,15 @@ describe('command registry integration', () => {
     const editReply = vi.fn(async () => undefined);
     await interactionCreate({
       id: 'i-select',
+      applicationId: 'app-1',
+      token: 'interaction-token',
+      type: 3,
+      data: {
+        component_type: 3,
+        custom_id: 'nexus:sessions:resume',
+        values: ['mem-1'],
+      },
+      message: { id: 'm-components' },
       customId: 'nexus:sessions:resume',
       values: ['mem-1'],
       channelId: 'C1',
@@ -500,12 +509,21 @@ describe('command registry integration', () => {
       threadParentChannelId: 'C1',
       rawContentType: 'discord:component-interaction',
     });
+    expect(handler.mock.calls[0]![0].rawPayload).toMatchObject({
+      type: 3,
+      data: {
+        component_type: 3,
+        custom_id: 'nexus:sessions:resume',
+        values: ['mem-1'],
+      },
+      token: 'interaction-token',
+    });
     expect(editReply).toHaveBeenCalledWith({
       content: '[session resumed: sid-old]',
     });
   });
 
-  it('settings workingDir button can open a Discord modal before defer', async () => {
+  it('settings workingDir button opens its Discord modal before daemon handling', async () => {
     const platform = createDiscordPlatform({
       token: 'test-token',
       botUserId: BOT_ID,
@@ -514,44 +532,8 @@ describe('command registry integration', () => {
       allowedUserIds: ALLOWED,
       testGuildId: 'G-dev',
     });
-    const handler = vi.fn(async () => ({
-      modalResponse: {
-        customId: 'nexus:settings:working-dir-modal',
-        title: 'Set working directory',
-        textInputs: [
-          {
-            customId: 'path',
-            label: 'Absolute path',
-            style: 'short' as const,
-            required: true,
-          },
-        ],
-      },
-    }));
-
-    await platform.start(handler);
-    const interactionCreate = registeredHandler('interactionCreate');
-    const deferReply = vi.fn(async () => undefined);
-    const showModal = vi.fn(async () => undefined);
-    await interactionCreate({
-      id: 'i-working-dir',
-      customId: 'nexus:settings:working-dir',
-      channelId: 'C1',
-      guildId: 'G-dev',
-      createdAt: new Date(123),
-      user: { id: OTHER_ID, username: 'alice', bot: false },
-      member: { roles: { cache: new Map() } },
-      channel: { isThread: () => false },
-      deferReply,
-      showModal,
-      isChatInputCommand: () => false,
-      isStringSelectMenu: () => false,
-      isButton: () => true,
-      isModalSubmit: () => false,
-    });
-
-    expect(deferReply).not.toHaveBeenCalled();
-    expect(showModal).toHaveBeenCalledWith({
+    const handler = vi.fn(async () => undefined);
+    const expectedModal = {
       custom_id: 'nexus:settings:working-dir-modal',
       title: 'Set working directory',
       components: [
@@ -568,7 +550,45 @@ describe('command registry integration', () => {
           ],
         },
       ],
-    });
+    };
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    const deferReply = vi.fn(async () => undefined);
+    const showModal = vi.fn(async () => undefined);
+    const interactionPromise = Promise.resolve(
+      interactionCreate({
+        id: 'i-working-dir',
+        applicationId: 'app-1',
+        token: 'interaction-token',
+        type: 3,
+        data: {
+          component_type: 2,
+          custom_id: 'nexus:settings:working-dir',
+        },
+        customId: 'nexus:settings:working-dir',
+        channelId: 'C1',
+        guildId: 'G-dev',
+        createdAt: new Date(123),
+        user: { id: OTHER_ID, username: 'alice', bot: false },
+        member: { roles: { cache: new Map() } },
+        channel: { isThread: () => false },
+        deferReply,
+        showModal,
+        isChatInputCommand: () => false,
+        isStringSelectMenu: () => false,
+        isButton: () => true,
+        isModalSubmit: () => false,
+      }),
+    );
+    await Promise.resolve();
+    const modalCallsBeforeHandlerSettles = showModal.mock.calls.length;
+    await interactionPromise;
+
+    expect(deferReply).not.toHaveBeenCalled();
+    expect(modalCallsBeforeHandlerSettles).toBe(1);
+    expect(showModal).toHaveBeenCalledWith(expectedModal);
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it('modal submit 转成 normalized interaction fields 并展示 handler 反馈', async () => {
@@ -593,6 +613,24 @@ describe('command registry integration', () => {
     const editReply = vi.fn(async () => undefined);
     await interactionCreate({
       id: 'i-modal',
+      applicationId: 'app-1',
+      token: 'interaction-token',
+      type: 5,
+      data: {
+        custom_id: 'nexus:settings:working-dir-modal',
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 4,
+                custom_id: 'path',
+                value: '/tmp/app',
+              },
+            ],
+          },
+        ],
+      },
       customId: 'nexus:settings:working-dir-modal',
       channelId: 'C1',
       guildId: 'G-dev',
@@ -626,6 +664,25 @@ describe('command registry integration', () => {
         },
       }),
     );
+    expect(handler.mock.calls[0]![0].rawPayload).toMatchObject({
+      type: 5,
+      data: {
+        custom_id: 'nexus:settings:working-dir-modal',
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 4,
+                custom_id: 'path',
+                value: '/tmp/app',
+              },
+            ],
+          },
+        ],
+      },
+      token: 'interaction-token',
+    });
     expect(editReply).toHaveBeenCalledWith({
       content: '[channel workingDir: /tmp/app]',
     });
@@ -1229,6 +1286,53 @@ describe('edit / typing capabilities', () => {
       }),
     ).rejects.toThrow('missing access');
     expect(cleanup).toHaveBeenCalledWith('agent-nexus thread setup failed');
+  });
+
+  it('createThread keeps the created thread when only the initial message fails', async () => {
+    const logger = makeLogger();
+    const cleanup = vi.fn(async () => undefined);
+    const initialMessageErr = new Error('missing send permission');
+    const create = vi.fn(async () => ({
+      id: 'T1',
+      guildId: 'G1',
+      members: { add: vi.fn(async () => undefined) },
+      send: vi.fn(async () => Promise.reject(initialMessageErr)),
+      delete: cleanup,
+    }));
+    discordMock.channelsFetch.mockResolvedValueOnce(makeThreadParentChannel({ create }));
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger,
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+    });
+
+    await expect(
+      platform.createThread!({
+        parentChannelId: 'C1',
+        initiatorUserId: OTHER_ID,
+        title: 'Design auth flow',
+        visibility: 'private',
+        autoArchiveDurationMinutes: 1440,
+        initialMessage: '[new Nexus session: Design auth flow]',
+        traceId: 't-1',
+      }),
+    ).resolves.toEqual({
+      threadId: 'T1',
+      parentChannelId: 'C1',
+      setupWarnings: [{ code: 'initial_message_failed' }],
+      url: 'https://discord.com/channels/G1/T1',
+    });
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      {
+        traceId: 't-1',
+        threadId: 'T1',
+        err: initialMessageErr,
+      },
+      'discord_thread_initial_message_failed',
+    );
   });
 
   it('updateThread renames the Discord thread', async () => {

@@ -513,7 +513,7 @@ export class Engine {
         run: async () => {
           try {
             await this.dispatchImpl(
-              { ...routedEvent, text: queuedMessage.text },
+              this.withQueuedText(routedEvent, queuedMessage.text),
               agentSlot,
             );
             if (this.idempotencyStore && idempotencyMessageId) {
@@ -585,6 +585,26 @@ export class Engine {
     };
   }
 
+  private withQueuedText(
+    event: NormalizedEvent & { sessionKey: SessionKey },
+    text: string | undefined,
+  ): NormalizedEvent & { sessionKey: SessionKey } {
+    if (event.type !== 'message' || text === undefined) return event;
+    return { ...event, text };
+  }
+
+  private interactionComponentId(event: NormalizedEvent): string {
+    return event.interaction?.componentId ?? '';
+  }
+
+  private modalValue(event: NormalizedEvent, componentId: string): string | undefined {
+    const prefix = `${componentId}=`;
+    const value = event.interaction?.values.find((candidate) =>
+      candidate.startsWith(prefix),
+    );
+    return value?.slice(prefix.length);
+  }
+
   private redactCommandResponse(
     response: EventCommandResponse,
     traceId: string,
@@ -609,7 +629,7 @@ export class Engine {
     return {
       ...response,
       title: this.redactForOutbound(response.title, traceId),
-      textInputs: response.textInputs.map((input) => ({
+      inputs: response.inputs.map((input) => ({
         ...input,
         label: this.redactForOutbound(input.label, traceId),
         ...(input.placeholder !== undefined
@@ -1086,15 +1106,15 @@ export class Engine {
         ephemeral: true,
         components: [
           {
-            type: 'string-select',
-            customId: SESSION_RESUME_COMPONENT_ID,
+            type: 'select',
+            componentId: SESSION_RESUME_COMPONENT_ID,
             placeholder: 'Resume session',
             minValues: 1,
             maxValues: 1,
             options: sessions.map((session) => ({
-              label: (session.title ?? session.channelId).slice(0, 100),
+              label: (session.title ?? session.key.channelId).slice(0, 100),
               value: session.sessionId,
-              description: `${session.channelId} · ${session.agentSessionId}`.slice(0, 100),
+              description: `${session.key.channelId} · ${session.agentSessionId}`.slice(0, 100),
             })),
           },
         ],
@@ -1280,8 +1300,8 @@ export class Engine {
     const components: NonNullable<EventHandlerResult['commandResponse']>['components'] = [];
     if (snapshot.pending.length > 0) {
       components.push({
-        type: 'string-select',
-        customId: QUEUE_SELECT_COMPONENT_ID,
+        type: 'select',
+        componentId: QUEUE_SELECT_COMPONENT_ID,
         placeholder: 'Select queued item',
         minValues: 1,
         maxValues: 1,
@@ -1298,14 +1318,14 @@ export class Engine {
       if (snapshot.running && snapshot.pendingCount > 0) {
         components.push({
           type: 'button',
-          customId: QUEUE_NEXT_COMPONENT_ID,
+          componentId: QUEUE_NEXT_COMPONENT_ID,
           label: 'Run next',
           style: 'primary',
         });
       }
       components.push({
         type: 'button',
-        customId: QUEUE_INSERT_COMPONENT_ID,
+        componentId: QUEUE_INSERT_COMPONENT_ID,
         label: 'Insert next',
         style:
           snapshot.running && snapshot.pendingCount > 0
@@ -1317,26 +1337,26 @@ export class Engine {
       components.push(
         {
           type: 'button',
-          customId: `${QUEUE_MOVE_UP_COMPONENT_PREFIX}${selected.id}`,
+          componentId: `${QUEUE_MOVE_UP_COMPONENT_PREFIX}${selected.id}`,
           label: 'Up',
           style: 'secondary',
         },
         {
           type: 'button',
-          customId: `${QUEUE_MOVE_DOWN_COMPONENT_PREFIX}${selected.id}`,
+          componentId: `${QUEUE_MOVE_DOWN_COMPONENT_PREFIX}${selected.id}`,
           label: 'Down',
           style: 'secondary',
         },
         {
           type: 'button',
-          customId: `${QUEUE_EDIT_COMPONENT_PREFIX}${selected.id}`,
+          componentId: `${QUEUE_EDIT_COMPONENT_PREFIX}${selected.id}`,
           label: 'Edit',
           style: 'secondary',
           disabled: selected.kind !== 'message',
         },
         {
           type: 'button',
-          customId: `${QUEUE_CANCEL_COMPONENT_PREFIX}${selected.id}`,
+          componentId: `${QUEUE_CANCEL_COMPONENT_PREFIX}${selected.id}`,
           label: 'Cancel',
           style: 'danger',
         },
@@ -1650,8 +1670,8 @@ export class Engine {
     const replyMode = items.find((item) => item.key === 'discord.replyMode');
     if (replyMode?.canChange) {
       components.push({
-        type: 'string-select',
-        customId: SETTINGS_REPLY_MODE_COMPONENT_ID,
+        type: 'select',
+        componentId: SETTINGS_REPLY_MODE_COMPONENT_ID,
         placeholder: 'Change reply mode',
         minValues: 1,
         maxValues: 1,
@@ -1674,8 +1694,8 @@ export class Engine {
     const agentItem = items.find((item) => item.key === 'daemon.agent');
     if (agentItem?.canChange) {
       components.push({
-        type: 'string-select',
-        customId: SETTINGS_AGENT_COMPONENT_ID,
+        type: 'select',
+        componentId: SETTINGS_AGENT_COMPONENT_ID,
         placeholder: 'Switch agent binding',
         minValues: 1,
         maxValues: 1,
@@ -1689,21 +1709,21 @@ export class Engine {
     }
     if (sessions.length > 0) {
       components.push({
-        type: 'string-select',
-        customId: SETTINGS_RESUME_COMPONENT_ID,
+        type: 'select',
+        componentId: SETTINGS_RESUME_COMPONENT_ID,
         placeholder: 'Resume a session',
         minValues: 1,
         maxValues: 1,
         options: sessions.map((session) => ({
-          label: (session.title ?? session.channelId).slice(0, 100),
+          label: (session.title ?? session.key.channelId).slice(0, 100),
           value: session.sessionId,
-          description: `${session.channelId} · ${session.agentSessionId}`.slice(0, 100),
+          description: `${session.key.channelId} · ${session.agentSessionId}`.slice(0, 100),
         })),
       });
     }
     components.push({
       type: 'button',
-      customId: SETTINGS_WORKING_DIR_COMPONENT_ID,
+      componentId: SETTINGS_WORKING_DIR_COMPONENT_ID,
       label: 'Set workingDir',
       style: 'secondary',
     });
@@ -1713,7 +1733,7 @@ export class Engine {
     ) {
       components.push({
         type: 'button',
-        customId: SETTINGS_NEW_THREAD_COMPONENT_ID,
+        componentId: SETTINGS_NEW_THREAD_COMPONENT_ID,
         label: 'Create thread',
         style: 'primary',
       });
@@ -1725,20 +1745,21 @@ export class Engine {
     if (!this.checkAuth(event)) {
       return this.commandResponse(COMMAND_NOT_ALLOWED_TEXT, event.traceId);
     }
-    if (event.interaction?.customId === SESSION_RESUME_COMPONENT_ID) {
+    const componentId = this.interactionComponentId(event);
+    if (componentId === SESSION_RESUME_COMPONENT_ID) {
       return this.handleSessionResumeInteraction(event);
     }
-    if (event.interaction?.customId?.startsWith(QUEUE_COMPONENT_PREFIX)) {
+    if (componentId.startsWith(QUEUE_COMPONENT_PREFIX)) {
       return this.handleQueueInteraction(event);
     }
-    if (event.interaction?.customId?.startsWith(SETTINGS_COMPONENT_PREFIX)) {
+    if (componentId.startsWith(SETTINGS_COMPONENT_PREFIX)) {
       return this.handleSettingsInteraction(event);
     }
     this.logger.error(
       {
         traceId: event.traceId,
         platformName: this.platformName,
-        customId: event.interaction?.customId,
+        componentId,
       },
       'interaction_handler_missing',
     );
@@ -1748,22 +1769,22 @@ export class Engine {
   private async handleQueueInteraction(
     event: NormalizedEvent,
   ): Promise<EventHandlerResult> {
-    const customId = event.interaction?.customId ?? '';
+    const componentId = this.interactionComponentId(event);
     const key = queueKeyFromEvent(event, this.platformName);
-    if (customId === QUEUE_SELECT_COMPONENT_ID) {
+    if (componentId === QUEUE_SELECT_COMPONENT_ID) {
       const selectedId = event.interaction?.values[0];
       return this.queueCommandResponse(event, undefined, selectedId);
     }
-    if (customId === QUEUE_INSERT_COMPONENT_ID) {
+    if (componentId === QUEUE_INSERT_COMPONENT_ID) {
       return this.modalResponse(
         {
-          customId: QUEUE_INSERT_MODAL_ID,
+          modalId: QUEUE_INSERT_MODAL_ID,
           title: 'Insert queued prompt',
-          textInputs: [
+          inputs: [
             {
-              customId: QUEUE_PROMPT_FIELD_ID,
+              componentId: QUEUE_PROMPT_FIELD_ID,
               label: 'Prompt',
-              style: 'paragraph',
+              kind: 'long_text',
               required: true,
               placeholder: 'Ask Nexus to do this next',
             },
@@ -1772,18 +1793,18 @@ export class Engine {
         event.traceId,
       );
     }
-    if (customId === QUEUE_NEXT_COMPONENT_ID) {
+    if (componentId === QUEUE_NEXT_COMPONENT_ID) {
       return this.handleQueueNextCommand(event);
     }
-    if (customId === QUEUE_INSERT_MODAL_ID) {
-      const prompt = event.interaction?.fields?.[QUEUE_PROMPT_FIELD_ID]?.trim();
+    if (componentId === QUEUE_INSERT_MODAL_ID) {
+      const prompt = this.modalValue(event, QUEUE_PROMPT_FIELD_ID)?.trim();
       if (!prompt) {
         return this.commandResponse('Prompt is required.', event.traceId);
       }
       return this.enqueueInsertedPrompt(event, prompt);
     }
-    if (customId.startsWith(QUEUE_EDIT_COMPONENT_PREFIX)) {
-      const itemId = customId.slice(QUEUE_EDIT_COMPONENT_PREFIX.length);
+    if (componentId.startsWith(QUEUE_EDIT_COMPONENT_PREFIX)) {
+      const itemId = componentId.slice(QUEUE_EDIT_COMPONENT_PREFIX.length);
       const item = this.messageQueue
         .snapshot(key)
         .pending.find((candidate) => candidate.id === itemId);
@@ -1792,13 +1813,13 @@ export class Engine {
       }
       return this.modalResponse(
         {
-          customId: `${QUEUE_EDIT_MODAL_PREFIX}${itemId}`,
+          modalId: `${QUEUE_EDIT_MODAL_PREFIX}${itemId}`,
           title: 'Edit queued prompt',
-          textInputs: [
+          inputs: [
             {
-              customId: QUEUE_PROMPT_FIELD_ID,
+              componentId: QUEUE_PROMPT_FIELD_ID,
               label: 'Prompt',
-              style: 'paragraph',
+              kind: 'long_text',
               required: true,
               value: item.editableText ?? item.label,
             },
@@ -1807,9 +1828,9 @@ export class Engine {
         event.traceId,
       );
     }
-    if (customId.startsWith(QUEUE_EDIT_MODAL_PREFIX)) {
-      const itemId = customId.slice(QUEUE_EDIT_MODAL_PREFIX.length);
-      const prompt = event.interaction?.fields?.[QUEUE_PROMPT_FIELD_ID]?.trim();
+    if (componentId.startsWith(QUEUE_EDIT_MODAL_PREFIX)) {
+      const itemId = componentId.slice(QUEUE_EDIT_MODAL_PREFIX.length);
+      const prompt = this.modalValue(event, QUEUE_PROMPT_FIELD_ID)?.trim();
       if (!prompt) {
         return this.commandResponse('Prompt is required.', event.traceId);
       }
@@ -1838,8 +1859,8 @@ export class Engine {
         itemId,
       );
     }
-    if (customId.startsWith(QUEUE_MOVE_UP_COMPONENT_PREFIX)) {
-      const itemId = customId.slice(QUEUE_MOVE_UP_COMPONENT_PREFIX.length);
+    if (componentId.startsWith(QUEUE_MOVE_UP_COMPONENT_PREFIX)) {
+      const itemId = componentId.slice(QUEUE_MOVE_UP_COMPONENT_PREFIX.length);
       const result = this.messageQueue.movePending(key, itemId, 'up');
       return this.queueCommandResponse(
         event,
@@ -1847,8 +1868,8 @@ export class Engine {
         itemId,
       );
     }
-    if (customId.startsWith(QUEUE_MOVE_DOWN_COMPONENT_PREFIX)) {
-      const itemId = customId.slice(QUEUE_MOVE_DOWN_COMPONENT_PREFIX.length);
+    if (componentId.startsWith(QUEUE_MOVE_DOWN_COMPONENT_PREFIX)) {
+      const itemId = componentId.slice(QUEUE_MOVE_DOWN_COMPONENT_PREFIX.length);
       const result = this.messageQueue.movePending(key, itemId, 'down');
       return this.queueCommandResponse(
         event,
@@ -1856,8 +1877,8 @@ export class Engine {
         itemId,
       );
     }
-    if (customId.startsWith(QUEUE_CANCEL_COMPONENT_PREFIX)) {
-      const itemId = customId.slice(QUEUE_CANCEL_COMPONENT_PREFIX.length);
+    if (componentId.startsWith(QUEUE_CANCEL_COMPONENT_PREFIX)) {
+      const itemId = componentId.slice(QUEUE_CANCEL_COMPONENT_PREFIX.length);
       const result = this.messageQueue.cancelPendingItem(key, itemId);
       return this.queueCommandResponse(
         event,
@@ -1895,16 +1916,23 @@ export class Engine {
       this.platformName,
     );
     const insertedEvent: NormalizedEvent & { sessionKey: SessionKey } = {
-      ...event,
       eventId: `${event.eventId}:queue-insert:${randomUUID()}`,
+      platform: event.platform,
+      sessionKey: routedSessionKey,
+      traceId: event.traceId,
       type: 'message',
       text: prompt,
-      command: undefined,
-      interaction: undefined,
       messageId: undefined,
+      rawPayload: event.rawPayload,
       rawContentType: 'daemon:queue-insert',
       receivedAt: new Date(),
-      sessionKey: routedSessionKey,
+      ...(event.platformTimestamp ? { platformTimestamp: event.platformTimestamp } : {}),
+      ...(event.guildId ? { guildId: event.guildId } : {}),
+      ...(event.initiatorRoleIds ? { initiatorRoleIds: event.initiatorRoleIds } : {}),
+      ...(event.threadParentChannelId
+        ? { threadParentChannelId: event.threadParentChannelId }
+        : {}),
+      initiator: event.initiator,
     };
     const key = queueKeyFromEvent(event, this.platformName);
     const queuedMessage = { text: prompt };
@@ -1980,8 +2008,8 @@ export class Engine {
   private async handleSettingsInteraction(
     event: NormalizedEvent,
   ): Promise<EventHandlerResult> {
-    const customId = event.interaction?.customId;
-    if (customId === SETTINGS_REPLY_MODE_COMPONENT_ID) {
+    const componentId = this.interactionComponentId(event);
+    if (componentId === SETTINGS_REPLY_MODE_COMPONENT_ID) {
       const value = event.interaction?.values[0];
       if (value !== 'mention' && value !== 'all') {
         return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
@@ -2002,30 +2030,30 @@ export class Engine {
           : `[reply mode requested: ${value}]`);
       return this.handleSettingsCommand(event, message);
     }
-    if (customId === SETTINGS_RESUME_COMPONENT_ID) {
+    if (componentId === SETTINGS_RESUME_COMPONENT_ID) {
       const result = this.handleSessionResumeInteraction(event);
       return this.handleSettingsCommand(
         event,
         result.commandResponse?.text ?? COMMAND_UNAVAILABLE_TEXT,
       );
     }
-    if (customId === SETTINGS_NEW_THREAD_COMPONENT_ID) {
+    if (componentId === SETTINGS_NEW_THREAD_COMPONENT_ID) {
       const result = await this.handleNewThreadCommand(event);
       return this.handleSettingsCommand(
         event,
         result.commandResponse?.text ?? COMMAND_UNAVAILABLE_TEXT,
       );
     }
-    if (customId === SETTINGS_WORKING_DIR_COMPONENT_ID) {
+    if (componentId === SETTINGS_WORKING_DIR_COMPONENT_ID) {
       return this.modalResponse(
         {
-          customId: SETTINGS_WORKING_DIR_MODAL_ID,
+          modalId: SETTINGS_WORKING_DIR_MODAL_ID,
           title: 'Set working directory',
-          textInputs: [
+          inputs: [
             {
-              customId: SETTINGS_WORKING_DIR_PATH_FIELD_ID,
+              componentId: SETTINGS_WORKING_DIR_PATH_FIELD_ID,
               label: 'Absolute path',
-              style: 'short',
+              kind: 'short_text',
               required: true,
               placeholder: '/workspace/project',
             },
@@ -2034,14 +2062,14 @@ export class Engine {
         event.traceId,
       );
     }
-    if (customId === SETTINGS_WORKING_DIR_MODAL_ID) {
+    if (componentId === SETTINGS_WORKING_DIR_MODAL_ID) {
       const result = await this.applySettingsWorkingDir(event);
       return this.handleSettingsCommand(
         event,
         result.commandResponse?.text ?? COMMAND_UNAVAILABLE_TEXT,
       );
     }
-    if (customId === SETTINGS_AGENT_COMPONENT_ID) {
+    if (componentId === SETTINGS_AGENT_COMPONENT_ID) {
       const result = this.applySettingsAgent(event);
       return this.handleSettingsCommand(
         event,
@@ -2056,7 +2084,7 @@ export class Engine {
   ): Promise<EventHandlerResult> {
     const prepared = this.prepareWorkingDirUpdate(
       event,
-      event.interaction?.fields?.[SETTINGS_WORKING_DIR_PATH_FIELD_ID],
+      this.modalValue(event, SETTINGS_WORKING_DIR_PATH_FIELD_ID),
       undefined,
     );
     if (!prepared.ok) return this.commandResponse(prepared.message, event.traceId);

@@ -486,7 +486,7 @@ function makeCommandEvent(
 }
 
 function makeComponentEvent(
-  customId: string,
+  componentId: string,
   values: string[],
   overrides: Partial<NormalizedEvent> = {},
 ): NormalizedEvent {
@@ -494,8 +494,8 @@ function makeComponentEvent(
     type: 'interaction',
     text: undefined,
     interaction: {
-      customId,
-      componentType: 'string-select',
+      componentId,
+      kind: 'select',
       values,
     },
     rawContentType: 'discord:component-interaction',
@@ -2235,23 +2235,23 @@ describe('Engine', () => {
       }),
     );
     const select = status?.commandResponse?.components?.find(
-      (component) => component.type === 'string-select',
+      (component) => component.type === 'select',
     );
     expect(select).toMatchObject({
-      customId: 'nexus:queue:select',
+      componentId: 'nexus:queue:select',
       options: [
         expect.objectContaining({ label: expect.stringContaining('alpha') }),
         expect.objectContaining({ label: expect.stringContaining('beta') }),
       ],
     });
-    const alphaId = select?.type === 'string-select' ? select.options[0]!.value : '';
-    const betaId = select?.type === 'string-select' ? select.options[1]!.value : '';
+    const alphaId = select?.type === 'select' ? select.options[0]!.value : '';
+    const betaId = select?.type === 'select' ? select.options[1]!.value : '';
 
     const selectedPanel = await dispatchHandler(
       makeComponentEvent('nexus:queue:select', [alphaId]),
     );
     const selectedCustomIds = selectedPanel?.commandResponse?.components?.map(
-      (component) => component.customId,
+      (component) => component.componentId,
     );
     expect(selectedPanel?.commandResponse?.components?.length).toBeLessThanOrEqual(5);
     expect(selectedCustomIds).toEqual([
@@ -2265,24 +2265,23 @@ describe('Engine', () => {
     const editModal = await dispatchHandler(
       makeComponentEvent(`nexus:queue:edit:${alphaId}`, [], {
         interaction: {
-          customId: `nexus:queue:edit:${alphaId}`,
-          componentType: 'button',
+          componentId: `nexus:queue:edit:${alphaId}`,
+          kind: 'button',
           values: [],
         },
       }),
     );
     expect(editModal).toMatchObject({
       modalResponse: {
-        customId: `nexus:queue:edit-modal:${alphaId}`,
+        modalId: `nexus:queue:edit-modal:${alphaId}`,
       },
     });
     const edited = await dispatchHandler(
       makeComponentEvent(`nexus:queue:edit-modal:${alphaId}`, [], {
         interaction: {
-          customId: `nexus:queue:edit-modal:${alphaId}`,
-          componentType: 'modal-submit',
-          values: [],
-          fields: { prompt: 'alpha edited' },
+          componentId: `nexus:queue:edit-modal:${alphaId}`,
+          kind: 'modal_submit',
+          values: ['prompt=alpha edited'],
         },
       }),
     );
@@ -2291,8 +2290,8 @@ describe('Engine', () => {
     const moved = await dispatchHandler(
       makeComponentEvent(`nexus:queue:up:${betaId}`, [], {
         interaction: {
-          customId: `nexus:queue:up:${betaId}`,
-          componentType: 'button',
+          componentId: `nexus:queue:up:${betaId}`,
+          kind: 'button',
           values: [],
         },
       }),
@@ -2360,9 +2359,9 @@ describe('Engine', () => {
       }),
     );
     const select = status?.commandResponse?.components?.find(
-      (component) => component.type === 'string-select',
+      (component) => component.type === 'select',
     );
-    if (!select || select.type !== 'string-select') {
+    if (!select || select.type !== 'select') {
       throw new Error('expected queue select');
     }
     const itemId = select.options[0]!.value;
@@ -2370,14 +2369,14 @@ describe('Engine', () => {
     const editModal = await dispatchHandler(
       makeComponentEvent(`nexus:queue:edit:${itemId}`, [], {
         interaction: {
-          customId: `nexus:queue:edit:${itemId}`,
-          componentType: 'button',
+          componentId: `nexus:queue:edit:${itemId}`,
+          kind: 'button',
           values: [],
         },
       }),
     );
 
-    const value = editModal?.modalResponse?.textInputs[0]?.value ?? '';
+    const value = editModal?.modalResponse?.inputs[0]?.value ?? '';
     expect(value).toContain('~/private');
     expect(value).toContain('<redacted:secret>');
     expect(value).not.toContain('/home/node/private');
@@ -2386,10 +2385,9 @@ describe('Engine', () => {
     await dispatchHandler(
       makeComponentEvent(`nexus:queue:edit-modal:${itemId}`, [], {
         interaction: {
-          customId: `nexus:queue:edit-modal:${itemId}`,
-          componentType: 'modal-submit',
-          values: [],
-          fields: { prompt: value },
+          componentId: `nexus:queue:edit-modal:${itemId}`,
+          kind: 'modal_submit',
+          values: [`prompt=${value}`],
         },
       }),
     );
@@ -2447,23 +2445,22 @@ describe('Engine', () => {
     const insertModal = await dispatchHandler(
       makeComponentEvent('nexus:queue:insert', [], {
         interaction: {
-          customId: 'nexus:queue:insert',
-          componentType: 'button',
+          componentId: 'nexus:queue:insert',
+          kind: 'button',
           values: [],
         },
       }),
     );
     expect(insertModal).toMatchObject({
-      modalResponse: { customId: 'nexus:queue:insert-modal' },
+      modalResponse: { modalId: 'nexus:queue:insert-modal' },
     });
     codex.queueEvents([]);
     const inserted = await dispatchHandler(
       makeComponentEvent('nexus:queue:insert-modal', [], {
         interaction: {
-          customId: 'nexus:queue:insert-modal',
-          componentType: 'modal-submit',
-          values: [],
-          fields: { prompt: 'inserted prompt' },
+          componentId: 'nexus:queue:insert-modal',
+          kind: 'modal_submit',
+          values: ['prompt=inserted prompt'],
         },
       }),
     );
@@ -2842,8 +2839,8 @@ describe('Engine', () => {
         ephemeral: true,
         components: [
           {
-            type: 'string-select',
-            customId: 'nexus:sessions:resume',
+            type: 'select',
+            componentId: 'nexus:sessions:resume',
             options: [
               {
                 label: 'Investigate failing tests',
@@ -3037,24 +3034,24 @@ describe('Engine', () => {
         ephemeral: true,
         components: expect.arrayContaining([
           expect.objectContaining({
-            type: 'string-select',
-            customId: 'nexus:settings:reply-mode',
+            type: 'select',
+            componentId: 'nexus:settings:reply-mode',
           }),
           expect.objectContaining({
-            type: 'string-select',
-            customId: 'nexus:settings:resume',
-          }),
-          expect.objectContaining({
-            type: 'button',
-            customId: 'nexus:settings:new-thread',
+            type: 'select',
+            componentId: 'nexus:settings:resume',
           }),
           expect.objectContaining({
             type: 'button',
-            customId: 'nexus:settings:working-dir',
+            componentId: 'nexus:settings:new-thread',
           }),
           expect.objectContaining({
-            type: 'string-select',
-            customId: 'nexus:settings:agent',
+            type: 'button',
+            componentId: 'nexus:settings:working-dir',
+          }),
+          expect.objectContaining({
+            type: 'select',
+            componentId: 'nexus:settings:agent',
           }),
         ]),
       },
@@ -3134,11 +3131,11 @@ describe('Engine', () => {
     expect(text).not.toContain('sk-ant');
     const resume = result?.commandResponse?.components?.find(
       (component) =>
-        component.type === 'string-select' &&
-        component.customId === 'nexus:settings:resume',
+        component.type === 'select' &&
+        component.componentId === 'nexus:settings:resume',
     );
-    expect(resume?.type).toBe('string-select');
-    if (!resume || resume.type !== 'string-select') {
+    expect(resume?.type).toBe('select');
+    if (!resume || resume.type !== 'select') {
       throw new Error('expected settings resume select');
     }
     const option = resume.options[0];
@@ -3214,8 +3211,8 @@ describe('Engine', () => {
     expect(result?.commandResponse?.components).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          type: 'string-select',
-          customId: 'nexus:settings:reply-mode',
+          type: 'select',
+          componentId: 'nexus:settings:reply-mode',
         }),
       ]),
     );
@@ -3291,7 +3288,7 @@ describe('Engine', () => {
       title: 'Resume from settings',
     });
     expect(result?.commandResponse?.text).toContain('[session resumed: sid-old]');
-    expect(result?.commandResponse?.text).toContain('Resumable sessions: `2`');
+    expect(result?.commandResponse?.text).toContain('Resumable sessions: `1`');
   });
 
   it('settings workingDir button opens a modal and modal submit changes the channel default', async () => {
@@ -3334,8 +3331,8 @@ describe('Engine', () => {
     const modal = await dispatchHandler(
       makeComponentEvent('nexus:settings:working-dir', [], {
         interaction: {
-          customId: 'nexus:settings:working-dir',
-          componentType: 'button',
+          componentId: 'nexus:settings:working-dir',
+          kind: 'button',
           values: [],
         },
       }),
@@ -3343,11 +3340,11 @@ describe('Engine', () => {
 
     expect(modal).toEqual({
       modalResponse: {
-        customId: 'nexus:settings:working-dir-modal',
+        modalId: 'nexus:settings:working-dir-modal',
         title: 'Set working directory',
-        textInputs: [
+        inputs: [
           expect.objectContaining({
-            customId: 'path',
+            componentId: 'path',
             label: 'Absolute path',
           }),
         ],
@@ -3357,10 +3354,9 @@ describe('Engine', () => {
     const result = await dispatchHandler(
       makeComponentEvent('nexus:settings:working-dir-modal', [], {
         interaction: {
-          customId: 'nexus:settings:working-dir-modal',
-          componentType: 'modal-submit',
-          values: [],
-          fields: { path: '/tmp/settings' },
+          componentId: 'nexus:settings:working-dir-modal',
+          kind: 'modal_submit',
+          values: ['path=/tmp/settings'],
         },
       }),
     );

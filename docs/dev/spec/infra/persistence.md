@@ -20,15 +20,23 @@ contracts:
 
 ## 存储根路径
 
-默认：`~/.agent-nexus/`
+默认：`~/.agent-nexus/`。
 
-可通过环境变量 `AGENT_NEXUS_DATA_DIR` 覆盖。启动时创建不存在的目录，权限 `0700`。
+当前实例根路径由 CLI 解析，优先级从高到低：
+
+1. 启动参数 `--home <path>` 或 `--home=<path>`
+2. 环境变量 `AGENT_NEXUS_HOME`
+3. 默认值 `~/.agent-nexus/`
+
+`--home` 与 `AGENT_NEXUS_HOME` 都接受 `~` 展开；空白路径必须 fail-closed。启动时创建不存在的根目录，权限 `0700`。
+
+`AGENT_NEXUS_DATA_DIR` 是废弃旧名，不再作为运行时输入读取；旧部署必须迁移到 `AGENT_NEXUS_HOME` 或 `--home`。
 
 ## 目录结构
 
 ```
-~/.agent-nexus/
-├── config.toml             # 用户配置（只读）
+<agent-nexus-home>/
+├── config.json             # 用户配置（mode 0600）
 ├── state.db                # SQLite：sessions、idempotency、messages、budget
 ├── transcripts/
 │   └── <sessionKey>/
@@ -58,7 +66,7 @@ contracts:
 | `agent_conversation_ref` | TEXT | opaque agent conversation ref；回传给 `SessionConfig.resumeFromAgentSessionId` |
 | `working_dir` | TEXT NOT NULL | |
 | `next_session_json` | TEXT | 一次性 next-session override；消费后置 NULL |
-| `transcript_path` | TEXT NOT NULL | 相对 `~/.agent-nexus/`，按 session_id 归属 |
+| `transcript_path` | TEXT NOT NULL | 相对实例根路径，按 session_id 归属 |
 | `turns_used` | INTEGER NOT NULL DEFAULT 0 | 一等计量 |
 | `tool_calls_used` | INTEGER NOT NULL DEFAULT 0 | 一等计量 |
 | `wall_clock_ms` | INTEGER NOT NULL DEFAULT 0 | 一等计量（累计） |
@@ -166,7 +174,7 @@ contracts:
 
 1. **OS keychain**：macOS `Keychain`、Linux `secret-service`、Windows `Credential Manager`
 2. **环境变量**：例 `DISCORD_BOT_TOKEN`、`ANTHROPIC_API_KEY`
-3. **文件 fallback**：`~/.agent-nexus/secrets/<name>`，mode `0600`
+3. **文件 fallback**：`<agent-nexus-home>/secrets/<name>`，mode `0600`
 
 前一级可用则不读下一级。启动时在日志里记录**来源**（来源本身，不含值）。
 
@@ -221,7 +229,7 @@ interface Store {
 
 ## 备份
 
-MVP 不内置备份功能。用户可自行备份 `~/.agent-nexus/state.db` 与 `transcripts/`。
+MVP 不内置备份功能。用户可自行备份实例根路径下的 `state.db` 与 `transcripts/`。
 
 未来若加备份/导出，发独立 ADR。
 

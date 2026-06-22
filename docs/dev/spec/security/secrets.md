@@ -26,7 +26,7 @@ related:
    - Linux：`libsecret` / `secret-service`
    - Windows：Credential Manager
 2. **环境变量**
-3. **文件** `~/.agent-nexus/secrets/<name>`，权限 `0600`
+3. **文件**：实例根路径下的 `secrets/<name>`，权限 `0600`；实例根路径见 [`persistence.md`](../infra/persistence.md#存储根路径)
 
 启动时在日志里记录**来源**（来源本身，例 "keychain"、"env"、"file"；**不含值**）。
 
@@ -70,7 +70,7 @@ related:
 
 ## 反模式
 
-- Token 写进 `config.toml`
+- Token 写进 config 文件
 - 用 `if debug { log.debug(token) }`——debug 模式下也禁止
 - 把密钥名放进命令行参数（会进程列表泄露；用 env 或 stdin）
 - 缓存解密后的密钥到文件以"加速启动"

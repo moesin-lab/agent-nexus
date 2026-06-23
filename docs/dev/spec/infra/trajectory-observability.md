@@ -218,6 +218,14 @@ ImportError {
 
 `linked` 不要求先 `imported`：native resume 只依赖 `nativeSessionRef` 与 agent package 支持，不依赖 transcript 正文导入。
 
+## Daemon 导入 / 恢复工作流
+
+CLI 组装层在 trajectory store 可用时创建 `ExternalSessionImportService`，并把 `daemon.trajectory.externalImport`、共享 `SessionStore` 与 `<configRoot>/trajectory/` 管理目录注入 Engine。`externalImport.enabled=false` 时 service 必须返回空结果且不扫描 root。
+
+Daemon-owned `daemon:external-sessions` command 触发一次 discovery/register/import pass，并用 ephemeral select 列出可 native resume 的 `registered` / `imported` candidate。用户选择 candidate 时，Engine 把当前 RoutingSession 的 agent owner 传给 service；service 在 backend 匹配后调用 `TrajectoryStore.linkExternalSession()`，并把 `nativeSessionRef` 写入 `SessionStore` 当前 key 的 resumable ref。Engine 只在绑定成功后停止当前 live runtime handle，使下一条消息走 `SessionConfig.resumeFromAgentSessionId`；backend mismatch、缺 native ref 或 import 不存在都返回稳定失败码，且不得清除已有 ref。
+
+`importContent=true` 只允许写 Nexus 管理的 redacted projection，例如 `trajectory/imports/<importId>/<segmentId>.json`。该 projection 不得包含外部原始 transcript 路径或用户 / agent message body；外部原始文件路径只能以 hash 或 redacted metadata 形式进入 store。
+
 ## Trajectory Segment
 
 ```text
@@ -410,9 +418,11 @@ TrajectoryPage {
 - 超过 `maxFileBytes` 的 candidate 被标记 unsupported。
 - project path 不在 allowlist 时 fail-closed。
 - `importContent=false` 时不写 `TrajectorySegment.contentRef`。
+- `daemon:external-sessions` 使用 ephemeral select 暴露 resumable candidate；未启用 external import 时不扫描 root。
 - `linked` 可以从 `registered` 直接进入，不要求先 `imported`。
 - `nativeSessionRef` 写入 `agent_conversation_ref`，下一次 spawn 传入 `resumeFromAgentSessionId`。
 - backend mismatch 拒绝 resume，不清除已有 RoutingSession ref。
+- 成功绑定 external session 后才停止当前 live runtime handle；失败路径不改变旧 ref。
 - provider capture 默认关闭。
 - redaction 失败时 provider payload 不落盘。
 - `includeContent=true` 不读取外部原始 transcript。

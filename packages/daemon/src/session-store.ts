@@ -33,6 +33,12 @@ export interface ListedSessionEntry extends Omit<SessionEntry, 'agentSessionId'>
   agentSessionId: string;
 }
 
+export interface ExternalResumeSessionEntry {
+  agentSessionId: string;
+  lastTurnAt: Date;
+  title?: string;
+}
+
 export interface ListSessionsInput {
   platformName: string;
   platform: string;
@@ -173,6 +179,14 @@ export class SessionStore {
       this.delete(sourceKey);
     }
     return stored ? cloneEntry(stored) : undefined;
+  }
+
+  bindExternalResumeToKey(
+    targetKey: SessionKey,
+    entry: ExternalResumeSessionEntry,
+  ): SessionEntry {
+    this.set(targetKey, entry);
+    return cloneEntry(this.get(targetKey)!);
   }
 
   findThreadByChannelId(input: FindThreadInput): ThreadRegistryEntry | undefined {

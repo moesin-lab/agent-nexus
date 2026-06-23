@@ -27,6 +27,7 @@ import {
   DEFAULT_COMMAND_NAME_POLICY,
 } from './command-registry.js';
 import { Engine } from './engine.js';
+import { ExternalSessionImportServiceError } from './external-session-import.js';
 import { InMemoryIdempotencyStore } from './idempotency.js';
 import { createLogger, type Logger } from './logger.js';
 import type { RoutingEntry } from './router.js';
@@ -386,6 +387,19 @@ const DAEMON_SESSIONS_COMMAND: CommandDescriptor = {
   summary: 'List resumable Nexus routing sessions',
   options: [],
   handlerKey: 'sessions',
+  applicability: {
+    requiredCapabilities: ['slash-command-registration', 'ephemeral-response'],
+  },
+  legacyNames: [],
+};
+
+const DAEMON_EXTERNAL_SESSIONS_COMMAND: CommandDescriptor = {
+  canonicalId: 'daemon:external-sessions',
+  owner: { type: 'daemon' },
+  localName: 'external-sessions',
+  summary: 'Discover external agent sessions',
+  options: [],
+  handlerKey: 'external-sessions',
   applicability: {
     requiredCapabilities: ['slash-command-registration', 'ephemeral-response'],
   },
@@ -3117,6 +3131,246 @@ describe('Engine', () => {
     expect(codex.startSession.mock.calls[0]![1]).toMatchObject({
       resumeFromAgentSessionId: 'sid-old',
     });
+  });
+
+  it('daemon /nexus-external-sessions lets a user bind an imported native session and resume next turn', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const externalSessionImporter = {
+      run: vi.fn(() => ({
+        imports: [
+          {
+            candidate: {
+              sourceAdapter: 'codex-app-jsonl',
+              sourceSessionId: 'codex-thread-imported',
+              sourcePath: '/home/node/.codex/sessions/imported.jsonl',
+              nativeSessionRef: 'codex-thread-imported',
+              projectPath: '/workspace/agent-nexus',
+              updatedAt: '2026-06-23T09:00:00.000Z',
+              firstUserMessageSummary: 'Imported Codex',
+              confidence: 'high',
+              unsupportedReasons: [],
+            },
+            record: {
+              importId: 'imp-codex',
+              sourceAdapter: 'codex-app-jsonl',
+              sourceSessionId: 'codex-thread-imported',
+              sourcePathHash: 'sha256:path',
+              nativeSessionRef: 'codex-thread-imported',
+              state: 'registered',
+              confidence: 'high',
+              metadataJson: '{"title":"Imported Codex"}',
+              discoveredAt: '2026-06-23T10:00:00.000Z',
+            },
+            segments: [],
+            resumeEligibility: {
+              canResume: true,
+              nativeSessionRef: 'codex-thread-imported',
+              confidence: 'high',
+              reasons: [],
+            },
+          },
+          {
+            candidate: {
+              sourceAdapter: 'claude-code-jsonl',
+              sourceSessionId: 'claude-session-imported',
+              sourcePath: '/home/node/.claude/projects/imported.jsonl',
+              nativeSessionRef: 'claude-session-imported',
+              projectPath: '/workspace/agent-nexus',
+              updatedAt: '2026-06-23T09:00:00.000Z',
+              firstUserMessageSummary: 'Imported Claude',
+              confidence: 'medium',
+              unsupportedReasons: [],
+            },
+            record: {
+              importId: 'imp-claude',
+              sourceAdapter: 'claude-code-jsonl',
+              sourceSessionId: 'claude-session-imported',
+              sourcePathHash: 'sha256:path2',
+              nativeSessionRef: 'claude-session-imported',
+              state: 'registered',
+              confidence: 'medium',
+              metadataJson: '{"title":"Imported Claude"}',
+              discoveredAt: '2026-06-23T10:00:00.000Z',
+            },
+            segments: [],
+            resumeEligibility: {
+              canResume: true,
+              nativeSessionRef: 'claude-session-imported',
+              confidence: 'medium',
+              reasons: [],
+            },
+          },
+        ],
+      })),
+      bindToRoutingSession: vi.fn((input: {
+        importId: string;
+        sessionKey: SessionKey;
+        agentOwner: string;
+      }) => {
+        expect(input).toMatchObject({
+          importId: 'imp-codex',
+          agentOwner: 'codex',
+        });
+        store.bindExternalResumeToKey(input.sessionKey, {
+          agentSessionId: 'codex-thread-imported',
+          lastTurnAt: new Date(10),
+          title: 'Imported Codex',
+        });
+        return {
+          sessionId: store.ensureSessionId(input.sessionKey),
+          importId: 'imp-codex',
+          sourceAdapter: 'codex-app-jsonl',
+          sourceSessionId: 'codex-thread-imported',
+          nativeSessionRef: 'codex-thread-imported',
+          confidence: 'high',
+          linkedAt: '2026-06-23T10:00:00.000Z',
+        };
+      }),
+    };
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_EXTERNAL_SESSIONS_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'external-sessions'],
+      externalSessionImporter,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const listResult = await dispatchHandler(makeCommandEvent('nexus-external-sessions'));
+
+    expect(listResult).toMatchObject({
+      commandResponse: {
+        text: 'Select an external session to resume.',
+        ephemeral: true,
+        components: [
+          {
+            type: 'select',
+            componentId: 'nexus:external-sessions:resume',
+            options: [
+              {
+                label: 'Imported Codex',
+                value: 'imp-codex',
+                description: 'codex-app-jsonl · codex-thread-imported',
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const bindResult = await dispatchHandler(
+      makeComponentEvent('nexus:external-sessions:resume', ['imp-codex']),
+    );
+    expect(bindResult).toEqual({
+      commandResponse: {
+        text: '[external session resumed: codex-thread-imported]',
+        ephemeral: true,
+      },
+    });
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'codex-thread-after-resume' }),
+      ev('text_final', { text: 'resumed external reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('continue imported session'));
+
+    expect(codex.startSession).toHaveBeenCalledTimes(1);
+    expect(codex.startSession.mock.calls[0]![1]).toMatchObject({
+      resumeFromAgentSessionId: 'codex-thread-imported',
+    });
+  });
+
+  it('external session backend mismatch returns a stable failure and preserves the current ref', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    store.set(withPlatformName(SESSION_KEY, 'discord-main'), {
+      agentSessionId: 'sid-current',
+      lastTurnAt: new Date(1),
+    });
+    const externalSessionImporter = {
+      run: vi.fn(() => ({ imports: [] })),
+      bindToRoutingSession: vi.fn(() => {
+        throw new ExternalSessionImportServiceError(
+          'native-resume-backend-mismatch',
+          'External session source is not compatible with this agent backend',
+        );
+      }),
+    };
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_EXTERNAL_SESSIONS_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'external-sessions'],
+      externalSessionImporter,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(
+      makeComponentEvent('nexus:external-sessions:resume', ['imp-claude']),
+    );
+
+    expect(result).toEqual({
+      commandResponse: {
+        text: '[external session unavailable: native-resume-backend-mismatch]',
+        ephemeral: true,
+      },
+    });
+    expect(store.get(withPlatformName(SESSION_KEY, 'discord-main'))?.agentSessionId)
+      .toBe('sid-current');
   });
 
   it('daemon /nexus-settings returns a user-scoped settings snapshot with actions', async () => {

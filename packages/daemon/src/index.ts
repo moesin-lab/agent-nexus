@@ -52,6 +52,26 @@ export {
   type DispatchCommandEventInput,
 } from './command-dispatch.js';
 export {
+  InMemoryTrajectoryStore,
+  TrajectoryStoreError,
+  confidenceMeetsMinimum,
+  type ExternalResumeBinding,
+  type ExternalSessionImportRecord,
+  type ExternalSessionImportState,
+  type LinkExternalSessionInput,
+  type ProviderCallObservation,
+  type ProviderTurnAlignment,
+  type TrajectoryConfidence,
+  type TrajectoryLogAnchor,
+  type TrajectoryPage,
+  type TrajectoryQuery,
+  type TrajectoryRedactionState,
+  type TrajectorySegment,
+  type TrajectorySegmentKind,
+  type TrajectorySegmentSource,
+  type TrajectoryStoreErrorCode,
+} from './trajectory-store.js';
+export {
   DEFAULT_DAEMON_RUNTIME_CONFIG,
   parseDaemonConfig,
   parseDaemonRuntimeConfig,

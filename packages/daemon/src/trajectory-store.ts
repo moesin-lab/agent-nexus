@@ -4,6 +4,7 @@ import { type Database as BetterSqliteDatabase } from 'better-sqlite3';
 import { BasicRedactor, type Redactor } from './redaction.js';
 
 const require = createRequire(import.meta.url);
+const SQLITE_DELETE_BATCH_SIZE = 900;
 
 export type TrajectoryConfidence = 'high' | 'medium' | 'low' | 'unknown';
 
@@ -171,6 +172,7 @@ export interface TrajectoryStore {
   getProviderCallObservation(
     observationId: string,
   ): ProviderCallObservation | undefined;
+  pruneProviderCallObservations(input: { before: string }): number;
   queryTrajectory(query: TrajectoryQuery): TrajectoryPage;
 }
 
@@ -299,6 +301,27 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
   ): ProviderCallObservation | undefined {
     const observation = this.observations.get(observationId);
     return observation ? this.cloneObservation(observation) : undefined;
+  }
+
+  pruneProviderCallObservations(input: { before: string }): number {
+    const deleted = new Set<string>();
+    for (const observation of this.observations.values()) {
+      if (observation.requestStartedAt < input.before) {
+        deleted.add(observation.observationId);
+      }
+    }
+    for (const observationId of deleted) {
+      this.observations.delete(observationId);
+    }
+    for (const [segmentId, segment] of this.segments) {
+      if (
+        segment.providerObservationId &&
+        deleted.has(segment.providerObservationId)
+      ) {
+        this.segments.delete(segmentId);
+      }
+    }
+    return deleted.size;
   }
 
   queryTrajectory(query: TrajectoryQuery): TrajectoryPage {
@@ -650,6 +673,42 @@ export class SqliteTrajectoryStore implements TrajectoryStore {
       .prepare('SELECT * FROM provider_call_observations WHERE observation_id = ?')
       .get(observationId) as ProviderCallObservationRow | undefined;
     return row ? this.cloneObservation(observationFromRow(row)) : undefined;
+  }
+
+  pruneProviderCallObservations(input: { before: string }): number {
+    return this.db.transaction((before: string) => {
+      const rows = this.db
+        .prepare(
+          'SELECT observation_id FROM provider_call_observations WHERE request_started_at < ?',
+        )
+        .all(before) as Array<{ observation_id: string }>;
+      const observationIds = rows.map((row) => row.observation_id);
+      if (observationIds.length === 0) return 0;
+      for (
+        let start = 0;
+        start < observationIds.length;
+        start += SQLITE_DELETE_BATCH_SIZE
+      ) {
+        const batch = observationIds.slice(
+          start,
+          start + SQLITE_DELETE_BATCH_SIZE,
+        );
+        const placeholders = batch.map(() => '?').join(', ');
+        this.db
+          .prepare(
+            `DELETE FROM trajectory_segments
+             WHERE provider_observation_id IN (${placeholders})`,
+          )
+          .run(...batch);
+        this.db
+          .prepare(
+            `DELETE FROM provider_call_observations
+             WHERE observation_id IN (${placeholders})`,
+          )
+          .run(...batch);
+      }
+      return observationIds.length;
+    })(input.before);
   }
 
   queryTrajectory(query: TrajectoryQuery): TrajectoryPage {

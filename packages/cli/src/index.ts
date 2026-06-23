@@ -6,6 +6,7 @@ import {
   Engine,
   ExternalSessionImportService,
   InMemoryIdempotencyStore,
+  ProviderCaptureService,
   SessionStore,
   SqliteTrajectoryStore,
   createLogger,
@@ -109,6 +110,25 @@ async function main(): Promise<void> {
         contentStorageRoot: configRoot(),
       })
     : undefined;
+  const providerCaptureService = trajectoryStore
+    ? new ProviderCaptureService({
+        config: config.daemon.trajectory.providerCapture,
+        store: trajectoryStore,
+        contentStorageRoot: configRoot(),
+      })
+    : undefined;
+  const providerCapture = config.daemon.trajectory.providerCapture.enabled
+    ? providerCaptureService
+    : undefined;
+  if (providerCapture) {
+    const retention = providerCapture.applyRetention();
+    if (retention.deletedObservations > 0) {
+      logger.info(
+        { deletedObservations: retention.deletedObservations },
+        'provider_capture_retention_applied',
+      );
+    }
+  }
   const engines: Engine[] = [];
   // targets 在下面循环里随 engine 创建逐个填充；reloader 调用时才读取
   const configReloadTargets: ConfigReloadTarget[] = [];
@@ -211,6 +231,7 @@ async function main(): Promise<void> {
         store: trajectoryStore,
       },
       externalSessionImporter,
+      providerCapture,
     });
     engines.push(engine);
     configReloadTargets.push({

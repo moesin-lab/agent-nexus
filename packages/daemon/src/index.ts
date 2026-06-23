@@ -93,6 +93,17 @@ export {
   type ResumeEligibility,
 } from './external-session-import.js';
 export {
+  ProviderCaptureService,
+  isProviderCaptureSupported,
+  type ProviderCallCaptureInput,
+  type ProviderCaptureErrorCode,
+  type ProviderCaptureRecordResult,
+  type ProviderCaptureRecorder,
+  type ProviderCaptureServiceInput,
+  type ProviderCaptureSupport,
+  type ProviderUsageObservationInput,
+} from './provider-capture.js';
+export {
   DEFAULT_DAEMON_RUNTIME_CONFIG,
   parseDaemonConfig,
   parseDaemonRuntimeConfig,

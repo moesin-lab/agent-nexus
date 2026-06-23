@@ -362,6 +362,13 @@ Capture 规则：
 | Codex App/Desktop local transcript | unsupported | unsupported | allowed | off |
 | unknown | unsupported | unsupported | unsupported | off |
 
+当前 daemon runtime 实现状态：
+
+- 已实现 `codex` / `claudecode` backend 的 `transcript-only` usage observation：当 agent runtime 发出 `usage` AgentEvent 且 `providerCapture.enabled=true` 时，daemon 写入 metadata-only `ProviderCallObservation` 和 `source=provider-call, kind=usage` 的 trajectory segment。
+- 尚未实现 provider proxy runner；`reverse-proxy` / `forward-proxy` 配置在运行时 fail-closed，记录 `provider_capture_failed`，不写 observation。
+- `ProviderCaptureService.recordProviderCall` 提供 redacted + size-limited payload 写入 helper，只允许写 `<home>/trajectory/provider-calls/`；当前 runtime 尚无 provider proxy 调用方，只有单元测试覆盖该 helper。
+- provider capture 开启时，启动按 `providerCapture.retentionDays` 清理过期 `provider_call_observations` 及其 `provider-call` trajectory segments。
+
 ## 查询契约
 
 ```text
@@ -424,7 +431,10 @@ TrajectoryPage {
 - backend mismatch 拒绝 resume，不清除已有 RoutingSession ref。
 - 成功绑定 external session 后才停止当前 live runtime handle；失败路径不改变旧 ref。
 - provider capture 默认关闭。
+- provider capture 开启后，`codex` / `claudecode` 的 `usage` AgentEvent 产生 transcript-only provider observation。
+- 未实现的 provider proxy mode fail-closed 且不写 observation。
 - redaction 失败时 provider payload 不落盘。
+- provider observation retention 同步清理对应 `provider-call` trajectory segment。
 - `includeContent=true` 不读取外部原始 transcript。
 - unknown schema 产生 `unknown` segment 或 unsupported reason，不抛裸异常。
 

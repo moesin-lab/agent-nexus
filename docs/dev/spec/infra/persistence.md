@@ -314,6 +314,7 @@ interface Store {
     upsertExternalSessionImport(record) -> void
     appendTrajectorySegment(segment) -> void
     recordProviderCallObservation(observation) -> void
+    pruneProviderCallObservations(before) -> int
     queryTrajectory(query) -> TrajectoryPage
 }
 ```

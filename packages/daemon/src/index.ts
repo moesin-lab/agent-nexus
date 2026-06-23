@@ -53,6 +53,7 @@ export {
 } from './command-dispatch.js';
 export {
   InMemoryTrajectoryStore,
+  SqliteTrajectoryStore,
   TrajectoryStoreError,
   confidenceMeetsMinimum,
   type ExternalResumeBinding,
@@ -61,6 +62,7 @@ export {
   type LinkExternalSessionInput,
   type ProviderCallObservation,
   type ProviderTurnAlignment,
+  type SqliteTrajectoryStoreInput,
   type TrajectoryConfidence,
   type TrajectoryLogAnchor,
   type TrajectoryPage,

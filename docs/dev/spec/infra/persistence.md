@@ -192,7 +192,7 @@ contracts:
 | `ts` | TEXT NOT NULL | RFC3339 |
 | `summary` | TEXT NOT NULL | 脱敏摘要 |
 | `content_ref` | TEXT | 指向 `<home>/trajectory/imports/` 或 transcript 内受管内容 |
-| `usage_event_id` | INTEGER | 关联 usage_events |
+| `usage_event_id` | TEXT | 关联 usage_events；存储 `usage_events.id` 的字符串投影，对齐 trajectory read model 的 `usageEventId` opaque id |
 | `log_anchor_json` | TEXT | `{logFile,byteOffset,event}`；路径必须相对 `<home>` |
 | `confidence` | TEXT NOT NULL | `high|medium|low|unknown` |
 | `redaction_state` | TEXT NOT NULL | `redacted|metadata-only|dropped` |

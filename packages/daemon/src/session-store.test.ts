@@ -216,6 +216,35 @@ describe('SessionStore', () => {
     });
   });
 
+  it('bindExternalResumeToKey writes an imported native ref onto the existing routing session', () => {
+    const store = new SessionStore();
+    const key = makeKey();
+    const sessionId = store.ensureSessionId(key);
+
+    const rebound = store.bindExternalResumeToKey(key, {
+      agentSessionId: 'codex-thread-imported',
+      lastTurnAt: new Date(10),
+      title: 'Imported Codex session',
+    });
+
+    expect(rebound).toEqual({
+      agentSessionId: 'codex-thread-imported',
+      lastTurnAt: new Date(10),
+      title: 'Imported Codex session',
+    });
+    expect(store.ensureSessionId(key)).toBe(sessionId);
+    expect(store.listForUser({
+      platformName: 'discord-main',
+      platform: 'discord',
+      initiatorUserId: 'U1',
+      limit: 10,
+    })[0]).toMatchObject({
+      sessionId,
+      agentSessionId: 'codex-thread-imported',
+      title: 'Imported Codex session',
+    });
+  });
+
   it('preserves registered thread metadata when the first agent session starts', () => {
     const store = new SessionStore();
     const key = makeKey({ channelId: 'T1' });

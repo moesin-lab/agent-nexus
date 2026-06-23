@@ -75,6 +75,24 @@ export {
   type TrajectoryStoreErrorCode,
 } from './trajectory-store.js';
 export {
+  ClaudeCodeJsonlSessionSourceAdapter,
+  CodexAppJsonlSessionSourceAdapter,
+  CodexCliJsonlSessionSourceAdapter,
+  ExternalSessionImportService,
+  ExternalSessionImportServiceError,
+  agentOwnerForExternalSourceAdapter,
+  type DiscoverExternalSessionsInput,
+  type ExternalImportPolicy,
+  type ExternalSessionCandidate,
+  type ExternalSessionImporter,
+  type ExternalSessionImportOutcome,
+  type ExternalSessionImportRunResult,
+  type ExternalSessionImportServiceErrorCode,
+  type ExternalSessionSourceAdapter,
+  type ImportedTranscriptSegment,
+  type ResumeEligibility,
+} from './external-session-import.js';
+export {
   DEFAULT_DAEMON_RUNTIME_CONFIG,
   parseDaemonConfig,
   parseDaemonRuntimeConfig,
@@ -88,4 +106,8 @@ export {
   type PlatformAuthConfig,
   type ToolMessageMode,
 } from './config.js';
-export { SessionStore, type SessionEntry } from './session-store.js';
+export {
+  SessionStore,
+  type ExternalResumeSessionEntry,
+  type SessionEntry,
+} from './session-store.js';

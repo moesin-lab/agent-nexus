@@ -35,6 +35,16 @@ describe('daemonCommandDescriptors', () => {
         legacyNames: [],
       }),
       expect.objectContaining({
+        canonicalId: 'daemon:external-sessions',
+        owner: { type: 'daemon' },
+        localName: 'external-sessions',
+        handlerKey: 'external-sessions',
+        applicability: {
+          requiredCapabilities: ['slash-command-registration', 'ephemeral-response'],
+        },
+        legacyNames: [],
+      }),
+      expect.objectContaining({
         canonicalId: 'daemon:new-thread',
         owner: { type: 'daemon' },
         localName: 'new-thread',

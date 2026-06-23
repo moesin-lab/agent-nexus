@@ -33,6 +33,12 @@ import {
 } from './command-dispatch.js';
 import type { CommandDispatchDecision } from './command-dispatch.js';
 import type { PlatformAuthConfig, ToolMessageMode } from './config.js';
+import {
+  ExternalSessionImportServiceError,
+  agentOwnerForExternalSourceAdapter,
+  type ExternalSessionImporter,
+  type ExternalSessionImportOutcome,
+} from './external-session-import.js';
 import type { IdempotencyStore } from './idempotency.js';
 import type { Logger } from './logger.js';
 import {
@@ -110,6 +116,7 @@ export interface EngineDeps {
     enabled?: boolean;
     store?: TrajectoryStore;
   };
+  externalSessionImporter?: ExternalSessionImporter;
 }
 
 const DEFAULT_STREAM_EDIT_THROTTLE_MS = 1500;
@@ -119,6 +126,8 @@ const COMMAND_NOT_READY_TEXT = 'Slash commands are not ready yet. Try again late
 const COMMAND_UNAVAILABLE_TEXT = 'This command is not available in this channel.';
 const COMMAND_FAILED_TEXT = 'Command failed.';
 const SESSION_RESUME_COMPONENT_ID = 'nexus:sessions:resume';
+const EXTERNAL_SESSIONS_COMPONENT_PREFIX = 'nexus:external-sessions:';
+const EXTERNAL_SESSIONS_RESUME_COMPONENT_ID = `${EXTERNAL_SESSIONS_COMPONENT_PREFIX}resume`;
 const NEW_THREAD_DEFAULT_TITLE = 'New Nexus session';
 const THREAD_AUTO_ARCHIVE_DURATION_MINUTES = 1440;
 const WORKING_DIR_ARG = 'path';
@@ -273,6 +282,19 @@ function workingDirScope(value: string | undefined): 'channel' | 'session' {
   return value === 'session' ? 'session' : 'channel';
 }
 
+function titleFromMetadataJson(metadataJson: string): string | undefined {
+  try {
+    const parsed = JSON.parse(metadataJson) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const title = (parsed as Record<string, unknown>)['title'];
+    return typeof title === 'string' && title.length > 0 ? title : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Engine：把 platform 入站事件路由到 agent，并把 agent 输出回送 platform。
  *
@@ -304,6 +326,7 @@ export class Engine {
   private readonly sessionStore: SessionStore;
   private readonly trajectoryEnabled: boolean;
   private readonly trajectoryStore?: TrajectoryStore;
+  private readonly externalSessionImporter?: ExternalSessionImporter;
   private readonly streamEditThrottleMs: number;
   private readonly typingRefreshMs: number;
   private readonly agentSessions = new Map<string, ActiveAgentSession>();
@@ -355,6 +378,7 @@ export class Engine {
     this.sessionStore = deps.sessionStore;
     this.trajectoryEnabled = deps.trajectory?.enabled ?? true;
     this.trajectoryStore = deps.trajectory?.store;
+    this.externalSessionImporter = deps.externalSessionImporter;
     this.streamEditThrottleMs =
       deps.streaming?.streamEditThrottleMs ?? DEFAULT_STREAM_EDIT_THROTTLE_MS;
     this.typingRefreshMs =
@@ -1054,6 +1078,9 @@ export class Engine {
     if (decision.handlerKey === 'sessions') {
       return this.handleSessionsCommand(event);
     }
+    if (decision.handlerKey === 'external-sessions') {
+      return this.handleExternalSessionsCommand(event);
+    }
     if (decision.handlerKey === 'new-thread') {
       return this.handleNewThreadCommand(event);
     }
@@ -1170,6 +1197,75 @@ export class Engine {
         ],
       },
       event.traceId,
+    );
+  }
+
+  private handleExternalSessionsCommand(event: NormalizedEvent): EventHandlerResult {
+    if (!this.externalSessionImporter) {
+      return this.commandResponse('[external import unavailable]', event.traceId);
+    }
+    const route = this.route(event);
+    const agentSlot = route ? this.agents.get(route.agentName) : undefined;
+    if (!agentSlot) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    const agentOwner = agentSlot.agentOwner ?? agentSlot.agent.name();
+    let result;
+    try {
+      result = this.externalSessionImporter.run();
+    } catch (err) {
+      this.logger.error({ traceId: event.traceId, err }, 'external_session_import_failed');
+      return this.commandResponse(COMMAND_FAILED_TEXT, event.traceId);
+    }
+    const resumable = result.imports
+      .filter((outcome) =>
+        this.externalSessionOutcomeCanResume(outcome, agentOwner),
+      )
+      .slice(0, 25);
+    if (resumable.length === 0) {
+      return this.commandResponse('[no external sessions]', event.traceId);
+    }
+    return this.commandResponseResult(
+      {
+        text: 'Select an external session to resume.',
+        ephemeral: true,
+        components: [
+          {
+            type: 'select',
+            componentId: EXTERNAL_SESSIONS_RESUME_COMPONENT_ID,
+            placeholder: 'Resume external session',
+            minValues: 1,
+            maxValues: 1,
+            options: resumable.map((outcome) => ({
+              label: this.externalSessionLabel(outcome).slice(0, 100),
+              value: outcome.record.importId,
+              description: `${outcome.record.sourceAdapter} · ${outcome.record.sourceSessionId}`.slice(0, 100),
+            })),
+          },
+        ],
+      },
+      event.traceId,
+    );
+  }
+
+  private externalSessionOutcomeCanResume(
+    outcome: ExternalSessionImportOutcome,
+    agentOwner: string,
+  ): boolean {
+    if (!outcome.record.nativeSessionRef) return false;
+    if (!outcome.resumeEligibility.canResume) return false;
+    const expectedOwner = agentOwnerForExternalSourceAdapter(
+      outcome.record.sourceAdapter,
+    );
+    if (!expectedOwner || expectedOwner !== agentOwner) return false;
+    return outcome.record.state === 'registered' || outcome.record.state === 'imported';
+  }
+
+  private externalSessionLabel(outcome: ExternalSessionImportOutcome): string {
+    return (
+      outcome.candidate.firstUserMessageSummary ??
+      titleFromMetadataJson(outcome.record.metadataJson) ??
+      outcome.record.sourceSessionId
     );
   }
 
@@ -1799,6 +1895,9 @@ export class Engine {
     if (componentId === SESSION_RESUME_COMPONENT_ID) {
       return this.handleSessionResumeInteraction(event);
     }
+    if (componentId === EXTERNAL_SESSIONS_RESUME_COMPONENT_ID) {
+      return this.handleExternalSessionResumeInteraction(event);
+    }
     if (componentId.startsWith(QUEUE_COMPONENT_PREFIX)) {
       return this.handleQueueInteraction(event);
     }
@@ -2051,6 +2150,47 @@ export class Engine {
     }
     return this.commandResponse(
       `[session resumed: ${rebound.agentSessionId}]`,
+      event.traceId,
+    );
+  }
+
+  private handleExternalSessionResumeInteraction(
+    event: NormalizedEvent,
+  ): EventHandlerResult {
+    const importId = event.interaction?.values[0];
+    if (!importId || !this.externalSessionImporter) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    const route = this.route(event);
+    const agentSlot = route ? this.agents.get(route.agentName) : undefined;
+    if (!agentSlot) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    const agentOwner = agentSlot.agentOwner ?? agentSlot.agent.name();
+    let binding;
+    try {
+      binding = this.externalSessionImporter.bindToRoutingSession({
+        importId,
+        sessionKey: routedSessionKey,
+        agentOwner,
+      });
+    } catch (err) {
+      if (err instanceof ExternalSessionImportServiceError) {
+        return this.commandResponse(
+          `[external session unavailable: ${err.code}]`,
+          event.traceId,
+        );
+      }
+      this.logger.error({ traceId: event.traceId, importId, err }, 'external_session_resume_failed');
+      return this.commandResponse(COMMAND_FAILED_TEXT, event.traceId);
+    }
+    this.stopActiveSession(serializeSessionKey(routedSessionKey), event.traceId);
+    return this.commandResponse(
+      `[external session resumed: ${binding.nativeSessionRef}]`,
       event.traceId,
     );
   }

@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import {
   ActiveCommandRegistry,
   Engine,
+  ExternalSessionImportService,
   InMemoryIdempotencyStore,
   SessionStore,
   SqliteTrajectoryStore,
@@ -100,6 +101,14 @@ async function main(): Promise<void> {
   }
   const trajectoryWriteEnabled =
     config.daemon.trajectory.enabled && trajectoryStore !== undefined;
+  const externalSessionImporter = trajectoryStore
+    ? new ExternalSessionImportService({
+        config: config.daemon.trajectory.externalImport,
+        store: trajectoryStore,
+        sessionStore,
+        contentStorageRoot: configRoot(),
+      })
+    : undefined;
   const engines: Engine[] = [];
   // targets 在下面循环里随 engine 创建逐个填充；reloader 调用时才读取
   const configReloadTargets: ConfigReloadTarget[] = [];
@@ -201,6 +210,7 @@ async function main(): Promise<void> {
         enabled: trajectoryWriteEnabled,
         store: trajectoryStore,
       },
+      externalSessionImporter,
     });
     engines.push(engine);
     configReloadTargets.push({

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { SessionKey } from '@agent-nexus/protocol';
 import { serializeSessionKey } from '@agent-nexus/protocol';
 
@@ -49,22 +50,28 @@ export class SessionStore {
   private readonly map = new Map<string, SessionEntry>();
   private readonly sessionIdsByKey = new Map<string, string>();
   private readonly keysBySessionId = new Map<string, SessionKey>();
+  private readonly trajectorySequencesBySessionId = new Map<string, number>();
   private readonly threadsByChannel = new Map<string, ThreadRegistryEntry>();
   private readonly workingDirsByChannel = new Map<string, string>();
-  private nextSessionSeq = 1;
 
   get(key: SessionKey): SessionEntry | undefined {
     return this.map.get(serializeSessionKey(key));
   }
 
-  set(key: SessionKey, entry: SessionEntry): void {
+  ensureSessionId(key: SessionKey): string {
     const keyStr = serializeSessionKey(key);
-    if (!this.sessionIdsByKey.has(keyStr)) {
-      const sessionId = `mem-${this.nextSessionSeq}`;
-      this.nextSessionSeq += 1;
+    let sessionId = this.sessionIdsByKey.get(keyStr);
+    if (!sessionId) {
+      sessionId = randomUUID();
       this.sessionIdsByKey.set(keyStr, sessionId);
       this.keysBySessionId.set(sessionId, { ...key });
     }
+    return sessionId;
+  }
+
+  set(key: SessionKey, entry: SessionEntry): void {
+    const keyStr = serializeSessionKey(key);
+    this.ensureSessionId(key);
     const existing = this.map.get(keyStr);
     const nextEntry: SessionEntry = { ...entry };
     // set() 只保留/更新 resumable 绑定；显式清除必须走 delete()。
@@ -86,12 +93,19 @@ export class SessionStore {
     this.map.set(keyStr, nextEntry);
   }
 
+  nextTrajectorySequence(sessionId: string): number {
+    const next = (this.trajectorySequencesBySessionId.get(sessionId) ?? 0) + 1;
+    this.trajectorySequencesBySessionId.set(sessionId, next);
+    return next;
+  }
+
   delete(key: SessionKey): boolean {
     const keyStr = serializeSessionKey(key);
     const sessionId = this.sessionIdsByKey.get(keyStr);
     if (sessionId) {
       this.sessionIdsByKey.delete(keyStr);
       this.keysBySessionId.delete(sessionId);
+      this.trajectorySequencesBySessionId.delete(sessionId);
     }
     return this.map.delete(keyStr);
   }
@@ -100,6 +114,7 @@ export class SessionStore {
     this.map.clear();
     this.sessionIdsByKey.clear();
     this.keysBySessionId.clear();
+    this.trajectorySequencesBySessionId.clear();
     this.threadsByChannel.clear();
     this.workingDirsByChannel.clear();
   }

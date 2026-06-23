@@ -71,6 +71,7 @@ export {
   type TrajectorySegment,
   type TrajectorySegmentKind,
   type TrajectorySegmentSource,
+  type TrajectoryStore,
   type TrajectoryStoreErrorCode,
 } from './trajectory-store.js';
 export {

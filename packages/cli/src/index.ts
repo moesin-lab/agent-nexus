@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   ActiveCommandRegistry,
   Engine,
   InMemoryIdempotencyStore,
   SessionStore,
+  SqliteTrajectoryStore,
   createLogger,
   daemonCommandDescriptors,
   type RoutingEntry,
@@ -25,6 +26,7 @@ import {
   ConfigError,
   SecretsPermissionError,
   buildRoutingTable,
+  configRoot,
   loadConfig,
   loadSecret,
 } from './config.js';
@@ -84,6 +86,20 @@ async function main(): Promise<void> {
   const sessionStore = new SessionStore();
   const commandRegistry = new ActiveCommandRegistry();
   const idempotencyStore = new InMemoryIdempotencyStore();
+  let trajectoryStore: SqliteTrajectoryStore | undefined;
+  if (config.daemon.trajectory.enabled) {
+    const trajectoryDbPath = join(configRoot(), 'state.db');
+    try {
+      trajectoryStore = new SqliteTrajectoryStore({ path: trajectoryDbPath });
+    } catch (err) {
+      logger.error(
+        { err, path: trajectoryDbPath },
+        'trajectory_store_open_failed',
+      );
+    }
+  }
+  const trajectoryWriteEnabled =
+    config.daemon.trajectory.enabled && trajectoryStore !== undefined;
   const engines: Engine[] = [];
   // targets 在下面循环里随 engine 创建逐个填充；reloader 调用时才读取
   const configReloadTargets: ConfigReloadTarget[] = [];
@@ -181,6 +197,10 @@ async function main(): Promise<void> {
       textPrefixes: {
         newSession: config.daemon.commandRegistry.textPrefixes.newSession,
       },
+      trajectory: {
+        enabled: trajectoryWriteEnabled,
+        store: trajectoryStore,
+      },
     });
     engines.push(engine);
     configReloadTargets.push({
@@ -206,6 +226,8 @@ async function main(): Promise<void> {
       await Promise.all(engines.map((engine) => engine.stop()));
     } catch (err) {
       logger.error({ err }, 'shutdown_error');
+    } finally {
+      trajectoryStore?.close();
     }
     process.exit(0);
   };

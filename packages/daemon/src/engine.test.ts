@@ -31,6 +31,10 @@ import { InMemoryIdempotencyStore } from './idempotency.js';
 import { createLogger, type Logger } from './logger.js';
 import type { RoutingEntry } from './router.js';
 import { SessionStore } from './session-store.js';
+import {
+  InMemoryTrajectoryStore,
+  type TrajectoryStore,
+} from './trajectory-store.js';
 
 // ----- mocks -----
 
@@ -528,6 +532,24 @@ function makeActiveRegistry(
   return registry;
 }
 
+function makeThrowingTrajectoryStore(): TrajectoryStore & {
+  appendTrajectorySegment: ReturnType<typeof vi.fn>;
+} {
+  return {
+    upsertExternalSessionImport: vi.fn(),
+    getExternalSessionImport: vi.fn(() => undefined),
+    linkExternalSession: vi.fn(() => {
+      throw new Error('not implemented');
+    }),
+    appendTrajectorySegment: vi.fn(() => {
+      throw new Error('trajectory append failed');
+    }),
+    recordProviderCallObservation: vi.fn(),
+    getProviderCallObservation: vi.fn(() => undefined),
+    queryTrajectory: vi.fn(() => ({ segments: [] })),
+  };
+}
+
 // ----- tests -----
 
 describe('Engine', () => {
@@ -569,6 +591,159 @@ describe('Engine', () => {
     expect(out.text).toBe('hi from agent');
 
     expect(agent.stopSession).not.toHaveBeenCalled();
+  });
+
+  it('trajectory enabled 时把路由输入和 AgentEvent 写入同一个 runtime sessionId', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const trajectoryStore = new InMemoryTrajectoryStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+      trajectory: { enabled: true, store: trajectoryStore },
+    });
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-123' }, 1),
+      ev('thinking', { text: 'checking context' }, 2),
+      ev(
+        'tool_call_started',
+        { callId: 'call-1', toolName: 'Bash', inputSummary: 'echo hi' },
+        3,
+      ),
+      ev(
+        'tool_result',
+        {
+          callId: 'call-1',
+          resultSequence: 1,
+          content: { kind: 'text', text: 'ok from tool' },
+          isError: false,
+        },
+        4,
+      ),
+      ev(
+        'usage',
+        {
+          model: 'gpt-5',
+          inputTokens: 10,
+          outputTokens: 5,
+          cacheReadTokens: 1,
+          cacheWriteTokens: 2,
+          costUsd: 0.01,
+          turnSequence: 1,
+          toolCallsThisTurn: 1,
+          wallClockMs: 1200,
+          completeness: 'complete',
+        },
+        5,
+      ),
+      ev('text_final', { text: 'answer with sk-ant-secret' }, 6),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }, 7),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('inspect /home/node/private'));
+
+    const sessionId = (agent.startSession.mock.calls[0]![1] as SessionConfig)
+      .sessionId;
+    expect(
+      store.listForUser({
+        platformName: 'mock-platform',
+        platform: 'discord',
+        initiatorUserId: 'U1',
+        limit: 1,
+      })[0]?.sessionId,
+    ).toBe(sessionId);
+    const segments = trajectoryStore.queryTrajectory({ sessionId }).segments;
+
+    expect(segments.map((segment) => segment.kind)).toEqual([
+      'user-message',
+      'state-change',
+      'reasoning',
+      'tool-call',
+      'tool-result',
+      'usage',
+      'agent-message',
+      'state-change',
+    ]);
+    expect(segments.every((segment) => segment.source === 'nexus-agent-event')).toBe(
+      true,
+    );
+    expect(segments.every((segment) => segment.traceId === 't-1')).toBe(true);
+    expect(segments.every((segment) => segment.redactionState === 'redacted')).toBe(
+      true,
+    );
+    expect(segments.map((segment) => segment.sequence)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8,
+    ]);
+    expect(segments[0]?.summary).toBe('inspect ~/private');
+    expect(segments[6]?.summary).toBe('answer with <redacted:secret>');
+    expect(segments[5]).toMatchObject({
+      kind: 'usage',
+      turnSequence: 1,
+      usageEventId: expect.any(String),
+    });
+  });
+
+  it('trajectory enabled=false 时不写 read model', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const trajectoryStore = new InMemoryTrajectoryStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+      defaultSessionConfig: DEFAULT_CFG,
+      trajectory: { enabled: false, store: trajectoryStore },
+    });
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-123' }, 1),
+      ev('text_final', { text: 'hi from agent' }, 2),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }, 3),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(trajectoryStore.queryTrajectory({}).segments).toEqual([]);
+  });
+
+  it('trajectory store 写入失败不阻断 agent 输出投递', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const trajectoryStore = makeThrowingTrajectoryStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+      defaultSessionConfig: DEFAULT_CFG,
+      trajectory: { enabled: true, store: trajectoryStore },
+    });
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-123' }, 1),
+      ev('text_final', { text: 'still delivered' }, 2),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }, 3),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(trajectoryStore.appendTrajectorySegment).toHaveBeenCalled();
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      'still delivered',
+    );
   });
 
   it('第二轮：复用同 sessionKey 的活跃 AgentSession，不重新 startSession', async () => {

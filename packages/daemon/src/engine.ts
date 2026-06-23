@@ -19,7 +19,6 @@ import type {
   SessionKey,
   SettingsSnapshotItem,
   ToolResultContent,
-  UsageRecord,
 } from '@agent-nexus/protocol';
 import { serializeSessionKey, withPlatformName } from '@agent-nexus/protocol';
 import { checkPlatformAuth } from './auth.js';
@@ -59,6 +58,11 @@ import type {
   TrajectorySegmentKind,
   TrajectoryStore,
 } from './trajectory-store.js';
+import {
+  safeJson,
+  summarizeUsageRecord,
+  titleFromMetadataJson,
+} from './trajectory-utils.js';
 
 export interface EngineAgent {
   agent: AgentRuntime;
@@ -218,25 +222,6 @@ function summarizeToolResultContent(content: ToolResultContent): string {
   }
 }
 
-function summarizeUsageRecord(usage: UsageRecord): string {
-  const cost =
-    usage.costUsd === null ? 'cost unknown' : `cost $${usage.costUsd.toFixed(6)}`;
-  return [
-    usage.model,
-    `input ${usage.inputTokens}`,
-    `output ${usage.outputTokens}`,
-    cost,
-  ].join(', ');
-}
-
-function safeJson(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return '{"serialization":"failed"}';
-  }
-}
-
 function sessionTitleFromPrompt(prompt: string): string | undefined {
   const title = prompt.replace(/\s+/g, ' ').trim();
   if (title.length === 0) return undefined;
@@ -250,6 +235,10 @@ function commandStringArg(
   const value = args?.[name];
   if (typeof value !== 'string') return undefined;
   return value;
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 function validateWorkingDirArg(
@@ -285,19 +274,6 @@ function validateWorkingDirArg(
 
 function workingDirScope(value: string | undefined): 'channel' | 'session' {
   return value === 'session' ? 'session' : 'channel';
-}
-
-function titleFromMetadataJson(metadataJson: string): string | undefined {
-  try {
-    const parsed = JSON.parse(metadataJson) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return undefined;
-    }
-    const title = (parsed as Record<string, unknown>)['title'];
-    return typeof title === 'string' && title.length > 0 ? title : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -1207,7 +1183,9 @@ export class Engine {
     );
   }
 
-  private handleExternalSessionsCommand(event: NormalizedEvent): EventHandlerResult {
+  private async handleExternalSessionsCommand(
+    event: NormalizedEvent,
+  ): Promise<EventHandlerResult> {
     if (!this.externalSessionImporter) {
       return this.commandResponse('[external import unavailable]', event.traceId);
     }
@@ -1219,7 +1197,8 @@ export class Engine {
     const agentOwner = agentSlot.agentOwner ?? agentSlot.agent.name();
     let result;
     try {
-      result = this.externalSessionImporter.run();
+      await yieldToEventLoop();
+      result = await this.externalSessionImporter.run();
     } catch (err) {
       this.logger.error({ traceId: event.traceId, err }, 'external_session_import_failed');
       return this.commandResponse(COMMAND_FAILED_TEXT, event.traceId);
@@ -3327,6 +3306,7 @@ export class Engine {
         sessionKeyStr,
         agentSlot,
       );
+      // handler closes over this value; assign it before currentTurn.handle can run.
       activeSessionForTrajectory = activeSession;
       session = activeSession.session;
       activeSession.currentTurn = {

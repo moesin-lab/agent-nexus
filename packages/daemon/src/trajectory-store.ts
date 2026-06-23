@@ -4,6 +4,7 @@ import { type Database as BetterSqliteDatabase } from 'better-sqlite3';
 import { BasicRedactor, type Redactor } from './redaction.js';
 
 const require = createRequire(import.meta.url);
+const CURRENT_TRAJECTORY_SCHEMA_VERSION = 1;
 const SQLITE_DELETE_BATCH_SIZE = 900;
 
 export type TrajectoryConfidence = 'high' | 'medium' | 'low' | 'unknown';
@@ -182,6 +183,7 @@ export type TrajectoryStoreErrorCode =
   | 'invalid-content-ref'
   | 'invalid-import-state'
   | 'invalid-query'
+  | 'unsupported-schema-version'
   | 'duplicate-record';
 
 export class TrajectoryStoreError extends Error {
@@ -534,62 +536,64 @@ export class SqliteTrajectoryStore implements TrajectoryStore {
   }
 
   appendTrajectorySegment(segment: TrajectorySegment): void {
-    if (this.hasRecord('trajectory_segments', 'segment_id', segment.segmentId)) {
-      throw new TrajectoryStoreError(
-        'duplicate-record',
-        `Trajectory segment ${segment.segmentId} already exists`,
-      );
-    }
-    if (segment.redactionState === 'dropped' && segment.contentRef) {
-      throw new TrajectoryStoreError(
-        'invalid-content-ref',
-        'Trajectory segment with dropped redaction state cannot keep contentRef',
-      );
-    }
-    if (segment.contentRef) assertManagedContentRef(segment.contentRef);
+    this.db.transaction((input: TrajectorySegment) => {
+      if (this.hasRecord('trajectory_segments', 'segment_id', input.segmentId)) {
+        throw new TrajectoryStoreError(
+          'duplicate-record',
+          `Trajectory segment ${input.segmentId} already exists`,
+        );
+      }
+      if (input.redactionState === 'dropped' && input.contentRef) {
+        throw new TrajectoryStoreError(
+          'invalid-content-ref',
+          'Trajectory segment with dropped redaction state cannot keep contentRef',
+        );
+      }
+      if (input.contentRef) assertManagedContentRef(input.contentRef);
 
-    const next = this.cloneSegment(segment);
-    this.db
-      .prepare(
-        `INSERT INTO trajectory_segments (
-          segment_id,
-          session_id,
-          import_id,
-          provider_observation_id,
-          source,
-          kind,
-          trace_id,
-          turn_sequence,
-          sequence,
-          ts,
-          summary,
-          content_ref,
-          usage_event_id,
-          log_anchor_json,
-          confidence,
-          redaction_state,
-          metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        next.segmentId,
-        next.sessionId ?? null,
-        next.importId ?? null,
-        next.providerObservationId ?? null,
-        next.source,
-        next.kind,
-        next.traceId ?? null,
-        next.turnSequence ?? null,
-        next.sequence,
-        next.ts,
-        next.summary,
-        next.contentRef ?? null,
-        next.usageEventId ?? null,
-        next.logAnchor ? JSON.stringify(next.logAnchor) : null,
-        next.confidence,
-        next.redactionState,
-        next.metadataJson,
-      );
+      const next = this.cloneSegment(input);
+      this.db
+        .prepare(
+          `INSERT INTO trajectory_segments (
+            segment_id,
+            session_id,
+            import_id,
+            provider_observation_id,
+            source,
+            kind,
+            trace_id,
+            turn_sequence,
+            sequence,
+            ts,
+            summary,
+            content_ref,
+            usage_event_id,
+            log_anchor_json,
+            confidence,
+            redaction_state,
+            metadata_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          next.segmentId,
+          next.sessionId ?? null,
+          next.importId ?? null,
+          next.providerObservationId ?? null,
+          next.source,
+          next.kind,
+          next.traceId ?? null,
+          next.turnSequence ?? null,
+          next.sequence,
+          next.ts,
+          next.summary,
+          next.contentRef ?? null,
+          next.usageEventId ?? null,
+          next.logAnchor ? JSON.stringify(next.logAnchor) : null,
+          next.confidence,
+          next.redactionState,
+          next.metadataJson,
+        );
+    })(segment);
   }
 
   recordProviderCallObservation(observation: ProviderCallObservation): void {
@@ -874,6 +878,30 @@ function initializeTrajectorySchema(db: BetterSqliteDatabase): void {
   db.pragma('foreign_keys = ON');
   db.pragma('journal_mode = WAL');
   db.exec(`
+    CREATE TABLE IF NOT EXISTS trajectory_schema_version (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      version INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  const currentVersion = readTrajectorySchemaVersion(db);
+  if (currentVersion > CURRENT_TRAJECTORY_SCHEMA_VERSION) {
+    throw new TrajectoryStoreError(
+      'unsupported-schema-version',
+      `Trajectory schema version ${currentVersion} is newer than supported version ${CURRENT_TRAJECTORY_SCHEMA_VERSION}`,
+    );
+  }
+  if (currentVersion >= CURRENT_TRAJECTORY_SCHEMA_VERSION) return;
+
+  db.transaction(() => {
+    applyTrajectorySchemaV1(db);
+    setTrajectorySchemaVersion(db, CURRENT_TRAJECTORY_SCHEMA_VERSION);
+  })();
+}
+
+function applyTrajectorySchemaV1(db: BetterSqliteDatabase): void {
+  db.exec(`
     CREATE TABLE IF NOT EXISTS external_session_imports (
       import_id TEXT PRIMARY KEY,
       source_adapter TEXT NOT NULL,
@@ -952,6 +980,28 @@ function initializeTrajectorySchema(db: BetterSqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_provider_call_observations_backend
       ON provider_call_observations(backend, request_started_at);
   `);
+}
+
+function readTrajectorySchemaVersion(db: BetterSqliteDatabase): number {
+  const row = db
+    .prepare('SELECT version FROM trajectory_schema_version WHERE id = 1')
+    .get() as { version: number } | undefined;
+  return row?.version ?? 0;
+}
+
+function setTrajectorySchemaVersion(
+  db: BetterSqliteDatabase,
+  version: number,
+): void {
+  db
+    .prepare(
+      `INSERT INTO trajectory_schema_version (id, version, updated_at)
+       VALUES (1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         version = excluded.version,
+         updated_at = excluded.updated_at`,
+    )
+    .run(version, new Date().toISOString());
 }
 
 function importFromRow(row: ExternalSessionImportRow): ExternalSessionImportRecord {

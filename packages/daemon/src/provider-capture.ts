@@ -10,6 +10,7 @@ import type {
   TrajectoryRedactionState,
   TrajectoryStore,
 } from './trajectory-store.js';
+import { safeJson, summarizeUsageRecord } from './trajectory-utils.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -90,6 +91,16 @@ export interface ProviderCaptureServiceInput {
   redactor?: Redactor;
   now?: () => Date;
   idFactory?: () => string;
+}
+
+export interface ProviderRetentionSweepInput {
+  intervalMs?: number;
+  onApplied?: (result: { deletedObservations: number }) => void;
+  onError?: (error: unknown) => void;
+}
+
+export interface ProviderRetentionSweepHandle {
+  stop(): void;
 }
 
 export class ProviderCaptureService implements ProviderCaptureRecorder {
@@ -313,6 +324,24 @@ export class ProviderCaptureService implements ProviderCaptureRecorder {
     };
   }
 
+  startRetentionSweep(
+    input: ProviderRetentionSweepInput = {},
+  ): ProviderRetentionSweepHandle {
+    const intervalMs = input.intervalMs ?? DAY_MS;
+    const interval = setInterval(() => {
+      try {
+        const result = this.applyRetention();
+        input.onApplied?.(result);
+      } catch (err) {
+        input.onError?.(err);
+      }
+    }, intervalMs);
+    interval.unref?.();
+    return {
+      stop: () => clearInterval(interval),
+    };
+  }
+
   private guardCapture(
     backend: string,
     captureMode: ProviderCaptureConfig['mode'],
@@ -441,29 +470,10 @@ export function isProviderCaptureSupported(
   };
 }
 
-function summarizeUsageRecord(usage: UsageRecord): string {
-  const cost =
-    usage.costUsd === null ? 'cost unknown' : `cost $${usage.costUsd.toFixed(6)}`;
-  return [
-    usage.model,
-    `input ${usage.inputTokens}`,
-    `output ${usage.outputTokens}`,
-    cost,
-  ].join(', ');
-}
-
 function summarizeProviderPayload(kind: 'request' | 'response', bytes: number): string {
   return `${kind} metadata, ${bytes} bytes captured`;
 }
 
 function byteLength(value: string | undefined): number {
   return Buffer.byteLength(value ?? '', 'utf8');
-}
-
-function safeJson(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return '{"serialization":"failed"}';
-  }
 }

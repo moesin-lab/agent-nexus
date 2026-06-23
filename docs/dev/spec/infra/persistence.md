@@ -327,10 +327,11 @@ interface Store {
 
 ## 迁移
 
-- 首版 schema 由 `@agent-nexus/daemon` 包内 `migrations/` 子目录管理
-- 每次 schema 变更 +1 migration
-- 启动时检查 schema version，自动跑 pending migrations
-- 禁止手工改 schema
+- SQLite store 维护 `trajectory_schema_version` 表，当前版本为 1。
+- 启动时检查 schema version；无版本记录的旧库会运行幂等 V1 migration 并写入版本。
+- 每次 schema 变更必须提升版本并在 store open 时自动跑 pending migration。
+- 遇到高于当前 runtime 支持的 schema version 必须 fail-closed。
+- 禁止手工改 schema。
 
 ## 备份
 

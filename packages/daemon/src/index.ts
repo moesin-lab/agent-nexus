@@ -101,8 +101,15 @@ export {
   type ProviderCaptureRecorder,
   type ProviderCaptureServiceInput,
   type ProviderCaptureSupport,
+  type ProviderRetentionSweepHandle,
+  type ProviderRetentionSweepInput,
   type ProviderUsageObservationInput,
 } from './provider-capture.js';
+export {
+  safeJson,
+  summarizeUsageRecord,
+  titleFromMetadataJson,
+} from './trajectory-utils.js';
 export {
   DEFAULT_DAEMON_RUNTIME_CONFIG,
   parseDaemonConfig,

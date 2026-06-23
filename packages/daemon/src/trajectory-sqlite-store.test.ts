@@ -1,6 +1,9 @@
+import { createRequire } from 'node:module';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type DatabaseConstructor from 'better-sqlite3';
+import { type Database as BetterSqliteDatabase } from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   SqliteTrajectoryStore,
@@ -11,6 +14,7 @@ import {
 } from './trajectory-store.js';
 
 const tempDirs: string[] = [];
+const require = createRequire(import.meta.url);
 
 afterEach(() => {
   while (tempDirs.length > 0) {
@@ -20,6 +24,23 @@ afterEach(() => {
 });
 
 describe('SqliteTrajectoryStore', () => {
+  it('records trajectory schema version on first open and preserves it across reopen', () => {
+    const dbPath = tempDbPath();
+    const first = new SqliteTrajectoryStore({ path: dbPath });
+    first.close();
+
+    const db = openDb(dbPath);
+    expect(readSchemaVersion(db)).toBe(1);
+    db.close();
+
+    const second = new SqliteTrajectoryStore({ path: dbPath });
+    second.close();
+
+    const reopened = openDb(dbPath);
+    expect(readSchemaVersion(reopened)).toBe(1);
+    reopened.close();
+  });
+
   it('persists external imports, trajectory segments, and provider observations across reopen', () => {
     const dbPath = tempDbPath();
     const first = new SqliteTrajectoryStore({ path: dbPath });
@@ -296,6 +317,20 @@ function tempDbPath(): string {
   const dir = mkdtempSync(join(tmpdir(), 'agent-nexus-trajectory-'));
   tempDirs.push(dir);
   return join(dir, 'state.db');
+}
+
+function openDb(path: string): BetterSqliteDatabase {
+  const Database = require('better-sqlite3') as typeof DatabaseConstructor;
+  return new Database(path);
+}
+
+function readSchemaVersion(db: BetterSqliteDatabase): number {
+  const row = db
+    .prepare(
+      'SELECT version FROM trajectory_schema_version WHERE id = 1',
+    )
+    .get() as { version: number } | undefined;
+  return row?.version ?? 0;
 }
 
 function importRecord(

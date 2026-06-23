@@ -104,7 +104,7 @@ TrajectoryRetentionConfig {
 | `externalImport.enabled` | `false` 时不扫描外部根目录 |
 | `externalImport.metadataOnlyDiscovery` | `true` 时 discovery 只读取外部 session metadata 和 record 计数，不导入正文 |
 | `externalImport.importContent` | `false` 时只登记 candidate 与 native ref eligibility；不得写 transcript segment 正文 |
-| `externalImport.sources[].root` | 必须是显式路径；不允许自动扫描整个 home |
+| `externalImport.sources[].root` | 必须是显式路径；不允许自动扫描整个 home；显式命令触发 discovery 时仍会扫描该 root 下 JSONL 文件，配置大目录会增加响应延迟 |
 | `externalImport.sources[].projectPathAllowlist` | 非空时只接受 project path 命中的 session；路径比较使用规范化绝对路径 |
 | `providerCapture.enabled` | 默认 `false`；开启也必须通过 support matrix 判定 |
 | `providerCapture.bindHost` | 默认只能绑定 loopback；非 loopback 需要后续安全 spec 扩展 |
@@ -397,6 +397,7 @@ TrajectoryPage {
 - `includeContent = true` 仍必须返回 redacted 内容；不得读取外部原始 transcript。
 - `limit` 必须有上限，默认 100，最大 1000。
 - 按 `ts ASC, sequence ASC` 稳定排序。
+- SQLite store 使用 keyset cursor；in-memory store 仅用于测试/进程内 scaffold，cursor 是 offset，不能跨 store 类型混用，也不保证并发写入时分页稳定。
 - 查询不到内容与 redaction dropped 必须可区分。
 
 ## 错误码

@@ -20,6 +20,7 @@ import { InMemoryTrajectoryStore } from './trajectory-store.js';
 const tempDirs: string[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) rmSync(dir, { recursive: true, force: true });
@@ -263,6 +264,39 @@ describe('ProviderCaptureService', () => {
     expect(store.getProviderCallObservation('obs-new')).toBeDefined();
     expect(store.queryTrajectory({ source: 'provider-call' }).segments.map((s) => s.providerObservationId))
       .toEqual(['obs-new']);
+  });
+
+  it('runs scheduled retention until stopped', () => {
+    vi.useFakeTimers();
+    const store = new InMemoryTrajectoryStore();
+    const applied: number[] = [];
+    const service = new ProviderCaptureService({
+      config: providerConfig({ enabled: true, mode: 'transcript-only', retentionDays: 30 }),
+      store,
+      now: () => new Date('2026-06-23T11:00:00.000Z'),
+      idFactory: fixedIdFactory('obs-old'),
+    });
+    service.recordProviderCall({
+      backend: 'codex',
+      captureMode: 'transcript-only',
+      sessionId: 'sess-1',
+      requestStartedAt: new Date('2026-05-01T00:00:00.000Z'),
+      alignment: { confidence: 'low', reasons: ['old'] },
+      trajectorySequence: 1,
+    });
+
+    const handle = service.startRetentionSweep({
+      intervalMs: 1000,
+      onApplied: (result) => applied.push(result.deletedObservations),
+    });
+
+    vi.advanceTimersByTime(1000);
+    expect(applied).toEqual([1]);
+    expect(store.getProviderCallObservation('obs-old')).toBeUndefined();
+
+    handle.stop();
+    vi.advanceTimersByTime(1000);
+    expect(applied).toEqual([1]);
   });
 });
 

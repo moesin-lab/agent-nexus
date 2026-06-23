@@ -33,6 +33,8 @@ import {
   loadSecret,
 } from './config.js';
 
+const PROVIDER_RETENTION_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 async function main(): Promise<void> {
   let config;
   const tokensByRef = new Map<string, string>();
@@ -120,14 +122,14 @@ async function main(): Promise<void> {
   const providerCapture = config.daemon.trajectory.providerCapture.enabled
     ? providerCaptureService
     : undefined;
+  let providerRetentionSweep: { stop(): void } | undefined;
   if (providerCapture) {
-    const retention = providerCapture.applyRetention();
-    if (retention.deletedObservations > 0) {
-      logger.info(
-        { deletedObservations: retention.deletedObservations },
-        'provider_capture_retention_applied',
-      );
-    }
+    applyProviderRetention(providerCapture);
+    providerRetentionSweep = providerCapture.startRetentionSweep({
+      intervalMs: PROVIDER_RETENTION_SWEEP_INTERVAL_MS,
+      onApplied: logProviderRetention,
+      onError: (err) => logger.error({ err }, 'provider_capture_retention_failed'),
+    });
   }
   const engines: Engine[] = [];
   // targets 在下面循环里随 engine 创建逐个填充；reloader 调用时才读取
@@ -254,6 +256,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutdown_signal');
     try {
+      providerRetentionSweep?.stop();
       await Promise.all(engines.map((engine) => engine.stop()));
     } catch (err) {
       logger.error({ err }, 'shutdown_error');
@@ -269,6 +272,23 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => {
     void shutdown('SIGTERM');
   });
+
+  function applyProviderRetention(provider: ProviderCaptureService): void {
+    try {
+      logProviderRetention(provider.applyRetention());
+    } catch (err) {
+      logger.error({ err }, 'provider_capture_retention_failed');
+    }
+  }
+
+  function logProviderRetention(retention: { deletedObservations: number }): void {
+    if (retention.deletedObservations > 0) {
+      logger.info(
+        { deletedObservations: retention.deletedObservations },
+        'provider_capture_retention_applied',
+      );
+    }
+  }
 }
 
 main().catch((err: unknown) => {

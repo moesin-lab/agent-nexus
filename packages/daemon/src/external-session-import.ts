@@ -32,6 +32,7 @@ import type {
   TrajectorySegmentKind,
   TrajectoryStore,
 } from './trajectory-store.js';
+import { titleFromMetadataJson } from './trajectory-utils.js';
 
 export interface DiscoverExternalSessionsInput {
   root: string;
@@ -121,7 +122,7 @@ export class ExternalSessionImportServiceError extends Error {
 }
 
 export interface ExternalSessionImporter {
-  run(): ExternalSessionImportRunResult;
+  run(): ExternalSessionImportRunResult | Promise<ExternalSessionImportRunResult>;
   bindToRoutingSession(input: {
     importId: string;
     sessionKey: SessionKey;
@@ -236,7 +237,7 @@ export class ExternalSessionImportService implements ExternalSessionImporter {
     this.sessionStore.bindExternalResumeToKey(input.sessionKey, {
       agentSessionId: binding.nativeSessionRef,
       lastTurnAt: linkedAtDate,
-      title: titleFromMetadata(record.metadataJson) ?? record.sourceSessionId,
+      title: titleFromMetadataJson(record.metadataJson) ?? record.sourceSessionId,
     });
     return binding;
   }
@@ -935,19 +936,6 @@ export function agentOwnerForExternalSourceAdapter(
   }
   if (sourceAdapter === 'claude-code-jsonl') return 'claudecode';
   return undefined;
-}
-
-function titleFromMetadata(metadataJson: string): string | undefined {
-  try {
-    const parsed = JSON.parse(metadataJson) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return undefined;
-    }
-    const title = (parsed as Record<string, unknown>)['title'];
-    return typeof title === 'string' && title.length > 0 ? title : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

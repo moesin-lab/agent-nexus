@@ -3359,7 +3359,11 @@ describe('Engine', () => {
 
     await engine.start();
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
-    const listResult = await dispatchHandler(makeCommandEvent('nexus-external-sessions'));
+    const listPromise = Promise.resolve(
+      dispatchHandler(makeCommandEvent('nexus-external-sessions')),
+    );
+    expect(externalSessionImporter.run).not.toHaveBeenCalled();
+    const listResult = await listPromise;
 
     expect(listResult).toMatchObject({
       commandResponse: {

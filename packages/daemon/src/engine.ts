@@ -47,6 +47,10 @@ import {
   QueueItemCancelledError,
   queueKeyFromEvent,
 } from './message-queue.js';
+import type {
+  ProviderCaptureRecordResult,
+  ProviderCaptureRecorder,
+} from './provider-capture.js';
 import { BasicRedactor, type Redactor } from './redaction.js';
 import { RouteError, selectRoute, type RoutingEntry } from './router.js';
 import type { SessionStore } from './session-store.js';
@@ -117,6 +121,7 @@ export interface EngineDeps {
     store?: TrajectoryStore;
   };
   externalSessionImporter?: ExternalSessionImporter;
+  providerCapture?: ProviderCaptureRecorder;
 }
 
 const DEFAULT_STREAM_EDIT_THROTTLE_MS = 1500;
@@ -327,6 +332,7 @@ export class Engine {
   private readonly trajectoryEnabled: boolean;
   private readonly trajectoryStore?: TrajectoryStore;
   private readonly externalSessionImporter?: ExternalSessionImporter;
+  private readonly providerCapture?: ProviderCaptureRecorder;
   private readonly streamEditThrottleMs: number;
   private readonly typingRefreshMs: number;
   private readonly agentSessions = new Map<string, ActiveAgentSession>();
@@ -379,6 +385,7 @@ export class Engine {
     this.trajectoryEnabled = deps.trajectory?.enabled ?? true;
     this.trajectoryStore = deps.trajectory?.store;
     this.externalSessionImporter = deps.externalSessionImporter;
+    this.providerCapture = deps.providerCapture;
     this.streamEditThrottleMs =
       deps.streaming?.streamEditThrottleMs ?? DEFAULT_STREAM_EDIT_THROTTLE_MS;
     this.typingRefreshMs =
@@ -2672,6 +2679,68 @@ export class Engine {
     }
   }
 
+  private recordProviderUsageBestEffort(
+    active: ActiveAgentSession,
+    event: Extract<AgentEvent, { type: 'usage' }>,
+    agentSlot: EngineAgent,
+  ): void {
+    if (!this.providerCapture) return;
+    const backend = agentSlot.agentOwner ?? agentSlot.agent.name();
+    let result: ProviderCaptureRecordResult;
+    try {
+      result = this.providerCapture.recordUsageObservation({
+        backend,
+        sessionId: active.sessionId,
+        traceId: event.traceId,
+        observedAt: event.timestamp,
+        agentEventSequence: event.sequence,
+        trajectorySequence: this.sessionStore.nextTrajectorySequence(
+          active.sessionId,
+        ),
+        usage: event.payload,
+      });
+    } catch (err) {
+      this.logger.warn(
+        {
+          traceId: event.traceId,
+          sessionId: active.sessionId,
+          backend,
+          err,
+        },
+        'provider_capture_failed',
+      );
+      return;
+    }
+
+    if (result.status === 'recorded') {
+      this.logger.info(
+        {
+          traceId: event.traceId,
+          sessionId: active.sessionId,
+          backend,
+          captureMode: 'transcript-only',
+          observationId: result.observationId,
+          alignmentConfidence: 'medium',
+          redactionState: 'metadata-only',
+        },
+        'provider_call_observed',
+      );
+      return;
+    }
+    if (result.status === 'unsupported' || result.status === 'dropped') {
+      this.logger.warn(
+        {
+          traceId: event.traceId,
+          sessionId: active.sessionId,
+          backend,
+          code: result.code,
+          reason: result.status === 'unsupported' ? result.reason : undefined,
+        },
+        'provider_capture_failed',
+      );
+    }
+  }
+
   private appendAgentEventTrajectoryBestEffort(
     active: ActiveAgentSession,
     event: AgentEvent,
@@ -3062,6 +3131,13 @@ export class Engine {
               e,
               sessionKeyStr,
             );
+            if (e.type === 'usage') {
+              this.recordProviderUsageBestEffort(
+                activeSessionForTrajectory,
+                e,
+                agentSlot,
+              );
+            }
           }
           if (e.type === 'session_started') {
             const agentSessionId = e.payload.agentSessionId;

@@ -30,6 +30,7 @@ import { Engine } from './engine.js';
 import { ExternalSessionImportServiceError } from './external-session-import.js';
 import { InMemoryIdempotencyStore } from './idempotency.js';
 import { createLogger, type Logger } from './logger.js';
+import { ProviderCaptureService } from './provider-capture.js';
 import type { RoutingEntry } from './router.js';
 import { SessionStore } from './session-store.js';
 import {
@@ -560,6 +561,7 @@ function makeThrowingTrajectoryStore(): TrajectoryStore & {
     }),
     recordProviderCallObservation: vi.fn(),
     getProviderCallObservation: vi.fn(() => undefined),
+    pruneProviderCallObservations: vi.fn(() => 0),
     queryTrajectory: vi.fn(() => ({ segments: [] })),
   };
 }
@@ -702,6 +704,100 @@ describe('Engine', () => {
       turnSequence: 1,
       usageEventId: expect.any(String),
     });
+  });
+
+  it('provider capture enabled 时把 usage AgentEvent 记录为 transcript-only provider observation', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const trajectoryStore = new InMemoryTrajectoryStore();
+    const providerCapture = new ProviderCaptureService({
+      config: {
+        enabled: true,
+        mode: 'transcript-only',
+        bindHost: '127.0.0.1',
+        port: null,
+        storeRawStreams: false,
+        maxRequestBytes: 1024,
+        maxResponseBytes: 1024,
+        retentionDays: 30,
+      },
+      store: trajectoryStore,
+      idFactory: () => 'obs-engine-usage',
+    });
+    const engine = new Engine({
+      platform,
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: agent.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'mock-platform',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      trajectory: { enabled: true, store: trajectoryStore },
+      providerCapture,
+    });
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-123' }, 1),
+      ev(
+        'usage',
+        {
+          model: 'gpt-5',
+          inputTokens: 10,
+          outputTokens: 5,
+          cacheReadTokens: 1,
+          cacheWriteTokens: 2,
+          costUsd: null,
+          turnSequence: 1,
+          toolCallsThisTurn: 0,
+          wallClockMs: 1000,
+          completeness: 'partial',
+        },
+        2,
+      ),
+      ev('text_final', { text: 'answer' }, 3),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }, 4),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello'));
+
+    const sessionId = (agent.startSession.mock.calls[0]![1] as SessionConfig)
+      .sessionId;
+    expect(trajectoryStore.getProviderCallObservation('obs-engine-usage'))
+      .toMatchObject({
+        sessionId,
+        traceId: 't-1',
+        backend: 'codex',
+        captureMode: 'transcript-only',
+        model: 'gpt-5',
+        redactionState: 'metadata-only',
+      });
+    expect(
+      trajectoryStore.queryTrajectory({ source: 'provider-call' }).segments,
+    ).toEqual([
+      expect.objectContaining({
+        sessionId,
+        providerObservationId: 'obs-engine-usage',
+        kind: 'usage',
+        source: 'provider-call',
+      }),
+    ]);
   });
 
   it('trajectory enabled=false 时不写 read model', async () => {

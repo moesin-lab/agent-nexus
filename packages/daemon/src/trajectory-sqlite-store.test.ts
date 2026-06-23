@@ -182,6 +182,55 @@ describe('SqliteTrajectoryStore', () => {
     store.close();
   });
 
+  it('prunes old provider observations and their provider-call segments', () => {
+    const store = new SqliteTrajectoryStore({ path: tempDbPath() });
+    store.recordProviderCallObservation(
+      observation({
+        observationId: 'obs-old',
+        requestStartedAt: '2026-05-01T00:00:00.000Z',
+      }),
+    );
+    store.recordProviderCallObservation(
+      observation({
+        observationId: 'obs-new',
+        requestStartedAt: '2026-06-20T00:00:00.000Z',
+      }),
+    );
+    store.appendTrajectorySegment(
+      segment({
+        segmentId: 'seg-old-provider',
+        importId: undefined,
+        providerObservationId: 'obs-old',
+        source: 'provider-call',
+        kind: 'provider-request',
+        sequence: 1,
+      }),
+    );
+    store.appendTrajectorySegment(
+      segment({
+        segmentId: 'seg-new-provider',
+        importId: undefined,
+        providerObservationId: 'obs-new',
+        source: 'provider-call',
+        kind: 'provider-request',
+        sequence: 2,
+      }),
+    );
+
+    expect(
+      store.pruneProviderCallObservations({
+        before: '2026-06-01T00:00:00.000Z',
+      }),
+    ).toBe(1);
+
+    expect(store.getProviderCallObservation('obs-old')).toBeUndefined();
+    expect(store.getProviderCallObservation('obs-new')).toBeDefined();
+    expect(
+      store.queryTrajectory({ source: 'provider-call' }).segments.map((s) => s.segmentId),
+    ).toEqual(['seg-new-provider']);
+    store.close();
+  });
+
   it('queries with stable keyset pagination and confidence filtering', () => {
     const store = new SqliteTrajectoryStore({ path: tempDbPath() });
 

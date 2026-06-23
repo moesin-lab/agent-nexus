@@ -81,7 +81,7 @@ ExternalImportSourceConfig {
 
 ProviderCaptureConfig {
     enabled: boolean = false
-    mode: "reverse-proxy" | "forward-proxy" | "transcript-only"
+    mode: "reverse-proxy" | "forward-proxy" | "transcript-only" = "transcript-only"
     bindHost: string = "127.0.0.1"
     port: integer? = null
     storeRawStreams: boolean = false

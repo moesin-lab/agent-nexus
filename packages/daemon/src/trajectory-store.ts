@@ -160,6 +160,20 @@ export interface TrajectoryPage {
   nextCursor?: string;
 }
 
+export interface TrajectoryStore {
+  upsertExternalSessionImport(record: ExternalSessionImportRecord): void;
+  getExternalSessionImport(
+    importId: string,
+  ): ExternalSessionImportRecord | undefined;
+  linkExternalSession(input: LinkExternalSessionInput): ExternalResumeBinding;
+  appendTrajectorySegment(segment: TrajectorySegment): void;
+  recordProviderCallObservation(observation: ProviderCallObservation): void;
+  getProviderCallObservation(
+    observationId: string,
+  ): ProviderCallObservation | undefined;
+  queryTrajectory(query: TrajectoryQuery): TrajectoryPage;
+}
+
 export type TrajectoryStoreErrorCode =
   | 'external-import-not-found'
   | 'native-resume-unavailable'
@@ -178,7 +192,7 @@ export class TrajectoryStoreError extends Error {
   }
 }
 
-export class InMemoryTrajectoryStore {
+export class InMemoryTrajectoryStore implements TrajectoryStore {
   private readonly imports = new Map<string, ExternalSessionImportRecord>();
   private readonly segments = new Map<string, TrajectorySegment>();
   private readonly observations = new Map<string, ProviderCallObservation>();
@@ -368,7 +382,7 @@ export interface SqliteTrajectoryStoreInput {
   redactor?: Redactor;
 }
 
-export class SqliteTrajectoryStore {
+export class SqliteTrajectoryStore implements TrajectoryStore {
   private readonly db: BetterSqliteDatabase;
   private readonly ownsDatabase: boolean;
   private readonly redactor: Redactor;

@@ -363,7 +363,7 @@ platformName + platform + channelId + initiatorUserId
 - `platforms[].auth` 的热应用以**重启等价**为准：成功 reload 后 daemon engine 鉴权（全维度 allowlist）与 platform adapter 内部授权数据（inbound guard、`/discord-reply-mode` 的 userIds 列表）必须与用新配置重启进程后一致；只换其一视为违反本 spec。
 - 已知限制（重启路径同样受限）：adapter 内部命令（`/discord-reply-mode`）的授权仅基于 `userIds` 维度；role / guild / channel 维度待 platform command 经 daemon dispatch 统一鉴权后覆盖。
 - `ui.toolMessages` 与 `textPrefixes` 在 turn 边界生效：进行中的 turn 沿用其开始时的值，不得中途混合渲染。
-- 仅重启生效字段：`platforms[]` 其余字段、`agents[]`、`log`、`daemon.commandRegistry` 其余字段。这些 section 有变化时，成功响应必须提示重启后才生效。
+- 仅重启生效字段：`platforms[]` 其余字段、`agents[]`、`log`、`daemon.commandRegistry` 其余字段、`daemon.trajectory`。这些 section 有变化时，成功响应必须提示重启后才生效。
 
 并发与时序：
 

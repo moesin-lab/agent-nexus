@@ -26,6 +26,34 @@ describe('SessionStore', () => {
     expect(store.size).toBe(1);
   });
 
+  it('ensureSessionId reuses a key-bound Nexus sessionId until delete', () => {
+    const store = new SessionStore();
+    const key = makeKey();
+
+    const first = store.ensureSessionId(key);
+    expect(first).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(store.ensureSessionId(key)).toBe(first);
+    expect(store.nextTrajectorySequence(first)).toBe(1);
+    expect(store.nextTrajectorySequence(first)).toBe(2);
+
+    store.set(key, { agentSessionId: 'sid-1', lastTurnAt: new Date(0) });
+    expect(
+      store.listForUser({
+        platformName: 'discord-main',
+        platform: 'discord',
+        initiatorUserId: 'U1',
+        limit: 1,
+      })[0]?.sessionId,
+    ).toBe(first);
+
+    store.delete(key);
+    const next = store.ensureSessionId(key);
+    expect(next).not.toBe(first);
+    expect(store.nextTrajectorySequence(next)).toBe(1);
+  });
+
   it('different platformName/platform/channel/user produce different map keys', () => {
     const store = new SessionStore();
     const k1 = makeKey({ platformName: 'discord-main' });

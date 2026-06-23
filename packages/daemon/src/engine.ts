@@ -18,6 +18,8 @@ import type {
   SessionConfig,
   SessionKey,
   SettingsSnapshotItem,
+  ToolResultContent,
+  UsageRecord,
 } from '@agent-nexus/protocol';
 import { serializeSessionKey, withPlatformName } from '@agent-nexus/protocol';
 import { checkPlatformAuth } from './auth.js';
@@ -42,6 +44,11 @@ import {
 import { BasicRedactor, type Redactor } from './redaction.js';
 import { RouteError, selectRoute, type RoutingEntry } from './router.js';
 import type { SessionStore } from './session-store.js';
+import type {
+  TrajectorySegment,
+  TrajectorySegmentKind,
+  TrajectoryStore,
+} from './trajectory-store.js';
 
 export interface EngineAgent {
   agent: AgentRuntime;
@@ -99,6 +106,10 @@ export interface EngineDeps {
   textPrefixes?: {
     newSession?: boolean;
   };
+  trajectory?: {
+    enabled?: boolean;
+    store?: TrajectoryStore;
+  };
 }
 
 const DEFAULT_STREAM_EDIT_THROTTLE_MS = 1500;
@@ -138,6 +149,7 @@ interface ActiveAgentSession {
   agent: AgentRuntime;
   agentName: string;
   session: AgentSession;
+  sessionId: string;
   currentTurn?: {
     eventId: string;
     traceId: string;
@@ -175,6 +187,40 @@ function renderToolStart(toolName: string, inputSummary: string): string {
     return `Bash:\n${codeBlock('bash', summary)}`;
   }
   return `${toolName}: ${summary}`;
+}
+
+function summarizeToolResultContent(content: ToolResultContent): string {
+  switch (content.kind) {
+    case 'empty':
+      return '(empty result)';
+    case 'text':
+      return content.text;
+    case 'blocks':
+      return `${content.blocks.length} content block(s)`;
+    case 'object':
+      return safeJson(content.object);
+    case 'unknown':
+      return content.raw;
+  }
+}
+
+function summarizeUsageRecord(usage: UsageRecord): string {
+  const cost =
+    usage.costUsd === null ? 'cost unknown' : `cost $${usage.costUsd.toFixed(6)}`;
+  return [
+    usage.model,
+    `input ${usage.inputTokens}`,
+    `output ${usage.outputTokens}`,
+    cost,
+  ].join(', ');
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '{"serialization":"failed"}';
+  }
 }
 
 function sessionTitleFromPrompt(prompt: string): string | undefined {
@@ -256,6 +302,8 @@ export class Engine {
   private readonly agents: Map<string, EngineAgent>;
   private readonly logger: Logger;
   private readonly sessionStore: SessionStore;
+  private readonly trajectoryEnabled: boolean;
+  private readonly trajectoryStore?: TrajectoryStore;
   private readonly streamEditThrottleMs: number;
   private readonly typingRefreshMs: number;
   private readonly agentSessions = new Map<string, ActiveAgentSession>();
@@ -305,6 +353,8 @@ export class Engine {
     }
     this.logger = deps.logger;
     this.sessionStore = deps.sessionStore;
+    this.trajectoryEnabled = deps.trajectory?.enabled ?? true;
+    this.trajectoryStore = deps.trajectory?.store;
     this.streamEditThrottleMs =
       deps.streaming?.streamEditThrottleMs ?? DEFAULT_STREAM_EDIT_THROTTLE_MS;
     this.typingRefreshMs =
@@ -2256,6 +2306,252 @@ export class Engine {
     }
   }
 
+  private appendNexusTrajectorySegment(
+    active: ActiveAgentSession,
+    input: {
+      kind: TrajectorySegmentKind;
+      traceId?: string;
+      turnSequence?: number;
+      ts: string;
+      summary: string;
+      usageEventId?: string;
+      metadata: Record<string, unknown>;
+    },
+  ): void {
+    if (!this.trajectoryEnabled || !this.trajectoryStore) return;
+    const segment: TrajectorySegment = {
+      segmentId: randomUUID(),
+      sessionId: active.sessionId,
+      source: 'nexus-agent-event',
+      kind: input.kind,
+      sequence: this.sessionStore.nextTrajectorySequence(active.sessionId),
+      ts: input.ts,
+      summary: input.summary,
+      confidence: 'high',
+      redactionState: 'redacted',
+      metadataJson: safeJson(input.metadata),
+    };
+    if (input.traceId) segment.traceId = input.traceId;
+    if (input.turnSequence !== undefined) {
+      segment.turnSequence = input.turnSequence;
+    }
+    if (input.usageEventId) segment.usageEventId = input.usageEventId;
+
+    try {
+      this.trajectoryStore.appendTrajectorySegment(segment);
+    } catch (err) {
+      this.logger.warn(
+        {
+          traceId: input.traceId,
+          sessionId: active.sessionId,
+          kind: input.kind,
+          err,
+        },
+        'trajectory_segment_append_failed',
+      );
+    }
+  }
+
+  private appendInboundTrajectorySegment(
+    active: ActiveAgentSession,
+    event: NormalizedEvent & { sessionKey: SessionKey },
+    prompt: string,
+    sessionKeyStr: string,
+    agentName: string,
+  ): void {
+    this.appendNexusTrajectorySegment(active, {
+      kind: 'user-message',
+      traceId: event.traceId,
+      ts: event.receivedAt.toISOString(),
+      summary: prompt,
+      metadata: {
+        eventId: event.eventId,
+        messageId: event.messageId,
+        platform: event.platform,
+        rawContentType: event.rawContentType,
+        sessionKey: sessionKeyStr,
+        agentName,
+      },
+    });
+  }
+
+  private appendAgentEventTrajectorySegment(
+    active: ActiveAgentSession,
+    event: AgentEvent,
+    sessionKeyStr: string,
+  ): void {
+    const baseMetadata = {
+      eventType: event.type,
+      agentEventSequence: event.sequence,
+      sessionKey: sessionKeyStr,
+    };
+    switch (event.type) {
+      case 'session_started':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'state-change',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: event.payload.agentSessionId
+            ? `session started: ${event.payload.agentSessionId}`
+            : 'session started',
+          metadata: {
+            ...baseMetadata,
+            agentSessionId: event.payload.agentSessionId,
+            workingDir: event.payload.workingDir,
+          },
+        });
+        return;
+      case 'thinking':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'reasoning',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: event.payload.text,
+          metadata: baseMetadata,
+        });
+        return;
+      case 'text_delta':
+        return;
+      case 'text_final':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'agent-message',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: event.payload.text,
+          metadata: baseMetadata,
+        });
+        return;
+      case 'tool_call_started':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'tool-call',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: `${event.payload.toolName}: ${event.payload.inputSummary}`,
+          metadata: {
+            ...baseMetadata,
+            callId: event.payload.callId,
+            toolName: event.payload.toolName,
+          },
+        });
+        return;
+      case 'tool_call_progress':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'state-change',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: `[tool: ${event.payload.callId}] ${event.payload.note}`,
+          metadata: {
+            ...baseMetadata,
+            callId: event.payload.callId,
+          },
+        });
+        return;
+      case 'tool_result':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'tool-result',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: summarizeToolResultContent(event.payload.content),
+          metadata: {
+            ...baseMetadata,
+            callId: event.payload.callId,
+            resultSequence: event.payload.resultSequence,
+            isError: event.payload.isError,
+            contentKind: event.payload.content.kind,
+          },
+        });
+        return;
+      case 'tool_call_finished':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'state-change',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: `${event.payload.toolName}: ${event.payload.status}`,
+          metadata: {
+            ...baseMetadata,
+            callId: event.payload.callId,
+            toolName: event.payload.toolName,
+            status: event.payload.status,
+            errorSummary: event.payload.errorSummary,
+          },
+        });
+        return;
+      case 'usage':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'usage',
+          traceId: event.traceId,
+          turnSequence: event.payload.turnSequence,
+          ts: event.timestamp.toISOString(),
+          summary: summarizeUsageRecord(event.payload),
+          usageEventId: `${active.sessionId}:usage:${event.sequence}`,
+          metadata: {
+            ...baseMetadata,
+            usage: event.payload,
+          },
+        });
+        return;
+      case 'turn_finished':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'state-change',
+          traceId: event.traceId,
+          turnSequence: event.payload.turnSequence,
+          ts: event.timestamp.toISOString(),
+          summary: `turn finished: ${event.payload.reason}`,
+          metadata: {
+            ...baseMetadata,
+            reason: event.payload.reason,
+            source: event.payload.source,
+          },
+        });
+        return;
+      case 'error':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'state-change',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: `[agent error: ${event.payload.errorKind}] ${event.payload.message}`,
+          metadata: {
+            ...baseMetadata,
+            errorKind: event.payload.errorKind,
+            code: event.payload.code,
+          },
+        });
+        return;
+      case 'session_stopped':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'state-change',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: `session stopped: ${event.payload.reason}`,
+          metadata: {
+            ...baseMetadata,
+            reason: event.payload.reason,
+          },
+        });
+        return;
+    }
+  }
+
+  private appendAgentEventTrajectoryBestEffort(
+    active: ActiveAgentSession,
+    event: AgentEvent,
+    sessionKeyStr: string,
+  ): void {
+    try {
+      this.appendAgentEventTrajectorySegment(active, event, sessionKeyStr);
+    } catch (err) {
+      this.logger.warn(
+        {
+          traceId: event.traceId,
+          sessionId: active.sessionId,
+          eventType: event.type,
+          err,
+        },
+        'trajectory_event_mapping_failed',
+      );
+    }
+  }
+
   private async dispatchImpl(
     event: NormalizedEvent & { sessionKey: SessionKey },
     agentSlot: EngineAgent,
@@ -2349,6 +2645,7 @@ export class Engine {
       let toolStatus: string | undefined;
       const toolCallStartedAt = new Map<string, number>();
       const toolMessages = new Map<string, ToolMessageState>();
+      let activeSessionForTrajectory: ActiveAgentSession | undefined;
 
       const safeSend = async (text: string): Promise<MessageRef | undefined> => {
         try {
@@ -2619,6 +2916,13 @@ export class Engine {
 
       const handler = async (e: AgentEvent): Promise<void> => {
         try {
+          if (activeSessionForTrajectory) {
+            this.appendAgentEventTrajectoryBestEffort(
+              activeSessionForTrajectory,
+              e,
+              sessionKeyStr,
+            );
+          }
           if (e.type === 'session_started') {
             const agentSessionId = e.payload.agentSessionId;
             if (agentSessionId) {
@@ -2807,6 +3111,7 @@ export class Engine {
         sessionKeyStr,
         agentSlot,
       );
+      activeSessionForTrajectory = activeSession;
       session = activeSession.session;
       activeSession.currentTurn = {
         eventId: event.eventId,
@@ -2816,6 +3121,13 @@ export class Engine {
         handle: handler,
       };
       const turnState = activeSession.currentTurn;
+      this.appendInboundTrajectorySegment(
+        activeSession,
+        event,
+        prompt,
+        sessionKeyStr,
+        agentSlot.agentName,
+      );
 
       startTyping();
       let sendInputErr: unknown;
@@ -2896,7 +3208,7 @@ export class Engine {
     const config: SessionConfig = {
       ...agentSlot.defaultSessionConfig,
       workingDir,
-      sessionId: randomUUID(),
+      sessionId: this.sessionStore.ensureSessionId(event.sessionKey),
       resumeFromAgentSessionId: prevAgentSessionId,
     };
     const session = agentSlot.agent.startSession(event.sessionKey, config);
@@ -2904,6 +3216,7 @@ export class Engine {
       agent: agentSlot.agent,
       agentName: agentSlot.agentName,
       session,
+      sessionId: config.sessionId,
     };
     this.agentSessions.set(sessionKeyStr, activeSession);
     agentSlot.agent.onEvent(session, async (agentEvent) => {

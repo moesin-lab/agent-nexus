@@ -29,8 +29,63 @@ export interface DaemonCommandRegistryConfig {
   };
 }
 
+export const TRAJECTORY_SOURCE_ADAPTERS = [
+  'codex-cli-jsonl',
+  'codex-app-jsonl',
+  'claude-code-jsonl',
+] as const;
+export type TrajectorySourceAdapter =
+  (typeof TRAJECTORY_SOURCE_ADAPTERS)[number];
+
+export const PROVIDER_CAPTURE_MODES = [
+  'reverse-proxy',
+  'forward-proxy',
+  'transcript-only',
+] as const;
+export type ProviderCaptureMode = (typeof PROVIDER_CAPTURE_MODES)[number];
+
+export interface ExternalImportSourceConfig {
+  adapter: TrajectorySourceAdapter;
+  root: string;
+  projectPathAllowlist: string[];
+}
+
+export interface ExternalImportConfig {
+  enabled: boolean;
+  sources: ExternalImportSourceConfig[];
+  metadataOnlyDiscovery: boolean;
+  importContent: boolean;
+  maxFileBytes: number;
+  maxRecordsPerSession: number;
+  maxAgeDays: number | null;
+}
+
+export interface ProviderCaptureConfig {
+  enabled: boolean;
+  mode: ProviderCaptureMode;
+  bindHost: string;
+  port: number | null;
+  storeRawStreams: boolean;
+  maxRequestBytes: number;
+  maxResponseBytes: number;
+  retentionDays: number;
+}
+
+export interface TrajectoryRetentionConfig {
+  importedSegmentsDays: number | null;
+  providerObservationsDays: number | null;
+}
+
+export interface TrajectoryObservabilityConfig {
+  enabled: boolean;
+  externalImport: ExternalImportConfig;
+  providerCapture: ProviderCaptureConfig;
+  retention: TrajectoryRetentionConfig;
+}
+
 export interface DaemonRuntimeConfig {
   commandRegistry: DaemonCommandRegistryConfig;
+  trajectory: TrajectoryObservabilityConfig;
 }
 
 export const DEFAULT_DAEMON_RUNTIME_CONFIG: DaemonRuntimeConfig = {
@@ -53,6 +108,32 @@ export const DEFAULT_DAEMON_RUNTIME_CONFIG: DaemonRuntimeConfig = {
     },
     textPrefixes: {
       newSession: true,
+    },
+  },
+  trajectory: {
+    enabled: true,
+    externalImport: {
+      enabled: false,
+      sources: [],
+      metadataOnlyDiscovery: true,
+      importContent: false,
+      maxFileBytes: 10485760,
+      maxRecordsPerSession: 20000,
+      maxAgeDays: null,
+    },
+    providerCapture: {
+      enabled: false,
+      mode: 'transcript-only',
+      bindHost: '127.0.0.1',
+      port: null,
+      storeRawStreams: false,
+      maxRequestBytes: 1048576,
+      maxResponseBytes: 4194304,
+      retentionDays: 30,
+    },
+    retention: {
+      importedSegmentsDays: 90,
+      providerObservationsDays: 30,
     },
   },
 };
@@ -113,6 +194,20 @@ function parseStringArray(
   return [...value];
 }
 
+function parseNonEmptyString(
+  raw: Record<string, unknown>,
+  key: string,
+  path: string,
+  defaultValue?: string,
+): string {
+  const value = raw[key];
+  if (value === undefined && defaultValue !== undefined) return defaultValue;
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new DaemonConfigError(`字段 ${path}.${key} 必须是非空字符串`);
+  }
+  return value;
+}
+
 function parseBoolean(
   raw: Record<string, unknown>,
   key: string,
@@ -140,6 +235,58 @@ function parseInteger(
     throw new DaemonConfigError(`字段 ${path}.${key} 必须是 >= ${min} 的整数`);
   }
   return value;
+}
+
+function parseNullableInteger(
+  raw: Record<string, unknown>,
+  key: string,
+  path: string,
+  defaultValue: number | null,
+  min: number,
+): number | null {
+  const value = raw[key];
+  if (value === undefined) return defaultValue;
+  if (value === null) return null;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min) {
+    throw new DaemonConfigError(`字段 ${path}.${key} 必须是 null 或 >= ${min} 的整数`);
+  }
+  return value;
+}
+
+function parseEnum<T extends readonly string[]>(
+  raw: Record<string, unknown>,
+  key: string,
+  path: string,
+  allowed: T,
+  defaultValue: T[number],
+): T[number] {
+  const value = raw[key];
+  if (value === undefined) return defaultValue;
+  if (typeof value !== 'string' || !allowed.includes(value)) {
+    throw new DaemonConfigError(
+      `字段 ${path}.${key} 必须是 ${allowed.map((v) => `"${v}"`).join(' / ')}`,
+    );
+  }
+  return value;
+}
+
+function parseRequiredEnum<T extends readonly string[]>(
+  raw: Record<string, unknown>,
+  key: string,
+  path: string,
+  allowed: T,
+): T[number] {
+  const value = raw[key];
+  if (typeof value !== 'string' || !allowed.includes(value)) {
+    throw new DaemonConfigError(
+      `字段 ${path}.${key} 必须是 ${allowed.map((v) => `"${v}"`).join(' / ')}`,
+    );
+  }
+  return value;
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
 }
 
 export function parsePlatformAuthConfig(
@@ -222,13 +369,251 @@ export function parseDaemonConfig(raw: unknown): DaemonConfig {
   };
 }
 
+function parseExternalImportSource(
+  raw: unknown,
+  index: number,
+): ExternalImportSourceConfig {
+  const path = `daemon.trajectory.externalImport.sources[${index}]`;
+  if (!isRecord(raw)) {
+    throw new DaemonConfigError(`字段 ${path} 必须是对象`);
+  }
+  assertNoUnknownKeys(raw, ['adapter', 'root', 'projectPathAllowlist'], path);
+  return {
+    adapter: parseRequiredEnum(
+      raw,
+      'adapter',
+      path,
+      TRAJECTORY_SOURCE_ADAPTERS,
+    ),
+    root: parseNonEmptyString(raw, 'root', path),
+    projectPathAllowlist: parseStringArray(
+      raw,
+      'projectPathAllowlist',
+      path,
+    ),
+  };
+}
+
+function parseExternalImportConfig(raw: unknown): ExternalImportConfig {
+  const path = 'daemon.trajectory.externalImport';
+  if (raw !== undefined && !isRecord(raw)) {
+    throw new DaemonConfigError(`字段 ${path} 必须是对象`);
+  }
+  const externalImport = (raw ?? {}) as Record<string, unknown>;
+  assertNoUnknownKeys(
+    externalImport,
+    [
+      'enabled',
+      'sources',
+      'metadataOnlyDiscovery',
+      'importContent',
+      'maxFileBytes',
+      'maxRecordsPerSession',
+      'maxAgeDays',
+    ],
+    path,
+  );
+
+  const sourcesRaw = externalImport['sources'];
+  if (sourcesRaw !== undefined && !Array.isArray(sourcesRaw)) {
+    throw new DaemonConfigError(`字段 ${path}.sources 必须是对象数组`);
+  }
+
+  return {
+    enabled: parseBoolean(
+      externalImport,
+      'enabled',
+      path,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.externalImport.enabled,
+    ),
+    sources: (sourcesRaw ?? []).map((source, index) =>
+      parseExternalImportSource(source, index),
+    ),
+    metadataOnlyDiscovery: parseBoolean(
+      externalImport,
+      'metadataOnlyDiscovery',
+      path,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.externalImport.metadataOnlyDiscovery,
+    ),
+    importContent: parseBoolean(
+      externalImport,
+      'importContent',
+      path,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.externalImport.importContent,
+    ),
+    maxFileBytes: parseInteger(
+      externalImport,
+      'maxFileBytes',
+      path,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.externalImport.maxFileBytes,
+      1,
+    ),
+    maxRecordsPerSession: parseInteger(
+      externalImport,
+      'maxRecordsPerSession',
+      path,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.externalImport.maxRecordsPerSession,
+      1,
+    ),
+    maxAgeDays: parseNullableInteger(
+      externalImport,
+      'maxAgeDays',
+      path,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.externalImport.maxAgeDays,
+      1,
+    ),
+  };
+}
+
+function parseProviderCaptureConfig(raw: unknown): ProviderCaptureConfig {
+  const path = 'daemon.trajectory.providerCapture';
+  if (raw !== undefined && !isRecord(raw)) {
+    throw new DaemonConfigError(`字段 ${path} 必须是对象`);
+  }
+  const providerCapture = (raw ?? {}) as Record<string, unknown>;
+  assertNoUnknownKeys(
+    providerCapture,
+    [
+      'enabled',
+      'mode',
+      'bindHost',
+      'port',
+      'storeRawStreams',
+      'maxRequestBytes',
+      'maxResponseBytes',
+      'retentionDays',
+    ],
+    path,
+  );
+
+  const bindHost = parseNonEmptyString(
+    providerCapture,
+    'bindHost',
+    path,
+    DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.providerCapture.bindHost,
+  );
+  if (!isLoopbackHost(bindHost)) {
+    throw new DaemonConfigError(`字段 ${path}.bindHost 必须是 loopback host`);
+  }
+  const port = parseNullableInteger(
+    providerCapture,
+    'port',
+    path,
+    DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.providerCapture.port,
+    1,
+  );
+  if (port !== null && port > 65535) {
+    throw new DaemonConfigError(`字段 ${path}.port 必须是 null 或 1..65535 的整数`);
+  }
+
+  return {
+    enabled: parseBoolean(
+      providerCapture,
+      'enabled',
+      path,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.providerCapture.enabled,
+    ),
+    mode: parseEnum(
+      providerCapture,
+      'mode',
+      path,
+      PROVIDER_CAPTURE_MODES,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.providerCapture.mode,
+    ),
+    bindHost,
+    port,
+    storeRawStreams: parseBoolean(
+      providerCapture,
+      'storeRawStreams',
+      path,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.providerCapture.storeRawStreams,
+    ),
+    maxRequestBytes: parseInteger(
+      providerCapture,
+      'maxRequestBytes',
+      path,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.providerCapture.maxRequestBytes,
+      1,
+    ),
+    maxResponseBytes: parseInteger(
+      providerCapture,
+      'maxResponseBytes',
+      path,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.providerCapture.maxResponseBytes,
+      1,
+    ),
+    retentionDays: parseInteger(
+      providerCapture,
+      'retentionDays',
+      path,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.providerCapture.retentionDays,
+      1,
+    ),
+  };
+}
+
+function parseTrajectoryRetentionConfig(raw: unknown): TrajectoryRetentionConfig {
+  const path = 'daemon.trajectory.retention';
+  if (raw !== undefined && !isRecord(raw)) {
+    throw new DaemonConfigError(`字段 ${path} 必须是对象`);
+  }
+  const retention = (raw ?? {}) as Record<string, unknown>;
+  assertNoUnknownKeys(
+    retention,
+    ['importedSegmentsDays', 'providerObservationsDays'],
+    path,
+  );
+  return {
+    importedSegmentsDays: parseNullableInteger(
+      retention,
+      'importedSegmentsDays',
+      path,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.retention.importedSegmentsDays,
+      1,
+    ),
+    providerObservationsDays: parseNullableInteger(
+      retention,
+      'providerObservationsDays',
+      path,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.retention.providerObservationsDays,
+      1,
+    ),
+  };
+}
+
+function parseTrajectoryObservabilityConfig(
+  raw: unknown,
+): TrajectoryObservabilityConfig {
+  const path = 'daemon.trajectory';
+  if (raw !== undefined && !isRecord(raw)) {
+    throw new DaemonConfigError(`字段 ${path} 必须是对象`);
+  }
+  const trajectory = (raw ?? {}) as Record<string, unknown>;
+  assertNoUnknownKeys(
+    trajectory,
+    ['enabled', 'externalImport', 'providerCapture', 'retention'],
+    path,
+  );
+  return {
+    enabled: parseBoolean(
+      trajectory,
+      'enabled',
+      path,
+      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.enabled,
+    ),
+    externalImport: parseExternalImportConfig(trajectory['externalImport']),
+    providerCapture: parseProviderCaptureConfig(trajectory['providerCapture']),
+    retention: parseTrajectoryRetentionConfig(trajectory['retention']),
+  };
+}
+
 export function parseDaemonRuntimeConfig(raw: unknown): DaemonRuntimeConfig {
   const path = 'daemon';
   if (raw !== undefined && !isRecord(raw)) {
     throw new DaemonConfigError(`字段 ${path} 必须是对象`);
   }
   const daemon = (raw ?? {}) as Record<string, unknown>;
-  assertNoUnknownKeys(daemon, ['commandRegistry'], path);
+  assertNoUnknownKeys(daemon, ['commandRegistry', 'trajectory'], path);
 
   const commandRegistryPath = `${path}.commandRegistry`;
   const commandRegistry = isRecord(daemon['commandRegistry'])
@@ -366,5 +751,6 @@ export function parseDaemonRuntimeConfig(raw: unknown): DaemonRuntimeConfig {
         ),
       },
     },
+    trajectory: parseTrajectoryObservabilityConfig(daemon['trajectory']),
   };
 }

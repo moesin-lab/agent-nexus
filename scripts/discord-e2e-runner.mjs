@@ -14,6 +14,7 @@ const CASE_PATTERNS = new Map([
   ['idempotency-replay', 'seed_idempotency_replay'],
   ['long-output-slicing', 'seed_long_output_slicing'],
   ['redaction', 'seed_redaction'],
+  ['trajectory-read-model', 'seed_trajectory_read_model'],
 ]);
 
 function usage() {
@@ -21,6 +22,7 @@ function usage() {
   corepack pnpm test:e2e:discord -- --all
   corepack pnpm test:e2e:discord -- --tag seed
   corepack pnpm test:e2e:discord -- --case happy-path
+  corepack pnpm test:e2e:discord -- --case trajectory-read-model
 
 Options:
   --all                 Run all Discord E2E tests.

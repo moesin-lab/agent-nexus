@@ -1,0 +1,135 @@
+[
+  {
+    "source": "nexus-agent-event",
+    "kind": "user-message",
+    "sequence": 1,
+    "traceId": "seed-trajectory-trace",
+    "summary": "trajectory input ANTHROPIC_API_KEY=<redacted> path=~/private/prompt.txt",
+    "confidence": "high",
+    "redactionState": "redacted",
+    "sameSession": true,
+    "metadata": {
+      "eventId": "seed-trajectory-event",
+      "messageId": "seed-trajectory-message",
+      "sessionKey": "discord-main:discord:C-e2e-main:U-e2e-owner",
+      "agentName": "scripted-agent"
+    }
+  },
+  {
+    "source": "nexus-agent-event",
+    "kind": "state-change",
+    "sequence": 2,
+    "traceId": "seed-trajectory-trace",
+    "summary": "session started: scripted-trajectory-session",
+    "confidence": "high",
+    "redactionState": "redacted",
+    "sameSession": true,
+    "metadata": {
+      "eventType": "session_started",
+      "agentEventSequence": 1,
+      "sessionKey": "discord-main:discord:C-e2e-main:U-e2e-owner",
+      "workingDir": "~/trajectory-secret-workdir"
+    }
+  },
+  {
+    "source": "nexus-agent-event",
+    "kind": "reasoning",
+    "sequence": 3,
+    "traceId": "seed-trajectory-trace",
+    "summary": "thinking with ANTHROPIC_API_KEY=<redacted>",
+    "confidence": "high",
+    "redactionState": "redacted",
+    "sameSession": true,
+    "metadata": {
+      "eventType": "thinking",
+      "agentEventSequence": 2,
+      "sessionKey": "discord-main:discord:C-e2e-main:U-e2e-owner"
+    }
+  },
+  {
+    "source": "nexus-agent-event",
+    "kind": "tool-call",
+    "sequence": 4,
+    "traceId": "seed-trajectory-trace",
+    "summary": "Read: ~/private/input.txt",
+    "confidence": "high",
+    "redactionState": "redacted",
+    "sameSession": true,
+    "metadata": {
+      "eventType": "tool_call_started",
+      "agentEventSequence": 3,
+      "sessionKey": "discord-main:discord:C-e2e-main:U-e2e-owner",
+      "toolName": "Read",
+      "callId": "tool-1"
+    }
+  },
+  {
+    "source": "nexus-agent-event",
+    "kind": "tool-result",
+    "sequence": 5,
+    "traceId": "seed-trajectory-trace",
+    "summary": "result contains DISCORD_TOKEN=<redacted> and ~/private/output.txt",
+    "confidence": "high",
+    "redactionState": "redacted",
+    "sameSession": true,
+    "metadata": {
+      "eventType": "tool_result",
+      "agentEventSequence": 4,
+      "sessionKey": "discord-main:discord:C-e2e-main:U-e2e-owner",
+      "callId": "tool-1",
+      "resultSequence": 1,
+      "contentKind": "text"
+    }
+  },
+  {
+    "source": "nexus-agent-event",
+    "kind": "usage",
+    "sequence": 6,
+    "traceId": "seed-trajectory-trace",
+    "turnSequence": 1,
+    "summary": "scripted-model, input 11, output 7, cost unknown",
+    "confidence": "high",
+    "redactionState": "redacted",
+    "sameSession": true,
+    "usageEventId": "usage:5",
+    "metadata": {
+      "eventType": "usage",
+      "agentEventSequence": 5,
+      "sessionKey": "discord-main:discord:C-e2e-main:U-e2e-owner",
+      "usageModel": "scripted-model",
+      "usageCompleteness": "partial"
+    }
+  },
+  {
+    "source": "nexus-agent-event",
+    "kind": "agent-message",
+    "sequence": 7,
+    "traceId": "seed-trajectory-trace",
+    "summary": "trajectory final answer",
+    "confidence": "high",
+    "redactionState": "redacted",
+    "sameSession": true,
+    "metadata": {
+      "eventType": "text_final",
+      "agentEventSequence": 6,
+      "sessionKey": "discord-main:discord:C-e2e-main:U-e2e-owner"
+    }
+  },
+  {
+    "source": "nexus-agent-event",
+    "kind": "state-change",
+    "sequence": 8,
+    "traceId": "seed-trajectory-trace",
+    "turnSequence": 1,
+    "summary": "turn finished: stop",
+    "confidence": "high",
+    "redactionState": "redacted",
+    "sameSession": true,
+    "metadata": {
+      "eventType": "turn_finished",
+      "agentEventSequence": 7,
+      "sessionKey": "discord-main:discord:C-e2e-main:U-e2e-owner",
+      "reason": "stop"
+    }
+  }
+]

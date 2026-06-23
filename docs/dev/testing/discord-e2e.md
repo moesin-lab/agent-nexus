@@ -92,6 +92,7 @@ E2E case 注入的是 `NormalizedEvent`，不是 raw gateway JSON。Discord raw 
 
 ```bash
 corepack pnpm test:e2e:discord -- --case happy-path
+corepack pnpm test:e2e:discord -- --case trajectory-read-model
 corepack pnpm test:e2e:discord -- --tag seed
 corepack pnpm test:e2e:discord -- --tag harness
 corepack pnpm test:e2e:discord -- --all
@@ -175,6 +176,7 @@ E2E 禁止用固定 sleep 等待业务结果。harness 提供显式等待：
 | `waitForAgentEvent(predicate, timeoutMs)` | recorder 看到某个 AgentEvent |
 | `waitForTurnFinished(traceId, timeoutMs)` | 同 traceId 的 turn terminal 到达 |
 | `waitForNoAgentCall(windowMs)` | 授权拒绝等负路径短窗口内未触发 agent |
+| `queryTrajectory(query)` | case 显式启用 trajectory store 时，查询 SQLite trajectory read model |
 
 等待失败时，runner 写出当前 transcript，并在 thrown error 中报告 case id、trace id 列表、最后一条事件类型和 artifact 绝对路径。
 
@@ -189,12 +191,14 @@ E2E 禁止用固定 sleep 等待业务结果。harness 提供显式等待：
 | `idempotency-replay` | Discord at-least-once 重放只处理一次 | 同 `(sessionKey, messageId)` 第二次不触发 agent；记录命中日志 |
 | `long-output-slicing` | 长回复切片归属清晰后，证明默认 E2E 不产生 fake-only 通过 | 不由 fake adapter 复刻 Discord `buildSlices`；最终断言随 platform-adapter owner 对切片归属的修正确定 |
 | `redaction` | agent 输出敏感模式时发到 Discord 前已脱敏 | outbound 不含原始 secret / 绝对路径；transcript 也不含原文 |
+| `trajectory-read-model` | runtime 事件写入 daemon trajectory read model | 用户输入、AgentEvent、usage anchor、sessionId、redaction 与 SQLite 查询结果匹配固定 fixture |
 
 当前实现状态与缺口：
 
 - `idempotency-replay` 需要按 spec 的 `(sessionKey, messageId)` 语义实现；当前已有可注入的内存 `IdempotencyStore`，但尚未覆盖 SQLite 持久化、TTL、GC 与 terminal status replay。
 - `redaction` 当前覆盖 daemon 到 IM outbound 的基础文本脱敏；日志 sink、agent 子进程 transcript 等全出口脱敏仍需后续按 redaction spec 补齐。
 - `long-output-slicing` 当前 seed 通过 fake platform 的 `maxTextLength` 能力模拟证明 harness 能捕获多条 outbound；真实 Discord 仍由 adapter 的 `buildSlices` 维护切片与 `MessageRef.messageIds`，段落 / 代码块边界、续页标记的最终归属仍需后续收敛。
+- `trajectory-read-model` 当前覆盖 scripted agent runtime 到 SQLite trajectory read model 的 daemon 链路；不覆盖外部 transcript scanner、真实 agent backend 或 provider proxy。
 - 若 session/idempotency 存储仍是内存实现，E2E 可以用 tmpdir state，但不能声称已覆盖 SQLite 持久化。
 
 ## 真实 Agent 选择
@@ -218,6 +222,7 @@ case 断言不能依赖完整 LLM 文本逐字一致。需要确定输出时，p
 
 - Discord raw gateway fixture 继续放 `testdata/discord/events/`，供 adapter 合约测试使用。
 - agent transcript fixture 继续放 owner backend 的 testdata；现有 Claude Code transcript 归 [`fixtures.md`](fixtures.md) 定义的 `testdata/cc-cli/transcripts/`，新增 Codex transcript 不在本文重新命名。
+- trajectory E2E 期望输出放 `testdata/trajectory/e2e/`；fixture 只保留已归一化、已脱敏、可稳定 diff 的 read model 视图，不保存运行时生成的 `segmentId`、`sessionId` 或 timestamp。
 - E2E seed case 配置可以放 `tests/e2e/discord/cases/`，只写脱敏输入和断言，不写运行产物。
 
 运行产物：

@@ -43,6 +43,8 @@ related:
     │       └── ...
     ├── anthropic/
     │   └── responses/         # Anthropic API mock 响应
+    ├── trajectory/
+    │   └── e2e/               # trajectory read model 归一化期望输出
     └── eval/
         └── cases/             # Eval case（见 eval.md）
 ```
@@ -110,6 +112,13 @@ related:
 - 预期的归一化输出（NormalizedEvent、AgentEvent、OutboundMessage）
 - 测试跑时比对实际输出 == 快照
 - 更新策略见下文
+
+### Trajectory E2E 期望输出（`testdata/trajectory/e2e/*.expected.json`）
+
+- Discord E2E seed case 查询 daemon trajectory read model 后的归一化结果。
+- 只保存稳定字段：`source`、`kind`、`sequence`、`summary`、`redactionState`、必要 metadata 摘要。
+- 不保存运行时生成的 `segmentId`、`sessionId`、timestamp、临时目录或原始 secret。
+- fixture 必须是脱敏后的 read model 视图，不能包含外部原始 transcript 内容。
 
 ## 命名约定
 

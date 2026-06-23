@@ -33,6 +33,17 @@ describe('Discord E2E runner args', () => {
     ]);
   });
 
+  it('maps --case trajectory-read-model to the trajectory seed test', () => {
+    expect(buildVitestArgs(['--case', 'trajectory-read-model'])).toEqual([
+      'run',
+      '--config',
+      'vitest.e2e.config.ts',
+      'tests/e2e/discord',
+      '--testNamePattern',
+      'seed_trajectory_read_model',
+    ]);
+  });
+
   it('ignores the pnpm argument separator before runner options', () => {
     expect(buildVitestArgs(['--', '--case', 'redaction'])).toEqual([
       'run',

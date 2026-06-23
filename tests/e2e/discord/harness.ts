@@ -24,6 +24,11 @@ import type { PlatformAuthConfig } from '../../../packages/daemon/src/config.js'
 import { InMemoryIdempotencyStore } from '../../../packages/daemon/src/idempotency.js';
 import { createLogger } from '../../../packages/daemon/src/logger.js';
 import { SessionStore } from '../../../packages/daemon/src/session-store.js';
+import {
+  SqliteTrajectoryStore,
+  type TrajectoryPage,
+  type TrajectoryQuery,
+} from '../../../packages/daemon/src/trajectory-store.js';
 
 const DEFAULT_PLATFORM_CAPS: CapabilitySet = {
   maxTextLength: 2_000,
@@ -137,6 +142,9 @@ export interface DiscordE2EHarnessOptions {
   platformName?: string;
   platformCaps?: Partial<CapabilitySet>;
   sessionKey?: PlatformSessionKey;
+  trajectory?: {
+    enabled?: boolean;
+  };
   agentEvents: ScriptedAgentEvents;
 }
 
@@ -144,6 +152,7 @@ export interface DiscordE2EHarnessPaths {
   rootDir: string;
   workingDir: string;
   stateDir: string;
+  trajectoryDbPath: string;
   transcriptDir: string;
 }
 
@@ -156,6 +165,8 @@ export interface InjectMessageOptions {
   displayName?: string;
   guildId?: string;
   initiatorRoleIds?: string[];
+  receivedAt?: Date;
+  platformTimestamp?: Date;
 }
 
 export function scriptedTextReply(text: string): ScriptedAgentEvents {
@@ -388,6 +399,7 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
   ): Promise<NormalizedEvent>;
   paths: DiscordE2EHarnessPaths;
   platform: FakeDiscordPlatform;
+  queryTrajectory(query?: TrajectoryQuery): TrajectoryPage;
   start(): Promise<void>;
   stop(): Promise<void>;
   transcript: Transcript;
@@ -412,6 +424,7 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
     rootDir,
     workingDir: path.join(rootDir, 'workdir'),
     stateDir: path.join(rootDir, 'state'),
+    trajectoryDbPath: path.join(rootDir, 'state.db'),
     transcriptDir: path.join(rootDir, 'transcripts'),
   };
   mkdirSync(paths.workingDir, { recursive: true });
@@ -538,6 +551,10 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
     settleAgentWaiters,
     options.agentEvents,
   );
+  const trajectoryStore =
+    options.trajectory?.enabled === true
+      ? new SqliteTrajectoryStore({ path: paths.trajectoryDbPath })
+      : undefined;
   const engine = new Engine({
     platform,
     platformName: options.platformName ?? 'discord-main',
@@ -546,6 +563,9 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
     agent,
     logger: createLogger({ level: 'fatal', pretty: false }),
     sessionStore: new SessionStore(),
+    trajectory: trajectoryStore
+      ? { enabled: true, store: trajectoryStore }
+      : undefined,
     defaultSessionConfig: {
       workingDir: paths.workingDir,
       timeoutMs: 10_000,
@@ -600,6 +620,12 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
     paths,
     platform,
     transcript,
+    queryTrajectory(query: TrajectoryQuery = {}): TrajectoryPage {
+      if (!trajectoryStore) {
+        throw new Error('Trajectory store is not enabled for this harness');
+      }
+      return trajectoryStore.queryTrajectory(query);
+    },
     async start(): Promise<void> {
       await engine.start();
     },
@@ -607,6 +633,7 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
       if (stopped) return;
       stopped = true;
       await engine.stop();
+      trajectoryStore?.close();
       if (preserveArtifacts && transcript.status === 'running') {
         writeTranscript('passed');
       }
@@ -625,6 +652,7 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
         initiatorUserId:
           overrides.initiatorUserId ?? sessionKey.initiatorUserId,
       };
+      const receivedAt = overrides.receivedAt ?? new Date();
       const event: NormalizedEvent = {
         eventId: overrides.eventId ?? `e2e-event-${id}`,
         platform: 'discord',
@@ -635,8 +663,8 @@ export function createDiscordE2EHarness(options: DiscordE2EHarnessOptions): {
         text,
         rawPayload: {},
         rawContentType: 'application/json',
-        receivedAt: new Date(),
-        platformTimestamp: new Date(),
+        receivedAt,
+        platformTimestamp: overrides.platformTimestamp ?? receivedAt,
         guildId: overrides.guildId ?? 'G-e2e',
         initiatorRoleIds: overrides.initiatorRoleIds,
         initiator: {

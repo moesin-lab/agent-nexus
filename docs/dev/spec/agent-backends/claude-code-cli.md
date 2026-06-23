@@ -34,6 +34,7 @@ contracts:
 | 订阅 / API 支持 | 两类都支持；`usage.costUsd` 在订阅路径下可能缺失（见下文 UsageCompleteness） |
 
 > **对账锚点**：当前基线使用的 `claude --help` 实测落盘见 [`../../references/cc-cli/help-2.1.119.txt`](../../references/cc-cli/help-2.1.119.txt)。
+> 2026-06-23 P1 现场对账观察到本机 Claude Code `2.1.185`。该版本 help 仍把部分 structured IO flag 描述为 `--print` 相关，因此当前支持继续以 `CompatibilityProbe` 的运行时实证为准，不以 help 文本或版本号单独放行。
 
 ## 启动命令模板
 

@@ -75,6 +75,7 @@ Proposed ──(显式签字盖章)──> Accepted
 | [0015](0015-multi-platform-agent-config.md) | 多平台多 Agent 命名配置 | Proposed |
 | [0016](0016-tui-hosted-agent-backends.md) | TUI-hosted Agent Backend Family | Proposed |
 | [0017](0017-slash-command-registry.md) | Slash command registry 统一声明与注册 | Proposed |
+| [0018](0018-trajectory-observability-read-model.md) | Trajectory Observability 读模型与外部观测 | Proposed |
 
 ## 职责边界
 

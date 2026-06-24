@@ -78,6 +78,15 @@ export interface BindingConfig {
   };
 }
 
+export interface ConfigFileEditInput {
+  path: string;
+  value: string;
+}
+
+export interface ConfigFileEditResult {
+  message: string;
+}
+
 export class ConfigError extends Error {
   constructor(message: string) {
     super(message);
@@ -351,6 +360,116 @@ async function persistConfig(path: string, parsed: Record<string, unknown>): Pro
   await chmod(path, 0o600);
 }
 
+type ConfigEditPathSegment = string | number;
+const UNSAFE_CONFIG_PATH_SEGMENTS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+]);
+
+function parseConfigEditPath(path: string): ConfigEditPathSegment[] {
+  const input = path.trim();
+  if (input.length === 0) {
+    throw new ConfigError('config edit path 不能为空');
+  }
+
+  const segments: ConfigEditPathSegment[] = [];
+  let token = '';
+  const pushToken = (): void => {
+    if (token.length === 0) {
+      throw new ConfigError(`config edit path 非法：${path}`);
+    }
+    if (UNSAFE_CONFIG_PATH_SEGMENTS.has(token)) {
+      throw new ConfigError(`config edit path 含不安全字段：${token}`);
+    }
+    segments.push(token);
+    token = '';
+  };
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index]!;
+    if (char === '.') {
+      if (token.length === 0 && input[index - 1] === ']') {
+        continue;
+      }
+      pushToken();
+      continue;
+    }
+    if (char === '[') {
+      if (token.length > 0) pushToken();
+      const end = input.indexOf(']', index + 1);
+      if (end === -1) {
+        throw new ConfigError(`config edit path 非法：${path}`);
+      }
+      const rawIndex = input.slice(index + 1, end);
+      if (!/^(0|[1-9]\d*)$/.test(rawIndex)) {
+        throw new ConfigError(`config edit path 只支持数字数组下标：${path}`);
+      }
+      segments.push(Number(rawIndex));
+      index = end;
+      continue;
+    }
+    token += char;
+  }
+
+  if (token.length > 0) pushToken();
+  if (segments.length === 0) {
+    throw new ConfigError(`config edit path 非法：${path}`);
+  }
+  return segments;
+}
+
+function parseConfigEditValue(value: string): unknown {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return '';
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return trimmed;
+  }
+}
+
+function setConfigValueAtPath(
+  root: Record<string, unknown>,
+  segments: readonly ConfigEditPathSegment[],
+  value: unknown,
+  path: string,
+): void {
+  let current: unknown = root;
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    const segment = segments[index]!;
+    const nextSegment = segments[index + 1]!;
+    if (typeof segment === 'number') {
+      if (!Array.isArray(current) || segment >= current.length) {
+        throw new ConfigError(`config edit path 不存在：${path}`);
+      }
+      current = current[segment];
+      continue;
+    }
+
+    if (!isRecord(current)) {
+      throw new ConfigError(`config edit path 不能穿过非对象字段：${path}`);
+    }
+    if (!(segment in current)) {
+      current[segment] = typeof nextSegment === 'number' ? [] : {};
+    }
+    current = current[segment];
+  }
+
+  const last = segments[segments.length - 1]!;
+  if (typeof last === 'number') {
+    if (!Array.isArray(current) || last > current.length) {
+      throw new ConfigError(`config edit path 不存在：${path}`);
+    }
+    current[last] = value;
+    return;
+  }
+  if (!isRecord(current)) {
+    throw new ConfigError(`config edit path 不能写入非对象字段：${path}`);
+  }
+  current[last] = value;
+}
+
 async function createFileIfMissing(
   path: string,
   content: string,
@@ -597,38 +716,10 @@ function parseLog(raw: unknown): { level: LogLevel } {
   return { level: (levelRaw as LogLevel | undefined) ?? DEFAULT_LOG_LEVEL };
 }
 
-export async function loadConfig(): Promise<AgentNexusConfig> {
-  let scaffold;
-  try {
-    scaffold = await ensureConfigScaffold();
-  } catch (err) {
-    throw new ConfigError(`初始化配置文件失败：${(err as Error).message}`);
-  }
-  if (scaffold.configCreated) {
-    throw new ConfigError(CONFIG_HINT(configPath()));
-  }
-
-  const path = configPath();
-  let raw: string;
-  try {
-    raw = await readFile(path, 'utf8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new ConfigError(CONFIG_HINT(path));
-    }
-    throw new ConfigError(`读取 ${path} 失败：${(err as Error).message}`);
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new ConfigError(`${path} 不是合法 JSON：${(err as Error).message}`);
-  }
-
-  if (!isRecord(parsed)) {
-    throw new ConfigError(`${path} 顶层必须是对象`);
-  }
+function parseConfigRecord(
+  parsed: Record<string, unknown>,
+  path: string,
+): { config: AgentNexusConfig; templateDefaultsChanged: boolean } {
   rejectLegacyTopLevel(path, parsed);
   assertNoUnknownKeys(parsed, ['platforms', 'agents', 'bindings', 'daemon', 'log', 'ui'], path);
   const templateDefaultsChanged = applyTemplateDefaultsIfMissing(parsed);
@@ -685,7 +776,54 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     throw err;
   }
 
-  if (templateDefaultsChanged) {
+  return {
+    config: {
+      platforms,
+      agents,
+      bindings,
+      daemon,
+      ui,
+      log: parseLog(parsed['log']),
+    },
+    templateDefaultsChanged,
+  };
+}
+
+export async function loadConfig(): Promise<AgentNexusConfig> {
+  let scaffold;
+  try {
+    scaffold = await ensureConfigScaffold();
+  } catch (err) {
+    throw new ConfigError(`初始化配置文件失败：${(err as Error).message}`);
+  }
+  if (scaffold.configCreated) {
+    throw new ConfigError(CONFIG_HINT(configPath()));
+  }
+
+  const path = configPath();
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new ConfigError(CONFIG_HINT(path));
+    }
+    throw new ConfigError(`读取 ${path} 失败：${(err as Error).message}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new ConfigError(`${path} 不是合法 JSON：${(err as Error).message}`);
+  }
+
+  if (!isRecord(parsed)) {
+    throw new ConfigError(`${path} 顶层必须是对象`);
+  }
+  const result = parseConfigRecord(parsed, path);
+
+  if (result.templateDefaultsChanged) {
     try {
       await persistConfig(path, parsed);
     } catch {
@@ -694,14 +832,45 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     }
   }
 
-  return {
-    platforms,
-    agents,
-    bindings,
-    daemon,
-    ui,
-    log: parseLog(parsed['log']),
-  };
+  return result.config;
+}
+
+export async function editConfigFile(
+  input: ConfigFileEditInput,
+): Promise<ConfigFileEditResult> {
+  const path = configPath();
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new ConfigError(CONFIG_HINT(path));
+    }
+    throw new ConfigError(`读取 ${path} 失败：${(err as Error).message}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new ConfigError(`${path} 不是合法 JSON：${(err as Error).message}`);
+  }
+  if (!isRecord(parsed)) {
+    throw new ConfigError(`${path} 顶层必须是对象`);
+  }
+
+  const editPath = input.path.trim();
+  const candidate = JSON.parse(JSON.stringify(parsed)) as Record<string, unknown>;
+  setConfigValueAtPath(
+    candidate,
+    parseConfigEditPath(editPath),
+    parseConfigEditValue(input.value),
+    editPath,
+  );
+  const validationCandidate = JSON.parse(JSON.stringify(candidate)) as Record<string, unknown>;
+  parseConfigRecord(validationCandidate, path);
+  await persistConfig(path, candidate);
+  return { message: `[config saved: ${editPath}]` };
 }
 
 export function buildRoutingTable(config: AgentNexusConfig): RoutingEntry[] {

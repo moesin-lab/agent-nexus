@@ -23,6 +23,7 @@ import {
   ConfigError,
   SecretsPermissionError,
   configRoot,
+  editConfigFile,
   loadConfig,
   loadDiscordToken,
   loadSecret,
@@ -361,6 +362,65 @@ describe('config loader', () => {
       },
       textPrefixes: { newSession: false },
     });
+  });
+
+  it('editConfigFile 按 settings 路径写入任意合法 config 字段', async () => {
+    const path = join(tmp, '.agent-nexus', 'config.json');
+    await writeFile(path, JSON.stringify(validConfig()));
+
+    const result = await editConfigFile({
+      path: 'agents[0].codex.workingDir',
+      value: '/workspace/free-path',
+    });
+
+    const persisted = JSON.parse(await readFile(path, 'utf8')) as {
+      agents: { codex?: { workingDir?: string } }[];
+    };
+    expect(result.message).toBe('[config saved: agents[0].codex.workingDir]');
+    expect(persisted.agents[0]!.codex!.workingDir).toBe('/workspace/free-path');
+    await expect(loadConfig()).resolves.toMatchObject({
+      agents: [
+        {
+          name: 'codex-dev',
+          codex: { workingDir: '/workspace/free-path' },
+        },
+        expect.anything(),
+      ],
+    });
+  });
+
+  it('editConfigFile 校验失败时保留原 config.json', async () => {
+    const path = join(tmp, '.agent-nexus', 'config.json');
+    const original = JSON.stringify(validConfig(), null, 2);
+    await writeFile(path, original);
+
+    await expect(
+      editConfigFile({
+        path: 'agents[0].codex.sandbox',
+        value: '"danger-full-access"',
+      }),
+    ).rejects.toThrow(/sandbox/);
+
+    expect(await readFile(path, 'utf8')).toBe(original);
+  });
+
+  it('editConfigFile 拒绝原型污染路径', async () => {
+    const path = join(tmp, '.agent-nexus', 'config.json');
+    const original = JSON.stringify(validConfig(), null, 2);
+    await writeFile(path, original);
+
+    try {
+      await expect(
+        editConfigFile({
+          path: '__proto__.polluted',
+          value: 'true',
+        }),
+      ).rejects.toThrow(/config edit path/);
+      expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+      expect(await readFile(path, 'utf8')).toBe(original);
+    } finally {
+      delete (Object.prototype as Record<string, unknown>)['polluted'];
+    }
   });
 
   it('legacy 顶层字段被清晰拒绝，不做自动迁移', async () => {

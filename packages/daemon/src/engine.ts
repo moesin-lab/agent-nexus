@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import type {
   AgentEvent,
   AgentCommandEnvelope,
@@ -61,6 +61,22 @@ export type DaemonConfigReloadResult =
 
 export type DaemonConfigReloader = () => Promise<DaemonConfigReloadResult>;
 
+export interface DaemonConfigEditInput {
+  path: string;
+  value: string;
+  userId: string;
+  channelId: string;
+  traceId: string;
+}
+
+export type DaemonConfigEditResult =
+  | { status: 'edited'; message: string }
+  | { status: 'rejected'; message: string };
+
+export type DaemonConfigEditor = (
+  input: DaemonConfigEditInput,
+) => Promise<DaemonConfigEditResult>;
+
 export interface EngineRuntimeUpdate {
   routingTable: readonly RoutingEntry[];
   platformAuth: PlatformAuthConfig;
@@ -80,6 +96,7 @@ export interface EngineDeps {
   platformCommandHandlerKeys?: readonly string[];
   daemonCommandHandlerKeys?: readonly string[];
   configReloader?: DaemonConfigReloader;
+  configEditor?: DaemonConfigEditor;
   idempotencyStore?: IdempotencyStore;
   redactor?: Redactor;
   logger: Logger;
@@ -119,6 +136,10 @@ const SETTINGS_NEW_THREAD_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}new-thread
 const SETTINGS_WORKING_DIR_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}working-dir`;
 const SETTINGS_WORKING_DIR_MODAL_ID = `${SETTINGS_COMPONENT_PREFIX}working-dir-modal`;
 const SETTINGS_WORKING_DIR_PATH_FIELD_ID = 'path';
+const SETTINGS_CONFIG_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}config`;
+const SETTINGS_CONFIG_MODAL_ID = `${SETTINGS_COMPONENT_PREFIX}config-modal`;
+const SETTINGS_CONFIG_PATH_FIELD_ID = 'path';
+const SETTINGS_CONFIG_VALUE_FIELD_ID = 'value';
 const SETTINGS_AGENT_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}agent`;
 const QUEUE_ACTION_ARG = 'action';
 const QUEUE_FULL_TEXT = 'Nexus queue is full. Try again after current tasks finish.';
@@ -194,7 +215,6 @@ function commandStringArg(
 
 function validateWorkingDirArg(
   value: string | undefined,
-  allowedRoot: string,
 ):
   | { ok: true; workingDir: string }
   | { ok: false; message: string } {
@@ -212,14 +232,6 @@ function validateWorkingDirArg(
     };
   }
   const normalizedWorkingDir = resolve(workingDir);
-  const normalizedRoot = resolve(allowedRoot);
-  const rel = relative(normalizedRoot, normalizedWorkingDir);
-  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    return {
-      ok: false,
-      message: `Working directory must be inside the configured root: ${normalizedRoot}`,
-    };
-  }
   return { ok: true, workingDir: normalizedWorkingDir };
 }
 
@@ -251,6 +263,7 @@ export class Engine {
   private readonly platformCommandHandlerKeys: readonly string[];
   private readonly daemonCommandHandlerKeys: readonly string[];
   private readonly configReloader?: DaemonConfigReloader;
+  private readonly configEditor?: DaemonConfigEditor;
   private readonly idempotencyStore?: IdempotencyStore;
   private readonly redactor: Redactor;
   private readonly agents: Map<string, EngineAgent>;
@@ -286,6 +299,7 @@ export class Engine {
     this.platformCommandHandlerKeys = deps.platformCommandHandlerKeys ?? [];
     this.daemonCommandHandlerKeys = deps.daemonCommandHandlerKeys ?? [];
     this.configReloader = deps.configReloader;
+    this.configEditor = deps.configEditor;
     this.idempotencyStore = deps.idempotencyStore;
     this.redactor = deps.redactor ?? new BasicRedactor();
     this.routingTable = deps.routingTable;
@@ -1401,7 +1415,7 @@ export class Engine {
       );
       return { ok: false, message: COMMAND_UNAVAILABLE_TEXT };
     }
-    const parsed = validateWorkingDirArg(path, agentSlot.defaultSessionConfig.workingDir);
+    const parsed = validateWorkingDirArg(path);
     if (!parsed.ok) {
       return { ok: false, message: parsed.message };
     }
@@ -1541,6 +1555,7 @@ export class Engine {
     const replyMode = items.find((item) => item.key === 'discord.replyMode');
     const agent = items.find((item) => item.key === 'daemon.agent');
     const workingDir = items.find((item) => item.key === 'daemon.workingDir');
+    const config = items.find((item) => item.key === 'daemon.config');
     const lines = ['**Nexus settings**'];
     if (prefix) {
       lines.push('', `Result: ${prefix}`);
@@ -1551,6 +1566,7 @@ export class Engine {
       `Reply mode: ${this.renderSettingsValue(replyMode)}`,
       `Agent: ${this.renderSettingsValue(agent)}`,
       `WorkingDir: ${this.renderSettingsValue(workingDir)}`,
+      `Config: ${this.renderSettingsValue(config)}`,
       `Resumable sessions: \`${sessionCount}\``,
       '',
       '**Notes**',
@@ -1581,6 +1597,23 @@ export class Engine {
       durability: agentOverride ? 'in-memory' : 'derived',
       canChange: this.agents.size > 1,
     };
+    const withConfigItem = (
+      items: SettingsSnapshotItem[],
+    ): SettingsSnapshotItem[] => {
+      if (!this.configEditor) return items;
+      return [
+        ...items,
+        {
+          key: 'daemon.config',
+          label: 'Config',
+          owner: 'daemon',
+          value: 'config.json',
+          source: 'config file',
+          durability: 'durable',
+          canChange: true,
+        },
+      ];
+    };
     const routedSessionKey = withPlatformName(
       event.sessionKey,
       this.platformName,
@@ -1588,7 +1621,7 @@ export class Engine {
     const nextWorkingDir = this.sessionStore.get(routedSessionKey)
       ?.nextSession?.workingDir;
     if (nextWorkingDir) {
-      return [
+      return withConfigItem([
         bindingItem,
         {
           key: 'daemon.workingDir',
@@ -1599,7 +1632,7 @@ export class Engine {
           durability: 'in-memory',
           canChange: false,
         },
-      ];
+      ]);
     }
     const currentChannelWorkingDir = this.sessionStore.getChannelWorkingDir({
       platformName: this.platformName,
@@ -1607,7 +1640,7 @@ export class Engine {
       channelId: event.sessionKey.channelId,
     });
     if (currentChannelWorkingDir) {
-      return [
+      return withConfigItem([
         bindingItem,
         {
           key: 'daemon.workingDir',
@@ -1618,7 +1651,7 @@ export class Engine {
           durability: 'in-memory',
           canChange: false,
         },
-      ];
+      ]);
     }
     const thread = this.sessionStore.findThreadByChannelId({
       platformName: this.platformName,
@@ -1633,7 +1666,7 @@ export class Engine {
         channelId: parentChannelId,
       });
       if (parentWorkingDir) {
-        return [
+        return withConfigItem([
           bindingItem,
           {
             key: 'daemon.workingDir',
@@ -1644,11 +1677,11 @@ export class Engine {
             durability: 'in-memory',
             canChange: false,
           },
-        ];
+        ]);
       }
     }
     const agentSlot = route ? this.agents.get(route.agentName) : undefined;
-    return [
+    return withConfigItem([
       bindingItem,
       {
         key: 'daemon.workingDir',
@@ -1659,7 +1692,7 @@ export class Engine {
         durability: 'derived',
         canChange: false,
       },
-    ];
+    ]);
   }
 
   private settingsComponents(
@@ -1727,6 +1760,14 @@ export class Engine {
       label: 'Set workingDir',
       style: 'secondary',
     });
+    if (this.configEditor) {
+      components.push({
+        type: 'button',
+        componentId: SETTINGS_CONFIG_COMPONENT_ID,
+        label: 'Edit config',
+        style: 'secondary',
+      });
+    }
     if (
       this.platform.capabilities().supportsThreadCreation &&
       this.platform.createThread
@@ -2062,8 +2103,40 @@ export class Engine {
         event.traceId,
       );
     }
+    if (componentId === SETTINGS_CONFIG_COMPONENT_ID) {
+      return this.modalResponse(
+        {
+          modalId: SETTINGS_CONFIG_MODAL_ID,
+          title: 'Edit Nexus config',
+          inputs: [
+            {
+              componentId: SETTINGS_CONFIG_PATH_FIELD_ID,
+              label: 'Config path',
+              kind: 'short_text',
+              required: true,
+              placeholder: 'agents[0].codex.workingDir',
+            },
+            {
+              componentId: SETTINGS_CONFIG_VALUE_FIELD_ID,
+              label: 'JSON value',
+              kind: 'long_text',
+              required: true,
+              placeholder: '"/workspace/project"',
+            },
+          ],
+        },
+        event.traceId,
+      );
+    }
     if (componentId === SETTINGS_WORKING_DIR_MODAL_ID) {
       const result = await this.applySettingsWorkingDir(event);
+      return this.handleSettingsCommand(
+        event,
+        result.commandResponse?.text ?? COMMAND_UNAVAILABLE_TEXT,
+      );
+    }
+    if (componentId === SETTINGS_CONFIG_MODAL_ID) {
+      const result = await this.applySettingsConfigEdit(event);
       return this.handleSettingsCommand(
         event,
         result.commandResponse?.text ?? COMMAND_UNAVAILABLE_TEXT,
@@ -2089,6 +2162,30 @@ export class Engine {
     );
     if (!prepared.ok) return this.commandResponse(prepared.message, event.traceId);
     return this.enqueueWorkingDirUpdate(event, prepared);
+  }
+
+  private async applySettingsConfigEdit(
+    event: NormalizedEvent,
+  ): Promise<EventHandlerResult> {
+    if (!this.configEditor) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    const path = this.modalValue(event, SETTINGS_CONFIG_PATH_FIELD_ID)?.trim();
+    const value = this.modalValue(event, SETTINGS_CONFIG_VALUE_FIELD_ID);
+    if (!path) {
+      return this.commandResponse('Config path is required.', event.traceId);
+    }
+    if (value === undefined) {
+      return this.commandResponse('Config value is required.', event.traceId);
+    }
+    const result = await this.configEditor({
+      path,
+      value,
+      userId: event.initiator.userId,
+      channelId: event.sessionKey.channelId,
+      traceId: event.traceId,
+    });
+    return this.commandResponse(result.message, event.traceId);
   }
 
   private applySettingsAgent(event: NormalizedEvent): EventHandlerResult {

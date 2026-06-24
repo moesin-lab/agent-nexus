@@ -309,6 +309,21 @@ platform adapter 实例。
 
 v1 的 override 是 channel 级路由覆盖，但清理动作只覆盖触发者 SessionKey。由于当前内存 session store 没有 channel-wide owner 索引，daemon 不承诺迁移或清理同 channel 其它用户已有的 opaque agent conversation ref；多用户频道里切换 agent owner 前，应让相关用户先结束自己的 RoutingSession。否则这些用户下一条消息的恢复结果不在 v1 合约内，需要由用户用 `/nexus-kill` 或 agent new command 重开。override 是内存态，进程重启后丢失。
 
+### Settings config editor
+
+`/nexus-settings` 可以暴露 config editor 控件，用于按路径修改 `config.json`。该能力由 CLI 组装层注入 daemon；daemon 只负责鉴权、收集 interaction 输入并调用注入的 editor，不直接读取或写入配置文件。
+
+编辑输入由两部分组成：
+
+- `path`：配置路径，使用 dot / bracket 语法，例如 `agents[0].codex.workingDir`、`bindings[0].match.discord.channelIds`。
+- `value`：目标值。合法 JSON 按 JSON 解析；无法解析为 JSON 的非空文本按字符串处理。
+
+写入语义：
+
+- editor 先在内存中生成候选 config，并用与启动 / reload 相同的 loader 完整校验。校验失败时不得写入 `config.json`，错误以 ephemeral settings 反馈返回触发者。
+- 校验通过后写回 `config.json`，随后触发与 `/nexus-reload-config` 相同的 reload。热生效字段按 §配置热重载 立即应用；仅重启生效字段仍写入文件，并由 reload 结果提示需要重启。
+- 写入成功但 reload 因运行态约束失败时，`config.json` 保留新内容，当前运行态配置保持不变；用户可继续编辑或重启进程使文件配置生效。
+
 ## Session 隔离
 
 Adapter 产出的 `PlatformSessionKey.platform` 只有平台类型字符串（如 `"discord"`）。多 platform 实例后，同一类型的不同 bot 可能拥有相同 channel/user ID，daemon 必须在 route decision 后注入 platform instance identity。

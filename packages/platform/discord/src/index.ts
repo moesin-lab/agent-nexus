@@ -550,6 +550,28 @@ function immediateModalForComponent(
       ],
     };
   }
+  if (interaction.customId === 'nexus:settings:config') {
+    return {
+      modalId: 'nexus:settings:config-modal',
+      title: 'Edit Nexus config',
+      inputs: [
+        {
+          componentId: 'path',
+          label: 'Config path',
+          kind: 'short_text',
+          required: true,
+          placeholder: 'agents[0].codex.workingDir',
+        },
+        {
+          componentId: 'value',
+          label: 'JSON value',
+          kind: 'long_text',
+          required: true,
+          placeholder: '"/workspace/project"',
+        },
+      ],
+    };
+  }
   if (interaction.customId === 'nexus:queue:insert') {
     return {
       modalId: 'nexus:queue:insert-modal',

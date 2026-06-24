@@ -429,12 +429,25 @@ function parseConfigEditValue(value: string): unknown {
   }
 }
 
+function formatConfigEditPath(segments: readonly ConfigEditPathSegment[]): string {
+  return segments
+    .map((segment, index) =>
+      typeof segment === 'number'
+        ? `[${segment}]`
+        : index === 0
+          ? segment
+          : `.${segment}`,
+    )
+    .join('');
+}
+
 function setConfigValueAtPath(
   root: Record<string, unknown>,
   segments: readonly ConfigEditPathSegment[],
   value: unknown,
   path: string,
-): void {
+): string[] {
+  const createdPaths: string[] = [];
   let current: unknown = root;
   for (let index = 0; index < segments.length - 1; index += 1) {
     const segment = segments[index]!;
@@ -452,6 +465,7 @@ function setConfigValueAtPath(
     }
     if (!(segment in current)) {
       current[segment] = typeof nextSegment === 'number' ? [] : {};
+      createdPaths.push(formatConfigEditPath(segments.slice(0, index + 1)));
     }
     current = current[segment];
   }
@@ -461,13 +475,20 @@ function setConfigValueAtPath(
     if (!Array.isArray(current) || last > current.length) {
       throw new ConfigError(`config edit path 不存在：${path}`);
     }
+    if (last === current.length) {
+      createdPaths.push(formatConfigEditPath(segments));
+    }
     current[last] = value;
-    return;
+    return createdPaths;
   }
   if (!isRecord(current)) {
     throw new ConfigError(`config edit path 不能写入非对象字段：${path}`);
   }
+  if (!(last in current)) {
+    createdPaths.push(formatConfigEditPath(segments));
+  }
   current[last] = value;
+  return createdPaths;
 }
 
 async function createFileIfMissing(
@@ -861,7 +882,7 @@ export async function editConfigFile(
 
   const editPath = input.path.trim();
   const candidate = JSON.parse(JSON.stringify(parsed)) as Record<string, unknown>;
-  setConfigValueAtPath(
+  const createdPaths = setConfigValueAtPath(
     candidate,
     parseConfigEditPath(editPath),
     parseConfigEditValue(input.value),
@@ -870,7 +891,12 @@ export async function editConfigFile(
   const validationCandidate = JSON.parse(JSON.stringify(candidate)) as Record<string, unknown>;
   parseConfigRecord(validationCandidate, path);
   await persistConfig(path, candidate);
-  return { message: `[config saved: ${editPath}]` };
+  const warning =
+    createdPaths.length > 0
+      ? `\n[config edit warning] created new config path(s): ${createdPaths.join(', ')}; ` +
+        'if this was a typo, edit the intended path.'
+      : '';
+  return { message: `[config saved: ${editPath}]${warning}` };
 }
 
 export function buildRoutingTable(config: AgentNexusConfig): RoutingEntry[] {

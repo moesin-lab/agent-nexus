@@ -389,6 +389,28 @@ describe('config loader', () => {
     });
   });
 
+  it('editConfigFile 新建 config 路径时在保存反馈里提示用户核对', async () => {
+    const path = join(tmp, '.agent-nexus', 'config.json');
+    await writeFile(path, JSON.stringify(validConfig()));
+
+    const result = await editConfigFile({
+      path: 'agents[0].codex.codx.workingDir',
+      value: '/workspace/typo',
+    });
+
+    const persisted = JSON.parse(await readFile(path, 'utf8')) as {
+      agents: { codex?: { codx?: { workingDir?: string } } }[];
+    };
+    expect(result.message).toContain(
+      '[config saved: agents[0].codex.codx.workingDir]',
+    );
+    expect(result.message).toContain(
+      'created new config path(s): agents[0].codex.codx',
+    );
+    expect(result.message).toContain('agents[0].codex.codx.workingDir');
+    expect(persisted.agents[0]!.codex!.codx!.workingDir).toBe('/workspace/typo');
+  });
+
   it('editConfigFile 校验失败时保留原 config.json', async () => {
     const path = join(tmp, '.agent-nexus', 'config.json');
     const original = JSON.stringify(validConfig(), null, 2);
@@ -405,19 +427,21 @@ describe('config loader', () => {
   });
 
   it('editConfigFile 拒绝原型污染路径', async () => {
-    const path = join(tmp, '.agent-nexus', 'config.json');
-    const original = JSON.stringify(validConfig(), null, 2);
-    await writeFile(path, original);
-
     try {
-      await expect(
-        editConfigFile({
-          path: '__proto__.polluted',
-          value: 'true',
-        }),
-      ).rejects.toThrow(/config edit path/);
-      expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
-      expect(await readFile(path, 'utf8')).toBe(original);
+      for (const segment of ['__proto__', 'constructor', 'prototype']) {
+        const path = join(tmp, '.agent-nexus', 'config.json');
+        const original = JSON.stringify(validConfig(), null, 2);
+        await writeFile(path, original);
+
+        await expect(
+          editConfigFile({
+            path: `${segment}.polluted`,
+            value: 'true',
+          }),
+        ).rejects.toThrow(/config edit path/);
+        expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+        expect(await readFile(path, 'utf8')).toBe(original);
+      }
     } finally {
       delete (Object.prototype as Record<string, unknown>)['polluted'];
     }

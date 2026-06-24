@@ -323,6 +323,7 @@ v1 的 override 是 channel 级路由覆盖，但清理动作只覆盖触发者 
 - editor 先在内存中生成候选 config，并用与启动 / reload 相同的 loader 完整校验。校验失败时不得写入 `config.json`，错误以 ephemeral settings 反馈返回触发者。
 - 校验通过后写回 `config.json`，随后触发与 `/nexus-reload-config` 相同的 reload。热生效字段按 §配置热重载 立即应用；仅重启生效字段仍写入文件，并由 reload 结果提示需要重启。
 - 写入成功但 reload 因运行态约束失败时，`config.json` 保留新内容，当前运行态配置保持不变；用户可继续编辑或重启进程使文件配置生效。
+- 路径中不存在的对象字段会按需要创建，以支持私有字段、future 字段与注释字段；反馈必须提示新建的路径段，避免用户把 `codex` 拼成 `codx` 这类输入误认为修改了既有字段。
 
 ## Session 隔离
 

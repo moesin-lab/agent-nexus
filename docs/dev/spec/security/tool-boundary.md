@@ -53,6 +53,7 @@ contracts:
 - Codex CLI 使用 `--cd <workingDir>` 绑定工作根；额外可写目录只能来自显式 `codex.addDirs` 并逐个传 `--add-dir`。详见 [`codex-cli.md`](../agent-backends/codex-cli.md)。
 - 如果 CC 配置允许多个 allowed dirs，沿用 CC 的 allowlist（本项目不重复实现）
 - **不继承** agent-nexus 进程的 cwd；每 session 显式传子进程 cwd
+- `/nexus-working-dir` 与 settings config editor 都允许把 workingDir 设为任意非空绝对路径，不强制包含在 agent 默认 `workingDir` 下。workingDir 是启动位置与 process-level sandbox 输入，不是独立安全边界；真实可读写范围仍由 backend sandbox / `addDirs` / CC 工具强制点与部署层 OS 纵深共同决定。
 
 ## 工具隔离强制点
 

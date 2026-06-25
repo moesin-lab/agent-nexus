@@ -272,11 +272,13 @@ describe('config loader', () => {
     expect(cfg.agents[0]).toMatchObject({
       name: 'codex-dev',
       backend: 'codex',
+      timeoutMs: 300_000,
       codex: { bin: 'codex', workingDir: '/codex' },
     });
     expect(cfg.agents[1]).toMatchObject({
       name: 'claude-prod',
       backend: 'claudecode',
+      timeoutMs: 300_000,
       claudeCode: { bin: 'claude', workingDir: '/claude' },
     });
     expect(cfg.bindings).toEqual([
@@ -294,6 +296,34 @@ describe('config loader', () => {
     expect(cfg.daemon.commandRegistry.aliases.legacy.replyMode).toBe(true);
     expect(cfg.daemon.commandRegistry.textPrefixes.newSession).toBe(true);
     expect(cfg.log.level).toBe('debug');
+  });
+
+  it('loadConfig 解析 agents[].timeoutMs 并校验取值范围', async () => {
+    const config = validConfig({
+      agents: [
+        { ...VALID_CODEX_AGENT, timeoutMs: 1_800_000 },
+        { ...VALID_CLAUDE_AGENT, timeoutMs: 86_400_000 },
+      ],
+    });
+    await writeFile(join(tmp, '.agent-nexus', 'config.json'), JSON.stringify(config));
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      agents: [
+        { name: 'codex-dev', timeoutMs: 1_800_000 },
+        { name: 'claude-prod', timeoutMs: 86_400_000 },
+      ],
+    });
+
+    for (const timeoutMs of [0, -1, 1.5, '300000', 2_147_483_648] as const) {
+      await writeFile(
+        join(tmp, '.agent-nexus', 'config.json'),
+        JSON.stringify({
+          ...config,
+          agents: [{ ...VALID_CODEX_AGENT, timeoutMs }],
+        }),
+      );
+      await expect(loadConfig()).rejects.toThrow(/timeoutMs/);
+    }
   });
 
   it('loadConfig 会把缺失的 daemon.commandRegistry 默认配置补回 config.json', async () => {
@@ -409,6 +439,28 @@ describe('config loader', () => {
     );
     expect(result.message).toContain('agents[0].codex.codx.workingDir');
     expect(persisted.agents[0]!.codex!.codx!.workingDir).toBe('/workspace/typo');
+  });
+
+  it('editConfigFile 支持从 settings 写入 agents[].timeoutMs', async () => {
+    const path = join(tmp, '.agent-nexus', 'config.json');
+    await writeFile(path, JSON.stringify(validConfig()));
+
+    const result = await editConfigFile({
+      path: 'agents[0].timeoutMs',
+      value: '1800000',
+    });
+
+    const persisted = JSON.parse(await readFile(path, 'utf8')) as {
+      agents: { timeoutMs?: number }[];
+    };
+    expect(result.message).toContain('[config saved: agents[0].timeoutMs]');
+    expect(result.message).toContain(
+      'created new config path(s): agents[0].timeoutMs',
+    );
+    expect(persisted.agents[0]!.timeoutMs).toBe(1_800_000);
+    await expect(loadConfig()).resolves.toMatchObject({
+      agents: [{ name: 'codex-dev', timeoutMs: 1_800_000 }, expect.anything()],
+    });
   });
 
   it('editConfigFile 校验失败时保留原 config.json', async () => {

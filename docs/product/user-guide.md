@@ -43,7 +43,7 @@ npm install -g packages/cli/agent-nexus-cli-*.tgz
 - `~/.agent-nexus/config.json` 模板，权限为 `0600`
 - `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` 空文件，权限为 `0600`
 
-默认实例根目录是 `~/.agent-nexus`。需要同时运行 stable / dev 等多个实例时，用 `agent-nexus --home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；配置、密钥与状态文件都会从该目录派生。
+默认实例根目录是 `~/.agent-nexus`。需要同时运行 stable / dev 等多个实例时，用 `agent-nexus --home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；配置、密钥与状态文件都会从该目录派生。本仓库约定 dev 使用 `~/.agent-nexus`，stable 使用 `~/.agent-nexus-stable`。
 
 后续启动会自动把模板中新增但本地缺失的字段补回 `config.json`；已有配置值不会被覆盖。必填字段如果没有真实默认值，只会补占位值并继续提示你填写。
 

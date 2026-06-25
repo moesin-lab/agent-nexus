@@ -14,6 +14,11 @@ related:
 
 > 本文件是协作规则的**入口索引**，叠加在各 harness 自身的全局规则之上。规则本体在 [`docs/dev/`](docs/dev/) 下按 [doc-ownership 矩阵](docs/dev/standards/doc-ownership.md) 分布；本文件只承载七条核心原则的陈述与文件定位速查。
 
+## 项目实例区分
+
+- `~/.agent-nexus`：dev 实例，用于开发、验证和试验新功能。
+- `~/.agent-nexus-stable`：stable 实例，用于保留稳定可用版本，避免被开发中的变更影响。
+
 ## 核心原则（不可违反）
 
 每条原则的本体（理由、做 / 不做对照、reviewer 拒稿条件）由 owner 文档承载，本文件只列陈述 + 单链接。

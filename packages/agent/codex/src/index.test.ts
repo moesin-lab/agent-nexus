@@ -508,7 +508,67 @@ describe('createCodexRuntime', () => {
     expect(finished.payload.status).toBe('ok');
   });
 
-  it('error 加 turn.failed 映射为诊断 error 和 terminal error', async () => {
+  it('顶层 error 映射为连续 status，不向 daemon 投递 AgentEvent.error', async () => {
+    const child = makeExecSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+    const runtime = makeRuntime();
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'recover',
+      traceId: 'trace-recover',
+    });
+    await nextTick();
+    child.emitLine(JSON.stringify({ type: 'thread.started', thread_id: 'thread-recover' }));
+    child.emitLine(JSON.stringify({ type: 'turn.started' }));
+    for (const attempt of [1, 2, 3]) {
+      child.emitLine(JSON.stringify({
+        type: 'error',
+        message: `Reconnecting... ${attempt}/5 (stream disconnected before completion: tls handshake eof)`,
+      }));
+    }
+    child.emitLine(JSON.stringify({
+      type: 'item.completed',
+      item: { id: 'item_0', type: 'agent_message', text: 'recovered' },
+    }));
+    child.emitLine(JSON.stringify({
+      type: 'turn.completed',
+      usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 },
+    }));
+    child.resolve();
+    await turn;
+
+    expect(events.map((event) => event.type)).toEqual([
+      'session_started',
+      'status',
+      'status',
+      'status',
+      'text_final',
+      'usage',
+      'turn_finished',
+    ]);
+    expect(
+      events
+        .filter((event) => event.type === 'status')
+        .map((event) => event.payload.message),
+    ).toEqual([
+      'Reconnecting... 1/5 (stream disconnected before completion: tls handshake eof)',
+      'Reconnecting... 2/5 (stream disconnected before completion: tls handshake eof)',
+      'Reconnecting... 3/5 (stream disconnected before completion: tls handshake eof)',
+    ]);
+    expect(fakeLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        traceId: 'trace-recover',
+        message: 'Reconnecting... 1/5 (stream disconnected before completion: tls handshake eof)',
+      }),
+      'codex_diagnostic_error',
+    );
+    expect(session.state).toBe('Idle');
+  });
+
+  it('turn.failed 映射为 terminal error', async () => {
     const child = makeExecSubproc();
     mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
     const runtime = makeRuntime();
@@ -527,10 +587,13 @@ describe('createCodexRuntime', () => {
 
     expect(events.map((event) => event.type)).toEqual([
       'session_started',
-      'error',
+      'status',
       'error',
       'turn_finished',
     ]);
+    const status = events[1];
+    if (status?.type !== 'status') throw new Error('expected status');
+    expect(status.payload.message).toBe('temporary reconnecting');
     const terminal = events.at(-1);
     if (terminal?.type !== 'turn_finished') throw new Error('expected terminal');
     expect(terminal.payload).toEqual({ reason: 'error', turnSequence: 1 });

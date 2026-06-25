@@ -241,7 +241,9 @@ ADR-0012 已把模式 B 纳入 stream-json 主路径；daemon 在 `supportsEdit=
 
 daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `tool_call_started` 追加一条独立工具消息，消息正文包含工具名与目标摘要。`tool_result` 与 `tool_call_finished` 不再产生用户可见消息，也不编辑 start 消息；完整 result 细节只进入 trace 日志。后续 assistant 正文走自己的消息，不覆盖已发出的工具轨迹。
 
-同一 turn 内，daemon 对平台的用户可见输出（tool start、assistant 正文、final reply）必须按 AgentEvent 到达顺序串行执行：前一条 `send` / `edit` 完成前，不得启动后一条用户可见输出。否则慢平台请求会造成工具消息与 assistant 正文在 IM 侧错位。
+同一 turn 内，daemon 对平台的用户可见输出（status、tool start、assistant 正文、final reply）必须按 AgentEvent 到达顺序串行执行：前一条 `send` / `edit` 完成前，不得启动后一条用户可见输出。否则慢平台请求会造成工具消息与 assistant 正文在 IM 侧错位。
+
+`status` 是非终端工作状态：支持 edit 的平台应复用同一条工作消息连续更新，后续 assistant 正文或工具消息到达时清除该临时状态；不支持 edit 的平台可降级为追加状态消息。
 
 在 `append` 模式下，`tool_call_started` 是 assistant 消息分段边界：如果 tool 前已经发送或缓冲了 assistant 文本，daemon 必须先固定该段文本，再发送 tool start；tool 之后到达的 `text_delta` / `text_final` 必须创建新的 assistant 消息，不得回头编辑 tool 前的消息。用户可见顺序应保持为 `assistant before tool` → `tool start` → `assistant after tool`。
 

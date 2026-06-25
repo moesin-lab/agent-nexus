@@ -204,6 +204,7 @@ enum EventType {
     thinking               // 内部推理片段（可选，不是所有后端支持）
     text_delta             // 文本增量（流式输出）
     text_final             // 一轮文本输出完成
+    status                 // 非终端状态 / 进度提示（如 backend 重连）
     tool_call_started      // 工具调用开始
     tool_call_progress     // 工具调用中（可选）
     tool_result            // 工具结果（独立事件；CC 多形态 content 结构化承载，见 ADR-0012 决策点 1 子问题 1-tr-B）
@@ -223,6 +224,7 @@ enum EventType {
 | `thinking` | `{ text: string }` |
 | `text_delta` | `{ text: string }` |
 | `text_final` | `{ text: string }` |
+| `status` | `{ message: string }` |
 | `tool_call_started` | `{ callId, toolName, inputSummary }` |
 | `tool_call_progress` | `{ callId, note }` |
 | `tool_result` | `{ callId, resultSequence: int, content: ToolResultContent, isError: bool }` |
@@ -252,6 +254,7 @@ enum EventType {
 - `callId` = CC 后端的 `tool_use.id` / `tool_result.tool_use_id` 归一化 ID（对应 `tool_call_started.callId`）。
 - `resultSequence` 同一 `callId` 内从 0 连续递增、不重复；不同 callId 间无可比性；最终投递顺序仍以 AgentEvent `sequence`（session 全局单调）为准。
 - `isError` ← CC `tool_result.is_error`，单条 result 级。
+- `status.message` 是非终端、可用户可见的进度 / 状态提示；它不表示 turn 失败，也不得触发 `turn_finished` 或 `session_stopped`。最终失败必须仍由 `error` / `turn_finished` / `session_stopped` 明确表达。
 
 ### TurnEndReason 枚举
 

@@ -102,6 +102,13 @@ export type AgentEvent =
       payload: { text: string };
     }
   | {
+      type: 'status';
+      traceId: string;
+      timestamp: Date;
+      sequence: number;
+      payload: { message: string };
+    }
+  | {
       type: 'tool_call_started';
       traceId: string;
       timestamp: Date;

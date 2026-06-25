@@ -135,7 +135,7 @@ codex \
 | `item.completed` + `item.type == "command_execution"` | `tool_result` 后接 `tool_call_finished` |
 | 未识别 `item.type` | 不映射 AgentEvent；记 `codex_unknown_item` debug 日志，只保留 `type` / `id` / 安全摘要，不记录完整 payload |
 | `turn.completed` | `usage` 后接 `turn_finished{reason:"stop"}` |
-| `error` | `error` 诊断事件；永不单独结束 turn |
+| `error` | `status` + backend-private `codex_diagnostic_error` 日志；永不单独结束 turn |
 | `turn.failed` | `error` + `turn_finished{reason:"error"}` |
 | 进程被 interrupt signal 终止且无 terminal JSONL | runtime 合成 `turn_finished{reason:"user_interrupt", source:"runtime-synthesized"}` |
 | 未识别顶层 `type` | 不映射 AgentEvent；记 `codex_unknown_event` debug 日志，只保留顶层 `type` / 安全摘要，不记录完整 payload |
@@ -175,10 +175,9 @@ Usage 映射：
 
 | Codex JSONL | AgentEvent `error.payload` |
 |---|---|
-| `error.message` | `{ errorKind:"agent", code:"codex_error", message }` |
 | `turn.failed.error.message` | `{ errorKind:"agent", code:"codex_turn_failed", message }` |
 
-终态只由 `turn.completed`、`turn.failed` 或 runtime 合成的 interrupt/timeout 驱动；单独的 `error` 事件不得触发 `turn_finished`。
+Codex 顶层 `error` 是诊断 / 重连提示通道，可能出现 `Reconnecting... 1/5`、`Reconnecting... 2/5` 等临时断流信息；runtime 必须按到达顺序投递非终端 `status{message}` 并记录 backend-private 日志，不把它升级成 `AgentEvent.error`。终态只由 `turn.completed`、`turn.failed` 或 runtime 合成的 interrupt/timeout 驱动。
 
 ## 多轮语义
 
@@ -252,7 +251,7 @@ Codex 安全边界：
 
 1. JSONL fixture：baseline text → `session_started` / `text_final` / `usage` / `turn_finished`。
 2. JSONL fixture：`command_execution` start/completed → tool events 顺序正确。
-3. JSONL fixture：`error` + `turn.failed` → `error` + `turn_finished{reason:"error"}`。
+3. JSONL fixture：顶层 `error` → 连续 `status` 且不终止；`turn.failed` → `error` + `turn_finished{reason:"error"}`。
 4. JSONL fixture：未知 `item.type` 与未知顶层 `type` → debug 记录，不产 text/tool/terminal 事件，不崩溃。
 5. resume 测试：第一轮保存 `thread_id`，第二轮 argv 使用 `exec resume <thread_id>`；resume 回同 id 不重发 `session_started`。
 6. interrupt 测试：in-flight child 被终止后合成 `turn_finished{reason:"user_interrupt"}`，迟到 terminal 不双发。
@@ -272,6 +271,7 @@ Codex 安全边界：
 | `codex_compat_probe_complete` | info | `{ probeMode }` |
 | `codex_compat_probe_failed` | error | `{ step, cause }` |
 | `codex_subproc_error` | warn/error | `{ code, exitCode?, signal?, stderrSummary? }` |
+| `codex_diagnostic_error` | warn | `{ traceId, message }` |
 | `codex_interrupt_synthesized` | debug | `{ threadId?, pid?, signal }` |
 | `codex_unknown_item` | debug | `{ itemId?, itemType, summary? }` |
 | `codex_unknown_event` | debug | `{ eventType, summary? }` |

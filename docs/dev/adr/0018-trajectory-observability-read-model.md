@@ -10,7 +10,7 @@ related:
   - dev/spec/infra/persistence
   - dev/spec/infra/observability
   - dev/spec/security/redaction
-adr_status: Proposed
+adr_status: Accepted
 adr_number: "0018"
 decision_date: 2026-06-23
 supersedes: null
@@ -19,14 +19,14 @@ superseded_by: null
 
 # ADR-0018：Trajectory Observability 采用 daemon-owned read model 与 opt-in capture
 
-- **状态**：Proposed
+- **状态**：Accepted
 - **日期**：2026-06-23
 - **决策者**：agent-nexus maintainers
 - **相关 ADR**：ADR-0012、ADR-0014、ADR-0016
 
 ## 状态变更日志
 
-- 2026-06-23：Proposed
+- 2026-06-23：Accepted
 
 ## Context
 

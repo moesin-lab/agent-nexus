@@ -196,6 +196,24 @@ export class TrajectoryStoreError extends Error {
   }
 }
 
+function duplicateProviderObservationError(
+  observationId: string,
+): TrajectoryStoreError {
+  return new TrajectoryStoreError(
+    'duplicate-record',
+    `Provider observation ${observationId} already exists`,
+  );
+}
+
+function isSqliteUniqueConstraintError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = (error as { code?: unknown }).code;
+  return (
+    code === 'SQLITE_CONSTRAINT_PRIMARYKEY' ||
+    code === 'SQLITE_CONSTRAINT_UNIQUE'
+  );
+}
+
 export class InMemoryTrajectoryStore implements TrajectoryStore {
   private readonly imports = new Map<string, ExternalSessionImportRecord>();
   private readonly segments = new Map<string, TrajectorySegment>();
@@ -597,77 +615,83 @@ export class SqliteTrajectoryStore implements TrajectoryStore {
   }
 
   recordProviderCallObservation(observation: ProviderCallObservation): void {
-    if (
-      this.hasRecord(
-        'provider_call_observations',
-        'observation_id',
-        observation.observationId,
-      )
-    ) {
-      throw new TrajectoryStoreError(
-        'duplicate-record',
-        `Provider observation ${observation.observationId} already exists`,
-      );
-    }
+    try {
+      this.db.transaction((input: ProviderCallObservation) => {
+        if (
+          this.hasRecord(
+            'provider_call_observations',
+            'observation_id',
+            input.observationId,
+          )
+        ) {
+          throw duplicateProviderObservationError(input.observationId);
+        }
 
-    const next = this.cloneObservation(observation);
-    if (next.redactionState !== 'redacted') {
-      delete next.requestBodyRef;
-      delete next.responseBodyRef;
-      delete next.streamFramesRef;
-    } else {
-      if (next.requestBodyRef) assertManagedProviderRef(next.requestBodyRef);
-      if (next.responseBodyRef) assertManagedProviderRef(next.responseBodyRef);
-      if (next.streamFramesRef) assertManagedProviderRef(next.streamFramesRef);
-    }
+        const next = this.cloneObservation(input);
+        if (next.redactionState !== 'redacted') {
+          delete next.requestBodyRef;
+          delete next.responseBodyRef;
+          delete next.streamFramesRef;
+        } else {
+          if (next.requestBodyRef) assertManagedProviderRef(next.requestBodyRef);
+          if (next.responseBodyRef) assertManagedProviderRef(next.responseBodyRef);
+          if (next.streamFramesRef) assertManagedProviderRef(next.streamFramesRef);
+        }
 
-    this.db
-      .prepare(
-        `INSERT INTO provider_call_observations (
-          observation_id,
-          session_id,
-          trace_id,
-          backend,
-          capture_mode,
-          request_started_at,
-          response_finished_at,
-          provider_host,
-          model,
-          request_summary,
-          response_summary,
-          request_body_ref,
-          response_body_ref,
-          stream_frames_ref,
-          request_bytes,
-          response_bytes,
-          redaction_state,
-          alignment_json,
-          error_code,
-          metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        next.observationId,
-        next.sessionId ?? null,
-        next.traceId ?? null,
-        next.backend,
-        next.captureMode,
-        next.requestStartedAt,
-        next.responseFinishedAt ?? null,
-        next.providerHost ?? null,
-        next.model ?? null,
-        next.requestSummary,
-        next.responseSummary ?? null,
-        next.requestBodyRef ?? null,
-        next.responseBodyRef ?? null,
-        next.streamFramesRef ?? null,
-        next.requestBytes,
-        next.responseBytes ?? null,
-        next.redactionState,
-        JSON.stringify(next.alignment),
-        next.errorCode ?? null,
-        next.metadataJson,
-      );
+        this.db
+          .prepare(
+            `INSERT INTO provider_call_observations (
+              observation_id,
+              session_id,
+              trace_id,
+              backend,
+              capture_mode,
+              request_started_at,
+              response_finished_at,
+              provider_host,
+              model,
+              request_summary,
+              response_summary,
+              request_body_ref,
+              response_body_ref,
+              stream_frames_ref,
+              request_bytes,
+              response_bytes,
+              redaction_state,
+              alignment_json,
+              error_code,
+              metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            next.observationId,
+            next.sessionId ?? null,
+            next.traceId ?? null,
+            next.backend,
+            next.captureMode,
+            next.requestStartedAt,
+            next.responseFinishedAt ?? null,
+            next.providerHost ?? null,
+            next.model ?? null,
+            next.requestSummary,
+            next.responseSummary ?? null,
+            next.requestBodyRef ?? null,
+            next.responseBodyRef ?? null,
+            next.streamFramesRef ?? null,
+            next.requestBytes,
+            next.responseBytes ?? null,
+            next.redactionState,
+            JSON.stringify(next.alignment),
+            next.errorCode ?? null,
+            next.metadataJson,
+          );
+      })(observation);
+    } catch (error) {
+      if (isSqliteUniqueConstraintError(error)) {
+        throw duplicateProviderObservationError(observation.observationId);
+      }
+      throw error;
+    }
   }
 
   getProviderCallObservation(

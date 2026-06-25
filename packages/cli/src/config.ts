@@ -283,10 +283,6 @@ const DEFAULT_CONFIG_TEMPLATE = `\
         "maxRequestBytes": 1048576,
         "maxResponseBytes": 4194304,
         "retentionDays": 30
-      },
-      "retention": {
-        "importedSegmentsDays": 90,
-        "providerObservationsDays": 30
       }
     }
   },

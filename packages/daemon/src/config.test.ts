@@ -57,10 +57,6 @@ describe('daemon runtime config', () => {
         maxResponseBytes: 4194304,
         retentionDays: 30,
       },
-      retention: {
-        importedSegmentsDays: 90,
-        providerObservationsDays: 30,
-      },
     });
   });
 
@@ -117,9 +113,6 @@ describe('daemon runtime config', () => {
             mode: 'reverse-proxy',
             port: 7010,
           },
-          retention: {
-            importedSegmentsDays: null,
-          },
         },
       }).trajectory,
     ).toEqual({
@@ -148,10 +141,6 @@ describe('daemon runtime config', () => {
         maxRequestBytes: 1048576,
         maxResponseBytes: 4194304,
         retentionDays: 30,
-      },
-      retention: {
-        importedSegmentsDays: null,
-        providerObservationsDays: 30,
       },
     });
   });
@@ -182,6 +171,14 @@ describe('daemon runtime config', () => {
         trajectory: { providerCapture: { stream: true } },
       }),
     ).toThrow(/daemon\.trajectory\.providerCapture\.stream/);
+
+    expect(() =>
+      parseDaemonRuntimeConfig({
+        trajectory: {
+          retention: { providerObservationsDays: 7 },
+        },
+      }),
+    ).toThrow(/daemon\.trajectory\.retention/);
 
     expect(() =>
       parseDaemonRuntimeConfig({

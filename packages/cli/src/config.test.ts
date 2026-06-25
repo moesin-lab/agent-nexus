@@ -338,10 +338,6 @@ describe('config loader', () => {
             enabled: false,
             mode: 'transcript-only',
           },
-          retention: {
-            importedSegmentsDays: 90,
-            providerObservationsDays: 30,
-          },
         },
       },
     });

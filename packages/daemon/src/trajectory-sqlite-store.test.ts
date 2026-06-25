@@ -203,6 +203,76 @@ describe('SqliteTrajectoryStore', () => {
     store.close();
   });
 
+  it('maps provider observation duplicate races to store errors', () => {
+    const dbPath = tempDbPath();
+    const setup = new SqliteTrajectoryStore({ path: dbPath });
+    setup.close();
+    const db = openDb(dbPath);
+    db.prepare(
+      `CREATE TRIGGER duplicate_provider_observation_before_insert
+       BEFORE INSERT ON provider_call_observations
+       WHEN NEW.observation_id = 'obs-race'
+       BEGIN
+         INSERT INTO provider_call_observations (
+           observation_id,
+           session_id,
+           trace_id,
+           backend,
+           capture_mode,
+           request_started_at,
+           response_finished_at,
+           provider_host,
+           model,
+           request_summary,
+           response_summary,
+           request_body_ref,
+           response_body_ref,
+           stream_frames_ref,
+           request_bytes,
+           response_bytes,
+           redaction_state,
+           alignment_json,
+           error_code,
+           metadata_json
+         ) VALUES (
+           NEW.observation_id,
+           NEW.session_id,
+           NEW.trace_id,
+           NEW.backend,
+           NEW.capture_mode,
+           NEW.request_started_at,
+           NEW.response_finished_at,
+           NEW.provider_host,
+           NEW.model,
+           NEW.request_summary,
+           NEW.response_summary,
+           NEW.request_body_ref,
+           NEW.response_body_ref,
+           NEW.stream_frames_ref,
+           NEW.request_bytes,
+           NEW.response_bytes,
+           NEW.redaction_state,
+           NEW.alignment_json,
+           NEW.error_code,
+           NEW.metadata_json
+         );
+       END`,
+    ).run();
+    db.close();
+
+    const store = new SqliteTrajectoryStore({ path: dbPath });
+    try {
+      store.recordProviderCallObservation(
+        observation({ observationId: 'obs-race' }),
+      );
+      throw new Error('expected recordProviderCallObservation to fail');
+    } catch (error) {
+      expect(error).toBeInstanceOf(TrajectoryStoreError);
+      expect((error as TrajectoryStoreError).code).toBe('duplicate-record');
+    }
+    store.close();
+  });
+
   it('prunes old provider observations and their provider-call segments', () => {
     const store = new SqliteTrajectoryStore({ path: tempDbPath() });
     store.recordProviderCallObservation(

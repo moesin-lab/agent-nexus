@@ -71,16 +71,10 @@ export interface ProviderCaptureConfig {
   retentionDays: number;
 }
 
-export interface TrajectoryRetentionConfig {
-  importedSegmentsDays: number | null;
-  providerObservationsDays: number | null;
-}
-
 export interface TrajectoryObservabilityConfig {
   enabled: boolean;
   externalImport: ExternalImportConfig;
   providerCapture: ProviderCaptureConfig;
-  retention: TrajectoryRetentionConfig;
 }
 
 export interface DaemonRuntimeConfig {
@@ -130,10 +124,6 @@ export const DEFAULT_DAEMON_RUNTIME_CONFIG: DaemonRuntimeConfig = {
       maxRequestBytes: 1048576,
       maxResponseBytes: 4194304,
       retentionDays: 30,
-    },
-    retention: {
-      importedSegmentsDays: 90,
-      providerObservationsDays: 30,
     },
   },
 };
@@ -552,35 +542,6 @@ function parseProviderCaptureConfig(raw: unknown): ProviderCaptureConfig {
   };
 }
 
-function parseTrajectoryRetentionConfig(raw: unknown): TrajectoryRetentionConfig {
-  const path = 'daemon.trajectory.retention';
-  if (raw !== undefined && !isRecord(raw)) {
-    throw new DaemonConfigError(`字段 ${path} 必须是对象`);
-  }
-  const retention = (raw ?? {}) as Record<string, unknown>;
-  assertNoUnknownKeys(
-    retention,
-    ['importedSegmentsDays', 'providerObservationsDays'],
-    path,
-  );
-  return {
-    importedSegmentsDays: parseNullableInteger(
-      retention,
-      'importedSegmentsDays',
-      path,
-      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.retention.importedSegmentsDays,
-      1,
-    ),
-    providerObservationsDays: parseNullableInteger(
-      retention,
-      'providerObservationsDays',
-      path,
-      DEFAULT_DAEMON_RUNTIME_CONFIG.trajectory.retention.providerObservationsDays,
-      1,
-    ),
-  };
-}
-
 function parseTrajectoryObservabilityConfig(
   raw: unknown,
 ): TrajectoryObservabilityConfig {
@@ -591,7 +552,7 @@ function parseTrajectoryObservabilityConfig(
   const trajectory = (raw ?? {}) as Record<string, unknown>;
   assertNoUnknownKeys(
     trajectory,
-    ['enabled', 'externalImport', 'providerCapture', 'retention'],
+    ['enabled', 'externalImport', 'providerCapture'],
     path,
   );
   return {
@@ -603,7 +564,6 @@ function parseTrajectoryObservabilityConfig(
     ),
     externalImport: parseExternalImportConfig(trajectory['externalImport']),
     providerCapture: parseProviderCaptureConfig(trajectory['providerCapture']),
-    retention: parseTrajectoryRetentionConfig(trajectory['retention']),
   };
 }
 

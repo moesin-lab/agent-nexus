@@ -144,6 +144,7 @@ matcher 自行解释。
 AgentConfig {
     name: string                      // 全局唯一，稳定 agent 名
     backend: "claudecode" | "codex"
+    timeoutMs?: int                   // 单次输入墙钟超时；默认 300000，必须为正整数毫秒值
 
     // backend="claudecode" owner 字段，由 agent-claudecode parser 校验
     claudeCode?: ClaudeCodeConfig
@@ -159,10 +160,11 @@ AgentConfig {
 |---|---|
 | `name` | 非空字符串；在 `agents[]` 内唯一；binding 只能通过此名称引用 |
 | `backend` | 必填；未知 backend 启动失败 |
+| `timeoutMs` | 可选；单次输入的 wall-clock timeout，默认 `300000`；必须是正整数毫秒值，且不超过 JS timer 上限 `2147483647` |
 | `claudeCode` | `backend="claudecode"` 时必填；`backend="codex"` 时必须缺省；字段内容只能由 `@agent-nexus/agent-claudecode` parser 校验 |
 | `codex` | `backend="codex"` 时必填；`backend="claudecode"` 时必须缺省；字段内容只能由 `@agent-nexus/agent-codex` parser 校验 |
 
-`AgentConfig` 不继承全局 workingDir 或 backend 私有安全字段。需要两套不同工作目录或 Claude Code `allowedTools` 边界时，配置两个不同 `agents[]` 项。
+`AgentConfig` 不继承全局 workingDir、timeout 或 backend 私有安全字段。需要两套不同工作目录、timeout 或 Claude Code `allowedTools` 边界时，配置两个不同 `agents[]` 项。
 inactive backend 配置块必须拒绝，不能作为"未知但忽略"字段保留，避免陈旧私有配置影响审计。
 
 ## PlatformBinding

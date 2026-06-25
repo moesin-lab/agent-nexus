@@ -80,6 +80,7 @@ describe('createAgentRuntime', () => {
       {
         name: 'claude-prod',
         backend: 'claudecode',
+        timeoutMs: 600_000,
         claudeCode: {
           bin: 'claude',
           workingDir: '/work',
@@ -107,7 +108,7 @@ describe('createAgentRuntime', () => {
     expect(selected.agent).toBe(claudeRuntime);
     expect(selected.defaultSessionConfig).toEqual({
       workingDir: '/work',
-      timeoutMs: 300_000,
+      timeoutMs: 600_000,
     });
   });
 
@@ -122,7 +123,7 @@ describe('createAgentRuntime', () => {
     } as const;
 
     const selected = await createAgentRuntime(
-      { name: 'codex-dev', backend: 'codex', codex },
+      { name: 'codex-dev', backend: 'codex', timeoutMs: 1_800_000, codex },
       logger,
     );
 
@@ -137,7 +138,7 @@ describe('createAgentRuntime', () => {
     expect(selected.agent).toBe(codexRuntime);
     expect(selected.defaultSessionConfig).toEqual({
       workingDir: '/codex',
-      timeoutMs: 300_000,
+      timeoutMs: 1_800_000,
     });
   });
 });

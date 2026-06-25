@@ -43,7 +43,7 @@ npm install -g packages/cli/agent-nexus-cli-*.tgz
 - `~/.agent-nexus/config.json` 模板，权限为 `0600`
 - `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` 空文件，权限为 `0600`
 
-默认实例根目录是 `~/.agent-nexus`。需要同时运行 stable / dev 等多个实例时，用 `agent-nexus --home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；配置、密钥与状态文件都会从该目录派生。
+默认实例根目录是 `~/.agent-nexus`。需要同时运行 stable / dev 等多个实例时，用 `agent-nexus --home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；配置、密钥与状态文件都会从该目录派生。项目 dev / stable 实例约定见 [`../ops/runbook.md`](../ops/runbook.md)。
 
 后续启动会自动把模板中新增但本地缺失的字段补回 `config.json`；已有配置值不会被覆盖。必填字段如果没有真实默认值，只会补占位值并继续提示你填写。
 
@@ -145,6 +145,7 @@ chmod 600 ~/.agent-nexus/config.json
 | `platforms[].testGuildId` | 否 | 开发时把 slash command 限定注册到一个 guild，避免全局 slash command 缓存延迟 |
 | `agents[].name` | 是 | agent 配置稳定名称；binding 用它引用该 agent |
 | `agents[].backend` | 是 | `claudecode` 或 `codex` |
+| `agents[].timeoutMs` | 否 | 单次输入 wall-clock timeout，默认 `300000`（5 分钟）；长任务可调大，例如 `1800000` |
 | `agents[].claudeCode.workingDir` | backend 为 `claudecode` 时是 | Claude Code 默认工作目录 |
 | `agents[].claudeCode.bin` | 否 | Claude Code CLI 路径；默认 `claude` |
 | `agents[].claudeCode.permissionLevel` | 否 | 默认 `default`；`bypassPermissions` 是 Claude Code 的 YOLO 模式；也允许 `acceptEdits` / `auto` / `dontAsk` / `plan` |

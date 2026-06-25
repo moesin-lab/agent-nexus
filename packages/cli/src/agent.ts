@@ -15,9 +15,13 @@ import type {
   SessionConfig,
 } from '@agent-nexus/protocol';
 import type { EngineAgent } from '@agent-nexus/daemon';
-import type { AgentConfig, AgentNexusConfig } from './config.js';
+import {
+  DEFAULT_AGENT_TIMEOUT_MS,
+  type AgentConfig,
+  type AgentNexusConfig,
+} from './config.js';
 
-const DEFAULT_SESSION_TIMEOUT_MS = 300_000;
+const CODEX_COMPATIBILITY_PROBE_TIMEOUT_MS = DEFAULT_AGENT_TIMEOUT_MS;
 
 export interface SelectedAgent {
   agent: AgentRuntime;
@@ -31,18 +35,19 @@ export async function createAgentRuntime(
   agentConfig: AgentConfig,
   logger: Logger,
 ): Promise<SelectedAgent> {
+  const timeoutMs = agentConfig.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
   if (agentConfig.backend === 'codex') {
     const codex = agentConfig.codex;
     await runCodexCompatibilityProbe({
       config: codex,
       logger,
-      timeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
+      timeoutMs: CODEX_COMPATIBILITY_PROBE_TIMEOUT_MS,
     });
     return {
       agent: createCodexRuntime({ config: codex, logger }),
       defaultSessionConfig: {
         workingDir: codex.workingDir,
-        timeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
+        timeoutMs,
       },
     };
   }
@@ -78,7 +83,7 @@ export async function createAgentRuntime(
     }),
     defaultSessionConfig: {
       workingDir: claudeCode.workingDir,
-      timeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
+      timeoutMs,
     },
   };
 }

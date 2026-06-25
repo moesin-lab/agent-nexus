@@ -63,7 +63,7 @@ claude \
 - **`--allowed-tools`**：**必传**（表配置意图，不依赖 CC 默认）；但该 flag **不单独强制**工具边界（见 §权限边界 ⚠️），不可当隔离保证
 - **`--disallowed-tools`**：可选；实测有效，仅作 defense-in-depth / 临时禁危险工具，**不替代** allowlist 安全模型
 - **`--resume <id>`**：按 session id 续话（跨进程恢复上下文，不限于被中断的 session）；无则新建。裸用打开 picker，本项目不用
-- **`--permission-mode`**：必须显式传 `claudeCode.permissionLevel`，允许 `default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan`。`default` 是安全默认值，用来避免继承用户全局 `settings.permissions.defaultMode`；其他模式只在用户显式配置时允许，且不承诺 agent-nexus 工具隔离。实现必须检查 `init.permissionMode` 与配置一致；例如 `auto` 因 CC gate 不可用回退到 `default` 时必须 fail closed。
+- **`--permission-mode`**：必须显式传 `claudeCode.permissionLevel`，允许 `default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan`。`default` 是安全默认值，用来避免继承用户全局 `settings.permissions.defaultMode`；`bypassPermissions` 是 Claude Code backend 的显式 YOLO 模式，语义接近远程等价本机执行；其他非 `default` 模式也只在用户显式配置时允许，且不承诺 agent-nexus 工具隔离。实现必须检查 `init.permissionMode` 与配置一致；例如 `auto` 因 CC gate 不可用回退到 `default` 时必须 fail closed。
 
 ### 一次性查询（probe 用）
 
@@ -90,9 +90,9 @@ claude --print "<single prompt>" --output-format json
 | `--disallowed-tools` / `--disallowedTools` | 工具黑名单 | **不用**（当前只用白名单） | §Headless structured session（保留为可选） |
 | `--model <id>` | 模型别名（`sonnet` / `opus`）或全名（`claude-sonnet-4-6`） | **用**（按 SessionConfig 注入） | §Headless structured session |
 | `--resume [value]` / `-r` | 按 session id（UUID）续话；裸用打开 picker | **用**（持有 `agentSessionId` 时传） | §Headless structured session、`agent-runtime.md` |
-| `--permission-mode <…>` | 取值：`acceptEdits` / `auto` / `bypassPermissions` / `default` / `dontAsk` / `plan`；不提供 agent-nexus 工具隔离保证（见 §权限边界 ⚠️）；CLI flag 优先于 user settings，实际模式以 `init.permissionMode` 为准；`auto` 可能受 CC feature gate / 动态配置影响回退 | **必传** `claudeCode.permissionLevel`；默认 `default`；其他模式仅显式配置时允许；`init.permissionMode` 与配置不一致 fail closed | §权限边界、`security/tool-boundary.md` |
-| `--dangerously-skip-permissions` | 等价于 `--permission-mode bypassPermissions` | **禁用** | `security/README.md` |
-| `--allow-dangerously-skip-permissions` | 让用户可以**选择**开启 bypass，但不默认开启 | **禁用** | `security/README.md` |
+| `--permission-mode <…>` | 取值：`acceptEdits` / `auto` / `bypassPermissions` / `default` / `dontAsk` / `plan`；`bypassPermissions` 是显式 YOLO 模式，语义接近远程等价本机执行；非 `default` 不提供 agent-nexus 工具隔离保证（见 §权限边界 ⚠️）；CLI flag 优先于 user settings，实际模式以 `init.permissionMode` 为准；`auto` 可能受 CC feature gate / 动态配置影响回退 | **必传** `claudeCode.permissionLevel`；默认 `default`；其他模式仅显式配置时允许；`init.permissionMode` 与配置不一致 fail closed；`bypassPermissions` 启动时必须 warn | §权限边界、`security/tool-boundary.md` |
+| `--dangerously-skip-permissions` | 等价于 `--permission-mode bypassPermissions` | **禁用**；需要 YOLO 时只能显式配置 `permissionLevel="bypassPermissions"` | `security/README.md` |
+| `--allow-dangerously-skip-permissions` | 让用户可以**选择**开启 bypass，但不默认开启 | **禁用**；agent-nexus 不暴露交互式旁路开关 | `security/README.md` |
 | `--mcp-config <configs…>` | 加载 MCP server（JSON 文件或 JSON 串，空格分隔多个） | **计划用**（MVP 不开 MCP；future 接入要走显式配置） | `security/tool-boundary.md` §MCP 默认全禁 |
 | `--strict-mcp-config` | 只用 `--mcp-config` 提供的 MCP，忽略其他配置源 | **计划用**（启用 MCP 时配套，避免继承用户全局配置） | `security/tool-boundary.md` |
 | `--add-dir <dirs…>` | 给工具开放访问的额外目录 | **计划用**（多 workingDir 场景） | `security/tool-boundary.md` §工作目录 |
@@ -282,7 +282,7 @@ catch 路径若已收到 `result.usage`，仍 emit `usage` 事件，避免 daemo
 1. `claude --version` → 解析版本号，比对最低支持版本；失败 → 启动失败 + 清晰错误
 2. `claude --print "ping" --output-format json` → 返回单 object envelope，校验**顶层** `stop_reason == "end_turn"` + **顶层** `result` 文本非空（`stop_reason` / `result` 均为 envelope 顶层字段，**不是** `result.stop_reason` 嵌套）；超时 30s
 3. 必跑一次长驻 stream-json probe：启动 `claude --input-format stream-json --output-format stream-json --permission-prompt-tool stdio --replay-user-messages --verbose --allowed-tools Read --permission-mode <permissionLevel>`（**不传 `--print`**，子进程 `cwd` 指向 `<testDir>`，stdout/stdin 必须为 pipe 而不是继承 TTY），stdin 写入第一条 user JSON，校验 stdout 至少包含 `system/init`、assistant 消息、`result`；随后**不重启进程**，向同一 stdin 写入第二条 user JSON，并校验同一 PID 的 stdout 再次产出该 turn 的 `system/init` 或 assistant/result。该 probe 验证主路径是 pipe 触发 headless 的长驻子进程，不得用 `--print` 单次调用替代
-4. `permissionLevel=default` 时，跑一次 stdio permission probe：启动参数必须包含 `--permission-prompt-tool stdio`、`--permission-mode default` 且不得包含 `--print`，stdout/stdin 必须为 pipe；向 CC 发起白名单外工具调用请求，断言 stdout 出现 `control_request{subtype:"can_use_tool"}`，runtime 回 `deny` 后副作用未发生；再跑一次白名单内 allow 样本，回 `allow + updatedInput` 后副作用发生，证明回包可放行。若该 probe 不通过，实现不得宣称 control 强制点可用；需要切 PreToolUse hook fallback 时，另跑 hook deny probe，断言副作用未发生、对应 `user / tool_result` 的 `is_error:true`、`permission_denials` 非空，且 probe 目录不得含会拦同一哨兵工具的 project/user settings deny，避免把 CC 原生 deny 误判成 hook deny。若 `allowedTools` 缺失或规则解析失败，必须断言工具隔离实现进入 fail-closed 状态（禁止启动或禁用全部工具），不允许静默 fallback 至放行。control 与 hook fallback 均不可用时，禁止落地工具隔离实现。`permissionLevel!=default` 时该 probe 必须跳过并打 warn，因为 CC 可能在 stdio prompt 前用模式规则 allow / deny / classifier 处理，不保证出现 `can_use_tool`
+4. `permissionLevel=default` 时，跑一次 stdio permission probe：启动参数必须包含 `--permission-prompt-tool stdio`、`--permission-mode default` 且不得包含 `--print`，stdout/stdin 必须为 pipe；向 CC 发起白名单外工具调用请求，断言 stdout 出现 `control_request{subtype:"can_use_tool"}`，runtime 回 `deny` 后副作用未发生；再跑一次白名单内 allow 样本，回 `allow + updatedInput` 后副作用发生，证明回包可放行。若该 probe 不通过，实现不得宣称 control 强制点可用；需要切 PreToolUse hook fallback 时，另跑 hook deny probe，断言副作用未发生、对应 `user / tool_result` 的 `is_error:true`、`permission_denials` 非空，且 probe 目录不得含会拦同一哨兵工具的 project/user settings deny，避免把 CC 原生 deny 误判成 hook deny。若 `allowedTools` 缺失或规则解析失败，必须断言工具隔离实现进入 fail-closed 状态（禁止启动或禁用全部工具），不允许静默 fallback 至放行。control 与 hook fallback 均不可用时，禁止落地工具隔离实现。`permissionLevel!=default` 时该 probe 必须跳过并打 warn，因为 CC 可能在 stdio prompt 前用模式规则 allow / deny / classifier 处理，不保证出现 `can_use_tool`；其中 `bypassPermissions` 必须额外打 `claudecode_bypass_permissions_enabled` warn，标识显式 YOLO session。
 5. 失败则：打 `agent_spawn_failed` 日志（见 observability.md），拒绝启动 Discord gateway
 
 ## 权限边界（与 security.md 对齐）
@@ -305,7 +305,7 @@ agent-nexus 启用工具隔离强制点时，必须启动 CC 时传 `--permissio
 - allow：`{"type":"control_response","response":{"subtype":"success","request_id":"<request_id>","response":{"behavior":"allow","updatedInput":<原 input 或审计后 input>}}}`
 - deny：`{"type":"control_response","response":{"subtype":"success","request_id":"<request_id>","response":{"behavior":"deny","message":"<原因>"}}}`
 
-该 flag 未出现在 help 中，CompatibilityProbe 必须在启动前验证 deny / allow 双向语义。probe 失败时必须 fail closed，或显式切到 PreToolUse hook fallback 并通过 hook deny probe。若用户显式配置非 `default` 的 `permissionLevel`，agent-nexus 仍传 `--permission-prompt-tool stdio` 但跳过 permission control probe；这些模式不满足工具隔离强安全承诺。`PermissionRequest` 是 CC 本机 hook 事件，可和 stdio prompt 并行竞争；它不是 stdout SDK 的 `permission_request` 事件。hook deny 的 stdout 信号为 `user / tool_result` `is_error:true` + result envelope `permission_denials` 非空。安全合约（fail-closed 条件、测试最低断言、实现约束）由 [`tool-boundary.md` §工具隔离强制点](../security/tool-boundary.md#工具隔离强制点) 拥有。
+该 flag 未出现在 help 中，CompatibilityProbe 必须在启动前验证 deny / allow 双向语义。probe 失败时必须 fail closed，或显式切到 PreToolUse hook fallback 并通过 hook deny probe。若用户显式配置非 `default` 的 `permissionLevel`，agent-nexus 仍传 `--permission-prompt-tool stdio` 但跳过 permission control probe；这些模式不满足工具隔离强安全承诺。`bypassPermissions` 是其中的 YOLO 模式，启动日志必须能独立检索到 `claudecode_bypass_permissions_enabled`。`PermissionRequest` 是 CC 本机 hook 事件，可和 stdio prompt 并行竞争；它不是 stdout SDK 的 `permission_request` 事件。hook deny 的 stdout 信号为 `user / tool_result` `is_error:true` + result envelope `permission_denials` 非空。安全合约（fail-closed 条件、测试最低断言、实现约束）由 [`tool-boundary.md` §工具隔离强制点](../security/tool-boundary.md#工具隔离强制点) 拥有。
 
 - 工作目录：通过子进程 `cwd` 选项传入（CC CLI 没有 `--cwd` flag），**不继承** agent-nexus 进程的 cwd
 - 工具白名单：**必须**显式传 `--allowed-tools`，不依赖 CC 默认集

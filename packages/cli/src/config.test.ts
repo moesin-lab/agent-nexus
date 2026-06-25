@@ -441,6 +441,22 @@ describe('config loader', () => {
     expect(persisted.agents[0]!.codex!.codx!.workingDir).toBe('/workspace/typo');
   });
 
+  it('editConfigFile 允许写入 Codex danger-full-access sandbox', async () => {
+    const path = join(tmp, '.agent-nexus', 'config.json');
+    await writeFile(path, JSON.stringify(validConfig(), null, 2));
+
+    const result = await editConfigFile({
+      path: 'agents[0].codex.sandbox',
+      value: '"danger-full-access"',
+    });
+
+    const persisted = JSON.parse(await readFile(path, 'utf8')) as {
+      agents: { codex?: { sandbox?: string } }[];
+    };
+    expect(result.message).toBe('[config saved: agents[0].codex.sandbox]');
+    expect(persisted.agents[0]!.codex!.sandbox).toBe('danger-full-access');
+  });
+
   it('editConfigFile 支持从 settings 写入 agents[].timeoutMs', async () => {
     const path = join(tmp, '.agent-nexus', 'config.json');
     await writeFile(path, JSON.stringify(validConfig()));
@@ -471,7 +487,7 @@ describe('config loader', () => {
     await expect(
       editConfigFile({
         path: 'agents[0].codex.sandbox',
-        value: '"danger-full-access"',
+        value: '"full-access"',
       }),
     ).rejects.toThrow(/sandbox/);
 

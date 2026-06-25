@@ -775,6 +775,8 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
       expect(args).toEqual(
         expect.arrayContaining(['--permission-mode', permissionLevel]),
       );
+      expect(args).not.toContain('--dangerously-skip-permissions');
+      expect(args).not.toContain('--allow-dangerously-skip-permissions');
       child.emitJson({
         type: 'system',
         subtype: 'init',

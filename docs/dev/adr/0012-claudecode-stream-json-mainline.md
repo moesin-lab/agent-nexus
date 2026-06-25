@@ -37,6 +37,7 @@ superseded_by: null
 - 2026-05-23：修正 spec/ADR 启动形态——agent-nexus 主路径为**不带 `--print`、由 stdout/stdin pipe 触发 headless 的长驻 stream-json structured IO 子进程**；`--print` 只保留为一次性 probe / legacy fallback
 - 2026-05-23：对齐 `/workspace/claudecode-src` 入口扫描——stdin 输入形态以 `user` / `control_response` / 少量 `control_request` 为 MVP，stdout 权限请求为 `control_request{subtype:"can_use_tool"}`，没有独立 `permission_request` SDK 事件
 - 2026-05-23：Accepted（maintainer 复盘签字，见 PR #99）
+- 2026-06-25：权限模型口径补充——`permissionLevel="bypassPermissions"` 定义为 Claude Code backend 的显式 YOLO 模式；默认 `default` 与 stdio permission control 强制点不变，直接 `--dangerously-skip-permissions` / `--allow-dangerously-skip-permissions` 仍禁用。
 
 ## Context
 

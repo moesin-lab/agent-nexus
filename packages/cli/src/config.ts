@@ -225,7 +225,7 @@ const DEFAULT_CONFIG_TEMPLATE = `\
       "codex": {
         "workingDir": "",
         "bin": "codex",
-        "_sandboxComment": "allowed: read-only, workspace-write",
+        "_sandboxComment": "allowed: read-only, workspace-write, danger-full-access",
         "sandbox": "read-only",
         "addDirs": [],
         "loadUserConfig": false,
@@ -239,7 +239,7 @@ const DEFAULT_CONFIG_TEMPLATE = `\
       "claudeCode": {
         "workingDir": "",
         "bin": "claude",
-        "_permissionLevelComment": "allowed: default, acceptEdits, auto, bypassPermissions, dontAsk, plan",
+        "_permissionLevelComment": "allowed: default, acceptEdits, auto, bypassPermissions(YOLO), dontAsk, plan",
         "permissionLevel": "default",
         "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"]
       }

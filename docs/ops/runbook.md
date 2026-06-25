@@ -31,7 +31,7 @@ related:
 
 ```bash
 pnpm dev
-corepack pnpm --filter @agent-nexus/cli dev --home ~/.agent-nexus
+corepack pnpm --filter @agent-nexus/cli dev
 ```
 
 构建并安装本地 npm bin 后运行：

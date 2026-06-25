@@ -22,7 +22,7 @@ related:
 - `pnpm --version` 可运行。
 - `claude --version` 可运行。
 - 首次运行会自动创建 `~/.agent-nexus/config.json` 与 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN`；后续启动会把模板新增但本地缺失的配置字段补回 `config.json`。编辑后确认两者权限为 `0600`。
-- 多实例运行时用 `--home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；配置、密钥与状态文件都会从该目录派生。
+- 多实例运行时用 `--home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；配置、密钥与状态文件都会从该目录派生。本仓库约定 dev 使用 `~/.agent-nexus`，stable 使用 `~/.agent-nexus-stable`。
 - Discord bot 已开启 `MESSAGE CONTENT INTENT`，并在目标 server / channel 有读写消息权限。
 
 ## 手动启动
@@ -31,7 +31,7 @@ related:
 
 ```bash
 pnpm dev
-corepack pnpm --filter @agent-nexus/cli dev --home ~/.agent-nexus-dev
+corepack pnpm --filter @agent-nexus/cli dev
 ```
 
 构建并安装本地 npm bin 后运行：

@@ -145,6 +145,7 @@ chmod 600 ~/.agent-nexus/config.json
 | `platforms[].testGuildId` | 否 | 开发时把 slash command 限定注册到一个 guild，避免全局 slash command 缓存延迟 |
 | `agents[].name` | 是 | agent 配置稳定名称；binding 用它引用该 agent |
 | `agents[].backend` | 是 | `claudecode` 或 `codex` |
+| `agents[].timeoutMs` | 否 | 单次输入 wall-clock timeout，默认 `300000`（5 分钟）；长任务可调大，例如 `1800000` |
 | `agents[].claudeCode.workingDir` | backend 为 `claudecode` 时是 | Claude Code 默认工作目录 |
 | `agents[].claudeCode.bin` | 否 | Claude Code CLI 路径；默认 `claude` |
 | `agents[].claudeCode.permissionLevel` | 否 | 默认 `default`；允许 `default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan` |

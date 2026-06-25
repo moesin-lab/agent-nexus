@@ -42,6 +42,9 @@ export type AgentBackend = 'claudecode' | 'codex';
 
 type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
+export const DEFAULT_AGENT_TIMEOUT_MS = 300_000;
+const MAX_AGENT_TIMEOUT_MS = 2_147_483_647;
+
 export type PlatformConfig = DiscordPlatformConfig & {
   auth: PlatformAuthConfig;
 };
@@ -50,11 +53,13 @@ export type AgentConfig =
   | {
       name: string;
       backend: 'claudecode';
+      timeoutMs?: number;
       claudeCode: ClaudeCodeConfig;
     }
   | {
       name: string;
       backend: 'codex';
+      timeoutMs?: number;
       codex: CodexConfig;
     };
 
@@ -216,6 +221,7 @@ const DEFAULT_CONFIG_TEMPLATE = `\
     {
       "name": "codex-dev",
       "backend": "codex",
+      "timeoutMs": 300000,
       "codex": {
         "workingDir": "",
         "bin": "codex",
@@ -229,6 +235,7 @@ const DEFAULT_CONFIG_TEMPLATE = `\
     {
       "name": "claude-prod",
       "backend": "claudecode",
+      "timeoutMs": 300000,
       "claudeCode": {
         "workingDir": "",
         "bin": "claude",
@@ -296,6 +303,22 @@ function requireNonEmptyString(
   const value = raw[key];
   if (typeof value !== 'string' || value.length === 0) {
     throw new ConfigError(`${path}.${key} 必须是非空字符串`);
+  }
+  return value;
+}
+
+function parseAgentTimeoutMs(raw: Record<string, unknown>, path: string): number {
+  const value = raw['timeoutMs'];
+  if (value === undefined) return DEFAULT_AGENT_TIMEOUT_MS;
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > MAX_AGENT_TIMEOUT_MS
+  ) {
+    throw new ConfigError(
+      `字段 ${path}.timeoutMs 必须是 1..${MAX_AGENT_TIMEOUT_MS} 的整数毫秒值`,
+    );
   }
   return value;
 }
@@ -556,8 +579,13 @@ function parseAgent(raw: unknown, index: number): AgentConfig {
   if (!isRecord(raw)) {
     throw new ConfigError(`字段 ${path} 必须是对象`);
   }
-  assertNoUnknownKeys(raw, ['name', 'backend', 'claudeCode', 'codex'], path);
+  assertNoUnknownKeys(
+    raw,
+    ['name', 'backend', 'timeoutMs', 'claudeCode', 'codex'],
+    path,
+  );
   const name = requireNonEmptyString(raw, 'name', path);
+  const timeoutMs = parseAgentTimeoutMs(raw, path);
   const backendRaw = raw['backend'];
   if (!BACKENDS.includes(backendRaw as AgentBackend)) {
     throw new ConfigError(
@@ -574,7 +602,7 @@ function parseAgent(raw: unknown, index: number): AgentConfig {
       throw new ConfigError(`缺字段 ${path}.codex`);
     }
     try {
-      return { name, backend, codex: parseCodexConfig(raw['codex']) };
+      return { name, backend, timeoutMs, codex: parseCodexConfig(raw['codex']) };
     } catch (err) {
       if (err instanceof CodexConfigError) {
         throw new ConfigError(`${path}.codex ${err.message}`);
@@ -590,7 +618,12 @@ function parseAgent(raw: unknown, index: number): AgentConfig {
     throw new ConfigError(`缺字段 ${path}.claudeCode`);
   }
   try {
-    return { name, backend, claudeCode: parseClaudeCodeConfig(raw['claudeCode']) };
+    return {
+      name,
+      backend,
+      timeoutMs,
+      claudeCode: parseClaudeCodeConfig(raw['claudeCode']),
+    };
   } catch (err) {
     if (err instanceof ClaudeCodeConfigError) {
       throw new ConfigError(`${path}.claudeCode ${err.message}`);

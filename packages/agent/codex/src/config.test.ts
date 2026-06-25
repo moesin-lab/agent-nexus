@@ -47,11 +47,23 @@ describe('parseCodexConfig', () => {
     });
   });
 
-  it('danger-full-access sandbox → CodexConfigError', () => {
-    expect(() =>
+  it('显式 danger-full-access sandbox → 原样保留', () => {
+    expect(
       parseCodexConfig({
         workingDir: '/workspace/project',
         sandbox: 'danger-full-access',
+      }),
+    ).toMatchObject({
+      workingDir: '/workspace/project',
+      sandbox: 'danger-full-access',
+    });
+  });
+
+  it('未知 sandbox → CodexConfigError', () => {
+    expect(() =>
+      parseCodexConfig({
+        workingDir: '/workspace/project',
+        sandbox: 'full-access',
       }),
     ).toThrow(CodexConfigError);
   });

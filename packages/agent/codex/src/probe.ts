@@ -34,8 +34,10 @@ function addGlobalArgs(args: string[], config: CodexConfig): void {
   args.push('--sandbox', config.sandbox);
   args.push('--ask-for-approval', 'never');
   args.push('--cd', config.workingDir);
-  for (const dir of config.addDirs) {
-    args.push('--add-dir', dir);
+  if (config.sandbox !== 'danger-full-access') {
+    for (const dir of config.addDirs) {
+      args.push('--add-dir', dir);
+    }
   }
   if (config.model) {
     args.push('--model', config.model);
@@ -211,6 +213,12 @@ export async function runCompatibilityProbe(
   const probeMode = opts.mode ?? 'startup';
   try {
     logger.info({ probeMode, sandbox: config.sandbox }, 'codex_compat_probe_start');
+    if (config.sandbox === 'danger-full-access') {
+      logger.warn(
+        { sandbox: config.sandbox },
+        'codex_danger_full_access_enabled',
+      );
+    }
     const version = await runProbeStep(logger, 'version', () =>
       runCodex(config.bin, ['--version'], timeoutMs),
     );
@@ -240,6 +248,9 @@ export async function runCompatibilityProbe(
     }
     if (config.model) {
       requireOneHelpToken(combinedHelp, ['--model', '-m'], '--model/-m');
+    }
+    if (config.sandbox === 'danger-full-access') {
+      requireHelpToken(combinedHelp, 'danger-full-access');
     }
     if (probeMode === 'startup') {
       logger.info({ probeMode }, 'codex_compat_probe_complete');

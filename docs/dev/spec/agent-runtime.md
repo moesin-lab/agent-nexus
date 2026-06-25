@@ -350,7 +350,7 @@ adapter 侧实现职责：
 - **输出解析**：维护行缓冲 + JSON parser，把 `CodexJsonlEvent` 翻译为 `AgentEvent`（映射表见 contract 文档）。
 - **多轮**：保存 `thread.started.thread_id` 到 `AgentSession.agentSessionId`；下一轮用 `exec resume <thread_id>`。
 - **中断**：终止当前 in-flight Codex 子进程，并合成 `turn_finished { reason: "user_interrupt", source: "runtime-synthesized" }`。
-- **安全默认值**：默认 `read-only` sandbox、固定 `--ask-for-approval never`、忽略 user config/rules；不使用 dangerous bypass。
+- **安全默认值**：默认 `read-only` sandbox、固定 `--ask-for-approval never`、忽略 user config/rules；显式 `danger-full-access` 才进入 YOLO 模式。
 - **能力声明**：`supportsStreaming=false`，除非后续 probe 坐实 text delta。
 
 Codex 的 `exec-server` / `app-server` 未经当前 contract 验证，不属于主路径。

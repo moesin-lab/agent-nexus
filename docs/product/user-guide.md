@@ -147,12 +147,12 @@ chmod 600 ~/.agent-nexus/config.json
 | `agents[].backend` | 是 | `claudecode` 或 `codex` |
 | `agents[].claudeCode.workingDir` | backend 为 `claudecode` 时是 | Claude Code 默认工作目录 |
 | `agents[].claudeCode.bin` | 否 | Claude Code CLI 路径；默认 `claude` |
-| `agents[].claudeCode.permissionLevel` | 否 | 默认 `default`；允许 `default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan` |
+| `agents[].claudeCode.permissionLevel` | 否 | 默认 `default`；`bypassPermissions` 是 Claude Code 的 YOLO 模式；也允许 `acceptEdits` / `auto` / `dontAsk` / `plan` |
 | `agents[].claudeCode.allowedTools` | 否 | 默认 `Read/Grep/Glob/Edit/Write`；启用 `Bash` 需要显式加入 |
 | `agents[].codex.workingDir` | backend 为 `codex` 时是 | Codex 默认工作目录，传给 `--cd` |
 | `agents[].codex.bin` | 否 | Codex CLI 路径；默认 `codex` |
 | `agents[].codex.model` | 否 | 传给 Codex CLI 的 `--model` |
-| `agents[].codex.sandbox` | 否 | 默认 `read-only`；可设为 `workspace-write` |
+| `agents[].codex.sandbox` | 否 | 默认 `read-only`；可设为 `workspace-write` 或 `danger-full-access` |
 | `agents[].codex.addDirs` | 否 | 默认 `[]`；逐个传给 `--add-dir` |
 | `agents[].codex.loadUserConfig` / `loadRules` | 否 | 默认 `false`，启动时传 `--ignore-user-config` / `--ignore-rules` |
 | `bindings[].platformName` | 是 | 引用 `platforms[].name` |
@@ -166,6 +166,12 @@ chmod 600 ~/.agent-nexus/config.json
 | `daemon.commandRegistry.textPrefixes.newSession` | 否 | 默认 `true`；控制 `@bot /new` 文本前缀，不影响 slash command |
 | `ui.toolMessages` | 否 | 默认 `append`；工具调用追加为独立消息并在结果到达时编辑该工具消息。设为 `compact` 可回到旧式紧凑显示 |
 | `log.level` | 否 | `trace` / `debug` / `info` / `warn` / `error` / `fatal`，默认 `info` |
+
+### Claude Code backend 权限细节
+
+默认保持 `permissionLevel: "default"`。agent-nexus 会显式传 `--permission-mode default`，并通过 `--permission-prompt-tool stdio` 自检工具执行前审批通道。
+
+如果你确实需要远程等价本机操作，可以把 `permissionLevel` 设为 `bypassPermissions`。这是 Claude Code backend 的 YOLO 模式：agent-nexus 会跳过工具权限控制 probe，并在启动日志打 warn；不要把这个模式暴露给不可信 Discord 账号或公共频道。其他非 `default` 模式也会跳过该 probe，不提供工具隔离强安全承诺。
 
 ### Codex backend 配置细节
 
@@ -208,6 +214,7 @@ chmod 600 ~/.agent-nexus/config.json
 |---|---|---|
 | `read-only` | 让 bot 只读代码、解释问题、做 review | 默认值；Codex 不能写项目文件 |
 | `workspace-write` | 让 bot 直接改 `workingDir` 下的仓库文件 | Codex 可以在工作目录内创建、修改、删除文件 |
+| `danger-full-access` | 远程控制 / YOLO，只在你信任入口和外层隔离时使用 | Codex 不受工作目录 sandbox 限制，风险接近本机 shell |
 
 `addDirs` 用来额外开放工作目录之外的路径。默认保持 `[]`。只有当 Codex backend 必须访问另一个目录时才配置，例如主项目在 `/workspace/app`，但还需要读共享 SDK `/workspace/shared-sdk`：
 
@@ -224,6 +231,8 @@ chmod 600 ~/.agent-nexus/config.json
 ```
 
 不要把 home、密钥目录、浏览器 profile、SSH/GPG 目录这类宽泛或敏感路径放进 `addDirs`。`addDirs` 是显式扩大 Codex CLI 可见范围的配置，应尽量只填具体项目目录。
+
+如果你确实需要远程等价本机操作，把 `sandbox` 设为 `danger-full-access`。此时 `workingDir` 只决定 Codex 从哪个目录启动，`addDirs` 不再限制可访问路径；不要把这个模式暴露给不可信 Discord 账号或公共频道。
 
 `loadUserConfig` 控制是否加载本机全局 Codex 配置：
 
@@ -246,9 +255,10 @@ chmod 600 ~/.agent-nexus/config.json
 | 只让 bot 解释代码 / review | `sandbox: "read-only"`，`addDirs: []`，`loadUserConfig: false`，`loadRules: false` |
 | 让 bot 修改当前仓库 | `sandbox: "workspace-write"`，`addDirs: []`，`loadUserConfig: false`，`loadRules: false` |
 | 多仓库联动 | `workspace-write` 加上最小必要的 `addDirs` |
+| 远程等价本机操作 | `sandbox: "danger-full-access"`，并确认 allowlist、channel binding 和外层隔离 |
 | 复用个人 Codex CLI 行为 | 只在理解影响后把 `loadUserConfig` 或 `loadRules` 改为 `true` |
 
-Codex backend 固定使用非交互 `codex exec --json` / `resume`，并固定传 `--ask-for-approval never`。因此需要人工确认的操作不会弹出审批窗口；应通过 `sandbox`、`workingDir`、`addDirs` 和默认不加载用户配置 / rules 来控制边界。
+Codex backend 固定使用非交互 `codex exec --json` / `resume`，并固定传 `--ask-for-approval never`。因此需要人工确认的操作不会弹出审批窗口；应通过 `sandbox`、`workingDir`、`addDirs` 和默认不加载用户配置 / rules 来控制边界。`danger-full-access` 明确表示放弃 Codex 文件系统 sandbox 边界。
 
 启动时默认只跑快速 Codex compatibility probe：检查 `codex --version` 与 help 中的必需 flag，不发起真实模型 turn。这样 Discord bot 启动不会先等待多轮 `codex exec --json`。如果要做完整 Codex backend 验证，使用仓库里的 `scripts/verify-codex-agent.sh`。
 

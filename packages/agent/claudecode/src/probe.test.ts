@@ -282,6 +282,12 @@ describe('runCompatibilityProbe', () => {
         { permissionLevel },
         'cc_permission_control_probe_skipped',
       );
+      if (permissionLevel === 'bypassPermissions') {
+        expect(fakeLogger.warn).toHaveBeenCalledWith(
+          { permissionLevel },
+          'claudecode_bypass_permissions_enabled',
+        );
+      }
     },
   );
 

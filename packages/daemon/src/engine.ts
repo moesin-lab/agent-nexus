@@ -2849,6 +2849,13 @@ export class Engine {
           }
           if (e.type === 'error') {
             errored = true;
+            const statusOnlyMessage =
+              statusText !== undefined &&
+              toolStatus === undefined &&
+              buf.length === 0 &&
+              messageRef !== undefined;
+            const errorText = `[agent error: ${e.payload.errorKind}] ${e.payload.message}`;
+            statusText = undefined;
             cancelPendingEdit();
             clearTyping();
             this.logger.error(
@@ -2862,7 +2869,12 @@ export class Engine {
               'agent_error',
             );
             try {
-              await safeSend(`[agent error: ${e.payload.errorKind}] ${e.payload.message}`);
+              if (platformCaps.supportsEdit && statusOnlyMessage && messageRef) {
+                await safeEdit(messageRef, errorText);
+                currentRenderedText = errorText;
+              } else {
+                await safeSend(errorText);
+              }
             } finally {
               closeSession();
             }

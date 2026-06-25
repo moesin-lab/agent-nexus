@@ -243,7 +243,7 @@ daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `t
 
 同一 turn 内，daemon 对平台的用户可见输出（status、tool start、assistant 正文、final reply）必须按 AgentEvent 到达顺序串行执行：前一条 `send` / `edit` 完成前，不得启动后一条用户可见输出。否则慢平台请求会造成工具消息与 assistant 正文在 IM 侧错位。
 
-`status` 是非终端工作状态：支持 edit 的平台应复用同一条工作消息连续更新，后续 assistant 正文或工具消息到达时清除该临时状态；不支持 edit 的平台可降级为追加状态消息。
+`status` 是非终端工作状态：支持 edit 的平台应复用同一条工作消息连续更新，后续 assistant 正文、工具消息或终端错误到达时清除该临时状态；不支持 edit 的平台可降级为追加状态消息。
 
 在 `append` 模式下，`tool_call_started` 是 assistant 消息分段边界：如果 tool 前已经发送或缓冲了 assistant 文本，daemon 必须先固定该段文本，再发送 tool start；tool 之后到达的 `text_delta` / `text_final` 必须创建新的 assistant 消息，不得回头编辑 tool 前的消息。用户可见顺序应保持为 `assistant before tool` → `tool start` → `assistant after tool`。
 

@@ -38,6 +38,18 @@ export const daemonCommandDescriptors: readonly CommandDescriptor[] = [
     legacyNames: [],
   },
   {
+    canonicalId: 'daemon:external-sessions',
+    owner: { type: 'daemon' },
+    localName: 'external-sessions',
+    summary: 'Discover external agent sessions',
+    options: [],
+    handlerKey: 'external-sessions',
+    applicability: {
+      requiredCapabilities: ['slash-command-registration', 'ephemeral-response'],
+    },
+    legacyNames: [],
+  },
+  {
     canonicalId: 'daemon:new-thread',
     owner: { type: 'daemon' },
     localName: 'new-thread',

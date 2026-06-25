@@ -10,6 +10,7 @@ related:
   - dev/spec/infra/idempotency
   - dev/spec/infra/persistence
   - dev/spec/infra/cost-and-limits
+  - dev/spec/infra/trajectory-observability
 ---
 
 # 会话模型（Session Model）
@@ -152,6 +153,12 @@ RoutingSession 持有的 opaque agent conversation ref 与 live `AgentSession` h
 当同一 SessionKey 没有可复用的 live handle 但仍有 opaque ref 时，daemon 启动新的 `AgentSession`，并把该 ref 放进 `SessionConfig.resumeFromAgentSessionId`。
 
 用户把已有 resumable session 绑定到新的 SessionKey 时，daemon 迁移 opaque ref 和下一次 spawn 所需的一次性 override；平台 thread 拓扑仍归原 channel，不随 rebind 复制。
+
+### Trajectory read model
+
+Trajectory read model 不改变本状态机。它以 RoutingSession / sessionId 为主要 anchor，另行记录外部 session 导入、native resume 绑定、AgentEvent transcript anchor、usage/log anchor 与可选 provider-call observation。
+
+外部 session resume 的架构边界与本节一致：daemon 保存 opaque native ref 并交给 agent runtime resume；外部 transcript 内容不因导入而进入模型上下文。字段、状态和查询契约见 [`trajectory-observability.md`](../spec/infra/trajectory-observability.md)。
 
 当前实现还未落地本文件描述的 SQLite lifecycle registry。内存态 MVP 支持 daemon-owned `/nexus-sessions`：按当前 platform instance + platform + user 列出最近可恢复的 opaque agent conversation ref，下拉项用该 session 的第一条用户消息生成标题；通过 Discord select 选择后，把当前 SessionKey 绑定到所选 `agentSessionId`；下一条消息使用 `SessionConfig.resumeFromAgentSessionId` 恢复。rebind 迁移 opaque ref、标题与下一次 spawn override，不复制 thread registry 或其它 channel topology 元数据。`/nexus-new-thread` 创建的 thread 占位在 agent session 启动前不出现在该列表里。
 

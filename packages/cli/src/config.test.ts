@@ -135,6 +135,9 @@ describe('config loader', () => {
     expect(configText).toMatch(/"daemon"/);
     expect(configText).toMatch(/"commandRegistry"/);
     expect(configText).toMatch(/"applyTimeoutMs": 30000/);
+    expect(configText).toMatch(/"trajectory"/);
+    expect(configText).toMatch(/"externalImport"/);
+    expect(configText).toMatch(/"providerCapture"/);
     expect(configText).not.toMatch(/"agent"\s*:/);
     expect(
       Object.prototype.hasOwnProperty.call(JSON.parse(configText), 'discord'),
@@ -334,6 +337,9 @@ describe('config loader', () => {
     const persisted = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
 
     expect(cfg.daemon.commandRegistry.registration.applyTimeoutMs).toBe(30000);
+    expect(cfg.daemon.trajectory.enabled).toBe(true);
+    expect(cfg.daemon.trajectory.externalImport.enabled).toBe(false);
+    expect(cfg.daemon.trajectory.providerCapture.enabled).toBe(false);
     expect(persisted).toMatchObject({
       daemon: {
         commandRegistry: {
@@ -351,6 +357,71 @@ describe('config loader', () => {
           },
           textPrefixes: { newSession: true },
         },
+        trajectory: {
+          enabled: true,
+          externalImport: {
+            enabled: false,
+            sources: [],
+            metadataOnlyDiscovery: true,
+            importContent: false,
+          },
+          providerCapture: {
+            enabled: false,
+            mode: 'transcript-only',
+          },
+        },
+      },
+    });
+  });
+
+  it('loadConfig 解析显式 daemon.trajectory 配置', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          daemon: {
+            trajectory: {
+              enabled: false,
+              externalImport: {
+                enabled: true,
+                sources: [
+                  {
+                    adapter: 'claude-code-jsonl',
+                    root: '/workspace/project/.claude',
+                  },
+                ],
+              },
+              providerCapture: {
+                enabled: true,
+                mode: 'forward-proxy',
+                port: 7005,
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    const cfg = await loadConfig();
+
+    expect(cfg.daemon.trajectory).toMatchObject({
+      enabled: false,
+      externalImport: {
+        enabled: true,
+        sources: [
+          {
+            adapter: 'claude-code-jsonl',
+            root: '/workspace/project/.claude',
+            projectPathAllowlist: [],
+          },
+        ],
+        importContent: false,
+      },
+      providerCapture: {
+        enabled: true,
+        mode: 'forward-proxy',
+        bindHost: '127.0.0.1',
+        port: 7005,
       },
     });
   });

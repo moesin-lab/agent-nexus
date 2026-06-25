@@ -278,6 +278,28 @@ const DEFAULT_CONFIG_TEMPLATE = `\
       "textPrefixes": {
         "newSession": true
       }
+    },
+    "trajectory": {
+      "enabled": true,
+      "externalImport": {
+        "enabled": false,
+        "sources": [],
+        "metadataOnlyDiscovery": true,
+        "importContent": false,
+        "maxFileBytes": 10485760,
+        "maxRecordsPerSession": 20000,
+        "maxAgeDays": null
+      },
+      "providerCapture": {
+        "enabled": false,
+        "mode": "transcript-only",
+        "bindHost": "127.0.0.1",
+        "port": null,
+        "storeRawStreams": false,
+        "maxRequestBytes": 1048576,
+        "maxResponseBytes": 4194304,
+        "retentionDays": 30
+      }
     }
   },
   "log": {

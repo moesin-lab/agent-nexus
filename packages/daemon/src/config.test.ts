@@ -35,6 +35,31 @@ describe('daemon runtime config', () => {
     expect(parseDaemonRuntimeConfig({})).toEqual(DEFAULT_DAEMON_RUNTIME_CONFIG);
   });
 
+  it('缺省 trajectory 配置按安全默认值补齐', () => {
+    expect(parseDaemonRuntimeConfig(undefined).trajectory).toEqual({
+      enabled: true,
+      externalImport: {
+        enabled: false,
+        sources: [],
+        metadataOnlyDiscovery: true,
+        importContent: false,
+        maxFileBytes: 10485760,
+        maxRecordsPerSession: 20000,
+        maxAgeDays: null,
+      },
+      providerCapture: {
+        enabled: false,
+        mode: 'transcript-only',
+        bindHost: '127.0.0.1',
+        port: null,
+        storeRawStreams: false,
+        maxRequestBytes: 1048576,
+        maxResponseBytes: 4194304,
+        retentionDays: 30,
+      },
+    });
+  });
+
   it('解析 commandRegistry 显式配置并补齐未写字段', () => {
     expect(
       parseDaemonRuntimeConfig({
@@ -51,7 +76,7 @@ describe('daemon runtime config', () => {
           textPrefixes: { newSession: false },
         },
       }),
-    ).toEqual({
+    ).toMatchObject({
       commandRegistry: {
         registration: {
           enabled: false,
@@ -63,6 +88,59 @@ describe('daemon runtime config', () => {
           legacy: { replyMode: false },
         },
         textPrefixes: { newSession: false },
+      },
+    });
+  });
+
+  it('解析 trajectory 显式配置并补齐未写字段', () => {
+    expect(
+      parseDaemonRuntimeConfig({
+        trajectory: {
+          enabled: false,
+          externalImport: {
+            enabled: true,
+            sources: [
+              {
+                adapter: 'codex-cli-jsonl',
+                root: '/workspace/project/.codex/sessions',
+                projectPathAllowlist: ['/workspace/project'],
+              },
+            ],
+            maxAgeDays: 30,
+          },
+          providerCapture: {
+            enabled: true,
+            mode: 'reverse-proxy',
+            port: 7010,
+          },
+        },
+      }).trajectory,
+    ).toEqual({
+      enabled: false,
+      externalImport: {
+        enabled: true,
+        sources: [
+          {
+            adapter: 'codex-cli-jsonl',
+            root: '/workspace/project/.codex/sessions',
+            projectPathAllowlist: ['/workspace/project'],
+          },
+        ],
+        metadataOnlyDiscovery: true,
+        importContent: false,
+        maxFileBytes: 10485760,
+        maxRecordsPerSession: 20000,
+        maxAgeDays: 30,
+      },
+      providerCapture: {
+        enabled: true,
+        mode: 'reverse-proxy',
+        bindHost: '127.0.0.1',
+        port: 7010,
+        storeRawStreams: false,
+        maxRequestBytes: 1048576,
+        maxResponseBytes: 4194304,
+        retentionDays: 30,
       },
     });
   });
@@ -85,6 +163,78 @@ describe('daemon runtime config', () => {
         },
       }),
     ).toThrow(/daemon\.commandRegistry\.aliases\.singleAgent\.mode/);
+  });
+
+  it('trajectory 未知字段、未知 adapter、非 loopback capture 绑定 fail-closed', () => {
+    expect(() =>
+      parseDaemonRuntimeConfig({
+        trajectory: { providerCapture: { stream: true } },
+      }),
+    ).toThrow(/daemon\.trajectory\.providerCapture\.stream/);
+
+    expect(() =>
+      parseDaemonRuntimeConfig({
+        trajectory: {
+          retention: { providerObservationsDays: 7 },
+        },
+      }),
+    ).toThrow(/daemon\.trajectory\.retention/);
+
+    expect(() =>
+      parseDaemonRuntimeConfig({
+        trajectory: {
+          externalImport: {
+            sources: [{ adapter: 'unknown-jsonl', root: '/workspace/project' }],
+          },
+        },
+      }),
+    ).toThrow(/daemon\.trajectory\.externalImport\.sources\[0\]\.adapter/);
+
+    expect(() =>
+      parseDaemonRuntimeConfig({
+        trajectory: {
+          externalImport: {
+            sources: [{ root: '/workspace/project' }],
+          },
+        },
+      }),
+    ).toThrow(/daemon\.trajectory\.externalImport\.sources\[0\]\.adapter/);
+
+    expect(() =>
+      parseDaemonRuntimeConfig({
+        trajectory: {
+          providerCapture: {
+            enabled: true,
+            mode: 'reverse-proxy',
+            bindHost: '0.0.0.0',
+          },
+        },
+      }),
+    ).toThrow(/daemon\.trajectory\.providerCapture\.bindHost/);
+
+    expect(() =>
+      parseDaemonRuntimeConfig({
+        trajectory: {
+          providerCapture: { mode: 'mirror' },
+        },
+      }),
+    ).toThrow(/daemon\.trajectory\.providerCapture\.mode/);
+
+    expect(() =>
+      parseDaemonRuntimeConfig({
+        trajectory: {
+          providerCapture: { port: 70000 },
+        },
+      }),
+    ).toThrow(/daemon\.trajectory\.providerCapture\.port/);
+
+    expect(() =>
+      parseDaemonRuntimeConfig({
+        trajectory: {
+          externalImport: { maxFileBytes: 0 },
+        },
+      }),
+    ).toThrow(/daemon\.trajectory\.externalImport\.maxFileBytes/);
   });
 });
 

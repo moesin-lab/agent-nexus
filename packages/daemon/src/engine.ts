@@ -18,6 +18,7 @@ import type {
   SessionConfig,
   SessionKey,
   SettingsSnapshotItem,
+  ToolResultContent,
 } from '@agent-nexus/protocol';
 import { serializeSessionKey, withPlatformName } from '@agent-nexus/protocol';
 import { checkPlatformAuth } from './auth.js';
@@ -31,6 +32,12 @@ import {
 } from './command-dispatch.js';
 import type { CommandDispatchDecision } from './command-dispatch.js';
 import type { PlatformAuthConfig, ToolMessageMode } from './config.js';
+import {
+  ExternalSessionImportServiceError,
+  agentOwnerForExternalSourceAdapter,
+  type ExternalSessionImporter,
+  type ExternalSessionImportOutcome,
+} from './external-session-import.js';
 import type { IdempotencyStore } from './idempotency.js';
 import type { Logger } from './logger.js';
 import {
@@ -39,9 +46,23 @@ import {
   QueueItemCancelledError,
   queueKeyFromEvent,
 } from './message-queue.js';
+import type {
+  ProviderCaptureRecordResult,
+  ProviderCaptureRecorder,
+} from './provider-capture.js';
 import { BasicRedactor, type Redactor } from './redaction.js';
 import { RouteError, selectRoute, type RoutingEntry } from './router.js';
 import type { SessionStore } from './session-store.js';
+import type {
+  TrajectorySegment,
+  TrajectorySegmentKind,
+  TrajectoryStore,
+} from './trajectory-store.js';
+import {
+  safeJson,
+  summarizeUsageRecord,
+  titleFromMetadataJson,
+} from './trajectory-utils.js';
 
 export interface EngineAgent {
   agent: AgentRuntime;
@@ -116,6 +137,12 @@ export interface EngineDeps {
   textPrefixes?: {
     newSession?: boolean;
   };
+  trajectory?: {
+    enabled?: boolean;
+    store?: TrajectoryStore;
+  };
+  externalSessionImporter?: ExternalSessionImporter;
+  providerCapture?: ProviderCaptureRecorder;
 }
 
 const DEFAULT_STREAM_EDIT_THROTTLE_MS = 1500;
@@ -125,6 +152,8 @@ const COMMAND_NOT_READY_TEXT = 'Slash commands are not ready yet. Try again late
 const COMMAND_UNAVAILABLE_TEXT = 'This command is not available in this channel.';
 const COMMAND_FAILED_TEXT = 'Command failed.';
 const SESSION_RESUME_COMPONENT_ID = 'nexus:sessions:resume';
+const EXTERNAL_SESSIONS_COMPONENT_PREFIX = 'nexus:external-sessions:';
+const EXTERNAL_SESSIONS_RESUME_COMPONENT_ID = `${EXTERNAL_SESSIONS_COMPONENT_PREFIX}resume`;
 const NEW_THREAD_DEFAULT_TITLE = 'New Nexus session';
 const THREAD_AUTO_ARCHIVE_DURATION_MINUTES = 1440;
 const WORKING_DIR_ARG = 'path';
@@ -159,6 +188,7 @@ interface ActiveAgentSession {
   agent: AgentRuntime;
   agentName: string;
   session: AgentSession;
+  sessionId: string;
   currentTurn?: {
     eventId: string;
     traceId: string;
@@ -198,6 +228,21 @@ function renderToolStart(toolName: string, inputSummary: string): string {
   return `${toolName}: ${summary}`;
 }
 
+function summarizeToolResultContent(content: ToolResultContent): string {
+  switch (content.kind) {
+    case 'empty':
+      return '(empty result)';
+    case 'text':
+      return content.text;
+    case 'blocks':
+      return `${content.blocks.length} content block(s)`;
+    case 'object':
+      return safeJson(content.object);
+    case 'unknown':
+      return content.raw;
+  }
+}
+
 function sessionTitleFromPrompt(prompt: string): string | undefined {
   const title = prompt.replace(/\s+/g, ' ').trim();
   if (title.length === 0) return undefined;
@@ -211,6 +256,10 @@ function commandStringArg(
   const value = args?.[name];
   if (typeof value !== 'string') return undefined;
   return value;
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 function validateWorkingDirArg(
@@ -269,6 +318,10 @@ export class Engine {
   private readonly agents: Map<string, EngineAgent>;
   private readonly logger: Logger;
   private readonly sessionStore: SessionStore;
+  private readonly trajectoryEnabled: boolean;
+  private readonly trajectoryStore?: TrajectoryStore;
+  private readonly externalSessionImporter?: ExternalSessionImporter;
+  private readonly providerCapture?: ProviderCaptureRecorder;
   private readonly streamEditThrottleMs: number;
   private readonly typingRefreshMs: number;
   private readonly agentSessions = new Map<string, ActiveAgentSession>();
@@ -319,6 +372,10 @@ export class Engine {
     }
     this.logger = deps.logger;
     this.sessionStore = deps.sessionStore;
+    this.trajectoryEnabled = deps.trajectory?.enabled ?? true;
+    this.trajectoryStore = deps.trajectory?.store;
+    this.externalSessionImporter = deps.externalSessionImporter;
+    this.providerCapture = deps.providerCapture;
     this.streamEditThrottleMs =
       deps.streaming?.streamEditThrottleMs ?? DEFAULT_STREAM_EDIT_THROTTLE_MS;
     this.typingRefreshMs =
@@ -1018,6 +1075,9 @@ export class Engine {
     if (decision.handlerKey === 'sessions') {
       return this.handleSessionsCommand(event);
     }
+    if (decision.handlerKey === 'external-sessions') {
+      return this.handleExternalSessionsCommand(event);
+    }
     if (decision.handlerKey === 'new-thread') {
       return this.handleNewThreadCommand(event);
     }
@@ -1134,6 +1194,78 @@ export class Engine {
         ],
       },
       event.traceId,
+    );
+  }
+
+  private async handleExternalSessionsCommand(
+    event: NormalizedEvent,
+  ): Promise<EventHandlerResult> {
+    if (!this.externalSessionImporter) {
+      return this.commandResponse('[external import unavailable]', event.traceId);
+    }
+    const route = this.route(event);
+    const agentSlot = route ? this.agents.get(route.agentName) : undefined;
+    if (!agentSlot) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    const agentOwner = agentSlot.agentOwner ?? agentSlot.agent.name();
+    let result;
+    try {
+      await yieldToEventLoop();
+      result = await this.externalSessionImporter.run();
+    } catch (err) {
+      this.logger.error({ traceId: event.traceId, err }, 'external_session_import_failed');
+      return this.commandResponse(COMMAND_FAILED_TEXT, event.traceId);
+    }
+    const resumable = result.imports
+      .filter((outcome) =>
+        this.externalSessionOutcomeCanResume(outcome, agentOwner),
+      )
+      .slice(0, 25);
+    if (resumable.length === 0) {
+      return this.commandResponse('[no external sessions]', event.traceId);
+    }
+    return this.commandResponseResult(
+      {
+        text: 'Select an external session to resume.',
+        ephemeral: true,
+        components: [
+          {
+            type: 'select',
+            componentId: EXTERNAL_SESSIONS_RESUME_COMPONENT_ID,
+            placeholder: 'Resume external session',
+            minValues: 1,
+            maxValues: 1,
+            options: resumable.map((outcome) => ({
+              label: this.externalSessionLabel(outcome).slice(0, 100),
+              value: outcome.record.importId,
+              description: `${outcome.record.sourceAdapter} · ${outcome.record.sourceSessionId}`.slice(0, 100),
+            })),
+          },
+        ],
+      },
+      event.traceId,
+    );
+  }
+
+  private externalSessionOutcomeCanResume(
+    outcome: ExternalSessionImportOutcome,
+    agentOwner: string,
+  ): boolean {
+    if (!outcome.record.nativeSessionRef) return false;
+    if (!outcome.resumeEligibility.canResume) return false;
+    const expectedOwner = agentOwnerForExternalSourceAdapter(
+      outcome.record.sourceAdapter,
+    );
+    if (!expectedOwner || expectedOwner !== agentOwner) return false;
+    return outcome.record.state === 'registered' || outcome.record.state === 'imported';
+  }
+
+  private externalSessionLabel(outcome: ExternalSessionImportOutcome): string {
+    return (
+      outcome.candidate.firstUserMessageSummary ??
+      titleFromMetadataJson(outcome.record.metadataJson) ??
+      outcome.record.sourceSessionId
     );
   }
 
@@ -1790,6 +1922,9 @@ export class Engine {
     if (componentId === SESSION_RESUME_COMPONENT_ID) {
       return this.handleSessionResumeInteraction(event);
     }
+    if (componentId === EXTERNAL_SESSIONS_RESUME_COMPONENT_ID) {
+      return this.handleExternalSessionResumeInteraction(event);
+    }
     if (componentId.startsWith(QUEUE_COMPONENT_PREFIX)) {
       return this.handleQueueInteraction(event);
     }
@@ -2042,6 +2177,47 @@ export class Engine {
     }
     return this.commandResponse(
       `[session resumed: ${rebound.agentSessionId}]`,
+      event.traceId,
+    );
+  }
+
+  private handleExternalSessionResumeInteraction(
+    event: NormalizedEvent,
+  ): EventHandlerResult {
+    const importId = event.interaction?.values[0];
+    if (!importId || !this.externalSessionImporter) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    const route = this.route(event);
+    const agentSlot = route ? this.agents.get(route.agentName) : undefined;
+    if (!agentSlot) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    const agentOwner = agentSlot.agentOwner ?? agentSlot.agent.name();
+    let binding;
+    try {
+      binding = this.externalSessionImporter.bindToRoutingSession({
+        importId,
+        sessionKey: routedSessionKey,
+        agentOwner,
+      });
+    } catch (err) {
+      if (err instanceof ExternalSessionImportServiceError) {
+        return this.commandResponse(
+          `[external session unavailable: ${err.code}]`,
+          event.traceId,
+        );
+      }
+      this.logger.error({ traceId: event.traceId, importId, err }, 'external_session_resume_failed');
+      return this.commandResponse(COMMAND_FAILED_TEXT, event.traceId);
+    }
+    this.stopActiveSession(serializeSessionKey(routedSessionKey), event.traceId);
+    return this.commandResponse(
+      `[external session resumed: ${binding.nativeSessionRef}]`,
       event.traceId,
     );
   }
@@ -2353,6 +2529,314 @@ export class Engine {
     }
   }
 
+  private appendNexusTrajectorySegment(
+    active: ActiveAgentSession,
+    input: {
+      kind: TrajectorySegmentKind;
+      traceId?: string;
+      turnSequence?: number;
+      ts: string;
+      summary: string;
+      usageEventId?: string;
+      metadata: Record<string, unknown>;
+    },
+  ): void {
+    if (!this.trajectoryEnabled || !this.trajectoryStore) return;
+    const segment: TrajectorySegment = {
+      segmentId: randomUUID(),
+      sessionId: active.sessionId,
+      source: 'nexus-agent-event',
+      kind: input.kind,
+      sequence: this.sessionStore.nextTrajectorySequence(active.sessionId),
+      ts: input.ts,
+      summary: input.summary,
+      confidence: 'high',
+      redactionState: 'redacted',
+      metadataJson: safeJson(input.metadata),
+    };
+    if (input.traceId) segment.traceId = input.traceId;
+    if (input.turnSequence !== undefined) {
+      segment.turnSequence = input.turnSequence;
+    }
+    if (input.usageEventId) segment.usageEventId = input.usageEventId;
+
+    try {
+      this.trajectoryStore.appendTrajectorySegment(segment);
+    } catch (err) {
+      this.logger.warn(
+        {
+          traceId: input.traceId,
+          sessionId: active.sessionId,
+          kind: input.kind,
+          err,
+        },
+        'trajectory_segment_append_failed',
+      );
+    }
+  }
+
+  private appendInboundTrajectorySegment(
+    active: ActiveAgentSession,
+    event: NormalizedEvent & { sessionKey: SessionKey },
+    prompt: string,
+    sessionKeyStr: string,
+    agentName: string,
+  ): void {
+    this.appendNexusTrajectorySegment(active, {
+      kind: 'user-message',
+      traceId: event.traceId,
+      ts: event.receivedAt.toISOString(),
+      summary: prompt,
+      metadata: {
+        eventId: event.eventId,
+        messageId: event.messageId,
+        platform: event.platform,
+        rawContentType: event.rawContentType,
+        sessionKey: sessionKeyStr,
+        agentName,
+      },
+    });
+  }
+
+  private appendAgentEventTrajectorySegment(
+    active: ActiveAgentSession,
+    event: AgentEvent,
+    sessionKeyStr: string,
+  ): void {
+    const baseMetadata = {
+      eventType: event.type,
+      agentEventSequence: event.sequence,
+      sessionKey: sessionKeyStr,
+    };
+    switch (event.type) {
+      case 'session_started':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'state-change',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: event.payload.agentSessionId
+            ? `session started: ${event.payload.agentSessionId}`
+            : 'session started',
+          metadata: {
+            ...baseMetadata,
+            agentSessionId: event.payload.agentSessionId,
+            workingDir: event.payload.workingDir,
+          },
+        });
+        return;
+      case 'thinking':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'reasoning',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: event.payload.text,
+          metadata: baseMetadata,
+        });
+        return;
+      case 'text_delta':
+        return;
+      case 'text_final':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'agent-message',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: event.payload.text,
+          metadata: baseMetadata,
+        });
+        return;
+      case 'tool_call_started':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'tool-call',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: `${event.payload.toolName}: ${event.payload.inputSummary}`,
+          metadata: {
+            ...baseMetadata,
+            callId: event.payload.callId,
+            toolName: event.payload.toolName,
+          },
+        });
+        return;
+      case 'tool_call_progress':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'state-change',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: `[tool: ${event.payload.callId}] ${event.payload.note}`,
+          metadata: {
+            ...baseMetadata,
+            callId: event.payload.callId,
+          },
+        });
+        return;
+      case 'tool_result':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'tool-result',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: summarizeToolResultContent(event.payload.content),
+          metadata: {
+            ...baseMetadata,
+            callId: event.payload.callId,
+            resultSequence: event.payload.resultSequence,
+            isError: event.payload.isError,
+            contentKind: event.payload.content.kind,
+          },
+        });
+        return;
+      case 'tool_call_finished':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'state-change',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: `${event.payload.toolName}: ${event.payload.status}`,
+          metadata: {
+            ...baseMetadata,
+            callId: event.payload.callId,
+            toolName: event.payload.toolName,
+            status: event.payload.status,
+            errorSummary: event.payload.errorSummary,
+          },
+        });
+        return;
+      case 'usage':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'usage',
+          traceId: event.traceId,
+          turnSequence: event.payload.turnSequence,
+          ts: event.timestamp.toISOString(),
+          summary: summarizeUsageRecord(event.payload),
+          usageEventId: `${active.sessionId}:usage:${event.sequence}`,
+          metadata: {
+            ...baseMetadata,
+            usage: event.payload,
+          },
+        });
+        return;
+      case 'turn_finished':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'state-change',
+          traceId: event.traceId,
+          turnSequence: event.payload.turnSequence,
+          ts: event.timestamp.toISOString(),
+          summary: `turn finished: ${event.payload.reason}`,
+          metadata: {
+            ...baseMetadata,
+            reason: event.payload.reason,
+            source: event.payload.source,
+          },
+        });
+        return;
+      case 'error':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'state-change',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: `[agent error: ${event.payload.errorKind}] ${event.payload.message}`,
+          metadata: {
+            ...baseMetadata,
+            errorKind: event.payload.errorKind,
+            code: event.payload.code,
+          },
+        });
+        return;
+      case 'session_stopped':
+        this.appendNexusTrajectorySegment(active, {
+          kind: 'state-change',
+          traceId: event.traceId,
+          ts: event.timestamp.toISOString(),
+          summary: `session stopped: ${event.payload.reason}`,
+          metadata: {
+            ...baseMetadata,
+            reason: event.payload.reason,
+          },
+        });
+        return;
+    }
+  }
+
+  private recordProviderUsageBestEffort(
+    active: ActiveAgentSession,
+    event: Extract<AgentEvent, { type: 'usage' }>,
+    agentSlot: EngineAgent,
+  ): void {
+    if (!this.providerCapture) return;
+    const backend = agentSlot.agentOwner ?? agentSlot.agent.name();
+    let result: ProviderCaptureRecordResult;
+    try {
+      result = this.providerCapture.recordUsageObservation({
+        backend,
+        sessionId: active.sessionId,
+        traceId: event.traceId,
+        observedAt: event.timestamp,
+        agentEventSequence: event.sequence,
+        trajectorySequence: this.sessionStore.nextTrajectorySequence(
+          active.sessionId,
+        ),
+        usage: event.payload,
+      });
+    } catch (err) {
+      this.logger.warn(
+        {
+          traceId: event.traceId,
+          sessionId: active.sessionId,
+          backend,
+          err,
+        },
+        'provider_capture_failed',
+      );
+      return;
+    }
+
+    if (result.status === 'recorded') {
+      this.logger.info(
+        {
+          traceId: event.traceId,
+          sessionId: active.sessionId,
+          backend,
+          captureMode: 'transcript-only',
+          observationId: result.observationId,
+          alignmentConfidence: 'medium',
+          redactionState: 'metadata-only',
+        },
+        'provider_call_observed',
+      );
+      return;
+    }
+    if (result.status === 'unsupported' || result.status === 'dropped') {
+      this.logger.warn(
+        {
+          traceId: event.traceId,
+          sessionId: active.sessionId,
+          backend,
+          code: result.code,
+          reason: result.status === 'unsupported' ? result.reason : undefined,
+        },
+        'provider_capture_failed',
+      );
+    }
+  }
+
+  private appendAgentEventTrajectoryBestEffort(
+    active: ActiveAgentSession,
+    event: AgentEvent,
+    sessionKeyStr: string,
+  ): void {
+    try {
+      this.appendAgentEventTrajectorySegment(active, event, sessionKeyStr);
+    } catch (err) {
+      this.logger.warn(
+        {
+          traceId: event.traceId,
+          sessionId: active.sessionId,
+          eventType: event.type,
+          err,
+        },
+        'trajectory_event_mapping_failed',
+      );
+    }
+  }
+
   private async dispatchImpl(
     event: NormalizedEvent & { sessionKey: SessionKey },
     agentSlot: EngineAgent,
@@ -2447,6 +2931,7 @@ export class Engine {
       let statusText: string | undefined;
       const toolCallStartedAt = new Map<string, number>();
       const toolMessages = new Map<string, ToolMessageState>();
+      let activeSessionForTrajectory: ActiveAgentSession | undefined;
 
       const safeSend = async (text: string): Promise<MessageRef | undefined> => {
         try {
@@ -2718,6 +3203,20 @@ export class Engine {
 
       const handler = async (e: AgentEvent): Promise<void> => {
         try {
+          if (activeSessionForTrajectory) {
+            this.appendAgentEventTrajectoryBestEffort(
+              activeSessionForTrajectory,
+              e,
+              sessionKeyStr,
+            );
+            if (e.type === 'usage') {
+              this.recordProviderUsageBestEffort(
+                activeSessionForTrajectory,
+                e,
+                agentSlot,
+              );
+            }
+          }
           if (e.type === 'session_started') {
             const agentSessionId = e.payload.agentSessionId;
             if (agentSessionId) {
@@ -2930,6 +3429,8 @@ export class Engine {
         sessionKeyStr,
         agentSlot,
       );
+      // handler closes over this value; assign it before currentTurn.handle can run.
+      activeSessionForTrajectory = activeSession;
       session = activeSession.session;
       activeSession.currentTurn = {
         eventId: event.eventId,
@@ -2939,6 +3440,13 @@ export class Engine {
         handle: handler,
       };
       const turnState = activeSession.currentTurn;
+      this.appendInboundTrajectorySegment(
+        activeSession,
+        event,
+        prompt,
+        sessionKeyStr,
+        agentSlot.agentName,
+      );
 
       startTyping();
       let sendInputErr: unknown;
@@ -3019,7 +3527,7 @@ export class Engine {
     const config: SessionConfig = {
       ...agentSlot.defaultSessionConfig,
       workingDir,
-      sessionId: randomUUID(),
+      sessionId: this.sessionStore.ensureSessionId(event.sessionKey),
       resumeFromAgentSessionId: prevAgentSessionId,
     };
     const session = agentSlot.agent.startSession(event.sessionKey, config);
@@ -3027,6 +3535,7 @@ export class Engine {
       agent: agentSlot.agent,
       agentName: agentSlot.agentName,
       session,
+      sessionId: config.sessionId,
     };
     this.agentSessions.set(sessionKeyStr, activeSession);
     agentSlot.agent.onEvent(session, async (agentEvent) => {

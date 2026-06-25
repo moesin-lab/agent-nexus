@@ -8,6 +8,7 @@ related:
   - dev/adr/0003-deployment-local-desktop
   - dev/architecture/session-model
   - dev/spec/infra/idempotency
+  - dev/spec/infra/trajectory-observability
   - dev/spec/security/secrets
   - dev/spec/security/README
 contracts:
@@ -43,6 +44,9 @@ contracts:
 ├── transcripts/
 │   └── <sessionKey>/
 │       └── <date>.jsonl    # CC 原始输出 transcript（按日切片）
+├── trajectory/
+│   ├── imports/            # Nexus 管理的外部导入片段
+│   └── provider-calls/     # Nexus 管理的 provider-call observation payload
 ├── logs/
 │   └── <date>.jsonl        # 结构化日志
 ├── secrets/                # 敏感文件（mode 0700）
@@ -146,6 +150,94 @@ contracts:
 
 **聚合约束**：所有美元 counter / `$` 预算 snapshot 的聚合**只能基于** `completeness = 'complete' AND cost_usd > 0` 的记录（语义见 [`cost-and-limits.md` §`UsageRecord.completeness` 语义](cost-and-limits.md#usagerecordcompleteness-语义) 消费方硬不变量）。直接 `SUM(cost_usd)` 是反模式。
 
+### external_session_imports
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `import_id` | TEXT PRIMARY KEY | ulid / uuidv7 |
+| `source_adapter` | TEXT NOT NULL | `codex-cli-jsonl` / `codex-app-jsonl` / `claude-code-jsonl` 等 |
+| `source_session_id` | TEXT NOT NULL | 外部来源内的 session id |
+| `source_path_hash` | TEXT NOT NULL | 外部路径 hash；不保存未脱敏绝对路径 |
+| `native_session_ref` | TEXT | 可交给 agent runtime 的 opaque resume ref |
+| `linked_session_id` | TEXT | 绑定到 Nexus RoutingSession 后填写 |
+| `state` | TEXT NOT NULL | `discovered|registered|imported|linked|rejected|failed|retired` |
+| `confidence` | TEXT NOT NULL | `high|medium|low|unknown` |
+| `metadata_json` | TEXT NOT NULL | source metadata、摘要、unsupported reasons；必须脱敏 |
+| `error_json` | TEXT | `{code,message,retryable}` |
+| `discovered_at` | TEXT NOT NULL | RFC3339 |
+| `imported_at` | TEXT | RFC3339 |
+| `linked_at` | TEXT | RFC3339 |
+
+索引：
+
+- `idx_external_session_imports_source (source_adapter, source_session_id)`
+- `idx_external_session_imports_linked_session (linked_session_id)`
+- `idx_external_session_imports_state (state, discovered_at DESC)`
+
+字段语义和状态机见 [`trajectory-observability.md`](trajectory-observability.md#导入状态)。
+
+### trajectory_segments
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `segment_id` | TEXT PRIMARY KEY | ulid / uuidv7 |
+| `session_id` | TEXT | Nexus session id；未链接外部导入时可为空 |
+| `import_id` | TEXT | 外部导入来源 |
+| `provider_observation_id` | TEXT | provider-call observation 来源 |
+| `source` | TEXT NOT NULL | `nexus-agent-event|external-import|provider-call` |
+| `kind` | TEXT NOT NULL | `user-message|agent-message|reasoning|tool-call|tool-result|usage|provider-request|provider-response|state-change|unknown` |
+| `trace_id` | TEXT | |
+| `turn_sequence` | INTEGER | |
+| `sequence` | INTEGER NOT NULL | 同 session 或 import 内的稳定顺序 |
+| `ts` | TEXT NOT NULL | RFC3339 |
+| `summary` | TEXT NOT NULL | 脱敏摘要 |
+| `content_ref` | TEXT | 指向 `<home>/trajectory/imports/` 或 transcript 内受管内容 |
+| `usage_event_id` | TEXT | 关联 usage_events；存储 `usage_events.id` 的字符串投影，对齐 trajectory read model 的 `usageEventId` opaque id |
+| `log_anchor_json` | TEXT | `{logFile,byteOffset,event}`；路径必须相对 `<home>` |
+| `confidence` | TEXT NOT NULL | `high|medium|low|unknown` |
+| `redaction_state` | TEXT NOT NULL | `redacted|metadata-only|dropped` |
+| `metadata_json` | TEXT NOT NULL | 扩展 metadata；必须脱敏 |
+
+索引：
+
+- `idx_trajectory_segments_session (session_id, ts, sequence)`
+- `idx_trajectory_segments_import (import_id, ts, sequence)`
+- `idx_trajectory_segments_source_kind (source, kind)`
+
+`content_ref` 不得指向外部原始 transcript 路径。查询契约见 [`trajectory-observability.md`](trajectory-observability.md#查询契约)。
+
+### provider_call_observations
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `observation_id` | TEXT PRIMARY KEY | ulid / uuidv7 |
+| `session_id` | TEXT | 可为空，表示无法可靠对齐到 Nexus session |
+| `trace_id` | TEXT | |
+| `backend` | TEXT NOT NULL | agent backend |
+| `capture_mode` | TEXT NOT NULL | `reverse-proxy|forward-proxy|transcript-only` |
+| `request_started_at` | TEXT NOT NULL | RFC3339 |
+| `response_finished_at` | TEXT | RFC3339 |
+| `provider_host` | TEXT | |
+| `model` | TEXT | |
+| `request_summary` | TEXT NOT NULL | 脱敏摘要 |
+| `response_summary` | TEXT | 脱敏摘要 |
+| `request_body_ref` | TEXT | 受管 redacted payload |
+| `response_body_ref` | TEXT | 受管 redacted payload |
+| `stream_frames_ref` | TEXT | 仅 `storeRawStreams=true` 时允许 |
+| `request_bytes` | INTEGER NOT NULL | 原始大小计数 |
+| `response_bytes` | INTEGER | 原始大小计数 |
+| `redaction_state` | TEXT NOT NULL | `redacted|metadata-only|dropped` |
+| `alignment_json` | TEXT NOT NULL | `{confidence,turnSequence,agentEventSequence,reasons}` |
+| `error_code` | TEXT | |
+| `metadata_json` | TEXT NOT NULL | 必须脱敏 |
+
+索引：
+
+- `idx_provider_call_observations_session (session_id, request_started_at)`
+- `idx_provider_call_observations_backend (backend, request_started_at)`
+
+payload 文件只能写入 `<home>/trajectory/provider-calls/`。provider-call 字段语义见 [`trajectory-observability.md`](trajectory-observability.md#provider-call-observation)。
+
 ## Transcript 文件
 
 ### 位置
@@ -217,6 +309,13 @@ interface Store {
     recordUsageEvent(event) -> void
     getSessionCounters(key) -> SessionCounters      // turns, toolCalls, wallClockMs, tokens, costUsd（costUsd 仅累加 completeness=complete && cost_usd>0；见 usage_events §聚合约束）
     getSessionBudget(key) -> BudgetSnapshot?        // null 当 $ 预算未启用
+
+    // trajectory
+    upsertExternalSessionImport(record) -> void
+    appendTrajectorySegment(segment) -> void
+    recordProviderCallObservation(observation) -> void
+    pruneProviderCallObservations(before) -> int
+    queryTrajectory(query) -> TrajectoryPage
 }
 ```
 
@@ -228,10 +327,11 @@ interface Store {
 
 ## 迁移
 
-- 首版 schema 由 `@agent-nexus/daemon` 包内 `migrations/` 子目录管理
-- 每次 schema 变更 +1 migration
-- 启动时检查 schema version，自动跑 pending migrations
-- 禁止手工改 schema
+- SQLite store 维护 `trajectory_schema_version` 表，当前版本为 1。
+- 启动时检查 schema version；无版本记录的旧库会运行幂等 V1 migration 并写入版本。
+- 每次 schema 变更必须提升版本并在 store open 时自动跑 pending migration。
+- 遇到高于当前 runtime 支持的 schema version 必须 fail-closed。
+- 禁止手工改 schema。
 
 ## 备份
 
@@ -244,6 +344,8 @@ MVP 不内置备份功能。用户可自行备份 `<home>/state.db` 与 `transcr
 - `idempotency`：TTL 24h，后台 GC
 - `messages`、`usage_events`：默认 90 天，用户可配置
 - `transcripts`：默认永久，用户可配置轮转
+- `external_session_imports`、`trajectory_segments`：默认 90 天，用户可配置；已链接到 active session 的记录不得早于 session 归档清理
+- `provider_call_observations` 与 `<home>/trajectory/provider-calls/` payload：默认 30 天，用户可配置
 - `logs`：默认 30 天
 
 ## 反模式

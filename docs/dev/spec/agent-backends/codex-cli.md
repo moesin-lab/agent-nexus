@@ -33,6 +33,8 @@ contracts:
 | 运行时 | 用户本机，由用户自行维护 Codex CLI 安装与认证 |
 | 执行前工具审批 | 当前未发现；不得宣称支持 Claude Code 的工具级白名单语义 |
 
+> 2026-06-23 P1 现场对账观察到本机 `codex-cli 0.142.0`，关键 `exec` / `exec resume` / `--json` / safety flags 仍需由 `CompatibilityProbe` 在启动时确认。本文件中的事件样例与行为基线仍以已落盘 probe 证据为准，不因本机版本号单独放行。
+
 ## 配置契约
 
 本节只定义 Codex backend 拥有的 `CodexConfig` 字段。它如何嵌入顶层 `AgentNexusConfig`、如何与其他 agent/backend 选择关系组合，由当前配置 schema owner 定义；Codex contract 不定义顶层 selector 或路由模型。

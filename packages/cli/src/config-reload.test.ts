@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createLogger, type EngineRuntimeUpdate } from '@agent-nexus/daemon';
+import {
+  DEFAULT_DAEMON_RUNTIME_CONFIG,
+  createLogger,
+  type EngineRuntimeUpdate,
+} from '@agent-nexus/daemon';
 import { ConfigError, type AgentConfig, type AgentNexusConfig } from './config.js';
 import { createConfigEditor, createConfigReloader } from './config-reload.js';
 
@@ -60,20 +64,7 @@ function baseConfig(overrides: Partial<AgentNexusConfig> = {}): AgentNexusConfig
         match: { discord: { channelIds: ['C1'] } },
       },
     ],
-    daemon: {
-      commandRegistry: {
-        registration: {
-          enabled: true,
-          applyTimeoutMs: 30000,
-          retry: { maxAttempts: 1, backoffMs: 0 },
-        },
-        aliases: {
-          singleAgent: { enabled: true },
-          legacy: { replyMode: true },
-        },
-        textPrefixes: { newSession: true },
-      },
-    },
+    daemon: structuredClone(DEFAULT_DAEMON_RUNTIME_CONFIG),
     ui: { toolMessages: 'append' },
     log: { level: 'info' },
     ...overrides,
@@ -259,6 +250,29 @@ describe('createConfigReloader', () => {
     expect(result.message).toContain('restart required');
     expect(result.message).toContain('agents');
     expect(result.message).toContain('log');
+  });
+
+  it('daemon.trajectory 变化时成功响应带重启提示但不热更新 trajectory', async () => {
+    const target = makeTarget('discord-main');
+    const next = baseConfig();
+    next.daemon.trajectory.enabled = false;
+
+    const reload = createConfigReloader({
+      initialConfig: baseConfig(),
+      load: async () => next,
+      targets: [target],
+      runningAgentNames: ['codex-dev'],
+      logger: SILENT_LOGGER,
+    });
+
+    const result = await reload();
+
+    expect(result.status).toBe('reloaded');
+    expect(target.applyRuntimeUpdate).toHaveBeenCalledTimes(1);
+    const update = target.applyRuntimeUpdate.mock.calls[0]![0] as EngineRuntimeUpdate;
+    expect(update).not.toHaveProperty('trajectoryEnabled');
+    expect(result.message).toContain('restart required');
+    expect(result.message).toContain('daemon');
   });
 });
 

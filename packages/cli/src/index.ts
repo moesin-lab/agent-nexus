@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import { mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   ActiveCommandRegistry,
   Engine,
+  ExternalSessionImportService,
   InMemoryIdempotencyStore,
+  ProviderCaptureService,
   SessionStore,
+  SqliteTrajectoryStore,
   createLogger,
   daemonCommandDescriptors,
   type RoutingEntry,
@@ -26,10 +29,13 @@ import {
   ConfigError,
   SecretsPermissionError,
   buildRoutingTable,
+  configRoot,
   editConfigFile,
   loadConfig,
   loadSecret,
 } from './config.js';
+
+const PROVIDER_RETENTION_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 async function main(): Promise<void> {
   let config;
@@ -86,6 +92,47 @@ async function main(): Promise<void> {
   const sessionStore = new SessionStore();
   const commandRegistry = new ActiveCommandRegistry();
   const idempotencyStore = new InMemoryIdempotencyStore();
+  let trajectoryStore: SqliteTrajectoryStore | undefined;
+  if (config.daemon.trajectory.enabled) {
+    const trajectoryDbPath = join(configRoot(), 'state.db');
+    try {
+      trajectoryStore = new SqliteTrajectoryStore({ path: trajectoryDbPath });
+    } catch (err) {
+      logger.error(
+        { err, path: trajectoryDbPath },
+        'trajectory_store_open_failed',
+      );
+    }
+  }
+  const trajectoryWriteEnabled =
+    config.daemon.trajectory.enabled && trajectoryStore !== undefined;
+  const externalSessionImporter = trajectoryStore
+    ? new ExternalSessionImportService({
+        config: config.daemon.trajectory.externalImport,
+        store: trajectoryStore,
+        sessionStore,
+        contentStorageRoot: configRoot(),
+      })
+    : undefined;
+  const providerCaptureService = trajectoryStore
+    ? new ProviderCaptureService({
+        config: config.daemon.trajectory.providerCapture,
+        store: trajectoryStore,
+        contentStorageRoot: configRoot(),
+      })
+    : undefined;
+  const providerCapture = config.daemon.trajectory.providerCapture.enabled
+    ? providerCaptureService
+    : undefined;
+  let providerRetentionSweep: { stop(): void } | undefined;
+  if (providerCapture) {
+    applyProviderRetention(providerCapture);
+    providerRetentionSweep = providerCapture.startRetentionSweep({
+      intervalMs: PROVIDER_RETENTION_SWEEP_INTERVAL_MS,
+      onApplied: logProviderRetention,
+      onError: (err) => logger.error({ err }, 'provider_capture_retention_failed'),
+    });
+  }
   const engines: Engine[] = [];
   // targets 在下面循环里随 engine 创建逐个填充；reloader 调用时才读取
   const configReloadTargets: ConfigReloadTarget[] = [];
@@ -189,6 +236,12 @@ async function main(): Promise<void> {
       textPrefixes: {
         newSession: config.daemon.commandRegistry.textPrefixes.newSession,
       },
+      trajectory: {
+        enabled: trajectoryWriteEnabled,
+        store: trajectoryStore,
+      },
+      externalSessionImporter,
+      providerCapture,
     });
     engines.push(engine);
     configReloadTargets.push({
@@ -211,9 +264,12 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutdown_signal');
     try {
+      providerRetentionSweep?.stop();
       await Promise.all(engines.map((engine) => engine.stop()));
     } catch (err) {
       logger.error({ err }, 'shutdown_error');
+    } finally {
+      trajectoryStore?.close();
     }
     process.exit(0);
   };
@@ -224,6 +280,23 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => {
     void shutdown('SIGTERM');
   });
+
+  function applyProviderRetention(provider: ProviderCaptureService): void {
+    try {
+      logProviderRetention(provider.applyRetention());
+    } catch (err) {
+      logger.error({ err }, 'provider_capture_retention_failed');
+    }
+  }
+
+  function logProviderRetention(retention: { deletedObservations: number }): void {
+    if (retention.deletedObservations > 0) {
+      logger.info(
+        { deletedObservations: retention.deletedObservations },
+        'provider_capture_retention_applied',
+      );
+    }
+  }
 }
 
 main().catch((err: unknown) => {

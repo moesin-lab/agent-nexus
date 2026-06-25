@@ -27,10 +27,16 @@ import {
   DEFAULT_COMMAND_NAME_POLICY,
 } from './command-registry.js';
 import { Engine } from './engine.js';
+import { ExternalSessionImportServiceError } from './external-session-import.js';
 import { InMemoryIdempotencyStore } from './idempotency.js';
 import { createLogger, type Logger } from './logger.js';
+import { ProviderCaptureService } from './provider-capture.js';
 import type { RoutingEntry } from './router.js';
 import { SessionStore } from './session-store.js';
+import {
+  InMemoryTrajectoryStore,
+  type TrajectoryStore,
+} from './trajectory-store.js';
 
 // ----- mocks -----
 
@@ -388,6 +394,19 @@ const DAEMON_SESSIONS_COMMAND: CommandDescriptor = {
   legacyNames: [],
 };
 
+const DAEMON_EXTERNAL_SESSIONS_COMMAND: CommandDescriptor = {
+  canonicalId: 'daemon:external-sessions',
+  owner: { type: 'daemon' },
+  localName: 'external-sessions',
+  summary: 'Discover external agent sessions',
+  options: [],
+  handlerKey: 'external-sessions',
+  applicability: {
+    requiredCapabilities: ['slash-command-registration', 'ephemeral-response'],
+  },
+  legacyNames: [],
+};
+
 const DAEMON_NEW_THREAD_COMMAND: CommandDescriptor = {
   canonicalId: 'daemon:new-thread',
   owner: { type: 'daemon' },
@@ -528,6 +547,25 @@ function makeActiveRegistry(
   return registry;
 }
 
+function makeThrowingTrajectoryStore(): TrajectoryStore & {
+  appendTrajectorySegment: ReturnType<typeof vi.fn>;
+} {
+  return {
+    upsertExternalSessionImport: vi.fn(),
+    getExternalSessionImport: vi.fn(() => undefined),
+    linkExternalSession: vi.fn(() => {
+      throw new Error('not implemented');
+    }),
+    appendTrajectorySegment: vi.fn(() => {
+      throw new Error('trajectory append failed');
+    }),
+    recordProviderCallObservation: vi.fn(),
+    getProviderCallObservation: vi.fn(() => undefined),
+    pruneProviderCallObservations: vi.fn(() => 0),
+    queryTrajectory: vi.fn(() => ({ segments: [] })),
+  };
+}
+
 // ----- tests -----
 
 describe('Engine', () => {
@@ -569,6 +607,253 @@ describe('Engine', () => {
     expect(out.text).toBe('hi from agent');
 
     expect(agent.stopSession).not.toHaveBeenCalled();
+  });
+
+  it('trajectory enabled 时把路由输入和 AgentEvent 写入同一个 runtime sessionId', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const trajectoryStore = new InMemoryTrajectoryStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+      trajectory: { enabled: true, store: trajectoryStore },
+    });
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-123' }, 1),
+      ev('thinking', { text: 'checking context' }, 2),
+      ev(
+        'tool_call_started',
+        { callId: 'call-1', toolName: 'Bash', inputSummary: 'echo hi' },
+        3,
+      ),
+      ev(
+        'tool_result',
+        {
+          callId: 'call-1',
+          resultSequence: 1,
+          content: { kind: 'text', text: 'ok from tool' },
+          isError: false,
+        },
+        4,
+      ),
+      ev(
+        'usage',
+        {
+          model: 'gpt-5',
+          inputTokens: 10,
+          outputTokens: 5,
+          cacheReadTokens: 1,
+          cacheWriteTokens: 2,
+          costUsd: 0.01,
+          turnSequence: 1,
+          toolCallsThisTurn: 1,
+          wallClockMs: 1200,
+          completeness: 'complete',
+        },
+        5,
+      ),
+      ev('text_final', { text: 'answer with sk-ant-secret' }, 6),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }, 7),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('inspect /home/node/private'));
+
+    const sessionId = (agent.startSession.mock.calls[0]![1] as SessionConfig)
+      .sessionId;
+    expect(
+      store.listForUser({
+        platformName: 'mock-platform',
+        platform: 'discord',
+        initiatorUserId: 'U1',
+        limit: 1,
+      })[0]?.sessionId,
+    ).toBe(sessionId);
+    const segments = trajectoryStore.queryTrajectory({ sessionId }).segments;
+
+    expect(segments.map((segment) => segment.kind)).toEqual([
+      'user-message',
+      'state-change',
+      'reasoning',
+      'tool-call',
+      'tool-result',
+      'usage',
+      'agent-message',
+      'state-change',
+    ]);
+    expect(segments.every((segment) => segment.source === 'nexus-agent-event')).toBe(
+      true,
+    );
+    expect(segments.every((segment) => segment.traceId === 't-1')).toBe(true);
+    expect(segments.every((segment) => segment.redactionState === 'redacted')).toBe(
+      true,
+    );
+    expect(segments.map((segment) => segment.sequence)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8,
+    ]);
+    expect(segments[0]?.summary).toBe('inspect ~/private');
+    expect(segments[6]?.summary).toBe('answer with <redacted:secret>');
+    expect(segments[5]).toMatchObject({
+      kind: 'usage',
+      turnSequence: 1,
+      usageEventId: expect.any(String),
+    });
+  });
+
+  it('provider capture enabled 时把 usage AgentEvent 记录为 transcript-only provider observation', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const trajectoryStore = new InMemoryTrajectoryStore();
+    const providerCapture = new ProviderCaptureService({
+      config: {
+        enabled: true,
+        mode: 'transcript-only',
+        bindHost: '127.0.0.1',
+        port: null,
+        storeRawStreams: false,
+        maxRequestBytes: 1024,
+        maxResponseBytes: 1024,
+        retentionDays: 30,
+      },
+      store: trajectoryStore,
+      idFactory: () => 'obs-engine-usage',
+    });
+    const engine = new Engine({
+      platform,
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: agent.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'mock-platform',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      trajectory: { enabled: true, store: trajectoryStore },
+      providerCapture,
+    });
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-123' }, 1),
+      ev(
+        'usage',
+        {
+          model: 'gpt-5',
+          inputTokens: 10,
+          outputTokens: 5,
+          cacheReadTokens: 1,
+          cacheWriteTokens: 2,
+          costUsd: null,
+          turnSequence: 1,
+          toolCallsThisTurn: 0,
+          wallClockMs: 1000,
+          completeness: 'partial',
+        },
+        2,
+      ),
+      ev('text_final', { text: 'answer' }, 3),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }, 4),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello'));
+
+    const sessionId = (agent.startSession.mock.calls[0]![1] as SessionConfig)
+      .sessionId;
+    expect(trajectoryStore.getProviderCallObservation('obs-engine-usage'))
+      .toMatchObject({
+        sessionId,
+        traceId: 't-1',
+        backend: 'codex',
+        captureMode: 'transcript-only',
+        model: 'gpt-5',
+        redactionState: 'metadata-only',
+      });
+    expect(
+      trajectoryStore.queryTrajectory({ source: 'provider-call' }).segments,
+    ).toEqual([
+      expect.objectContaining({
+        sessionId,
+        providerObservationId: 'obs-engine-usage',
+        kind: 'usage',
+        source: 'provider-call',
+      }),
+    ]);
+  });
+
+  it('trajectory enabled=false 时不写 read model', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const trajectoryStore = new InMemoryTrajectoryStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+      defaultSessionConfig: DEFAULT_CFG,
+      trajectory: { enabled: false, store: trajectoryStore },
+    });
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-123' }, 1),
+      ev('text_final', { text: 'hi from agent' }, 2),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }, 3),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(trajectoryStore.queryTrajectory({}).segments).toEqual([]);
+  });
+
+  it('trajectory store 写入失败不阻断 agent 输出投递', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const trajectoryStore = makeThrowingTrajectoryStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+      defaultSessionConfig: DEFAULT_CFG,
+      trajectory: { enabled: true, store: trajectoryStore },
+    });
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-123' }, 1),
+      ev('text_final', { text: 'still delivered' }, 2),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }, 3),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(trajectoryStore.appendTrajectorySegment).toHaveBeenCalled();
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      'still delivered',
+    );
   });
 
   it('第二轮：复用同 sessionKey 的活跃 AgentSession，不重新 startSession', async () => {
@@ -2942,6 +3227,250 @@ describe('Engine', () => {
     expect(codex.startSession.mock.calls[0]![1]).toMatchObject({
       resumeFromAgentSessionId: 'sid-old',
     });
+  });
+
+  it('daemon /nexus-external-sessions lets a user bind an imported native session and resume next turn', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const externalSessionImporter = {
+      run: vi.fn(() => ({
+        imports: [
+          {
+            candidate: {
+              sourceAdapter: 'codex-app-jsonl',
+              sourceSessionId: 'codex-thread-imported',
+              sourcePath: '/home/node/.codex/sessions/imported.jsonl',
+              nativeSessionRef: 'codex-thread-imported',
+              projectPath: '/workspace/agent-nexus',
+              updatedAt: '2026-06-23T09:00:00.000Z',
+              firstUserMessageSummary: 'Imported Codex',
+              confidence: 'high',
+              unsupportedReasons: [],
+            },
+            record: {
+              importId: 'imp-codex',
+              sourceAdapter: 'codex-app-jsonl',
+              sourceSessionId: 'codex-thread-imported',
+              sourcePathHash: 'sha256:path',
+              nativeSessionRef: 'codex-thread-imported',
+              state: 'registered',
+              confidence: 'high',
+              metadataJson: '{"title":"Imported Codex"}',
+              discoveredAt: '2026-06-23T10:00:00.000Z',
+            },
+            segments: [],
+            resumeEligibility: {
+              canResume: true,
+              nativeSessionRef: 'codex-thread-imported',
+              confidence: 'high',
+              reasons: [],
+            },
+          },
+          {
+            candidate: {
+              sourceAdapter: 'claude-code-jsonl',
+              sourceSessionId: 'claude-session-imported',
+              sourcePath: '/home/node/.claude/projects/imported.jsonl',
+              nativeSessionRef: 'claude-session-imported',
+              projectPath: '/workspace/agent-nexus',
+              updatedAt: '2026-06-23T09:00:00.000Z',
+              firstUserMessageSummary: 'Imported Claude',
+              confidence: 'medium',
+              unsupportedReasons: [],
+            },
+            record: {
+              importId: 'imp-claude',
+              sourceAdapter: 'claude-code-jsonl',
+              sourceSessionId: 'claude-session-imported',
+              sourcePathHash: 'sha256:path2',
+              nativeSessionRef: 'claude-session-imported',
+              state: 'registered',
+              confidence: 'medium',
+              metadataJson: '{"title":"Imported Claude"}',
+              discoveredAt: '2026-06-23T10:00:00.000Z',
+            },
+            segments: [],
+            resumeEligibility: {
+              canResume: true,
+              nativeSessionRef: 'claude-session-imported',
+              confidence: 'medium',
+              reasons: [],
+            },
+          },
+        ],
+      })),
+      bindToRoutingSession: vi.fn((input: {
+        importId: string;
+        sessionKey: SessionKey;
+        agentOwner: string;
+      }) => {
+        expect(input).toMatchObject({
+          importId: 'imp-codex',
+          agentOwner: 'codex',
+        });
+        store.bindExternalResumeToKey(input.sessionKey, {
+          agentSessionId: 'codex-thread-imported',
+          lastTurnAt: new Date(10),
+          title: 'Imported Codex',
+        });
+        return {
+          sessionId: store.ensureSessionId(input.sessionKey),
+          importId: 'imp-codex',
+          sourceAdapter: 'codex-app-jsonl',
+          sourceSessionId: 'codex-thread-imported',
+          nativeSessionRef: 'codex-thread-imported',
+          confidence: 'high',
+          linkedAt: '2026-06-23T10:00:00.000Z',
+        };
+      }),
+    };
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_EXTERNAL_SESSIONS_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'external-sessions'],
+      externalSessionImporter,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const listPromise = Promise.resolve(
+      dispatchHandler(makeCommandEvent('nexus-external-sessions')),
+    );
+    expect(externalSessionImporter.run).not.toHaveBeenCalled();
+    const listResult = await listPromise;
+
+    expect(listResult).toMatchObject({
+      commandResponse: {
+        text: 'Select an external session to resume.',
+        ephemeral: true,
+        components: [
+          {
+            type: 'select',
+            componentId: 'nexus:external-sessions:resume',
+            options: [
+              {
+                label: 'Imported Codex',
+                value: 'imp-codex',
+                description: 'codex-app-jsonl · codex-thread-imported',
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const bindResult = await dispatchHandler(
+      makeComponentEvent('nexus:external-sessions:resume', ['imp-codex']),
+    );
+    expect(bindResult).toEqual({
+      commandResponse: {
+        text: '[external session resumed: codex-thread-imported]',
+        ephemeral: true,
+      },
+    });
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'codex-thread-after-resume' }),
+      ev('text_final', { text: 'resumed external reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('continue imported session'));
+
+    expect(codex.startSession).toHaveBeenCalledTimes(1);
+    expect(codex.startSession.mock.calls[0]![1]).toMatchObject({
+      resumeFromAgentSessionId: 'codex-thread-imported',
+    });
+  });
+
+  it('external session backend mismatch returns a stable failure and preserves the current ref', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    store.set(withPlatformName(SESSION_KEY, 'discord-main'), {
+      agentSessionId: 'sid-current',
+      lastTurnAt: new Date(1),
+    });
+    const externalSessionImporter = {
+      run: vi.fn(() => ({ imports: [] })),
+      bindToRoutingSession: vi.fn(() => {
+        throw new ExternalSessionImportServiceError(
+          'native-resume-backend-mismatch',
+          'External session source is not compatible with this agent backend',
+        );
+      }),
+    };
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_EXTERNAL_SESSIONS_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'external-sessions'],
+      externalSessionImporter,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(
+      makeComponentEvent('nexus:external-sessions:resume', ['imp-claude']),
+    );
+
+    expect(result).toEqual({
+      commandResponse: {
+        text: '[external session unavailable: native-resume-backend-mismatch]',
+        ephemeral: true,
+      },
+    });
+    expect(store.get(withPlatformName(SESSION_KEY, 'discord-main'))?.agentSessionId)
+      .toBe('sid-current');
   });
 
   it('daemon /nexus-settings returns a user-scoped settings snapshot with actions', async () => {

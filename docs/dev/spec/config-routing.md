@@ -9,6 +9,7 @@ related:
   - dev/spec/platform-adapter
   - dev/spec/agent-runtime
   - dev/spec/message-flow
+  - dev/spec/infra/trajectory-observability
   - dev/spec/security/auth
   - dev/spec/security/secrets
 contracts:
@@ -57,6 +58,7 @@ owner parser 校验并提供默认值；CLI 只能读取、持久化默认模板
 ```text
 DaemonRuntimeConfig {
     commandRegistry: DaemonCommandRegistryConfig
+    trajectory: TrajectoryObservabilityConfig?
 }
 
 DaemonCommandRegistryConfig {
@@ -92,6 +94,7 @@ DaemonCommandRegistryConfig {
 | `daemon.commandRegistry.aliases.singleAgent.enabled` | 控制 single-agent bare alias（如 `/new` / `/stop`）是否进入 plan；stable `/codex-new` / `/codex-stop` / `/claudecode-new` / `/claudecode-stop` 不受影响 |
 | `daemon.commandRegistry.aliases.legacy.replyMode` | 控制 legacy `/reply-mode` 是否进入 plan；`reply-mode` 仍保留为 historical reserved bare name |
 | `daemon.commandRegistry.textPrefixes.newSession` | 控制文本前缀 `@bot /new` / `@bot /new <prompt>`；不影响 slash command stable names |
+| `daemon.trajectory` | daemon-owned trajectory read model、外部 session 导入与 provider-call observation 配置；字段权威源见 [`trajectory-observability.md`](infra/trajectory-observability.md#配置) |
 
 ## PlatformConfig
 
@@ -378,7 +381,7 @@ platformName + platform + channelId + initiatorUserId
 - `platforms[].auth` 的热应用以**重启等价**为准：成功 reload 后 daemon engine 鉴权（全维度 allowlist）与 platform adapter 内部授权数据（inbound guard、`/discord-reply-mode` 的 userIds 列表）必须与用新配置重启进程后一致；只换其一视为违反本 spec。
 - 已知限制（重启路径同样受限）：adapter 内部命令（`/discord-reply-mode`）的授权仅基于 `userIds` 维度；role / guild / channel 维度待 platform command 经 daemon dispatch 统一鉴权后覆盖。
 - `ui.toolMessages` 与 `textPrefixes` 在 turn 边界生效：进行中的 turn 沿用其开始时的值，不得中途混合渲染。
-- 仅重启生效字段：`platforms[]` 其余字段、`agents[]`、`log`、`daemon.commandRegistry` 其余字段。这些 section 有变化时，成功响应必须提示重启后才生效。
+- 仅重启生效字段：`platforms[]` 其余字段、`agents[]`、`log`、`daemon.commandRegistry` 其余字段、`daemon.trajectory`。这些 section 有变化时，成功响应必须提示重启后才生效。
 
 并发与时序：
 

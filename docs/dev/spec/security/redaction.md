@@ -8,6 +8,7 @@ related:
   - dev/spec/security/README
   - dev/spec/security/secrets
   - dev/spec/infra/observability
+  - dev/spec/infra/trajectory-observability
   - dev/standards/logging
 contracts:
   - Redactor
@@ -33,6 +34,8 @@ contracts:
 | 用户消息正文（IM 入站原文） | 摘要或 hash；完整正文走 transcript 落盘，不进 log / outbound |
 | Agent 子进程完整输出原文（CC CLI stdout） | 摘要或 hash；完整输出走专门的 transcript 落盘 |
 | `tool_result` event 的 content（**所有类型**：text / blocks / object / unknown） | 任一类型进任何出口前都按本表逐项过滤；`ToolResultContent.unknown.raw`（原始 JSON 回显）是其中**高风险点**（承载未识别的原始工具输出），非唯一覆盖项 |
+| Provider-call observation 的 request / response headers（如 `authorization`、`cookie`、`x-api-key`、`api-key`） | 敏感 header 值替换为 `<redacted:secret>`；未知 header 仍按通用密钥 pattern 扫描 |
+| Provider-call observation 的 request / response body 与 raw stream frame | 先按本表全文扫描脱敏，再执行 size limit；redactor 失败时丢弃 payload，只保留 metadata-only observation |
 
 本表是**全出口必过滤项的权威源**——日志、IM outbound、transcript 等任何出口均按此过滤。日志写法约束见 [`../../standards/logging.md`](../../standards/logging.md)（写法）；observability 的字段契约见 [`../infra/observability.md`](../infra/observability.md)（字段表）。
 
@@ -51,6 +54,7 @@ contracts:
 - `tool_result` content（所有类型）在 runtime emit → daemon 转发 IM / 落 transcript / 进日志的**任一出口前**必须过 redactor；`unknown.raw` 因承载未识别的原始工具输出，是脱敏高风险点，不得绕过
 - **脱敏先于截断**：`unknown.raw` 的 4KB 截断（[`agent-runtime.md`](../agent-runtime.md) 协议约束）必须在脱敏**之后**执行——否则截断点可能切在密钥中间（如 `sk-ant-…` 被切成 `sk-ant-a`），残片不触发前缀正则、绕过脱敏进入出口
 - `unknown.raw` 是字符串，redactor 按既有文本过滤方式**直接对序列化后的 JSON 字符串做正则扫描**（不 JSON decode 后逐字段扫）；与本层"纯文本过滤"定位一致
+- Provider-call observation 的 header、body、raw stream frame 在写入 `<home>/trajectory/provider-calls/`、日志或导出前都必须过 redactor；失败时 payload 不落盘，按 [`trajectory-observability.md`](../infra/trajectory-observability.md#provider-call-observation) 写 metadata-only / dropped 状态
 
 ## 两层视角（future）
 

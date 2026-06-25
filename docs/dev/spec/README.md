@@ -35,6 +35,7 @@ spec 触发条件（什么改动需要 spec / 何时可跳过）见 [`../standar
 - [`infra/idempotency.md`](infra/idempotency.md) — `(sessionKey, messageId)` 去重契约与 dispatch 流程
 - [`infra/persistence.md`](infra/persistence.md) — 本地存储契约
 - [`infra/observability.md`](infra/observability.md) — 日志/trace/metric 字段契约
+- [`infra/trajectory-observability.md`](infra/trajectory-observability.md) — trajectory read model、外部 session 导入与 provider-call observation 契约
 - [`infra/cost-and-limits.md`](infra/cost-and-limits.md) — Limits（一等：失控保护 + 观测）/ $ 预算（二等 opt-in）
 - [`infra/errors.md`](infra/errors.md) — daemon 内部错误对象与错误上下文字段契约
 
@@ -70,4 +71,4 @@ spec 触发条件（什么改动需要 spec / 何时可跳过）见 [`../standar
 
 1. 先读 [`../architecture/overview.md`](../architecture/overview.md) 建立心智
 2. 再读本目录核心契约
-3. 最后按需查阅横切四件套
+3. 最后按需查阅横切基础设施与安全契约

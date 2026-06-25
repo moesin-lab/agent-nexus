@@ -456,11 +456,17 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
       cleanupAfterTurn(session, state);
     } else if (type === 'error') {
       if (!turn || turn.terminalEmitted) return;
-      emitEvent(state, 'error', turn.traceId, {
-        errorKind: 'agent',
-        code: 'codex_error',
-        message: safeString(event['message']) ?? 'Codex CLI emitted an error',
-      });
+      const message = truncate(
+        safeString(event['message']) ?? 'Codex CLI emitted a diagnostic error',
+      );
+      emitEvent(state, 'status', turn.traceId, { message });
+      logger.warn(
+        {
+          traceId: turn.traceId,
+          message,
+        },
+        'codex_diagnostic_error',
+      );
     } else if (type === 'turn.failed') {
       if (!turn || turn.terminalEmitted) return;
       const err = isRecord(event['error']) ? event['error'] : {};

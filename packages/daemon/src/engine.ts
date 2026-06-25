@@ -2444,6 +2444,7 @@ export class Engine {
       let typingInterval: ReturnType<typeof setInterval> | undefined;
       let typingActive = false;
       let toolStatus: string | undefined;
+      let statusText: string | undefined;
       const toolCallStartedAt = new Map<string, number>();
       const toolMessages = new Map<string, ToolMessageState>();
 
@@ -2492,8 +2493,9 @@ export class Engine {
       };
 
       const renderVisibleText = (): string => {
-        if (toolStatus && buf.length > 0) return `${buf}\n\n${toolStatus}`;
-        return buf.length > 0 ? buf : (toolStatus ?? '[working]');
+        const statusLines = [toolStatus, statusText].filter(Boolean).join('\n');
+        if (statusLines && buf.length > 0) return `${buf}\n\n${statusLines}`;
+        return buf.length > 0 ? buf : (statusLines || '[working]');
       };
 
       const ensureMessageRef = (
@@ -2737,12 +2739,14 @@ export class Engine {
             return;
           }
           if (e.type === 'text_delta') {
+            statusText = undefined;
             sawDelta = true;
             buf += e.payload.text;
             await scheduleEdit();
             return;
           }
           if (e.type === 'text_final') {
+            statusText = undefined;
             if (sawDelta) {
               buf = e.payload.text;
             } else {
@@ -2752,7 +2756,17 @@ export class Engine {
             await scheduleEdit();
             return;
           }
+          if (e.type === 'status') {
+            statusText = e.payload.message;
+            if (platformCaps.supportsEdit) {
+              await scheduleEdit();
+            } else {
+              await safeSend(e.payload.message);
+            }
+            return;
+          }
           if (e.type === 'tool_call_started') {
+            statusText = undefined;
             toolCallStartedAt.set(e.payload.callId, Date.now());
             this.logger.info(
               {
@@ -2835,6 +2849,13 @@ export class Engine {
           }
           if (e.type === 'error') {
             errored = true;
+            const statusOnlyMessage =
+              statusText !== undefined &&
+              toolStatus === undefined &&
+              buf.length === 0 &&
+              messageRef !== undefined;
+            const errorText = `[agent error: ${e.payload.errorKind}] ${e.payload.message}`;
+            statusText = undefined;
             cancelPendingEdit();
             clearTyping();
             this.logger.error(
@@ -2848,7 +2869,12 @@ export class Engine {
               'agent_error',
             );
             try {
-              await safeSend(`[agent error: ${e.payload.errorKind}] ${e.payload.message}`);
+              if (platformCaps.supportsEdit && statusOnlyMessage && messageRef) {
+                await safeEdit(messageRef, errorText);
+                currentRenderedText = errorText;
+              } else {
+                await safeSend(errorText);
+              }
             } finally {
               closeSession();
             }

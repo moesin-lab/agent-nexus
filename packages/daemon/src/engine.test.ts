@@ -5221,6 +5221,115 @@ describe('Engine', () => {
     expect((platform.edit.mock.calls[0]![1] as OutboundMessage).text).toBe('hello');
   });
 
+  it('status 事件连续更新同一条用户可见工作消息，最终回复清除 status', async () => {
+    const platform = makePlatform({ supportsEdit: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+      streaming: { streamEditThrottleMs: 0 },
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('status', { message: 'Reconnecting... 1/5' }),
+      ev('status', { message: 'Reconnecting... 2/5' }),
+      ev('status', { message: 'Reconnecting... 3/5' }),
+      ev('text_final', { text: 'done' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      'Reconnecting... 1/5',
+    );
+    expect(platform.edit).toHaveBeenCalledTimes(3);
+    expect(platform.edit.mock.calls.map((call) => (call[1] as OutboundMessage).text)).toEqual([
+      'Reconnecting... 2/5',
+      'Reconnecting... 3/5',
+      'done',
+    ]);
+    expect(agent.runtime.stopSession).not.toHaveBeenCalled();
+  });
+
+  it('supportsEdit=true：status 后终端 error 复用工作消息，不留下过期 status', async () => {
+    const platform = makePlatform({ supportsEdit: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+      streaming: { streamEditThrottleMs: 0 },
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('status', { message: 'Reconnecting... 1/5' }),
+      ev('error', {
+        errorKind: 'agent',
+        code: 'codex_turn_failed',
+        message: '401 Unauthorized',
+      }),
+      ev('turn_finished', { reason: 'error', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      'Reconnecting... 1/5',
+    );
+    expect(platform.edit).toHaveBeenCalledTimes(1);
+    expect((platform.edit.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      '[agent error: agent] 401 Unauthorized',
+    );
+  });
+
+  it('supportsEdit=false：status 降级为追加消息且最终回复顺序正确', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('status', { message: 'Reconnecting... 1/5' }),
+      ev('status', { message: 'Reconnecting... 2/5' }),
+      ev('text_final', { text: 'done' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(platform.edit).not.toHaveBeenCalled();
+    expect(platform.send.mock.calls.map((call) => (call[1] as OutboundMessage).text)).toEqual([
+      'Reconnecting... 1/5',
+      'Reconnecting... 2/5',
+      'done',
+    ]);
+  });
+
   it('长回复 edit 交给 platform adapter 维护切片与 messageIds', async () => {
     const platform = makePlatform({ supportsEdit: true, maxTextLength: 5 });
     const agent = makeAgent();

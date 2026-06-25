@@ -21,8 +21,6 @@ import {
   type AgentNexusConfig,
 } from './config.js';
 
-const CODEX_COMPATIBILITY_PROBE_TIMEOUT_MS = DEFAULT_AGENT_TIMEOUT_MS;
-
 export interface SelectedAgent {
   agent: AgentRuntime;
   defaultSessionConfig: Omit<
@@ -41,7 +39,7 @@ export async function createAgentRuntime(
     await runCodexCompatibilityProbe({
       config: codex,
       logger,
-      timeoutMs: CODEX_COMPATIBILITY_PROBE_TIMEOUT_MS,
+      timeoutMs,
     });
     return {
       agent: createCodexRuntime({ config: codex, logger }),

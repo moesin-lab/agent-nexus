@@ -130,7 +130,7 @@ describe('createAgentRuntime', () => {
     expect(runCodexProbeMock).toHaveBeenCalledWith({
       config: codex,
       logger,
-      timeoutMs: 300_000,
+      timeoutMs: 1_800_000,
     });
     expect(createCodexRuntimeMock).toHaveBeenCalledWith({ config: codex, logger });
     expect(runClaudeProbeMock).not.toHaveBeenCalled();
@@ -139,6 +139,32 @@ describe('createAgentRuntime', () => {
     expect(selected.defaultSessionConfig).toEqual({
       workingDir: '/codex',
       timeoutMs: 1_800_000,
+    });
+  });
+
+  it('codex backend 未配置 timeoutMs 时 probe 使用默认 timeout', async () => {
+    const codex = {
+      bin: 'codex',
+      workingDir: '/codex',
+      sandbox: 'read-only',
+      addDirs: [],
+      loadUserConfig: false,
+      loadRules: false,
+    } as const;
+
+    const selected = await createAgentRuntime(
+      { name: 'codex-dev', backend: 'codex', codex },
+      logger,
+    );
+
+    expect(runCodexProbeMock).toHaveBeenCalledWith({
+      config: codex,
+      logger,
+      timeoutMs: 300_000,
+    });
+    expect(selected.defaultSessionConfig).toEqual({
+      workingDir: '/codex',
+      timeoutMs: 300_000,
     });
   });
 });

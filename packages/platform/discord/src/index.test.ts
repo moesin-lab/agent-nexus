@@ -591,6 +591,88 @@ describe('command registry integration', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it('settings config button opens its Discord modal before daemon handling', async () => {
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      testGuildId: 'G-dev',
+    });
+    const handler = vi.fn(async () => undefined);
+    const expectedModal = {
+      custom_id: 'nexus:settings:config-modal',
+      title: 'Edit Nexus config',
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4,
+              custom_id: 'path',
+              label: 'Config path',
+              style: 1,
+              required: true,
+              placeholder: 'agents[0].codex.workingDir',
+            },
+          ],
+        },
+        {
+          type: 1,
+          components: [
+            {
+              type: 4,
+              custom_id: 'value',
+              label: 'JSON value',
+              style: 2,
+              required: true,
+              placeholder: '"/workspace/project"',
+            },
+          ],
+        },
+      ],
+    };
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    const deferReply = vi.fn(async () => undefined);
+    const showModal = vi.fn(async () => undefined);
+    const interactionPromise = Promise.resolve(
+      interactionCreate({
+        id: 'i-config',
+        applicationId: 'app-1',
+        token: 'interaction-token',
+        type: 3,
+        data: {
+          component_type: 2,
+          custom_id: 'nexus:settings:config',
+        },
+        customId: 'nexus:settings:config',
+        channelId: 'C1',
+        guildId: 'G-dev',
+        createdAt: new Date(123),
+        user: { id: OTHER_ID, username: 'alice', bot: false },
+        member: { roles: { cache: new Map() } },
+        channel: { isThread: () => false },
+        deferReply,
+        showModal,
+        isChatInputCommand: () => false,
+        isStringSelectMenu: () => false,
+        isButton: () => true,
+        isModalSubmit: () => false,
+      }),
+    );
+    await Promise.resolve();
+    const modalCallsBeforeHandlerSettles = showModal.mock.calls.length;
+    await interactionPromise;
+
+    expect(deferReply).not.toHaveBeenCalled();
+    expect(modalCallsBeforeHandlerSettles).toBe(1);
+    expect(showModal).toHaveBeenCalledWith(expectedModal);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it('modal submit 转成 normalized interaction fields 并展示 handler 反馈', async () => {
     const platform = createDiscordPlatform({
       token: 'test-token',

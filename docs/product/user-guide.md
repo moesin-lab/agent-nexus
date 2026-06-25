@@ -43,7 +43,7 @@ npm install -g packages/cli/agent-nexus-cli-*.tgz
 - `~/.agent-nexus/config.json` 模板，权限为 `0600`
 - `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` 空文件，权限为 `0600`
 
-默认实例根目录是 `~/.agent-nexus`。需要同时运行 stable / dev 等多个实例时，用 `agent-nexus --home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；配置、密钥与状态文件都会从该目录派生。
+默认实例根目录是 `~/.agent-nexus`。需要同时运行 stable / dev 等多个实例时，用 `agent-nexus --home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；配置、密钥与状态文件都会从该目录派生。项目 dev / stable 实例约定见 [`../ops/runbook.md`](../ops/runbook.md)。
 
 后续启动会自动把模板中新增但本地缺失的字段补回 `config.json`；已有配置值不会被覆盖。必填字段如果没有真实默认值，只会补占位值并继续提示你填写。
 
@@ -145,14 +145,15 @@ chmod 600 ~/.agent-nexus/config.json
 | `platforms[].testGuildId` | 否 | 开发时把 slash command 限定注册到一个 guild，避免全局 slash command 缓存延迟 |
 | `agents[].name` | 是 | agent 配置稳定名称；binding 用它引用该 agent |
 | `agents[].backend` | 是 | `claudecode` 或 `codex` |
+| `agents[].timeoutMs` | 否 | 单次输入 wall-clock timeout，默认 `300000`（5 分钟）；长任务可调大，例如 `1800000` |
 | `agents[].claudeCode.workingDir` | backend 为 `claudecode` 时是 | Claude Code 默认工作目录 |
 | `agents[].claudeCode.bin` | 否 | Claude Code CLI 路径；默认 `claude` |
-| `agents[].claudeCode.permissionLevel` | 否 | 默认 `default`；允许 `default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan` |
+| `agents[].claudeCode.permissionLevel` | 否 | 默认 `default`；`bypassPermissions` 是 Claude Code 的 YOLO 模式；也允许 `acceptEdits` / `auto` / `dontAsk` / `plan` |
 | `agents[].claudeCode.allowedTools` | 否 | 默认 `Read/Grep/Glob/Edit/Write`；启用 `Bash` 需要显式加入 |
 | `agents[].codex.workingDir` | backend 为 `codex` 时是 | Codex 默认工作目录，传给 `--cd` |
 | `agents[].codex.bin` | 否 | Codex CLI 路径；默认 `codex` |
 | `agents[].codex.model` | 否 | 传给 Codex CLI 的 `--model` |
-| `agents[].codex.sandbox` | 否 | 默认 `read-only`；可设为 `workspace-write` |
+| `agents[].codex.sandbox` | 否 | 默认 `read-only`；可设为 `workspace-write` 或 `danger-full-access` |
 | `agents[].codex.addDirs` | 否 | 默认 `[]`；逐个传给 `--add-dir` |
 | `agents[].codex.loadUserConfig` / `loadRules` | 否 | 默认 `false`，启动时传 `--ignore-user-config` / `--ignore-rules` |
 | `bindings[].platformName` | 是 | 引用 `platforms[].name` |
@@ -166,6 +167,12 @@ chmod 600 ~/.agent-nexus/config.json
 | `daemon.commandRegistry.textPrefixes.newSession` | 否 | 默认 `true`；控制 `@bot /new` 文本前缀，不影响 slash command |
 | `ui.toolMessages` | 否 | 默认 `append`；工具调用追加为独立消息并在结果到达时编辑该工具消息。设为 `compact` 可回到旧式紧凑显示 |
 | `log.level` | 否 | `trace` / `debug` / `info` / `warn` / `error` / `fatal`，默认 `info` |
+
+### Claude Code backend 权限细节
+
+默认保持 `permissionLevel: "default"`。agent-nexus 会显式传 `--permission-mode default`，并通过 `--permission-prompt-tool stdio` 自检工具执行前审批通道。
+
+如果你确实需要远程等价本机操作，可以把 `permissionLevel` 设为 `bypassPermissions`。这是 Claude Code backend 的 YOLO 模式：agent-nexus 会跳过工具权限控制 probe，并在启动日志打 warn；不要把这个模式暴露给不可信 Discord 账号或公共频道。其他非 `default` 模式也会跳过该 probe，不提供工具隔离强安全承诺。
 
 ### Codex backend 配置细节
 
@@ -208,6 +215,7 @@ chmod 600 ~/.agent-nexus/config.json
 |---|---|---|
 | `read-only` | 让 bot 只读代码、解释问题、做 review | 默认值；Codex 不能写项目文件 |
 | `workspace-write` | 让 bot 直接改 `workingDir` 下的仓库文件 | Codex 可以在工作目录内创建、修改、删除文件 |
+| `danger-full-access` | 远程控制 / YOLO，只在你信任入口和外层隔离时使用 | Codex 不受工作目录 sandbox 限制，风险接近本机 shell |
 
 `addDirs` 用来额外开放工作目录之外的路径。默认保持 `[]`。只有当 Codex backend 必须访问另一个目录时才配置，例如主项目在 `/workspace/app`，但还需要读共享 SDK `/workspace/shared-sdk`：
 
@@ -224,6 +232,8 @@ chmod 600 ~/.agent-nexus/config.json
 ```
 
 不要把 home、密钥目录、浏览器 profile、SSH/GPG 目录这类宽泛或敏感路径放进 `addDirs`。`addDirs` 是显式扩大 Codex CLI 可见范围的配置，应尽量只填具体项目目录。
+
+如果你确实需要远程等价本机操作，把 `sandbox` 设为 `danger-full-access`。此时 `workingDir` 只决定 Codex 从哪个目录启动，`addDirs` 不再限制可访问路径；不要把这个模式暴露给不可信 Discord 账号或公共频道。
 
 `loadUserConfig` 控制是否加载本机全局 Codex 配置：
 
@@ -246,9 +256,10 @@ chmod 600 ~/.agent-nexus/config.json
 | 只让 bot 解释代码 / review | `sandbox: "read-only"`，`addDirs: []`，`loadUserConfig: false`，`loadRules: false` |
 | 让 bot 修改当前仓库 | `sandbox: "workspace-write"`，`addDirs: []`，`loadUserConfig: false`，`loadRules: false` |
 | 多仓库联动 | `workspace-write` 加上最小必要的 `addDirs` |
+| 远程等价本机操作 | `sandbox: "danger-full-access"`，并确认 allowlist、channel binding 和外层隔离 |
 | 复用个人 Codex CLI 行为 | 只在理解影响后把 `loadUserConfig` 或 `loadRules` 改为 `true` |
 
-Codex backend 固定使用非交互 `codex exec --json` / `resume`，并固定传 `--ask-for-approval never`。因此需要人工确认的操作不会弹出审批窗口；应通过 `sandbox`、`workingDir`、`addDirs` 和默认不加载用户配置 / rules 来控制边界。
+Codex backend 固定使用非交互 `codex exec --json` / `resume`，并固定传 `--ask-for-approval never`。因此需要人工确认的操作不会弹出审批窗口；应通过 `sandbox`、`workingDir`、`addDirs` 和默认不加载用户配置 / rules 来控制边界。`danger-full-access` 明确表示放弃 Codex 文件系统 sandbox 边界。
 
 启动时默认只跑快速 Codex compatibility probe：检查 `codex --version` 与 help 中的必需 flag，不发起真实模型 turn。这样 Discord bot 启动不会先等待多轮 `codex exec --json`。如果要做完整 Codex backend 验证，使用仓库里的 `scripts/verify-codex-agent.sh`。
 
@@ -314,7 +325,7 @@ agent-nexus
 /nexus-queue      # 打开当前会话队列面板；可移动、编辑、取消 pending、插入 next prompt，或让下一条接管
 ```
 
-`new` / `stop` 是 agent command，daemon 只完成鉴权、reverse-map、binding route 和 envelope 转发；重置、停止、排队或拒绝等具体语义由对应 agent package/runtime 决定。`/nexus-kill` 是 daemon command，会终止当前 RoutingSession，并清掉后续 resume 需要的 opaque agent conversation ref。`/nexus-sessions` 是内存态 session switcher：Discord 会显示仅调用方可见的下拉菜单，每项用该 session 的第一条用户消息做标题；选择某一项后当前 channel/user 会绑定到对应 agent conversation，下一条消息按该 conversation resume；进程重启后列表会丢失。`/nexus-new-thread` 会在当前 channel 下创建 private thread，默认把调用者加入；thread 中第一条用户消息启动一个新的 agent session；只有创建时未传标题、仍使用默认占位标题时，才会自动把 thread 名改成第一条消息生成的标题，不迁移父 channel 的当前会话。`/nexus-working-dir` 默认设置当前 channel/thread 的工作目录默认值；thread 未设置时继承父 channel 的默认值。传 `scope:session` 时才为当前 channel/thread + user 的下一次新 agent session 设置一次性 override。路径必须在当前 binding 目标 agent 的默认 `workingDir` 内。如果当前 session 正在运行，workingDir 变更会排到当前 turn 后面，不会影响当前进程。`/nexus-settings` 是统一入口：展示并修改当前 reply-mode、effective workingDir、channel agent binding、session resume 和 new-thread 操作；每次操作返回新的 ephemeral 快照。settings 里的 workingDir 直接用 modal 输入路径；agent binding 是当前进程内的 channel override，重启后回到配置文件 binding。`/nexus-queue` 打开当前 channel/thread + user 的 daemon queue 面板：用下拉选择 pending item，再用按钮上移、下移、编辑 message prompt 或取消；`Run next` / `action:next` 会中断当前 running turn，让下一条 pending item 接着执行；`Insert next` 会用 modal 插入一条排在当前 running 后面的 prompt；`action:clear` 只取消 pending items，不中断 running turn。
+`new` / `stop` 是 agent command，daemon 只完成鉴权、reverse-map、binding route 和 envelope 转发；重置、停止、排队或拒绝等具体语义由对应 agent package/runtime 决定。`/nexus-kill` 是 daemon command，会终止当前 RoutingSession，并清掉后续 resume 需要的 opaque agent conversation ref。`/nexus-sessions` 是内存态 session switcher：Discord 会显示仅调用方可见的下拉菜单，每项用该 session 的第一条用户消息做标题；选择某一项后当前 channel/user 会绑定到对应 agent conversation，下一条消息按该 conversation resume；进程重启后列表会丢失。`/nexus-new-thread` 会在当前 channel 下创建 private thread，默认把调用者加入；thread 中第一条用户消息启动一个新的 agent session；只有创建时未传标题、仍使用默认占位标题时，才会自动把 thread 名改成第一条消息生成的标题，不迁移父 channel 的当前会话。`/nexus-working-dir` 默认设置当前 channel/thread 的工作目录默认值；thread 未设置时继承父 channel 的默认值。传 `scope:session` 时才为当前 channel/thread + user 的下一次新 agent session 设置一次性 override。路径必须是非空绝对路径，不再限制在当前 binding 目标 agent 的默认 `workingDir` 内。如果当前 session 正在运行，workingDir 变更会排到当前 turn 后面，不会影响当前进程。`/nexus-settings` 是统一入口：展示并修改当前 reply-mode、effective workingDir、channel agent binding、session resume、new-thread 和 `config.json` 设置；每次操作返回新的 ephemeral 快照。settings 里的 workingDir 直接用 modal 输入路径；agent binding 是当前进程内的 channel override，重启后回到配置文件 binding。settings 里的 config 编辑使用 `agents[0].codex.workingDir` 这类 dot / bracket 路径，值可以填 JSON（如 `true`、`["C1"]`、`{"enabled":false}`）或未加引号的字符串；保存前会按完整 config loader 校验，校验失败不写文件。路径里不存在的对象字段会被创建，反馈会列出新建路径段；如果看到这个 warning，先核对是否把字段名拼错。保存成功后会自动执行一次 reload：热生效字段立即应用，仅重启生效字段会写入文件并在反馈中提示重启。`/nexus-queue` 打开当前 channel/thread + user 的 daemon queue 面板：用下拉选择 pending item，再用按钮上移、下移、编辑 message prompt 或取消；`Run next` / `action:next` 会中断当前 running turn，让下一条 pending item 接着执行；`Insert next` 会用 modal 插入一条排在当前 running 后面的 prompt；`action:clear` 只取消 pending items，不中断 running turn。
 
 当前除 `/discord-reply-mode` / `/reply-mode` / `/nexus-sessions` / `/nexus-new-thread` / `/nexus-working-dir` / `/nexus-settings` / `/nexus-queue` 外，agent / daemon slash command 的成功 ack 会作为普通频道消息发送；如果 command registry 尚未激活、当前频道没有匹配 binding，或调用方未通过 allowlist，Discord 会显示一条仅调用方可见的 ephemeral 反馈。排障时看 daemon 日志中的 `command_*` / `auth_denied` / `command_registration_*` / `thread_create_failed` 事件。
 

@@ -1,11 +1,17 @@
 import type {
+  DaemonConfigEditor,
   DaemonConfigReloader,
   DaemonConfigReloadResult,
   EngineRuntimeUpdate,
   Logger,
 } from '@agent-nexus/daemon';
 import { agentOwnersForPlatform } from './command-registry.js';
-import { buildRoutingTable, type AgentNexusConfig } from './config.js';
+import {
+  buildRoutingTable,
+  type AgentNexusConfig,
+  type ConfigFileEditInput,
+  type ConfigFileEditResult,
+} from './config.js';
 
 /** reload 时被热替换的 engine 目标；语义见 docs/dev/spec/config-routing.md §配置热重载 */
 export interface ConfigReloadTarget {
@@ -22,10 +28,81 @@ export interface CreateConfigReloaderOptions {
   logger: Logger;
 }
 
+export interface CreateConfigEditorOptions {
+  edit(input: ConfigFileEditInput): Promise<ConfigFileEditResult>;
+  reload: DaemonConfigReloader;
+  logger: Logger;
+}
+
 function failed(reason: string): DaemonConfigReloadResult {
   return {
     status: 'failed',
     message: `[config reload failed] previous config kept:\n${reason}`,
+  };
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function reloadFailedAfterEditMessage(
+  editResult: ConfigFileEditResult,
+  reloadResult: DaemonConfigReloadResult,
+): string {
+  const previousConfigKeptPrefix = '[config reload failed] previous config kept:\n';
+  const reason = reloadResult.message.startsWith(previousConfigKeptPrefix)
+    ? reloadResult.message.slice(previousConfigKeptPrefix.length)
+    : reloadResult.message;
+  return (
+    `${editResult.message}\n` +
+    `[config reload failed] config saved; running config kept:\n${reason}`
+  );
+}
+
+export function createConfigEditor(
+  opts: CreateConfigEditorOptions,
+): DaemonConfigEditor {
+  return async (input) => {
+    let editResult: ConfigFileEditResult;
+    try {
+      editResult = await opts.edit({
+        path: input.path,
+        value: input.value,
+      });
+    } catch (err) {
+      const reason = errorMessage(err);
+      opts.logger.warn(
+        { err, path: input.path, userId: input.userId, channelId: input.channelId },
+        'config_edit_rejected',
+      );
+      return {
+        status: 'rejected',
+        message: `[config edit rejected]\n${reason}`,
+      };
+    }
+
+    try {
+      const reloadResult = await opts.reload();
+      if (reloadResult.status === 'failed') {
+        return {
+          status: 'edited',
+          message: reloadFailedAfterEditMessage(editResult, reloadResult),
+        };
+      }
+      return {
+        status: 'edited',
+        message: `${editResult.message}\n${reloadResult.message}`,
+      };
+    } catch (err) {
+      const reason = errorMessage(err);
+      opts.logger.error({ err, path: input.path }, 'config_edit_reload_failed');
+      return {
+        status: 'edited',
+        message:
+          `${editResult.message}\n` +
+          `[config reload failed] config saved; running config kept:\n${reason}`,
+      };
+    }
   };
 }
 

@@ -2,7 +2,7 @@
 title: Spec：Codex CLI 外部契约
 type: spec
 status: active
-summary: Codex CLI backend 的命令模板、JSONL 协议、resume 多轮、中断、sandbox/approval 安全默认值、配置与兼容性自检
+summary: Codex CLI backend 的命令模板、JSONL 协议、resume 多轮、中断、sandbox/approval 权限模型、配置与兼容性自检
 tags: [spec, codex, agent-runtime, subprocess]
 related:
   - dev/adr/0014-agent-backend-codex-cli
@@ -27,7 +27,7 @@ contracts:
 | 维度 | 取值 |
 |---|---|
 | CLI 命令名 | `codex` |
-| 已对账版本 | `codex-cli 0.133.0`（已验证） |
+| 已对账版本 | `codex-cli 0.133.0`（JSONL 主路径）/ `0.142.0`（`danger-full-access` help） |
 | 最低支持版本 | 不靠静态版本号放行；启动时必须通过 CompatibilityProbe |
 | 主路径 | `codex exec --json`；后续 turn 用 `codex exec resume <thread_id> --json` |
 | 运行时 | 用户本机，由用户自行维护 Codex CLI 安装与认证 |
@@ -46,8 +46,8 @@ codex {
     workingDir: path                        // 必填，传给 --cd
     bin: string = "codex"
     model: string?                          // 可选，传给 --model
-    sandbox: "read-only" | "workspace-write" = "read-only"
-    addDirs: path[] = []                    // 逐个传 --add-dir；仅显式配置时启用
+    sandbox: "read-only" | "workspace-write" | "danger-full-access" = "read-only"
+    addDirs: path[] = []                    // sandboxed 模式逐个传 --add-dir；仅显式配置时启用
     loadUserConfig: bool = false            // false -> 传 --ignore-user-config
     loadRules: bool = false                 // false -> 传 --ignore-rules
 }
@@ -61,11 +61,12 @@ codex {
 
 安全默认值：
 
-- 默认 `sandbox = "read-only"`；写文件能力必须由用户显式改为 `workspace-write`。
+- 默认 `sandbox = "read-only"`；写文件能力必须由用户显式改为 `workspace-write` 或 `danger-full-access`。
 - 固定传 `--ask-for-approval never`，原因是 `codex exec` 是非交互路径；需要批准的动作应由 sandbox 失败返回给模型，不等待人类 prompt。当前不提供 approval policy 配置字段。
 - 默认 `loadUserConfig = false` 与 `loadRules = false`，避免继承用户全局 Codex 配置 / rules 带来的未审计工具或策略；认证仍通过 `CODEX_HOME`。
-- 禁止 runtime 默认使用 `--dangerously-bypass-approvals-and-sandbox`。config parser 不提供该字段。
-- `danger-full-access` 不进入当前配置枚举；若未来要支持，必须单独 ADR/spec 修订并声明安全边界。
+- `danger-full-access` 是显式 YOLO 模式：runtime 传 `--sandbox danger-full-access --ask-for-approval never`，不再提供 workingDir / addDirs 文件系统隔离承诺；见 ADR-0014。
+- 启用 `danger-full-access` 时，startup probe 必须打 warn 级日志，标注该 session 不提供 Codex 文件系统 sandbox 边界。
+- 禁止 runtime 使用 `--dangerously-bypass-approvals-and-sandbox`。config parser 不提供该字段；YOLO 只通过 `sandbox: "danger-full-access"` 表达。
 
 ## 启动命令模板
 
@@ -108,6 +109,7 @@ codex \
 
 - `--sandbox`、`--ask-for-approval`、`--cd` 是顶层 flag，必须放在 `exec` 前；已验证 `codex exec --ask-for-approval never` 会被拒绝。
 - `--json`、`--skip-git-repo-check`、`--ignore-user-config`、`--ignore-rules` 是 `exec` / `resume` 路径 flag，放在子命令后。
+- `danger-full-access` 下 runtime 不传 `--add-dir`；此模式没有额外目录边界，`addDirs` 仅保留配置兼容性。
 - runtime 每个 user turn spawn 一个 Codex 子进程；同一个 `AgentSession` 通过保存 `thread_id` 维持多轮语义。
 - `AgentSession.pid` 表示当前 in-flight turn 的 Codex 子进程 pid；turn 空闲时可以为空。
 
@@ -135,7 +137,7 @@ codex \
 | `item.completed` + `item.type == "command_execution"` | `tool_result` 后接 `tool_call_finished` |
 | 未识别 `item.type` | 不映射 AgentEvent；记 `codex_unknown_item` debug 日志，只保留 `type` / `id` / 安全摘要，不记录完整 payload |
 | `turn.completed` | `usage` 后接 `turn_finished{reason:"stop"}` |
-| `error` | `error` 诊断事件；永不单独结束 turn |
+| `error` | `status` + backend-private `codex_diagnostic_error` 日志；永不单独结束 turn |
 | `turn.failed` | `error` + `turn_finished{reason:"error"}` |
 | 进程被 interrupt signal 终止且无 terminal JSONL | runtime 合成 `turn_finished{reason:"user_interrupt", source:"runtime-synthesized"}` |
 | 未识别顶层 `type` | 不映射 AgentEvent；记 `codex_unknown_event` debug 日志，只保留顶层 `type` / 安全摘要，不记录完整 payload |
@@ -175,10 +177,9 @@ Usage 映射：
 
 | Codex JSONL | AgentEvent `error.payload` |
 |---|---|
-| `error.message` | `{ errorKind:"agent", code:"codex_error", message }` |
 | `turn.failed.error.message` | `{ errorKind:"agent", code:"codex_turn_failed", message }` |
 
-终态只由 `turn.completed`、`turn.failed` 或 runtime 合成的 interrupt/timeout 驱动；单独的 `error` 事件不得触发 `turn_finished`。
+Codex 顶层 `error` 是诊断 / 重连提示通道，可能出现 `Reconnecting... 1/5`、`Reconnecting... 2/5` 等临时断流信息；runtime 必须按到达顺序投递非终端 `status{message}` 并记录 backend-private 日志，不把它升级成 `AgentEvent.error`。终态只由 `turn.completed`、`turn.failed` 或 runtime 合成的 interrupt/timeout 驱动。
 
 ## 多轮语义
 
@@ -204,11 +205,13 @@ Codex backend 不满足 Claude Code backend 的执行前工具白名单强安全
 
 Codex 安全边界：
 
-- process-level sandbox：`--sandbox read-only|workspace-write`
+- process-level sandbox：`--sandbox read-only|workspace-write|danger-full-access`
 - approval policy：`--ask-for-approval never`
 - root directory：`--cd <workingDir>`
-- optional extra writable dirs：`--add-dir`
+- optional extra writable dirs：`--add-dir`，仅在 sandboxed 模式下表达额外可写范围；`danger-full-access` 下不构成边界
 - config/rules inheritance：默认关闭 `--ignore-user-config` / `--ignore-rules`
+
+`sandbox="danger-full-access"` 表示远程等价本机执行。此模式下 `workingDir` 仍决定 Codex 启动根目录，`addDirs` 仅保留配置兼容性和意图提示，不限制 Codex 可访问路径。
 
 能力声明：
 
@@ -231,12 +234,12 @@ Codex 安全边界：
 `startup` 至少验证：
 
 1. `<bin> --version` 可执行，版本字符串可记录。
-2. `<bin> --help` 和 `<bin> exec --help` 暴露 `exec`、`exec resume`、`--json`、`--sandbox`、`--ask-for-approval`、`--cd`、`--add-dir`、`--ignore-user-config`、`--ignore-rules`；配置了 `model` 时还必须验证 `--model` / `-m` 可用。
+2. `<bin> --help` 和 `<bin> exec --help` 暴露 `exec`、`exec resume`、`--json`、`--sandbox`、`--ask-for-approval`、`--cd`、`--add-dir`、`--ignore-user-config`、`--ignore-rules`；配置了 `sandbox="danger-full-access"` 时还必须在 help 中看到 `danger-full-access`；配置了 `model` 时还必须验证 `--model` / `-m` 可用。
 3. 构造命令时危险 bypass flag 不出现。
 
 `full` 额外验证：
 
-1. 用配置的 sandbox 跑一次 `exec --json` ping，校验 `thread.started`、`turn.started`、`item.completed agent_message`、`turn.completed usage`。当 `sandbox=workspace-write` 时，probe 还必须用哨兵文件验证工作目录可写并清理。
+1. 用配置的 sandbox 跑一次 `exec --json` ping，校验 `thread.started`、`turn.started`、`item.completed agent_message`、`turn.completed usage`。当 `sandbox=workspace-write` 时，probe 还必须用哨兵文件验证工作目录可写并清理；`danger-full-access` 不追加文件系统边界断言。
 2. 用返回的 `thread_id` 跑 `exec resume --json`，校验同一 `thread_id` 且能引用上一轮上下文。
 3. 跑一次只读 shell 样本，校验 `command_execution` start/completed；失败则 `supportsToolCallEvents=false` 且相关测试必须覆盖降级。
 4. 跑一次 interrupt 样本或在测试环境中覆盖等价 fake child process，证明 runtime 合成 `user_interrupt` terminal 且不双发。
@@ -250,11 +253,11 @@ Codex 安全边界：
 
 1. JSONL fixture：baseline text → `session_started` / `text_final` / `usage` / `turn_finished`。
 2. JSONL fixture：`command_execution` start/completed → tool events 顺序正确。
-3. JSONL fixture：`error` + `turn.failed` → `error` + `turn_finished{reason:"error"}`。
+3. JSONL fixture：顶层 `error` → 连续 `status` 且不终止；`turn.failed` → `error` + `turn_finished{reason:"error"}`。
 4. JSONL fixture：未知 `item.type` 与未知顶层 `type` → debug 记录，不产 text/tool/terminal 事件，不崩溃。
 5. resume 测试：第一轮保存 `thread_id`，第二轮 argv 使用 `exec resume <thread_id>`；resume 回同 id 不重发 `session_started`。
 6. interrupt 测试：in-flight child 被终止后合成 `turn_finished{reason:"user_interrupt"}`，迟到 terminal 不双发。
-7. config 测试：默认 read-only / fixed `--ask-for-approval never` / ignore user config / ignore rules；禁止 dangerous bypass；非法 sandbox / addDirs 类型报 `CodexConfigError`。
+7. config 测试：默认 read-only / fixed `--ask-for-approval never` / ignore user config / ignore rules；显式 danger-full-access 可用；禁止 dangerous bypass 字段；非法 sandbox / addDirs 类型报 `CodexConfigError`。
 8. probe 测试：缺 `--json`、缺 resume、JSONL schema 不匹配、工具能力缺失时 fail closed。
 
 ## Backend 私有日志事件
@@ -264,11 +267,13 @@ Codex 安全边界：
 | 事件名 | level | 字段 |
 |---|---|---|
 | `codex_compat_probe_start` | info | `{ probeMode, sandbox }` |
+| `codex_danger_full_access_enabled` | warn | `{ sandbox }` |
 | `codex_compat_probe_step_start` | info | `{ step }` |
 | `codex_compat_probe_step_ok` | info | `{ step }` |
 | `codex_compat_probe_complete` | info | `{ probeMode }` |
 | `codex_compat_probe_failed` | error | `{ step, cause }` |
 | `codex_subproc_error` | warn/error | `{ code, exitCode?, signal?, stderrSummary? }` |
+| `codex_diagnostic_error` | warn | `{ traceId, message }` |
 | `codex_interrupt_synthesized` | debug | `{ threadId?, pid?, signal }` |
 | `codex_unknown_item` | debug | `{ itemId?, itemType, summary? }` |
 | `codex_unknown_event` | debug | `{ eventType, summary? }` |

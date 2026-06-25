@@ -1,6 +1,10 @@
 export const DEFAULT_BIN = 'codex';
 export const DEFAULT_SANDBOX = 'read-only' as const;
-export const SANDBOX_MODES = ['read-only', 'workspace-write'] as const;
+export const SANDBOX_MODES = [
+  'read-only',
+  'workspace-write',
+  'danger-full-access',
+] as const;
 
 export type CodexSandbox = (typeof SANDBOX_MODES)[number];
 

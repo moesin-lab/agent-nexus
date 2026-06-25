@@ -2,6 +2,9 @@ export { createLogger, type Logger, type CreateLoggerOptions } from './logger.js
 export { checkPlatformAuth, type AuthDecision } from './auth.js';
 export {
   Engine,
+  type DaemonConfigEditor,
+  type DaemonConfigEditInput,
+  type DaemonConfigEditResult,
   type DaemonConfigReloader,
   type DaemonConfigReloadResult,
   type EngineAgent,

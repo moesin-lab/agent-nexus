@@ -80,6 +80,12 @@ export async function runCompatibilityProbe(
 ): Promise<void> {
   const { claudeBin, logger, workingDir } = opts;
   const permissionLevel = opts.permissionLevel ?? 'default';
+  if (permissionLevel === 'bypassPermissions') {
+    logger.warn(
+      { permissionLevel },
+      'claudecode_bypass_permissions_enabled',
+    );
+  }
 
   // step 1: --version
   let version: string;

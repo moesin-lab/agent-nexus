@@ -3479,6 +3479,10 @@ describe('Engine', () => {
       supportsEphemeral: true,
       supportsThreadCreation: true,
     });
+    const configEditor = vi.fn(async () => ({
+      status: 'edited' as const,
+      message: '[config saved]',
+    }));
     platform.settingsSnapshot.mockResolvedValueOnce({
       items: [
         {
@@ -3546,6 +3550,7 @@ describe('Engine', () => {
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
       commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
       daemonCommandHandlerKeys: ['kill', 'settings'],
+      configEditor,
       logger: SILENT_LOGGER,
       sessionStore: store,
     });
@@ -3579,6 +3584,10 @@ describe('Engine', () => {
             componentId: 'nexus:settings:working-dir',
           }),
           expect.objectContaining({
+            type: 'button',
+            componentId: 'nexus:settings:config',
+          }),
+          expect.objectContaining({
             type: 'select',
             componentId: 'nexus:settings:agent',
           }),
@@ -3589,6 +3598,7 @@ describe('Engine', () => {
     expect(result?.commandResponse?.text).toContain('**Current state**');
     expect(result?.commandResponse?.text).toContain('Reply mode: `mention` · discord state · durable');
     expect(result?.commandResponse?.text).toContain('WorkingDir: `/tmp/channel` · channel default · in-memory');
+    expect(result?.commandResponse?.text).toContain('Config: `config.json` · config file · durable');
     expect(result?.commandResponse?.text).toContain('Resumable sessions: `1`');
     expect(result?.commandResponse?.text).toContain('Values marked `in-memory` reset when the daemon restarts.');
   });
@@ -3897,6 +3907,73 @@ describe('Engine', () => {
     })).toBe('/tmp/settings');
     expect(result?.commandResponse?.text).toContain('[channel workingDir: /tmp/settings]');
     expect(result?.commandResponse?.text).toContain('WorkingDir: `/tmp/settings` · channel default · in-memory');
+  });
+
+  it('settings config modal submit edits config.json through the injected config editor', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const codex = makeAgent();
+    const configEditor = vi.fn(async () => ({
+      status: 'edited' as const,
+      message: '[config saved: agents[0].codex.workingDir]',
+    }));
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'settings'],
+      configEditor,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-modal', [], {
+        interaction: {
+          componentId: 'nexus:settings:config-modal',
+          kind: 'modal_submit',
+          values: [
+            'path=agents[0].codex.workingDir',
+            'value="/workspace/free-path"',
+          ],
+        },
+      }),
+    );
+
+    expect(configEditor).toHaveBeenCalledWith({
+      path: 'agents[0].codex.workingDir',
+      value: '"/workspace/free-path"',
+      userId: 'U1',
+      channelId: 'C1',
+      traceId: 't-1',
+    });
+    expect(result?.commandResponse?.text).toContain(
+      'Result: [config saved: agents[0].codex.workingDir]',
+    );
+    expect(result?.commandResponse?.text).toContain('Config: `config.json` · config file · durable');
   });
 
   it('settings agent binding select changes the channel route for subsequent messages', async () => {
@@ -4313,12 +4390,13 @@ describe('Engine', () => {
     expect(store.size).toBe(0);
   });
 
-  it('daemon /nexus-working-dir rejects paths outside the bound agent workingDir root', async () => {
+  it('daemon /nexus-working-dir accepts absolute paths outside the bound agent workingDir root', async () => {
     const platform = makePlatform({
       supportsSlashCommands: true,
       supportsEphemeral: true,
     });
     const codex = makeAgent();
+    const store = new SessionStore();
     const engine = new Engine({
       platform,
       platformName: 'discord-main',
@@ -4344,7 +4422,7 @@ describe('Engine', () => {
       commandRegistry: makeActiveRegistry([DAEMON_WORKING_DIR_COMMAND]),
       daemonCommandHandlerKeys: ['kill', 'working-dir'],
       logger: SILENT_LOGGER,
-      sessionStore: new SessionStore(),
+      sessionStore: store,
     });
 
     await engine.start();
@@ -4359,12 +4437,12 @@ describe('Engine', () => {
       }),
     );
 
-    expect(result).toEqual({
-      commandResponse: {
-        text: 'Working directory must be inside the configured root: /tmp',
-        ephemeral: true,
-      },
-    });
+    expect(store.getChannelWorkingDir({
+      platformName: 'discord-main',
+      platform: 'discord',
+      channelId: 'C1',
+    })).toBe('/workspace/other');
+    expect(result?.commandResponse?.text).toBe('[channel workingDir: /workspace/other]');
   });
 
   it('daemon /nexus-working-dir in a thread affects only that thread next session', async () => {
@@ -5670,6 +5748,115 @@ describe('Engine', () => {
     expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe('he');
     expect(platform.edit).toHaveBeenCalledTimes(1);
     expect((platform.edit.mock.calls[0]![1] as OutboundMessage).text).toBe('hello');
+  });
+
+  it('status 事件连续更新同一条用户可见工作消息，最终回复清除 status', async () => {
+    const platform = makePlatform({ supportsEdit: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+      streaming: { streamEditThrottleMs: 0 },
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('status', { message: 'Reconnecting... 1/5' }),
+      ev('status', { message: 'Reconnecting... 2/5' }),
+      ev('status', { message: 'Reconnecting... 3/5' }),
+      ev('text_final', { text: 'done' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      'Reconnecting... 1/5',
+    );
+    expect(platform.edit).toHaveBeenCalledTimes(3);
+    expect(platform.edit.mock.calls.map((call) => (call[1] as OutboundMessage).text)).toEqual([
+      'Reconnecting... 2/5',
+      'Reconnecting... 3/5',
+      'done',
+    ]);
+    expect(agent.runtime.stopSession).not.toHaveBeenCalled();
+  });
+
+  it('supportsEdit=true：status 后终端 error 复用工作消息，不留下过期 status', async () => {
+    const platform = makePlatform({ supportsEdit: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+      streaming: { streamEditThrottleMs: 0 },
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('status', { message: 'Reconnecting... 1/5' }),
+      ev('error', {
+        errorKind: 'agent',
+        code: 'codex_turn_failed',
+        message: '401 Unauthorized',
+      }),
+      ev('turn_finished', { reason: 'error', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(platform.send).toHaveBeenCalledTimes(1);
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      'Reconnecting... 1/5',
+    );
+    expect(platform.edit).toHaveBeenCalledTimes(1);
+    expect((platform.edit.mock.calls[0]![1] as OutboundMessage).text).toBe(
+      '[agent error: agent] 401 Unauthorized',
+    );
+  });
+
+  it('supportsEdit=false：status 降级为追加消息且最终回复顺序正确', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('status', { message: 'Reconnecting... 1/5' }),
+      ev('status', { message: 'Reconnecting... 2/5' }),
+      ev('text_final', { text: 'done' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('hello'));
+
+    expect(platform.edit).not.toHaveBeenCalled();
+    expect(platform.send.mock.calls.map((call) => (call[1] as OutboundMessage).text)).toEqual([
+      'Reconnecting... 1/5',
+      'Reconnecting... 2/5',
+      'done',
+    ]);
   });
 
   it('长回复 edit 交给 platform adapter 维护切片与 messageIds', async () => {

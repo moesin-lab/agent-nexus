@@ -5,7 +5,7 @@ import {
   type EngineRuntimeUpdate,
 } from '@agent-nexus/daemon';
 import { ConfigError, type AgentConfig, type AgentNexusConfig } from './config.js';
-import { createConfigReloader } from './config-reload.js';
+import { createConfigEditor, createConfigReloader } from './config-reload.js';
 
 const SILENT_LOGGER = createLogger({ level: 'fatal', pretty: false });
 
@@ -273,5 +273,103 @@ describe('createConfigReloader', () => {
     expect(update).not.toHaveProperty('trajectoryEnabled');
     expect(result.message).toContain('restart required');
     expect(result.message).toContain('daemon');
+  });
+});
+
+describe('createConfigEditor', () => {
+  it('保存 config edit 后触发 reload 并返回组合结果', async () => {
+    const edit = vi.fn(async () => ({
+      message: '[config saved: ui.toolMessages]',
+    }));
+    const reload = vi.fn(async () => ({
+      status: 'reloaded' as const,
+      message: '[config reloaded] applied: bindings, auth, ui, text prefixes',
+    }));
+    const editor = createConfigEditor({
+      edit,
+      reload,
+      logger: SILENT_LOGGER,
+    });
+
+    const result = await editor({
+      path: 'ui.toolMessages',
+      value: '"compact"',
+      userId: 'U1',
+      channelId: 'C1',
+      traceId: 't-1',
+    });
+
+    expect(edit).toHaveBeenCalledWith({
+      path: 'ui.toolMessages',
+      value: '"compact"',
+    });
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      status: 'edited',
+      message:
+        '[config saved: ui.toolMessages]\n[config reloaded] applied: bindings, auth, ui, text prefixes',
+    });
+  });
+
+  it('config edit 校验失败时返回 rejected 且不触发 reload', async () => {
+    const edit = vi.fn(async () => {
+      throw new ConfigError('字段 ui.toolMessages 必须是 append / compact / off');
+    });
+    const reload = vi.fn(async () => ({
+      status: 'reloaded' as const,
+      message: '[config reloaded]',
+    }));
+    const editor = createConfigEditor({
+      edit,
+      reload,
+      logger: SILENT_LOGGER,
+    });
+
+    const result = await editor({
+      path: 'ui.toolMessages',
+      value: '"verbose"',
+      userId: 'U1',
+      channelId: 'C1',
+      traceId: 't-1',
+    });
+
+    expect(reload).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      status: 'rejected',
+      message: '[config edit rejected]\n字段 ui.toolMessages 必须是 append / compact / off',
+    });
+  });
+
+  it('config edit 保存成功但 reload 返回 failed 时说明文件已保存且运行态未变', async () => {
+    const edit = vi.fn(async () => ({
+      message: '[config saved: bindings[0].agentName]',
+    }));
+    const reload = vi.fn(async () => ({
+      status: 'failed' as const,
+      message:
+        '[config reload failed] previous config kept:\n' +
+        'bindings 引用了未运行的 agent：claude-prod',
+    }));
+    const editor = createConfigEditor({
+      edit,
+      reload,
+      logger: SILENT_LOGGER,
+    });
+
+    const result = await editor({
+      path: 'bindings[0].agentName',
+      value: 'claude-prod',
+      userId: 'U1',
+      channelId: 'C1',
+      traceId: 't-1',
+    });
+
+    expect(result).toEqual({
+      status: 'edited',
+      message:
+        '[config saved: bindings[0].agentName]\n' +
+        '[config reload failed] config saved; running config kept:\n' +
+        'bindings 引用了未运行的 agent：claude-prod',
+    });
   });
 });

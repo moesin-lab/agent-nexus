@@ -22,7 +22,7 @@ related:
 - `pnpm --version` 可运行。
 - `claude --version` 可运行。
 - 首次运行会自动创建 `~/.agent-nexus/config.json` 与 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN`；后续启动会把模板新增但本地缺失的配置字段补回 `config.json`。编辑后确认两者权限为 `0600`。
-- 多实例运行时用 `--home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；配置、密钥与状态文件都会从该目录派生。
+- 多实例运行时用 `--home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；配置、密钥与状态文件都会从该目录派生。本仓库约定 dev 使用 `~/.agent-nexus`，stable 使用 `~/.agent-nexus-stable`。
 - Discord bot 已开启 `MESSAGE CONTENT INTENT`，并在目标 server / channel 有读写消息权限。
 
 ## 手动启动
@@ -31,7 +31,7 @@ related:
 
 ```bash
 pnpm dev
-corepack pnpm --filter @agent-nexus/cli dev --home ~/.agent-nexus-dev
+corepack pnpm --filter @agent-nexus/cli dev
 ```
 
 构建并安装本地 npm bin 后运行：
@@ -65,7 +65,7 @@ agent-nexus --home ~/.agent-nexus-stable
 
 首次运行会创建前两个文件的模板 / 空文件，但不会替你填真实 bot id、allowlist、working directory 或 token。
 
-默认 `<home>` 是 `~/.agent-nexus`。`config.json` 变更后需要重启进程。`daemon.commandRegistry.*` 控制 slash command 注册、alias 与 `@bot /new` 文本前缀；`state/discord-<encodedPlatformName>.json` 由 `/discord-reply-mode` 或 legacy `/reply-mode` 写入，通常不手动改。例如 `platforms[].name="discord-main"` 时默认文件是 `<home>/state/discord-discord-main.json`。
+默认 `<home>` 是 `~/.agent-nexus`。`config.json` 可手动编辑，也可从 `/nexus-settings` 写入；热生效字段可通过 `/nexus-reload-config` 或 settings 保存后的自动 reload 生效，其余字段仍需重启进程。`daemon.commandRegistry.*` 控制 slash command 注册、alias 与 `@bot /new` 文本前缀；`state/discord-<encodedPlatformName>.json` 由 `/discord-reply-mode` 或 legacy `/reply-mode` 写入，通常不手动改。例如 `platforms[].name="discord-main"` 时默认文件是 `<home>/state/discord-discord-main.json`。
 
 ## 常见故障
 

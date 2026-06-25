@@ -27,7 +27,7 @@ const baseConfig = {
 } satisfies CodexConfig;
 
 function logger(): Logger {
-  return { info: vi.fn() } as unknown as Logger;
+  return { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
 }
 
 beforeEach(() => {
@@ -87,6 +87,30 @@ describe('Codex command construction', () => {
       'thread-1',
       'next',
     ]);
+  });
+
+  it('danger-full-access 命令使用 sandbox 枚举而不是 dangerous bypass flag', () => {
+    const args = buildCodexExecArgs(
+      { ...baseConfig, sandbox: 'danger-full-access', addDirs: ['/tmp/ignored'] },
+      'yolo',
+    );
+
+    expect(args).toEqual([
+      '--sandbox',
+      'danger-full-access',
+      '--ask-for-approval',
+      'never',
+      '--cd',
+      '/workspace/project',
+      'exec',
+      '--json',
+      '--skip-git-repo-check',
+      '--ignore-user-config',
+      '--ignore-rules',
+      'yolo',
+    ]);
+    expect(args).not.toContain('--add-dir');
+    expect(args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
   });
 });
 
@@ -229,6 +253,48 @@ describe('Codex compatibility probe', () => {
     ).rejects.toThrow('missing --json in codex help');
   });
 
+  it('配置 danger-full-access 时 help 必须暴露该 sandbox 值', async () => {
+    execaMock
+      .mockResolvedValueOnce({ stdout: 'codex-cli 0.142.0' })
+      .mockResolvedValueOnce({
+        stdout: 'Usage: codex\nexec\n--sandbox --ask-for-approval --cd --add-dir',
+      })
+      .mockResolvedValueOnce({
+        stdout: 'Usage: codex exec\nresume --json --ignore-user-config --ignore-rules',
+      });
+
+    await expect(
+      runCompatibilityProbe({
+        config: { ...baseConfig, sandbox: 'danger-full-access' },
+        logger: logger(),
+      }),
+    ).rejects.toThrow('missing danger-full-access in codex help');
+  });
+
+  it('配置 danger-full-access 时启动探针打 warn 日志', async () => {
+    const fakeLogger = logger();
+    execaMock
+      .mockResolvedValueOnce({ stdout: 'codex-cli 0.142.0' })
+      .mockResolvedValueOnce({
+        stdout: 'Usage: codex\nexec\n--sandbox danger-full-access --ask-for-approval --cd --add-dir',
+      })
+      .mockResolvedValueOnce({
+        stdout: 'Usage: codex exec\nresume --json --ignore-user-config --ignore-rules',
+      });
+
+    await expect(
+      runCompatibilityProbe({
+        config: { ...baseConfig, sandbox: 'danger-full-access' },
+        logger: fakeLogger,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(fakeLogger.warn).toHaveBeenCalledWith(
+      { sandbox: 'danger-full-access' },
+      'codex_danger_full_access_enabled',
+    );
+  });
+
   it('exec JSONL 缺少 thread.started 时 fail closed', async () => {
     execaMock
       .mockResolvedValueOnce({ stdout: 'codex-cli 0.133.0' })
@@ -288,5 +354,34 @@ describe('Codex compatibility probe', () => {
     } finally {
       await rm(workingDir, { recursive: true, force: true });
     }
+  });
+
+  it('danger-full-access full probe 不运行 workspace-write 哨兵写入', async () => {
+    execaMock
+      .mockResolvedValueOnce({ stdout: 'codex-cli 0.142.0' })
+      .mockResolvedValueOnce({
+        stdout: 'Usage: codex\nexec\n--sandbox danger-full-access --ask-for-approval --cd --add-dir',
+      })
+      .mockResolvedValueOnce({
+        stdout: 'Usage: codex exec\nresume --json --ignore-user-config --ignore-rules',
+      })
+      .mockResolvedValueOnce({ stdout: execPingStdout })
+      .mockResolvedValueOnce({ stdout: resumeStdout })
+      .mockResolvedValueOnce({ stdout: toolStdout });
+
+    await expect(
+      runCompatibilityProbe({
+        config: { ...baseConfig, sandbox: 'danger-full-access' },
+        logger: logger(),
+        mode: 'full',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(execaMock).toHaveBeenCalledTimes(6);
+    const prompts = execaMock.mock.calls
+      .map((call) => (call[1] as string[]).at(-1))
+      .filter((value): value is string => typeof value === 'string');
+    expect(prompts.some((prompt) => prompt.includes('CODEX_WORKSPACE_WRITE_OK')))
+      .toBe(false);
   });
 });

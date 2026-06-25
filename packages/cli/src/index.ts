@@ -20,6 +20,7 @@ import {
 import { createAgentRegistry } from './agent.js';
 import { buildCliCommandRegistrationPlan } from './command-registry.js';
 import {
+  createConfigEditor,
   createConfigReloader,
   type ConfigReloadTarget,
 } from './config-reload.js';
@@ -29,6 +30,7 @@ import {
   SecretsPermissionError,
   buildRoutingTable,
   configRoot,
+  editConfigFile,
   loadConfig,
   loadSecret,
 } from './config.js';
@@ -141,6 +143,11 @@ async function main(): Promise<void> {
     runningAgentNames: agents.map((agent) => agent.agentName),
     logger,
   });
+  const configEditor = createConfigEditor({
+    edit: editConfigFile,
+    reload: configReloader,
+    logger,
+  });
 
   for (const platformConfig of config.platforms) {
     logger.info(
@@ -217,6 +224,7 @@ async function main(): Promise<void> {
         (descriptor) => descriptor.handlerKey,
       ),
       configReloader,
+      configEditor,
       agents,
       routingTable,
       idempotencyStore,

@@ -39,6 +39,7 @@ related:
 | 想做什么 | 先看哪里 |
 |---|---|
 | 看仓库架构总览 / 模块拓扑 | `docs/dev/architecture/overview.md` |
+| 查 dev / stable 实例 home 约定 | `docs/ops/runbook.md` |
 | 开新 package（agent / platform / daemon 子模块） | `docs/dev/process/workflow.md` |
 | 改 package import / 依赖方向 | `docs/dev/architecture/dependencies.md` |
 | 起 ADR / spec 前 surface 邻接维度 | `docs/dev/process/requirement-clarification.md` |

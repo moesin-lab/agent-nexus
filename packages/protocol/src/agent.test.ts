@@ -63,10 +63,17 @@ const events = [
     payload: { text: 'final' },
   },
   {
-    type: 'tool_call_started',
+    type: 'status',
     traceId: 'trace-1',
     timestamp: new Date(0),
     sequence: 4,
+    payload: { message: 'Reconnecting... 2/5' },
+  },
+  {
+    type: 'tool_call_started',
+    traceId: 'trace-1',
+    timestamp: new Date(0),
+    sequence: 5,
     payload: {
       callId: 'toolu-1',
       toolName: 'Read',
@@ -77,7 +84,7 @@ const events = [
     type: 'tool_call_progress',
     traceId: 'trace-1',
     timestamp: new Date(0),
-    sequence: 5,
+    sequence: 6,
     payload: {
       callId: 'toolu-1',
       note: 'running',
@@ -87,7 +94,7 @@ const events = [
     type: 'tool_result',
     traceId: 'trace-1',
     timestamp: new Date(0),
-    sequence: 6,
+    sequence: 7,
     payload: {
       callId: 'toolu-1',
       resultSequence: 0,
@@ -99,7 +106,7 @@ const events = [
     type: 'tool_call_finished',
     traceId: 'trace-1',
     timestamp: new Date(0),
-    sequence: 7,
+    sequence: 8,
     payload: {
       callId: 'toolu-1',
       toolName: 'Read',
@@ -110,7 +117,7 @@ const events = [
     type: 'usage',
     traceId: 'trace-1',
     timestamp: new Date(0),
-    sequence: 8,
+    sequence: 9,
     payload: {
       model: 'claude-sonnet',
       inputTokens: 1,
@@ -128,7 +135,7 @@ const events = [
     type: 'turn_finished',
     traceId: 'trace-1',
     timestamp: new Date(0),
-    sequence: 9,
+    sequence: 10,
     payload: {
       reason: 'wallclock_timeout',
       turnSequence: 1,
@@ -139,7 +146,7 @@ const events = [
     type: 'error',
     traceId: 'trace-1',
     timestamp: new Date(0),
-    sequence: 10,
+    sequence: 11,
     payload: {
       errorKind: 'runtime',
       code: 'E_RUNTIME',
@@ -151,7 +158,7 @@ const events = [
     type: 'session_stopped',
     traceId: 'trace-1',
     timestamp: new Date(0),
-    sequence: 11,
+    sequence: 12,
     payload: { reason: 'wallclock_timeout' },
   },
 ] satisfies AgentEvent[];
@@ -162,6 +169,7 @@ function eventTypeName(event: AgentEvent): AgentEvent['type'] {
     case 'thinking':
     case 'text_delta':
     case 'text_final':
+    case 'status':
     case 'tool_call_started':
     case 'tool_call_progress':
     case 'tool_result':
@@ -185,6 +193,7 @@ describe('AgentEvent protocol contract', () => {
       'thinking',
       'text_delta',
       'text_final',
+      'status',
       'tool_call_started',
       'tool_call_progress',
       'tool_result',

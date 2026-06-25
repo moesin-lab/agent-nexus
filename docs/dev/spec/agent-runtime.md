@@ -161,7 +161,7 @@ SessionConfig {
     sessionId: string                         // 持久化主键（见 session-model.md）
     workingDir: path                          // agent 后端运行的工作目录
     maxTokensPerTurn: int
-    timeoutMs: int                            // 单次输入的处理超时（对应 limits.perInputTimeoutMs）
+    timeoutMs: int                            // 单次输入的处理超时（默认来自 agents[].timeoutMs；对应 limits.perInputTimeoutMs）
     env: map[string]string                    // 注入的环境变量（过滤敏感字段）
     transcriptFile: path?                     // 落盘 transcript 的位置
     resumeFromAgentSessionId: string?         // daemon 回传的 opaque agent conversation ref；如 Codex thread_id / CC session_id
@@ -204,6 +204,7 @@ enum EventType {
     thinking               // 内部推理片段（可选，不是所有后端支持）
     text_delta             // 文本增量（流式输出）
     text_final             // 一轮文本输出完成
+    status                 // 非终端状态 / 进度提示（如 backend 重连）
     tool_call_started      // 工具调用开始
     tool_call_progress     // 工具调用中（可选）
     tool_result            // 工具结果（独立事件；CC 多形态 content 结构化承载，见 ADR-0012 决策点 1 子问题 1-tr-B）
@@ -223,6 +224,7 @@ enum EventType {
 | `thinking` | `{ text: string }` |
 | `text_delta` | `{ text: string }` |
 | `text_final` | `{ text: string }` |
+| `status` | `{ message: string }` |
 | `tool_call_started` | `{ callId, toolName, inputSummary }` |
 | `tool_call_progress` | `{ callId, note }` |
 | `tool_result` | `{ callId, resultSequence: int, content: ToolResultContent, isError: bool }` |
@@ -252,6 +254,7 @@ enum EventType {
 - `callId` = CC 后端的 `tool_use.id` / `tool_result.tool_use_id` 归一化 ID（对应 `tool_call_started.callId`）。
 - `resultSequence` 同一 `callId` 内从 0 连续递增、不重复；不同 callId 间无可比性；最终投递顺序仍以 AgentEvent `sequence`（session 全局单调）为准。
 - `isError` ← CC `tool_result.is_error`，单条 result 级。
+- `status.message` 是非终端、可用户可见的进度 / 状态提示；它不表示 turn 失败，也不得触发 `turn_finished` 或 `session_stopped`。最终失败必须仍由 `error` / `turn_finished` / `session_stopped` 明确表达。
 
 ### TurnEndReason 枚举
 
@@ -303,6 +306,7 @@ UsageRecord {
 backend 选择属于配置 / 路由层，不属于 `AgentRuntime` 接口。当前配置契约见 [`config-routing.md`](config-routing.md)：
 
 - `agents[].backend` 只决定该命名 agent 启用哪个 `@agent-nexus/agent-<name>` package；daemon 不读取该字段。
+- `agents[].timeoutMs` 是 backend 无关的 `SessionConfig.timeoutMs` 默认值；默认值由 [`config-routing.md`](config-routing.md#agentconfig) 定义。
 - backend 自己的字段住各 owner 配置块：`agents[].claudeCode` 由 `@agent-nexus/agent-claudecode` 解析，`agents[].codex` 由 `@agent-nexus/agent-codex` 解析。
 - CLI 可以按当前配置 schema 调用对应 parser / probe / runtime factory，但不得实现 backend 业务逻辑或校验 owner 字段。
 - legacy 单实例配置中的顶层 `agent.backend` 只能作为迁移错误处理对象，不得静默混入新结构。
@@ -350,7 +354,7 @@ adapter 侧实现职责：
 - **输出解析**：维护行缓冲 + JSON parser，把 `CodexJsonlEvent` 翻译为 `AgentEvent`（映射表见 contract 文档）。
 - **多轮**：保存 `thread.started.thread_id` 到 `AgentSession.agentSessionId`；下一轮用 `exec resume <thread_id>`。
 - **中断**：终止当前 in-flight Codex 子进程，并合成 `turn_finished { reason: "user_interrupt", source: "runtime-synthesized" }`。
-- **安全默认值**：默认 `read-only` sandbox、固定 `--ask-for-approval never`、忽略 user config/rules；不使用 dangerous bypass。
+- **安全默认值**：默认 `read-only` sandbox、固定 `--ask-for-approval never`、忽略 user config/rules；显式 `danger-full-access` 才进入 YOLO 模式。
 - **能力声明**：`supportsStreaming=false`，除非后续 probe 坐实 text delta。
 
 Codex 的 `exec-server` / `app-server` 未经当前 contract 验证，不属于主路径。

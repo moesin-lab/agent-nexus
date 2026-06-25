@@ -147,6 +147,7 @@ matcher 自行解释。
 AgentConfig {
     name: string                      // 全局唯一，稳定 agent 名
     backend: "claudecode" | "codex"
+    timeoutMs?: int                   // 单次输入墙钟超时；默认 300000，必须为正整数毫秒值
 
     // backend="claudecode" owner 字段，由 agent-claudecode parser 校验
     claudeCode?: ClaudeCodeConfig
@@ -162,10 +163,11 @@ AgentConfig {
 |---|---|
 | `name` | 非空字符串；在 `agents[]` 内唯一；binding 只能通过此名称引用 |
 | `backend` | 必填；未知 backend 启动失败 |
+| `timeoutMs` | 可选；单次输入的 wall-clock timeout，默认 `300000`；必须是正整数毫秒值，且不超过 JS timer 上限 `2147483647` |
 | `claudeCode` | `backend="claudecode"` 时必填；`backend="codex"` 时必须缺省；字段内容只能由 `@agent-nexus/agent-claudecode` parser 校验 |
 | `codex` | `backend="codex"` 时必填；`backend="claudecode"` 时必须缺省；字段内容只能由 `@agent-nexus/agent-codex` parser 校验 |
 
-`AgentConfig` 不继承全局 workingDir 或 backend 私有安全字段。需要两套不同工作目录或 Claude Code `allowedTools` 边界时，配置两个不同 `agents[]` 项。
+`AgentConfig` 不继承全局 workingDir、timeout 或 backend 私有安全字段。需要两套不同工作目录、timeout 或 Claude Code `allowedTools` 边界时，配置两个不同 `agents[]` 项。
 inactive backend 配置块必须拒绝，不能作为"未知但忽略"字段保留，避免陈旧私有配置影响审计。
 
 ## PlatformBinding
@@ -311,6 +313,22 @@ platform adapter 实例。
 路由时先查该 override；命中且 agent 仍存在时返回该 `agentName`，否则继续按 `RoutingTable` 匹配。设置 override 时，daemon 必须停止触发者当前 SessionKey 的活跃 runtime handle，并删除该 key 上保存的 opaque agent conversation ref，避免触发者后续消息用旧 agent conversation resume 到新 agent owner。
 
 v1 的 override 是 channel 级路由覆盖，但清理动作只覆盖触发者 SessionKey。由于当前内存 session store 没有 channel-wide owner 索引，daemon 不承诺迁移或清理同 channel 其它用户已有的 opaque agent conversation ref；多用户频道里切换 agent owner 前，应让相关用户先结束自己的 RoutingSession。否则这些用户下一条消息的恢复结果不在 v1 合约内，需要由用户用 `/nexus-kill` 或 agent new command 重开。override 是内存态，进程重启后丢失。
+
+### Settings config editor
+
+`/nexus-settings` 可以暴露 config editor 控件，用于按路径修改 `config.json`。该能力由 CLI 组装层注入 daemon；daemon 只负责鉴权、收集 interaction 输入并调用注入的 editor，不直接读取或写入配置文件。
+
+编辑输入由两部分组成：
+
+- `path`：配置路径，使用 dot / bracket 语法，例如 `agents[0].codex.workingDir`、`bindings[0].match.discord.channelIds`。
+- `value`：目标值。合法 JSON 按 JSON 解析；无法解析为 JSON 的非空文本按字符串处理。
+
+写入语义：
+
+- editor 先在内存中生成候选 config，并用与启动 / reload 相同的 loader 完整校验。校验失败时不得写入 `config.json`，错误以 ephemeral settings 反馈返回触发者。
+- 校验通过后写回 `config.json`，随后触发与 `/nexus-reload-config` 相同的 reload。热生效字段按 §配置热重载 立即应用；仅重启生效字段仍写入文件，并由 reload 结果提示需要重启。
+- 写入成功但 reload 因运行态约束失败时，`config.json` 保留新内容，当前运行态配置保持不变；用户可继续编辑或重启进程使文件配置生效。
+- 路径中不存在的对象字段会按需要创建，以支持私有字段、future 字段与注释字段；反馈必须提示新建的路径段，避免用户把 `codex` 拼成 `codx` 这类输入误认为修改了既有字段。
 
 ## Session 隔离
 

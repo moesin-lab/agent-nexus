@@ -42,6 +42,9 @@ export type AgentBackend = 'claudecode' | 'codex';
 
 type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
+export const DEFAULT_AGENT_TIMEOUT_MS = 300_000;
+const MAX_AGENT_TIMEOUT_MS = 2_147_483_647;
+
 export type PlatformConfig = DiscordPlatformConfig & {
   auth: PlatformAuthConfig;
 };
@@ -50,11 +53,13 @@ export type AgentConfig =
   | {
       name: string;
       backend: 'claudecode';
+      timeoutMs?: number;
       claudeCode: ClaudeCodeConfig;
     }
   | {
       name: string;
       backend: 'codex';
+      timeoutMs?: number;
       codex: CodexConfig;
     };
 
@@ -76,6 +81,15 @@ export interface BindingConfig {
   match: {
     discord: DiscordBindingMatchConfig;
   };
+}
+
+export interface ConfigFileEditInput {
+  path: string;
+  value: string;
+}
+
+export interface ConfigFileEditResult {
+  message: string;
 }
 
 export class ConfigError extends Error {
@@ -207,10 +221,11 @@ const DEFAULT_CONFIG_TEMPLATE = `\
     {
       "name": "codex-dev",
       "backend": "codex",
+      "timeoutMs": 300000,
       "codex": {
         "workingDir": "",
         "bin": "codex",
-        "_sandboxComment": "allowed: read-only, workspace-write",
+        "_sandboxComment": "allowed: read-only, workspace-write, danger-full-access",
         "sandbox": "read-only",
         "addDirs": [],
         "loadUserConfig": false,
@@ -220,10 +235,11 @@ const DEFAULT_CONFIG_TEMPLATE = `\
     {
       "name": "claude-prod",
       "backend": "claudecode",
+      "timeoutMs": 300000,
       "claudeCode": {
         "workingDir": "",
         "bin": "claude",
-        "_permissionLevelComment": "allowed: default, acceptEdits, auto, bypassPermissions, dontAsk, plan",
+        "_permissionLevelComment": "allowed: default, acceptEdits, auto, bypassPermissions(YOLO), dontAsk, plan",
         "permissionLevel": "default",
         "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"]
       }
@@ -313,6 +329,22 @@ function requireNonEmptyString(
   return value;
 }
 
+function parseAgentTimeoutMs(raw: Record<string, unknown>, path: string): number {
+  const value = raw['timeoutMs'];
+  if (value === undefined) return DEFAULT_AGENT_TIMEOUT_MS;
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > MAX_AGENT_TIMEOUT_MS
+  ) {
+    throw new ConfigError(
+      `字段 ${path}.timeoutMs 必须是 1..${MAX_AGENT_TIMEOUT_MS} 的整数毫秒值`,
+    );
+  }
+  return value;
+}
+
 function duplicateNames(items: readonly string[]): string[] {
   const seen = new Set<string>();
   const dup = new Set<string>();
@@ -371,6 +403,137 @@ function applyTemplateDefaultsIfMissing(
 async function persistConfig(path: string, parsed: Record<string, unknown>): Promise<void> {
   await writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`);
   await chmod(path, 0o600);
+}
+
+type ConfigEditPathSegment = string | number;
+const UNSAFE_CONFIG_PATH_SEGMENTS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+]);
+
+function parseConfigEditPath(path: string): ConfigEditPathSegment[] {
+  const input = path.trim();
+  if (input.length === 0) {
+    throw new ConfigError('config edit path 不能为空');
+  }
+
+  const segments: ConfigEditPathSegment[] = [];
+  let token = '';
+  const pushToken = (): void => {
+    if (token.length === 0) {
+      throw new ConfigError(`config edit path 非法：${path}`);
+    }
+    if (UNSAFE_CONFIG_PATH_SEGMENTS.has(token)) {
+      throw new ConfigError(`config edit path 含不安全字段：${token}`);
+    }
+    segments.push(token);
+    token = '';
+  };
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index]!;
+    if (char === '.') {
+      if (token.length === 0 && input[index - 1] === ']') {
+        continue;
+      }
+      pushToken();
+      continue;
+    }
+    if (char === '[') {
+      if (token.length > 0) pushToken();
+      const end = input.indexOf(']', index + 1);
+      if (end === -1) {
+        throw new ConfigError(`config edit path 非法：${path}`);
+      }
+      const rawIndex = input.slice(index + 1, end);
+      if (!/^(0|[1-9]\d*)$/.test(rawIndex)) {
+        throw new ConfigError(`config edit path 只支持数字数组下标：${path}`);
+      }
+      segments.push(Number(rawIndex));
+      index = end;
+      continue;
+    }
+    token += char;
+  }
+
+  if (token.length > 0) pushToken();
+  if (segments.length === 0) {
+    throw new ConfigError(`config edit path 非法：${path}`);
+  }
+  return segments;
+}
+
+function parseConfigEditValue(value: string): unknown {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return '';
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return trimmed;
+  }
+}
+
+function formatConfigEditPath(segments: readonly ConfigEditPathSegment[]): string {
+  return segments
+    .map((segment, index) =>
+      typeof segment === 'number'
+        ? `[${segment}]`
+        : index === 0
+          ? segment
+          : `.${segment}`,
+    )
+    .join('');
+}
+
+function setConfigValueAtPath(
+  root: Record<string, unknown>,
+  segments: readonly ConfigEditPathSegment[],
+  value: unknown,
+  path: string,
+): string[] {
+  const createdPaths: string[] = [];
+  let current: unknown = root;
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    const segment = segments[index]!;
+    const nextSegment = segments[index + 1]!;
+    if (typeof segment === 'number') {
+      if (!Array.isArray(current) || segment >= current.length) {
+        throw new ConfigError(`config edit path 不存在：${path}`);
+      }
+      current = current[segment];
+      continue;
+    }
+
+    if (!isRecord(current)) {
+      throw new ConfigError(`config edit path 不能穿过非对象字段：${path}`);
+    }
+    if (!(segment in current)) {
+      current[segment] = typeof nextSegment === 'number' ? [] : {};
+      createdPaths.push(formatConfigEditPath(segments.slice(0, index + 1)));
+    }
+    current = current[segment];
+  }
+
+  const last = segments[segments.length - 1]!;
+  if (typeof last === 'number') {
+    if (!Array.isArray(current) || last > current.length) {
+      throw new ConfigError(`config edit path 不存在：${path}`);
+    }
+    if (last === current.length) {
+      createdPaths.push(formatConfigEditPath(segments));
+    }
+    current[last] = value;
+    return createdPaths;
+  }
+  if (!isRecord(current)) {
+    throw new ConfigError(`config edit path 不能写入非对象字段：${path}`);
+  }
+  if (!(last in current)) {
+    createdPaths.push(formatConfigEditPath(segments));
+  }
+  current[last] = value;
+  return createdPaths;
 }
 
 async function createFileIfMissing(
@@ -438,8 +601,13 @@ function parseAgent(raw: unknown, index: number): AgentConfig {
   if (!isRecord(raw)) {
     throw new ConfigError(`字段 ${path} 必须是对象`);
   }
-  assertNoUnknownKeys(raw, ['name', 'backend', 'claudeCode', 'codex'], path);
+  assertNoUnknownKeys(
+    raw,
+    ['name', 'backend', 'timeoutMs', 'claudeCode', 'codex'],
+    path,
+  );
   const name = requireNonEmptyString(raw, 'name', path);
+  const timeoutMs = parseAgentTimeoutMs(raw, path);
   const backendRaw = raw['backend'];
   if (!BACKENDS.includes(backendRaw as AgentBackend)) {
     throw new ConfigError(
@@ -456,7 +624,7 @@ function parseAgent(raw: unknown, index: number): AgentConfig {
       throw new ConfigError(`缺字段 ${path}.codex`);
     }
     try {
-      return { name, backend, codex: parseCodexConfig(raw['codex']) };
+      return { name, backend, timeoutMs, codex: parseCodexConfig(raw['codex']) };
     } catch (err) {
       if (err instanceof CodexConfigError) {
         throw new ConfigError(`${path}.codex ${err.message}`);
@@ -472,7 +640,12 @@ function parseAgent(raw: unknown, index: number): AgentConfig {
     throw new ConfigError(`缺字段 ${path}.claudeCode`);
   }
   try {
-    return { name, backend, claudeCode: parseClaudeCodeConfig(raw['claudeCode']) };
+    return {
+      name,
+      backend,
+      timeoutMs,
+      claudeCode: parseClaudeCodeConfig(raw['claudeCode']),
+    };
   } catch (err) {
     if (err instanceof ClaudeCodeConfigError) {
       throw new ConfigError(`${path}.claudeCode ${err.message}`);
@@ -619,38 +792,10 @@ function parseLog(raw: unknown): { level: LogLevel } {
   return { level: (levelRaw as LogLevel | undefined) ?? DEFAULT_LOG_LEVEL };
 }
 
-export async function loadConfig(): Promise<AgentNexusConfig> {
-  let scaffold;
-  try {
-    scaffold = await ensureConfigScaffold();
-  } catch (err) {
-    throw new ConfigError(`初始化配置文件失败：${(err as Error).message}`);
-  }
-  if (scaffold.configCreated) {
-    throw new ConfigError(CONFIG_HINT(configPath()));
-  }
-
-  const path = configPath();
-  let raw: string;
-  try {
-    raw = await readFile(path, 'utf8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new ConfigError(CONFIG_HINT(path));
-    }
-    throw new ConfigError(`读取 ${path} 失败：${(err as Error).message}`);
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new ConfigError(`${path} 不是合法 JSON：${(err as Error).message}`);
-  }
-
-  if (!isRecord(parsed)) {
-    throw new ConfigError(`${path} 顶层必须是对象`);
-  }
+function parseConfigRecord(
+  parsed: Record<string, unknown>,
+  path: string,
+): { config: AgentNexusConfig; templateDefaultsChanged: boolean } {
   rejectLegacyTopLevel(path, parsed);
   assertNoUnknownKeys(parsed, ['platforms', 'agents', 'bindings', 'daemon', 'log', 'ui'], path);
   const templateDefaultsChanged = applyTemplateDefaultsIfMissing(parsed);
@@ -707,7 +852,54 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     throw err;
   }
 
-  if (templateDefaultsChanged) {
+  return {
+    config: {
+      platforms,
+      agents,
+      bindings,
+      daemon,
+      ui,
+      log: parseLog(parsed['log']),
+    },
+    templateDefaultsChanged,
+  };
+}
+
+export async function loadConfig(): Promise<AgentNexusConfig> {
+  let scaffold;
+  try {
+    scaffold = await ensureConfigScaffold();
+  } catch (err) {
+    throw new ConfigError(`初始化配置文件失败：${(err as Error).message}`);
+  }
+  if (scaffold.configCreated) {
+    throw new ConfigError(CONFIG_HINT(configPath()));
+  }
+
+  const path = configPath();
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new ConfigError(CONFIG_HINT(path));
+    }
+    throw new ConfigError(`读取 ${path} 失败：${(err as Error).message}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new ConfigError(`${path} 不是合法 JSON：${(err as Error).message}`);
+  }
+
+  if (!isRecord(parsed)) {
+    throw new ConfigError(`${path} 顶层必须是对象`);
+  }
+  const result = parseConfigRecord(parsed, path);
+
+  if (result.templateDefaultsChanged) {
     try {
       await persistConfig(path, parsed);
     } catch {
@@ -716,14 +908,50 @@ export async function loadConfig(): Promise<AgentNexusConfig> {
     }
   }
 
-  return {
-    platforms,
-    agents,
-    bindings,
-    daemon,
-    ui,
-    log: parseLog(parsed['log']),
-  };
+  return result.config;
+}
+
+export async function editConfigFile(
+  input: ConfigFileEditInput,
+): Promise<ConfigFileEditResult> {
+  const path = configPath();
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new ConfigError(CONFIG_HINT(path));
+    }
+    throw new ConfigError(`读取 ${path} 失败：${(err as Error).message}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new ConfigError(`${path} 不是合法 JSON：${(err as Error).message}`);
+  }
+  if (!isRecord(parsed)) {
+    throw new ConfigError(`${path} 顶层必须是对象`);
+  }
+
+  const editPath = input.path.trim();
+  const candidate = JSON.parse(JSON.stringify(parsed)) as Record<string, unknown>;
+  const createdPaths = setConfigValueAtPath(
+    candidate,
+    parseConfigEditPath(editPath),
+    parseConfigEditValue(input.value),
+    editPath,
+  );
+  const validationCandidate = JSON.parse(JSON.stringify(candidate)) as Record<string, unknown>;
+  parseConfigRecord(validationCandidate, path);
+  await persistConfig(path, candidate);
+  const warning =
+    createdPaths.length > 0
+      ? `\n[config edit warning] created new config path(s): ${createdPaths.join(', ')}; ` +
+        'if this was a typo, edit the intended path.'
+      : '';
+  return { message: `[config saved: ${editPath}]${warning}` };
 }
 
 export function buildRoutingTable(config: AgentNexusConfig): RoutingEntry[] {

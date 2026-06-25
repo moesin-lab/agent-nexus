@@ -130,7 +130,7 @@ describe('createAgentRuntime', () => {
     expect(runCodexProbeMock).toHaveBeenCalledWith({
       config: codex,
       logger,
-      timeoutMs: 1_800_000,
+      timeoutMs: 300_000,
     });
     expect(createCodexRuntimeMock).toHaveBeenCalledWith({ config: codex, logger });
     expect(runClaudeProbeMock).not.toHaveBeenCalled();

@@ -303,7 +303,7 @@ UsageRecord {
 backend 选择属于配置 / 路由层，不属于 `AgentRuntime` 接口。当前配置契约见 [`config-routing.md`](config-routing.md)：
 
 - `agents[].backend` 只决定该命名 agent 启用哪个 `@agent-nexus/agent-<name>` package；daemon 不读取该字段。
-- `agents[].timeoutMs` 是 backend 无关的 `SessionConfig.timeoutMs` 默认值；未配置时为 `300000` ms。
+- `agents[].timeoutMs` 是 backend 无关的 `SessionConfig.timeoutMs` 默认值；默认值由 [`config-routing.md`](config-routing.md#agentconfig) 定义。
 - backend 自己的字段住各 owner 配置块：`agents[].claudeCode` 由 `@agent-nexus/agent-claudecode` 解析，`agents[].codex` 由 `@agent-nexus/agent-codex` 解析。
 - CLI 可以按当前配置 schema 调用对应 parser / probe / runtime factory，但不得实现 backend 业务逻辑或校验 owner 字段。
 - legacy 单实例配置中的顶层 `agent.backend` 只能作为迁移错误处理对象，不得静默混入新结构。

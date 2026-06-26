@@ -12,8 +12,10 @@ import type {
   EventHandlerResult,
   EventModalResponse,
   MessageComponent,
+  MessageEmbed,
   MessageRef,
   NormalizedEvent,
+  OutboundMessage,
   PlatformAdapter,
   SessionConfig,
   SessionKey,
@@ -183,6 +185,12 @@ const QUEUE_MOVE_UP_COMPONENT_PREFIX = `${QUEUE_COMPONENT_PREFIX}up:`;
 const QUEUE_MOVE_DOWN_COMPONENT_PREFIX = `${QUEUE_COMPONENT_PREFIX}down:`;
 const QUEUE_CANCEL_COMPONENT_PREFIX = `${QUEUE_COMPONENT_PREFIX}cancel:`;
 const QUEUE_PROMPT_FIELD_ID = 'prompt';
+const TOOL_EMBED_ACCENT_COLOR = 0x64748b;
+const EMBED_TITLE_LIMIT = 256;
+const EMBED_DESCRIPTION_LIMIT = 4000;
+const EMBED_FIELD_NAME_LIMIT = 256;
+const EMBED_FIELD_VALUE_LIMIT = 1024;
+const EMBED_FOOTER_TEXT_LIMIT = 2048;
 
 interface ActiveAgentSession {
   agent: AgentRuntime;
@@ -206,6 +214,18 @@ interface ToolMessageState {
   startText: string;
 }
 
+interface ToolStartRender {
+  text: string;
+  embed: MessageEmbed;
+}
+
+type OutboundSendInput =
+  | string
+  | {
+      text: string;
+      embeds?: MessageEmbed[];
+    };
+
 type PreparedWorkingDirUpdate =
   | {
       ok: true;
@@ -220,12 +240,33 @@ function codeBlock(lang: string, text: string): string {
   return `${fence}${lang}\n${text}\n${fence}`;
 }
 
-function renderToolStart(toolName: string, inputSummary: string): string {
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  if (maxLength <= 3) return text.slice(0, maxLength);
+  return `${text.slice(0, maxLength - 3)}...`;
+}
+
+function renderToolStart(toolName: string, inputSummary: string): ToolStartRender {
   const summary = inputSummary.length > 0 ? inputSummary : '(no input)';
+  const description = toolName === 'Bash' ? codeBlock('bash', summary) : summary;
   if (toolName === 'Bash') {
-    return `Bash:\n${codeBlock('bash', summary)}`;
+    return {
+      text: `Bash:\n${description}`,
+      embed: {
+        title: `Tool: ${toolName}`,
+        description,
+        color: TOOL_EMBED_ACCENT_COLOR,
+      },
+    };
   }
-  return `${toolName}: ${summary}`;
+  return {
+    text: `${toolName}: ${summary}`,
+    embed: {
+      title: `Tool: ${toolName}`,
+      description,
+      color: TOOL_EMBED_ACCENT_COLOR,
+    },
+  };
 }
 
 function summarizeToolResultContent(content: ToolResultContent): string {
@@ -2529,6 +2570,74 @@ export class Engine {
     }
   }
 
+  private redactAndTruncateForEmbed(
+    text: string,
+    traceId: string,
+    maxLength: number,
+  ): string {
+    return truncateText(this.redactForOutbound(text, traceId), maxLength);
+  }
+
+  private redactMessageEmbed(embed: MessageEmbed, traceId: string): MessageEmbed {
+    const redacted: MessageEmbed = { ...embed };
+    if (embed.title !== undefined) {
+      redacted.title = this.redactAndTruncateForEmbed(
+        embed.title,
+        traceId,
+        EMBED_TITLE_LIMIT,
+      );
+    }
+    if (embed.description !== undefined) {
+      redacted.description = this.redactAndTruncateForEmbed(
+        embed.description,
+        traceId,
+        EMBED_DESCRIPTION_LIMIT,
+      );
+    }
+    if (embed.fields) {
+      redacted.fields = embed.fields.map((field) => ({
+        ...field,
+        name: this.redactAndTruncateForEmbed(
+          field.name,
+          traceId,
+          EMBED_FIELD_NAME_LIMIT,
+        ),
+        value: this.redactAndTruncateForEmbed(
+          field.value,
+          traceId,
+          EMBED_FIELD_VALUE_LIMIT,
+        ),
+      }));
+    }
+    if (embed.footer) {
+      redacted.footer = {
+        text: this.redactAndTruncateForEmbed(
+          embed.footer.text,
+          traceId,
+          EMBED_FOOTER_TEXT_LIMIT,
+        ),
+      };
+    }
+    return redacted;
+  }
+
+  private redactOutboundMessage(
+    message: OutboundMessage,
+    traceId: string,
+  ): OutboundMessage {
+    return {
+      ...message,
+      text: this.redactForOutbound(message.text, traceId),
+      ...(message.embeds !== undefined
+        ? {
+            embeds: message.embeds.map((embed) =>
+              this.redactMessageEmbed(embed, traceId),
+            ),
+          }
+        : {}),
+    };
+  }
+
   private appendNexusTrajectorySegment(
     active: ActiveAgentSession,
     input: {
@@ -2933,14 +3042,18 @@ export class Engine {
       const toolMessages = new Map<string, ToolMessageState>();
       let activeSessionForTrajectory: ActiveAgentSession | undefined;
 
-      const safeSend = async (text: string): Promise<MessageRef | undefined> => {
+      const safeSend = async (
+        input: OutboundSendInput,
+      ): Promise<MessageRef | undefined> => {
         try {
-          const outboundText = this.redactForOutbound(text, event.traceId);
-          return await this.platform.send(event.sessionKey, {
-            text: outboundText,
+          const payload =
+            typeof input === 'string' ? { text: input } : input;
+          const outbound = this.redactOutboundMessage({
+            ...payload,
             traceId: event.traceId,
             sessionKey: event.sessionKey,
-          });
+          }, event.traceId);
+          return await this.platform.send(event.sessionKey, outbound);
         } catch (sendErr) {
           this.logger.error(
             {
@@ -3130,6 +3243,7 @@ export class Engine {
         callId: string,
         text: string,
         toolName?: string,
+        embeds?: MessageEmbed[],
       ): Promise<void> => {
         let state = toolMessages.get(callId);
         if (!state) {
@@ -3154,14 +3268,16 @@ export class Engine {
             state.ref = ref;
             await safeEdit(ref, text);
           } else if (!ref || !platformCaps.supportsEdit) {
-            state.ref = await safeSend(text);
+            state.ref = await safeSend(
+              embeds !== undefined ? { text, embeds } : text,
+            );
           }
           state.startText = text;
           return;
         }
 
         state.startText = text;
-        state.pendingRef = safeSend(text)
+        state.pendingRef = safeSend(embeds !== undefined ? { text, embeds } : text)
           .then((ref) => {
             state.ref = ref;
             return ref;
@@ -3286,19 +3402,29 @@ export class Engine {
               },
               'tool_call_input',
             );
-            const startText = renderToolStart(
+            const start = renderToolStart(
               e.payload.toolName,
               e.payload.inputSummary,
             );
             if (toolMessageMode === 'append') {
               await splitAssistantMessageBeforeTool();
+              const redactedStartText = this.redactForOutbound(
+                start.text,
+                event.traceId,
+              );
+              const embeds =
+                platformCaps.supportsEmbeds &&
+                redactedStartText.length <= platformCaps.maxTextLength
+                  ? [start.embed]
+                  : undefined;
               await upsertToolMessage(
                 e.payload.callId,
-                startText,
+                start.text,
                 e.payload.toolName,
+                embeds,
               );
             } else {
-              await ensureToolVisible(startText);
+              await ensureToolVisible(start.text);
             }
             return;
           }

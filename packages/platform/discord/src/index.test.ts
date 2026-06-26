@@ -1295,6 +1295,7 @@ describe('edit / typing capabilities', () => {
 
     expect(platform.capabilities()).toMatchObject({
       supportsEdit: true,
+      supportsEmbeds: true,
       supportsTypingIndicator: true,
       supportsSlashCommands: true,
       supportsThreads: true,
@@ -1435,6 +1436,67 @@ describe('edit / typing capabilities', () => {
     );
   });
 
+  it('send 单片带 embed：传 content 和 embeds 给 Discord', async () => {
+    const send = vi.fn(async () => ({ id: 'm-1' }));
+    discordMock.channelsFetch.mockResolvedValueOnce(makeTextChannel({ send }));
+    const platform = makePlatform();
+    const embeds = [
+      {
+        title: 'Tool: Read',
+        description: 'src/index.ts',
+        color: 0x5865f2,
+      },
+    ];
+
+    const ref = await platform.send({
+      platform: 'discord',
+      channelId: 'C1',
+      initiatorUserId: OTHER_ID,
+    }, {
+      text: 'Read: src/index.ts',
+      embeds,
+      traceId: 't-1',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    });
+
+    expect(send).toHaveBeenCalledWith({
+      content: 'Read: src/index.ts',
+      embeds,
+    });
+    expect(ref.messageIds).toEqual(['m-1']);
+    expect(ref.messageId).toBe('m-1');
+  });
+
+  it('send 多片带 embed：只在第一片带 embeds', async () => {
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'm-1' })
+      .mockResolvedValueOnce({ id: 'm-2' });
+    discordMock.channelsFetch.mockResolvedValueOnce(makeTextChannel({ send }));
+    const platform = makePlatform();
+    const embeds = [{ title: 'Tool: Read', description: 'long', color: 0x5865f2 }];
+    const text = 'x'.repeat(SLICE_SIZE + 1);
+
+    const ref = await platform.send({
+      platform: 'discord',
+      channelId: 'C1',
+      initiatorUserId: OTHER_ID,
+    }, {
+      text,
+      embeds,
+      traceId: 't-1',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    });
+
+    expect(send).toHaveBeenNthCalledWith(1, {
+      content: 'x'.repeat(SLICE_SIZE),
+      embeds,
+    });
+    expect(send).toHaveBeenNthCalledWith(2, 'x');
+    expect(ref.messageIds).toEqual(['m-1', 'm-2']);
+    expect(ref.messageId).toBe('m-2');
+  });
+
   it('edit 单片消息：用 MessageManager.edit 更新已有 message id', async () => {
     const edit = vi.fn(async (id: string) => ({ id }));
     discordMock.channelsFetch.mockResolvedValueOnce(makeTextChannel({ edit }));
@@ -1456,6 +1518,63 @@ describe('edit / typing capabilities', () => {
     expect(edit).toHaveBeenCalledWith('m-1', 'updated');
     expect(ref.messageIds).toEqual(['m-1']);
     expect(ref.messageId).toBe('m-1');
+  });
+
+  it('edit 单片带 embed：传 content 和 embeds 给 Discord', async () => {
+    const edit = vi.fn(async (id: string) => ({ id }));
+    discordMock.channelsFetch.mockResolvedValueOnce(makeTextChannel({ edit }));
+    const platform = makePlatform();
+    const ref = {
+      platform: 'discord',
+      channelId: 'C1',
+      messageId: 'm-1',
+      messageIds: ['m-1'],
+      sentAt: new Date(0),
+    };
+    const embeds = [
+      {
+        title: 'Tool: Read',
+        description: 'src/index.ts',
+        color: 0x5865f2,
+      },
+    ];
+
+    await platform.edit(ref, {
+      text: 'Read: src/index.ts',
+      embeds,
+      traceId: 't-1',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    });
+
+    expect(edit).toHaveBeenCalledWith('m-1', {
+      content: 'Read: src/index.ts',
+      embeds,
+    });
+  });
+
+  it('edit 单片 embeds=[]：显式清空 Discord embeds', async () => {
+    const edit = vi.fn(async (id: string) => ({ id }));
+    discordMock.channelsFetch.mockResolvedValueOnce(makeTextChannel({ edit }));
+    const platform = makePlatform();
+    const ref = {
+      platform: 'discord',
+      channelId: 'C1',
+      messageId: 'm-1',
+      messageIds: ['m-1'],
+      sentAt: new Date(0),
+    };
+
+    await platform.edit(ref, {
+      text: 'updated',
+      embeds: [],
+      traceId: 't-1',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    });
+
+    expect(edit).toHaveBeenCalledWith('m-1', {
+      content: 'updated',
+      embeds: [],
+    });
   });
 
   it('edit 增长到多片：追加发送新 slice 并回写 MessageRef', async () => {

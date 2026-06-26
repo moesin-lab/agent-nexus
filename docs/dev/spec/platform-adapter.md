@@ -496,6 +496,17 @@ Adapter 在 `client.on('ready')` 比较 `client.user?.id` 与 config 的 `botUse
 | `ephemeral` | Interaction response flags |
 | 超过 2000 字符 | 切片成多条（切片策略见 message-protocol） |
 
+Discord adapter 声明 `supportsEmbeds=true` 时，必须把 `OutboundMessage.embeds` 映射到 Discord rich embed。capability 翻转与 `send` / `edit` 实现必须同 PR 原子落地，禁止先声明支持但静默丢弃 embed。
+
+`send` / `edit` 的 embed 语义：
+
+- 单片消息：`text` 映射为 `content`，`embeds` 原样映射为 Discord `embeds`。
+- 多片消息：调用方应优先避免为切片消息附 embed；adapter 若收到多片 text + embeds，只能把 embeds 挂在第一片，后续片保持纯 content。
+- `embeds` 字段缺省：不改变平台既有 embed 状态（edit 场景）。
+- `embeds: []`：显式清空该消息上的 embed。
+
+所有 outbound embed 文本字段必须由 daemon 在调用 adapter 前完成出站脱敏；adapter 只做平台协议映射，不重新解析 tool input 或执行业务脱敏。
+
 ### Thread 创建错误语义
 
 ```text

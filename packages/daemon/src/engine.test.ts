@@ -5973,8 +5973,160 @@ describe('Engine', () => {
     expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
       'Bash:\n```bash\nnpm test\n```',
     );
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).embeds).toBeUndefined();
     expect(platform.edit).not.toHaveBeenCalled();
     expect((platform.send.mock.calls[1]![1] as OutboundMessage).text).toBe('done');
+  });
+
+  it('默认 append 且平台支持 embeds：tool start 发送 fallback text 和工具卡片', async () => {
+    const platform = makePlatform({ supportsEdit: true, supportsEmbeds: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('tool_call_started', {
+        callId: 'tool-read',
+        toolName: 'Read',
+        inputSummary: 'src/index.ts',
+      }),
+      ev('text_final', { text: 'done' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('read file'));
+
+    expect(platform.send).toHaveBeenCalledTimes(2);
+    const toolMessage = platform.send.mock.calls[0]![1] as OutboundMessage;
+    expect(toolMessage.text).toBe('Read: src/index.ts');
+    expect(toolMessage.embeds).toEqual([
+      {
+        title: 'Tool: Read',
+        description: 'src/index.ts',
+        color: 0x64748b,
+      },
+    ]);
+    expect((platform.send.mock.calls[1]![1] as OutboundMessage).text).toBe('done');
+    expect((platform.send.mock.calls[1]![1] as OutboundMessage).embeds).toBeUndefined();
+  });
+
+  it('默认 append 且平台支持 embeds：Bash 工具卡片保留 fenced bash 描述', async () => {
+    const platform = makePlatform({ supportsEdit: true, supportsEmbeds: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('tool_call_started', {
+        callId: 'tool-bash',
+        toolName: 'Bash',
+        inputSummary: 'npm test',
+      }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('run tests'));
+
+    const toolMessage = platform.send.mock.calls[0]![1] as OutboundMessage;
+    expect(toolMessage.text).toBe('Bash:\n```bash\nnpm test\n```');
+    expect(toolMessage.embeds?.[0]).toMatchObject({
+      title: 'Tool: Bash',
+      description: '```bash\nnpm test\n```',
+      color: 0x64748b,
+    });
+  });
+
+  it('默认 append 且平台支持 embeds：embed 字段先脱敏再截断', async () => {
+    const platform = makePlatform({
+      maxTextLength: 6000,
+      supportsEdit: true,
+      supportsEmbeds: true,
+    });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const summary = `${'x'.repeat(3985)} sk-ant-secret-near-boundary ${'y'.repeat(200)} path=/home/node/secret/file.ts`;
+
+    agent.queueEvents([
+      ev('tool_call_started', {
+        callId: 'tool-read',
+        toolName: 'Read',
+        inputSummary: summary,
+      }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('read secret'));
+
+    const toolMessage = platform.send.mock.calls[0]![1] as OutboundMessage;
+    expect(toolMessage.text).not.toContain('sk-ant');
+    expect(toolMessage.text).not.toContain('/home/node/secret');
+    const description = toolMessage.embeds?.[0]?.description ?? '';
+    expect(description.length).toBeLessThanOrEqual(4000);
+    expect(description).not.toContain('sk-ant');
+    expect(description).not.toContain('/home/node/secret');
+  });
+
+  it('默认 append 且平台支持 embeds：tool fallback text 超单条长度时退回纯文本', async () => {
+    const platform = makePlatform({
+      maxTextLength: 40,
+      supportsEdit: true,
+      supportsEmbeds: true,
+    });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('tool_call_started', {
+        callId: 'tool-read',
+        toolName: 'Read',
+        inputSummary: 'x'.repeat(80),
+      }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('read long input'));
+
+    const toolMessage = platform.send.mock.calls[0]![1] as OutboundMessage;
+    expect(toolMessage.text).toBe(`Read: ${'x'.repeat(80)}`);
+    expect(toolMessage.embeds).toBeUndefined();
   });
 
   it('默认 append：同一 turn 的 tool start send 完成前不发送 final reply', async () => {
@@ -6068,7 +6220,7 @@ describe('Engine', () => {
   });
 
   it('compact：tool 状态沿用当前回复消息，final edit 覆盖为最终回复', async () => {
-    const platform = makePlatform({ supportsEdit: true });
+    const platform = makePlatform({ supportsEdit: true, supportsEmbeds: true });
     const agent = makeAgent();
     const store = new SessionStore();
     const engine = new Engine({
@@ -6105,8 +6257,10 @@ describe('Engine', () => {
     expect((platform.send.mock.calls[0]![1] as OutboundMessage).text).toBe(
       'Read: src/index.ts',
     );
+    expect((platform.send.mock.calls[0]![1] as OutboundMessage).embeds).toBeUndefined();
     expect(platform.edit).toHaveBeenCalledTimes(1);
     expect((platform.edit.mock.calls[0]![1] as OutboundMessage).text).toBe('done');
+    expect((platform.edit.mock.calls[0]![1] as OutboundMessage).embeds).toBeUndefined();
   });
 
   it('默认 append：Read 等非 Bash 工具 result 不展示用户可见内容或状态', async () => {

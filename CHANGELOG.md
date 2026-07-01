@@ -70,6 +70,7 @@ related:
 
 ### Tooling
 
+- 新增 stable 运维脚本源 `scripts/ops/agent-nexus-stable/`：watchdog 支持定时检查 `origin/main`、构建 hash release、idle 后切换并重启、记录最近稳定 hash、跳过已知 bad hash、失败自动回退到 last-good release；runbook 补充 stable 自动更新与回退操作说明。
 - 新增 `scripts/docs-read`（bash，零外部依赖）：按 YAML frontmatter 状态控制性读取项目文档，防止 agent 读取过时文档后正文污染上下文。三种模式：默认（active 全文，过时只 frontmatter + 告警）/ `--head`（仅 frontmatter，泛读用）/ `--force`（强制全文，过时告警）。
 - `AGENTS.md` 追加"读文档的防污染规则"作为核心原则第 8 条，强制所有 `docs/` 与规则文档通过脚本读取。
 - 新增 `scripts/pretool-read-guard`（从 `.claude/hooks/` 搬出）：通用 PreToolUse 守卫脚本，拦截对 `docs/**/*.md` 与根规则文档的裸 `Read`，stderr 指引三种 docs-read 模式。支持 PreToolUse hook 的 agent harness（Claude Code / Codex 等）皆可接入；AGENTS.md 附 Claude Code 配置示例。

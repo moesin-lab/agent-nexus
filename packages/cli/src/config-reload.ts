@@ -1,7 +1,13 @@
 import type {
+  DaemonConfigEditableField,
+  DaemonConfigFieldsProvider,
+  DaemonConfigPreviewer,
   DaemonConfigEditor,
   DaemonConfigReloader,
   DaemonConfigReloadResult,
+  DaemonConfigEditEffect,
+  DaemonConfigEditRisk,
+  DaemonConfigValueKind,
   EngineRuntimeUpdate,
   Logger,
 } from '@agent-nexus/daemon';
@@ -9,8 +15,13 @@ import { agentOwnersForPlatform } from './command-registry.js';
 import {
   buildRoutingTable,
   type AgentNexusConfig,
+  type AgentConfig,
   type ConfigFileEditInput,
+  type ConfigFileEditPreviewInput,
+  type ConfigFileEditPreviewResult,
   type ConfigFileEditResult,
+  type BindingConfig,
+  type PlatformConfig,
 } from './config.js';
 
 /** reload 时被热替换的 engine 目标；语义见 docs/dev/spec/config-routing.md §配置热重载 */
@@ -34,6 +45,14 @@ export interface CreateConfigEditorOptions {
   logger: Logger;
 }
 
+export interface CreateConfigFieldsProviderOptions {
+  load: () => Promise<AgentNexusConfig>;
+}
+
+export interface CreateConfigPreviewerOptions {
+  preview(input: ConfigFileEditPreviewInput): Promise<ConfigFileEditPreviewResult>;
+}
+
 function failed(reason: string): DaemonConfigReloadResult {
   return {
     status: 'failed',
@@ -43,6 +62,562 @@ function failed(reason: string): DaemonConfigReloadResult {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function configValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === undefined) return '[missing]';
+  return JSON.stringify(value);
+}
+
+function effectForPath(path: string): DaemonConfigEditEffect {
+  if (
+    path === 'ui.toolMessages' ||
+    path === 'daemon.commandRegistry.textPrefixes.newSession' ||
+    /^platforms\[\d+\]\.auth(?:\.|$)/.test(path)
+  ) {
+    return 'hot';
+  }
+  if (/^bindings\[\d+\]\./.test(path)) {
+    return 'conditional-hot';
+  }
+  return 'restart';
+}
+
+function riskForPath(path: string): DaemonConfigEditRisk {
+  if (
+    /^platforms\[\d+\]\.auth(?:\.|$)/.test(path) ||
+    path.includes('.auth.') ||
+    path.endsWith('.sandbox') ||
+    path.endsWith('.addDirs') ||
+    path.endsWith('.loadUserConfig') ||
+    path.endsWith('.loadRules') ||
+    path.endsWith('.allowedTools') ||
+    path.endsWith('.permissionLevel') ||
+    path.endsWith('.bin') ||
+    path.endsWith('.tokenRef') ||
+    path.endsWith('.statePath') ||
+    path.includes('.externalImport') ||
+    path.includes('.providerCapture')
+  ) {
+    return 'high';
+  }
+  return 'normal';
+}
+
+function field(
+  input: Omit<DaemonConfigEditableField, 'effect' | 'risk' | 'value'> & {
+    value: unknown;
+  },
+): DaemonConfigEditableField {
+  return {
+    ...input,
+    value: configValue(input.value),
+    effect: effectForPath(input.path),
+    risk: riskForPath(input.path),
+  };
+}
+
+function platformFields(platform: PlatformConfig, index: number): DaemonConfigEditableField[] {
+  const base = `platforms[${index}]`;
+  const category = `Platform ${platform.name}`;
+  const allowlist = platform.auth.allowlist;
+  return [
+    field({
+      key: `${base}.botUserId`,
+      label: `${platform.name} bot user ID`,
+      category,
+      path: `${base}.botUserId`,
+      value: platform.botUserId,
+      valueKind: 'string',
+    }),
+    field({
+      key: `${base}.tokenRef`,
+      label: `${platform.name} token ref`,
+      category,
+      path: `${base}.tokenRef`,
+      value: platform.tokenRef,
+      valueKind: 'string',
+    }),
+    field({
+      key: `${base}.statePath`,
+      label: `${platform.name} state path`,
+      category,
+      path: `${base}.statePath`,
+      value: platform.statePath,
+      valueKind: 'string',
+    }),
+    field({
+      key: `${base}.testGuildId`,
+      label: `${platform.name} test guild`,
+      category,
+      path: `${base}.testGuildId`,
+      value: platform.testGuildId ?? '',
+      valueKind: 'string',
+    }),
+    field({
+      key: `${base}.publicChannelMode`,
+      label: `${platform.name} public channel mode`,
+      category,
+      path: `${base}.publicChannelMode`,
+      value: platform.publicChannelMode,
+      valueKind: 'enum',
+      options: ['disabled', 'thread', 'public'],
+    }),
+    field({
+      key: `${base}.auth.allowlist.userIds`,
+      label: `${platform.name} allowed users`,
+      category,
+      path: `${base}.auth.allowlist.userIds`,
+      value: allowlist.userIds,
+      valueKind: 'string-list',
+    }),
+    field({
+      key: `${base}.auth.allowlist.roleIds`,
+      label: `${platform.name} allowed roles`,
+      category,
+      path: `${base}.auth.allowlist.roleIds`,
+      value: allowlist.roleIds,
+      valueKind: 'string-list',
+    }),
+    field({
+      key: `${base}.auth.allowlist.allowedGuildIds`,
+      label: `${platform.name} allowed guilds`,
+      category,
+      path: `${base}.auth.allowlist.allowedGuildIds`,
+      value: allowlist.allowedGuildIds,
+      valueKind: 'string-list',
+    }),
+    field({
+      key: `${base}.auth.allowlist.allowedChannelIds`,
+      label: `${platform.name} allowed channels`,
+      category,
+      path: `${base}.auth.allowlist.allowedChannelIds`,
+      value: allowlist.allowedChannelIds,
+      valueKind: 'string-list',
+    }),
+    field({
+      key: `${base}.auth.allowlist.allowDM`,
+      label: `${platform.name} allow DM`,
+      category,
+      path: `${base}.auth.allowlist.allowDM`,
+      value: allowlist.allowDM,
+      valueKind: 'boolean',
+    }),
+    field({
+      key: `${base}.auth.allowlist.requireMentionOrSlash`,
+      label: `${platform.name} require mention or slash`,
+      category,
+      path: `${base}.auth.allowlist.requireMentionOrSlash`,
+      value: allowlist.requireMentionOrSlash,
+      valueKind: 'boolean',
+    }),
+  ];
+}
+
+function agentFields(agent: AgentConfig, index: number): DaemonConfigEditableField[] {
+  const base = `agents[${index}]`;
+  const common = [
+    field({
+      key: `${base}.timeoutMs`,
+      label: `${agent.name} timeout`,
+      category: `Agent ${agent.name}`,
+      path: `${base}.timeoutMs`,
+      value: agent.timeoutMs,
+      valueKind: 'number',
+    }),
+  ];
+  if (agent.backend === 'codex') {
+    return [
+      ...common,
+      field({
+        key: `${base}.codex.workingDir`,
+        label: `${agent.name} workingDir`,
+        category: `Agent ${agent.name}`,
+        path: `${base}.codex.workingDir`,
+        value: agent.codex.workingDir,
+        valueKind: 'string',
+      }),
+      field({
+        key: `${base}.codex.bin`,
+        label: `${agent.name} codex bin`,
+        category: `Agent ${agent.name}`,
+        path: `${base}.codex.bin`,
+        value: agent.codex.bin,
+        valueKind: 'string',
+      }),
+      field({
+        key: `${base}.codex.model`,
+        label: `${agent.name} model`,
+        category: `Agent ${agent.name}`,
+        path: `${base}.codex.model`,
+        value: agent.codex.model ?? '',
+        valueKind: 'string',
+      }),
+      field({
+        key: `${base}.codex.sandbox`,
+        label: `${agent.name} sandbox`,
+        category: `Agent ${agent.name}`,
+        path: `${base}.codex.sandbox`,
+        value: agent.codex.sandbox,
+        valueKind: 'enum',
+        options: ['read-only', 'workspace-write', 'danger-full-access'],
+      }),
+      field({
+        key: `${base}.codex.addDirs`,
+        label: `${agent.name} addDirs`,
+        category: `Agent ${agent.name}`,
+        path: `${base}.codex.addDirs`,
+        value: agent.codex.addDirs,
+        valueKind: 'string-list',
+      }),
+      field({
+        key: `${base}.codex.loadUserConfig`,
+        label: `${agent.name} load user config`,
+        category: `Agent ${agent.name}`,
+        path: `${base}.codex.loadUserConfig`,
+        value: agent.codex.loadUserConfig,
+        valueKind: 'boolean',
+      }),
+      field({
+        key: `${base}.codex.loadRules`,
+        label: `${agent.name} load rules`,
+        category: `Agent ${agent.name}`,
+        path: `${base}.codex.loadRules`,
+        value: agent.codex.loadRules,
+        valueKind: 'boolean',
+      }),
+    ];
+  }
+  return [
+    ...common,
+    field({
+      key: `${base}.claudeCode.workingDir`,
+      label: `${agent.name} workingDir`,
+      category: `Agent ${agent.name}`,
+      path: `${base}.claudeCode.workingDir`,
+      value: agent.claudeCode.workingDir,
+      valueKind: 'string',
+    }),
+    field({
+      key: `${base}.claudeCode.bin`,
+      label: `${agent.name} Claude bin`,
+      category: `Agent ${agent.name}`,
+      path: `${base}.claudeCode.bin`,
+      value: agent.claudeCode.bin,
+      valueKind: 'string',
+    }),
+    field({
+      key: `${base}.claudeCode.allowedTools`,
+      label: `${agent.name} allowed tools`,
+      category: `Agent ${agent.name}`,
+      path: `${base}.claudeCode.allowedTools`,
+      value: agent.claudeCode.allowedTools,
+      valueKind: 'string-list',
+    }),
+    field({
+      key: `${base}.claudeCode.permissionLevel`,
+      label: `${agent.name} permission level`,
+      category: `Agent ${agent.name}`,
+      path: `${base}.claudeCode.permissionLevel`,
+      value: agent.claudeCode.permissionLevel,
+      valueKind: 'enum',
+      options: ['acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'plan'],
+    }),
+  ];
+}
+
+function bindingFields(
+  binding: BindingConfig,
+  index: number,
+  config: AgentNexusConfig,
+): DaemonConfigEditableField[] {
+  const base = `bindings[${index}]`;
+  const category = `Binding ${binding.name}`;
+  return [
+    field({
+      key: `${base}.name`,
+      label: `${binding.name} name`,
+      category,
+      path: `${base}.name`,
+      value: binding.name,
+      valueKind: 'string',
+    }),
+    field({
+      key: `${base}.platformName`,
+      label: `${binding.name} platform`,
+      category,
+      path: `${base}.platformName`,
+      value: binding.platformName,
+      valueKind: 'enum',
+      options: config.platforms.map((platform) => platform.name),
+    }),
+    field({
+      key: `${base}.agentName`,
+      label: `${binding.name} agent`,
+      category,
+      path: `${base}.agentName`,
+      value: binding.agentName,
+      valueKind: 'enum',
+      options: config.agents.map((agent) => agent.name),
+    }),
+    field({
+      key: `${base}.match.discord.channelIds`,
+      label: `${binding.name} channel IDs`,
+      category,
+      path: `${base}.match.discord.channelIds`,
+      value: binding.match.discord.channelIds,
+      valueKind: 'string-list',
+    }),
+  ];
+}
+
+function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableField[] {
+  const commandRegistry = config.daemon.commandRegistry;
+  const category = 'Daemon command registry';
+  return [
+    field({
+      key: 'daemon.commandRegistry.registration.enabled',
+      label: 'Command registration enabled',
+      category,
+      path: 'daemon.commandRegistry.registration.enabled',
+      value: commandRegistry.registration.enabled,
+      valueKind: 'boolean',
+    }),
+    field({
+      key: 'daemon.commandRegistry.registration.applyTimeoutMs',
+      label: 'Command registration timeout',
+      category,
+      path: 'daemon.commandRegistry.registration.applyTimeoutMs',
+      value: commandRegistry.registration.applyTimeoutMs,
+      valueKind: 'number',
+    }),
+    field({
+      key: 'daemon.commandRegistry.registration.retry.maxAttempts',
+      label: 'Command registration retry attempts',
+      category,
+      path: 'daemon.commandRegistry.registration.retry.maxAttempts',
+      value: commandRegistry.registration.retry.maxAttempts,
+      valueKind: 'number',
+    }),
+    field({
+      key: 'daemon.commandRegistry.registration.retry.backoffMs',
+      label: 'Command registration retry backoff',
+      category,
+      path: 'daemon.commandRegistry.registration.retry.backoffMs',
+      value: commandRegistry.registration.retry.backoffMs,
+      valueKind: 'number',
+    }),
+    field({
+      key: 'daemon.commandRegistry.aliases.singleAgent.enabled',
+      label: 'Single-agent bare aliases',
+      category,
+      path: 'daemon.commandRegistry.aliases.singleAgent.enabled',
+      value: commandRegistry.aliases.singleAgent.enabled,
+      valueKind: 'boolean',
+    }),
+    field({
+      key: 'daemon.commandRegistry.aliases.legacy.replyMode',
+      label: 'Legacy reply-mode alias',
+      category,
+      path: 'daemon.commandRegistry.aliases.legacy.replyMode',
+      value: commandRegistry.aliases.legacy.replyMode,
+      valueKind: 'boolean',
+    }),
+    field({
+      key: 'daemon.commandRegistry.textPrefixes.newSession',
+      label: 'Text prefix /new',
+      category,
+      path: 'daemon.commandRegistry.textPrefixes.newSession',
+      value: commandRegistry.textPrefixes.newSession,
+      valueKind: 'boolean',
+    }),
+  ];
+}
+
+function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[] {
+  const trajectory = config.daemon.trajectory;
+  const externalImport = trajectory.externalImport;
+  const providerCapture = trajectory.providerCapture;
+  const category = 'Daemon trajectory';
+  return [
+    field({
+      key: 'daemon.trajectory.enabled',
+      label: 'Trajectory enabled',
+      category,
+      path: 'daemon.trajectory.enabled',
+      value: trajectory.enabled,
+      valueKind: 'boolean',
+    }),
+    field({
+      key: 'daemon.trajectory.externalImport.enabled',
+      label: 'External import enabled',
+      category,
+      path: 'daemon.trajectory.externalImport.enabled',
+      value: externalImport.enabled,
+      valueKind: 'boolean',
+    }),
+    field({
+      key: 'daemon.trajectory.externalImport.sources',
+      label: 'External import sources',
+      category,
+      path: 'daemon.trajectory.externalImport.sources',
+      value: externalImport.sources,
+      valueKind: 'json',
+    }),
+    field({
+      key: 'daemon.trajectory.externalImport.metadataOnlyDiscovery',
+      label: 'Metadata-only discovery',
+      category,
+      path: 'daemon.trajectory.externalImport.metadataOnlyDiscovery',
+      value: externalImport.metadataOnlyDiscovery,
+      valueKind: 'boolean',
+    }),
+    field({
+      key: 'daemon.trajectory.externalImport.importContent',
+      label: 'External import content',
+      category,
+      path: 'daemon.trajectory.externalImport.importContent',
+      value: externalImport.importContent,
+      valueKind: 'boolean',
+    }),
+    field({
+      key: 'daemon.trajectory.externalImport.maxFileBytes',
+      label: 'External import max file bytes',
+      category,
+      path: 'daemon.trajectory.externalImport.maxFileBytes',
+      value: externalImport.maxFileBytes,
+      valueKind: 'number',
+    }),
+    field({
+      key: 'daemon.trajectory.externalImport.maxRecordsPerSession',
+      label: 'External import max records',
+      category,
+      path: 'daemon.trajectory.externalImport.maxRecordsPerSession',
+      value: externalImport.maxRecordsPerSession,
+      valueKind: 'number',
+    }),
+    field({
+      key: 'daemon.trajectory.externalImport.maxAgeDays',
+      label: 'External import max age days',
+      category,
+      path: 'daemon.trajectory.externalImport.maxAgeDays',
+      value: externalImport.maxAgeDays,
+      valueKind: 'json',
+    }),
+    field({
+      key: 'daemon.trajectory.providerCapture.enabled',
+      label: 'Provider capture enabled',
+      category,
+      path: 'daemon.trajectory.providerCapture.enabled',
+      value: providerCapture.enabled,
+      valueKind: 'boolean',
+    }),
+    field({
+      key: 'daemon.trajectory.providerCapture.mode',
+      label: 'Provider capture mode',
+      category,
+      path: 'daemon.trajectory.providerCapture.mode',
+      value: providerCapture.mode,
+      valueKind: 'enum',
+      options: ['reverse-proxy', 'forward-proxy', 'transcript-only'],
+    }),
+    field({
+      key: 'daemon.trajectory.providerCapture.bindHost',
+      label: 'Provider capture bind host',
+      category,
+      path: 'daemon.trajectory.providerCapture.bindHost',
+      value: providerCapture.bindHost,
+      valueKind: 'string',
+    }),
+    field({
+      key: 'daemon.trajectory.providerCapture.port',
+      label: 'Provider capture port',
+      category,
+      path: 'daemon.trajectory.providerCapture.port',
+      value: providerCapture.port,
+      valueKind: 'json',
+    }),
+    field({
+      key: 'daemon.trajectory.providerCapture.storeRawStreams',
+      label: 'Provider capture raw streams',
+      category,
+      path: 'daemon.trajectory.providerCapture.storeRawStreams',
+      value: providerCapture.storeRawStreams,
+      valueKind: 'boolean',
+    }),
+    field({
+      key: 'daemon.trajectory.providerCapture.maxRequestBytes',
+      label: 'Provider capture max request bytes',
+      category,
+      path: 'daemon.trajectory.providerCapture.maxRequestBytes',
+      value: providerCapture.maxRequestBytes,
+      valueKind: 'number',
+    }),
+    field({
+      key: 'daemon.trajectory.providerCapture.maxResponseBytes',
+      label: 'Provider capture max response bytes',
+      category,
+      path: 'daemon.trajectory.providerCapture.maxResponseBytes',
+      value: providerCapture.maxResponseBytes,
+      valueKind: 'number',
+    }),
+    field({
+      key: 'daemon.trajectory.providerCapture.retentionDays',
+      label: 'Provider capture retention days',
+      category,
+      path: 'daemon.trajectory.providerCapture.retentionDays',
+      value: providerCapture.retentionDays,
+      valueKind: 'number',
+    }),
+  ];
+}
+
+function configEditableFields(config: AgentNexusConfig): DaemonConfigEditableField[] {
+  return [
+    field({
+      key: 'ui.toolMessages',
+      label: 'UI tool messages',
+      category: 'Hot behavior',
+      path: 'ui.toolMessages',
+      value: config.ui.toolMessages,
+      valueKind: 'enum',
+      options: ['append', 'compact'],
+    }),
+    ...daemonCommandFields(config),
+    ...trajectoryFields(config),
+    ...config.bindings.flatMap((binding, index) =>
+      bindingFields(binding, index, config),
+    ),
+    ...config.platforms.flatMap((platform, index) => platformFields(platform, index)),
+    ...config.agents.flatMap((agent, index) => agentFields(agent, index)),
+    field({
+      key: 'log.level',
+      label: 'Log level',
+      category: 'Process',
+      path: 'log.level',
+      value: config.log.level,
+      valueKind: 'enum',
+      options: ['trace', 'debug', 'info', 'warn', 'error', 'fatal'],
+    }),
+  ];
+}
+
+function previewWarnings(path: string, newValue: unknown): string[] {
+  const warnings: string[] = [];
+  if (riskForPath(path) === 'high') {
+    warnings.push('high-risk config boundary; review before applying');
+  }
+  if (path.endsWith('.sandbox') && newValue === 'danger-full-access') {
+    warnings.push('danger-full-access removes filesystem sandbox protection');
+  }
+  if (path.endsWith('.permissionLevel') && newValue !== 'default') {
+    warnings.push('non-default Claude Code permission level weakens tool isolation');
+  }
+  if (/^bindings\[\d+\]\.(agentName|platformName)$/.test(path)) {
+    warnings.push('binding target changes may save but require restart if the agent owner set changes');
+  }
+  return warnings;
 }
 
 function reloadFailedAfterEditMessage(
@@ -106,6 +681,39 @@ export function createConfigEditor(
   };
 }
 
+export function createConfigFieldsProvider(
+  opts: CreateConfigFieldsProviderOptions,
+): DaemonConfigFieldsProvider {
+  return async () => ({
+    fields: configEditableFields(await opts.load()),
+  });
+}
+
+export function createConfigPreviewer(
+  opts: CreateConfigPreviewerOptions,
+): DaemonConfigPreviewer {
+  return async (input) => {
+    const preview = await opts.preview({
+      path: input.path,
+      value: input.value,
+      platformName: input.platformName,
+      platform: input.platform,
+      userId: input.userId,
+      channelId: input.channelId,
+      ...(input.guildId ? { guildId: input.guildId } : {}),
+      ...(input.initiatorRoleIds ? { initiatorRoleIds: input.initiatorRoleIds } : {}),
+      ...(input.threadParentChannelId
+        ? { threadParentChannelId: input.threadParentChannelId }
+        : {}),
+    });
+    return {
+      ...preview,
+      effect: effectForPath(preview.path),
+      warnings: previewWarnings(preview.path, preview.newValue),
+    };
+  };
+}
+
 /** 仅重启生效 section 的变更检测；热生效字段（auth / textPrefixes）剔除后再比较 */
 function restartOnlyChanges(
   prev: AgentNexusConfig,
@@ -117,7 +725,10 @@ function restartOnlyChanges(
     ...config.daemon,
     commandRegistry: {
       ...config.daemon.commandRegistry,
-      textPrefixes: undefined,
+      textPrefixes: {
+        ...config.daemon.commandRegistry.textPrefixes,
+        newSession: undefined,
+      },
     },
   });
   const sections: string[] = [];

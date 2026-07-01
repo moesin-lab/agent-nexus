@@ -92,6 +92,14 @@ export interface DaemonConfigEditInput {
   traceId: string;
 }
 
+export interface DaemonConfigPreviewInput extends DaemonConfigEditInput {
+  platformName: string;
+  platform: string;
+  guildId?: string;
+  initiatorRoleIds?: readonly string[];
+  threadParentChannelId?: string;
+}
+
 export type DaemonConfigEditResult =
   | { status: 'edited'; message: string }
   | { status: 'rejected'; message: string };
@@ -99,6 +107,55 @@ export type DaemonConfigEditResult =
 export type DaemonConfigEditor = (
   input: DaemonConfigEditInput,
 ) => Promise<DaemonConfigEditResult>;
+
+export type DaemonConfigValueKind =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'enum'
+  | 'string-list'
+  | 'json';
+export type DaemonConfigEditEffect =
+  | 'hot'
+  | 'conditional-hot'
+  | 'restart'
+  | 'unknown';
+export type DaemonConfigEditRisk = 'normal' | 'high';
+
+export interface DaemonConfigEditableField {
+  key: string;
+  label: string;
+  category: string;
+  path: string;
+  value: string;
+  valueKind: DaemonConfigValueKind;
+  options?: readonly string[];
+  effect: DaemonConfigEditEffect;
+  risk: DaemonConfigEditRisk;
+}
+
+export interface DaemonConfigFieldsResult {
+  fields: readonly DaemonConfigEditableField[];
+}
+
+export type DaemonConfigFieldsProvider = (input: {
+  userId: string;
+  channelId: string;
+  traceId: string;
+}) => Promise<DaemonConfigFieldsResult>;
+
+export interface DaemonConfigPreviewResult {
+  path: string;
+  oldValue: unknown;
+  newValue: unknown;
+  createdPaths: readonly string[];
+  effect: DaemonConfigEditEffect;
+  warnings: readonly string[];
+}
+
+export type DaemonConfigPreviewer = (
+  input: DaemonConfigPreviewInput,
+) => Promise<DaemonConfigPreviewResult>;
 
 export interface EngineRuntimeUpdate {
   routingTable: readonly RoutingEntry[];
@@ -119,6 +176,8 @@ export interface EngineDeps {
   platformCommandHandlerKeys?: readonly string[];
   daemonCommandHandlerKeys?: readonly string[];
   configReloader?: DaemonConfigReloader;
+  configFields?: DaemonConfigFieldsProvider;
+  configPreviewer?: DaemonConfigPreviewer;
   configEditor?: DaemonConfigEditor;
   idempotencyStore?: IdempotencyStore;
   redactor?: Redactor;
@@ -168,9 +227,17 @@ const SETTINGS_WORKING_DIR_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}working-d
 const SETTINGS_WORKING_DIR_MODAL_ID = `${SETTINGS_COMPONENT_PREFIX}working-dir-modal`;
 const SETTINGS_WORKING_DIR_PATH_FIELD_ID = 'path';
 const SETTINGS_CONFIG_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}config`;
+const SETTINGS_CONFIG_CATEGORY_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}config-category`;
+const SETTINGS_CONFIG_FIELD_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}config-field`;
+const SETTINGS_CONFIG_RAW_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}config-raw`;
+const SETTINGS_CONFIG_EDIT_COMPONENT_PREFIX = `${SETTINGS_COMPONENT_PREFIX}config-edit:`;
+const SETTINGS_CONFIG_EDIT_MODAL_PREFIX = `${SETTINGS_COMPONENT_PREFIX}config-edit-modal:`;
+const SETTINGS_CONFIG_APPLY_COMPONENT_PREFIX = `${SETTINGS_COMPONENT_PREFIX}config-apply:`;
+const SETTINGS_CONFIG_CANCEL_COMPONENT_PREFIX = `${SETTINGS_COMPONENT_PREFIX}config-cancel:`;
 const SETTINGS_CONFIG_MODAL_ID = `${SETTINGS_COMPONENT_PREFIX}config-modal`;
 const SETTINGS_CONFIG_PATH_FIELD_ID = 'path';
 const SETTINGS_CONFIG_VALUE_FIELD_ID = 'value';
+const SETTINGS_CONFIG_PREVIEW_TTL_MS = 10 * 60 * 1000;
 const SETTINGS_AGENT_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}agent`;
 const QUEUE_ACTION_ARG = 'action';
 const QUEUE_FULL_TEXT = 'Nexus queue is full. Try again after current tasks finish.';
@@ -235,6 +302,12 @@ type PreparedWorkingDirUpdate =
       apply(): string;
     }
   | { ok: false; message: string };
+
+interface PendingConfigEdit {
+  path: string;
+  value: string;
+  createdAtMs: number;
+}
 
 function codeBlock(lang: string, text: string): string {
   const fence = text.includes('```') ? '````' : '```';
@@ -354,6 +427,8 @@ export class Engine {
   private readonly platformCommandHandlerKeys: readonly string[];
   private readonly daemonCommandHandlerKeys: readonly string[];
   private readonly configReloader?: DaemonConfigReloader;
+  private readonly configFields?: DaemonConfigFieldsProvider;
+  private readonly configPreviewer?: DaemonConfigPreviewer;
   private readonly configEditor?: DaemonConfigEditor;
   private readonly idempotencyStore?: IdempotencyStore;
   private readonly redactor: Redactor;
@@ -368,6 +443,7 @@ export class Engine {
   private readonly typingRefreshMs: number;
   private readonly agentSessions = new Map<string, ActiveAgentSession>();
   private readonly agentOverridesByChannel = new Map<string, string>();
+  private readonly pendingConfigEdits = new Map<string, PendingConfigEdit>();
   /**
    * Daemon 级 per-SessionKey barrier：同 key 的 message / queued command
    * 按到达序执行，不同 key 之间互不阻塞。
@@ -394,6 +470,8 @@ export class Engine {
     this.platformCommandHandlerKeys = deps.platformCommandHandlerKeys ?? [];
     this.daemonCommandHandlerKeys = deps.daemonCommandHandlerKeys ?? [];
     this.configReloader = deps.configReloader;
+    this.configFields = deps.configFields;
+    this.configPreviewer = deps.configPreviewer;
     this.configEditor = deps.configEditor;
     this.idempotencyStore = deps.idempotencyStore;
     this.redactor = deps.redactor ?? new BasicRedactor();
@@ -1943,7 +2021,7 @@ export class Engine {
       components.push({
         type: 'button',
         componentId: SETTINGS_CONFIG_COMPONENT_ID,
-        label: 'Edit config',
+        label: 'Config file',
         style: 'secondary',
       });
     }
@@ -1959,6 +2037,339 @@ export class Engine {
       });
     }
     return components;
+  }
+
+  private async configFieldsForEvent(
+    event: NormalizedEvent,
+  ): Promise<readonly DaemonConfigEditableField[]> {
+    if (!this.configFields) return [];
+    const result = await this.configFields({
+      userId: event.initiator.userId,
+      channelId: event.sessionKey.channelId,
+      traceId: event.traceId,
+    });
+    return result.fields;
+  }
+
+  private configFieldByKey(
+    fields: readonly DaemonConfigEditableField[],
+    key: string | undefined,
+  ): DaemonConfigEditableField | undefined {
+    if (!key) return undefined;
+    return fields.find((field) => field.key === key);
+  }
+
+  private configCategories(
+    fields: readonly DaemonConfigEditableField[],
+  ): string[] {
+    return [...new Set(fields.map((field) => field.category))];
+  }
+
+  private configSelectedCategory(
+    fields: readonly DaemonConfigEditableField[],
+    selected: DaemonConfigEditableField | undefined,
+    selectedCategory: string | undefined,
+  ): string | undefined {
+    if (selected) return selected.category;
+    if (
+      selectedCategory &&
+      fields.some((field) => field.category === selectedCategory)
+    ) {
+      return selectedCategory;
+    }
+    return fields[0]?.category;
+  }
+
+  private configCategoryFromSelection(
+    categories: readonly string[],
+    selectedCategory: string | undefined,
+  ): string | undefined {
+    if (selectedCategory === undefined) return undefined;
+    const index = Number(selectedCategory);
+    if (Number.isInteger(index) && index >= 0 && index < categories.length) {
+      return categories[index];
+    }
+    return categories.includes(selectedCategory) ? selectedCategory : undefined;
+  }
+
+  private renderConfigValue(value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (value === undefined) return '[missing]';
+    return JSON.stringify(value);
+  }
+
+  private renderConfigEffect(effect: DaemonConfigEditEffect): string {
+    if (effect === 'hot') return 'applies immediately';
+    if (effect === 'conditional-hot') return 'applies after reload if runtime constraints allow it';
+    if (effect === 'restart') return 'requires restart';
+    return 'advanced';
+  }
+
+  private renderConfigFieldText(field: DaemonConfigEditableField): string {
+    const lines = [
+      '**Config field**',
+      `Field: \`${field.label}\``,
+      `Path: \`${field.path}\``,
+      `Current: \`${this.renderConfigValue(field.value)}\``,
+      `Effect: ${this.renderConfigEffect(field.effect)}`,
+    ];
+    if (field.options && field.options.length > 0) {
+      lines.push(`Allowed: ${field.options.map((option) => `\`${option}\``).join(', ')}`);
+    }
+    if (field.risk === 'high') {
+      lines.push('Risk: high');
+    }
+    return lines.join('\n');
+  }
+
+  private async configPanelResponse(
+    event: NormalizedEvent,
+    selectedKey?: string,
+    selectedCategory?: string,
+  ): Promise<EventHandlerResult> {
+    if (!this.configEditor) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    const fields = await this.configFieldsForEvent(event);
+    const selected = this.configFieldByKey(fields, selectedKey);
+    const categories = this.configCategories(fields);
+    const requestedCategory = this.configCategoryFromSelection(
+      categories,
+      selectedCategory,
+    );
+    const activeCategory = this.configSelectedCategory(
+      fields,
+      selected,
+      requestedCategory,
+    );
+    const categoryFields = activeCategory
+      ? fields.filter((field) => field.category === activeCategory)
+      : fields;
+    const text = selected
+      ? this.renderConfigFieldText(selected)
+      : [
+          '**Config file**',
+          activeCategory ? `Category: \`${activeCategory}\`` : undefined,
+          'Select a category and field to preview durable config.json changes.',
+          'Advanced raw path remains available for unsupported fields.',
+          categories.length > 25
+            ? 'Showing first 25 categories; use Advanced raw path for the rest.'
+            : undefined,
+          categoryFields.length > 25
+            ? 'Showing first 25 fields in this category; use Advanced raw path for the rest.'
+            : undefined,
+        ].filter((line): line is string => line !== undefined).join('\n');
+    const components: NonNullable<EventHandlerResult['commandResponse']>['components'] = [];
+    if (categories.length > 1) {
+      components.push({
+        type: 'select',
+        componentId: SETTINGS_CONFIG_CATEGORY_COMPONENT_ID,
+        placeholder: 'Choose config category',
+        minValues: 1,
+        maxValues: 1,
+        options: categories.slice(0, 25).map((category, index) => ({
+          label: category.slice(0, 100),
+          value: String(index),
+          description: `${fields.filter((field) => field.category === category).length} fields`.slice(0, 100),
+          default: category === activeCategory,
+        })),
+      });
+    }
+    if (categoryFields.length > 0) {
+      components.push({
+        type: 'select',
+        componentId: SETTINGS_CONFIG_FIELD_COMPONENT_ID,
+        placeholder: 'Choose config field',
+        minValues: 1,
+        maxValues: 1,
+        options: categoryFields.slice(0, 25).map((field) => ({
+          label: field.label.slice(0, 100),
+          value: field.key,
+          description: field.path.slice(0, 100),
+          default: field.key === selected?.key,
+        })),
+      });
+    }
+    if (selected) {
+      components.push({
+        type: 'button',
+        componentId: `${SETTINGS_CONFIG_EDIT_COMPONENT_PREFIX}${selected.key}`,
+        label: 'Edit value',
+        style: selected.risk === 'high' ? 'danger' : 'primary',
+      });
+    }
+    components.push({
+      type: 'button',
+      componentId: SETTINGS_CONFIG_RAW_COMPONENT_ID,
+      label: 'Advanced raw path',
+      style: 'secondary',
+    });
+    return this.commandResponseResult(
+      { text, ephemeral: true, components },
+      event.traceId,
+    );
+  }
+
+  private configFieldValueForEdit(
+    field: DaemonConfigEditableField,
+    rawValue: string,
+  ): string {
+    const trimmed = rawValue.trim();
+    if (field.valueKind === 'string-list') {
+      return JSON.stringify(
+        rawValue
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0),
+      );
+    }
+    if (field.valueKind === 'enum' || field.valueKind === 'string') {
+      return JSON.stringify(trimmed);
+    }
+    return trimmed;
+  }
+
+  private configPreviewInput(
+    event: NormalizedEvent,
+    path: string,
+    value: string,
+  ): DaemonConfigPreviewInput {
+    return {
+      path,
+      value,
+      userId: event.initiator.userId,
+      channelId: event.sessionKey.channelId,
+      traceId: event.traceId,
+      platformName: this.platformName,
+      platform: event.sessionKey.platform,
+      ...(event.guildId ? { guildId: event.guildId } : {}),
+      ...(event.initiatorRoleIds ? { initiatorRoleIds: event.initiatorRoleIds } : {}),
+      ...(event.threadParentChannelId
+        ? { threadParentChannelId: event.threadParentChannelId }
+        : {}),
+    };
+  }
+
+  private pruneExpiredConfigEdits(nowMs = Date.now()): void {
+    for (const [previewId, pending] of this.pendingConfigEdits) {
+      if (nowMs - pending.createdAtMs > SETTINGS_CONFIG_PREVIEW_TTL_MS) {
+        this.pendingConfigEdits.delete(previewId);
+      }
+    }
+  }
+
+  private async previewConfigEdit(
+    event: NormalizedEvent,
+    path: string,
+    value: string,
+  ): Promise<EventHandlerResult> {
+    if (!this.configPreviewer) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    let preview: DaemonConfigPreviewResult;
+    try {
+      preview = await this.configPreviewer(
+        this.configPreviewInput(event, path, value),
+      );
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      return this.commandResponse(`[config edit rejected]\n${reason}`, event.traceId);
+    }
+    this.pruneExpiredConfigEdits();
+    const previewId = randomUUID();
+    this.pendingConfigEdits.set(previewId, {
+      path,
+      value,
+      createdAtMs: Date.now(),
+    });
+    const lines = [
+      `[config preview: ${preview.path}]`,
+      `Old: \`${this.renderConfigValue(preview.oldValue)}\``,
+      `New: \`${this.renderConfigValue(preview.newValue)}\``,
+      `Effect: ${this.renderConfigEffect(preview.effect)}`,
+    ];
+    if (preview.createdPaths.length > 0) {
+      lines.push(`Created path(s): ${preview.createdPaths.map((item) => `\`${item}\``).join(', ')}`);
+    }
+    for (const warning of preview.warnings) {
+      lines.push(`Warning: ${warning}`);
+    }
+    return this.commandResponseResult(
+      {
+        text: lines.join('\n'),
+        ephemeral: true,
+        components: [
+          {
+            type: 'button',
+            componentId: `${SETTINGS_CONFIG_APPLY_COMPONENT_PREFIX}${previewId}`,
+            label: 'Apply',
+            style: 'primary',
+          },
+          {
+            type: 'button',
+            componentId: `${SETTINGS_CONFIG_CANCEL_COMPONENT_PREFIX}${previewId}`,
+            label: 'Cancel',
+            style: 'secondary',
+          },
+        ],
+      },
+      event.traceId,
+    );
+  }
+
+  private async previewSettingsConfigFieldEdit(
+    event: NormalizedEvent,
+    fieldKey: string,
+  ): Promise<EventHandlerResult> {
+    const fields = await this.configFieldsForEvent(event);
+    const field = this.configFieldByKey(fields, fieldKey);
+    if (!field) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    const rawValue = this.modalValue(event, SETTINGS_CONFIG_VALUE_FIELD_ID) ?? '';
+    return this.previewConfigEdit(
+      event,
+      field.path,
+      this.configFieldValueForEdit(field, rawValue),
+    );
+  }
+
+  private async applyPendingConfigEdit(
+    event: NormalizedEvent,
+    previewId: string,
+  ): Promise<EventHandlerResult> {
+    if (!this.configEditor) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    const nowMs = Date.now();
+    this.pruneExpiredConfigEdits(nowMs);
+    const pending = this.pendingConfigEdits.get(previewId);
+    if (!pending) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    if (nowMs - pending.createdAtMs > SETTINGS_CONFIG_PREVIEW_TTL_MS) {
+      this.pendingConfigEdits.delete(previewId);
+      return this.commandResponse('[config preview expired]', event.traceId);
+    }
+    if (this.configPreviewer) {
+      try {
+        await this.configPreviewer(
+          this.configPreviewInput(event, pending.path, pending.value),
+        );
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        return this.commandResponse(`[config edit rejected]\n${reason}`, event.traceId);
+      }
+    }
+    this.pendingConfigEdits.delete(previewId);
+    const result = await this.configEditor({
+      path: pending.path,
+      value: pending.value,
+      userId: event.initiator.userId,
+      channelId: event.sessionKey.channelId,
+      traceId: event.traceId,
+    });
+    return this.handleSettingsCommand(event, result.message);
   }
 
   private async dispatchInteraction(event: NormalizedEvent): Promise<EventHandlerResult | void> {
@@ -2327,6 +2738,40 @@ export class Engine {
       );
     }
     if (componentId === SETTINGS_CONFIG_COMPONENT_ID) {
+      if (this.configFields) {
+        return this.configPanelResponse(event);
+      }
+      return this.modalResponse(
+        {
+          modalId: SETTINGS_CONFIG_MODAL_ID,
+          title: 'Edit Nexus config',
+          inputs: [
+            {
+              componentId: SETTINGS_CONFIG_PATH_FIELD_ID,
+              label: 'Config path',
+              kind: 'short_text',
+              required: true,
+              placeholder: 'agents[0].codex.workingDir',
+            },
+            {
+              componentId: SETTINGS_CONFIG_VALUE_FIELD_ID,
+              label: 'JSON value',
+              kind: 'long_text',
+              required: true,
+              placeholder: '"/workspace/project"',
+            },
+          ],
+        },
+        event.traceId,
+      );
+    }
+    if (componentId === SETTINGS_CONFIG_CATEGORY_COMPONENT_ID) {
+      return this.configPanelResponse(event, undefined, event.interaction?.values[0]);
+    }
+    if (componentId === SETTINGS_CONFIG_FIELD_COMPONENT_ID) {
+      return this.configPanelResponse(event, event.interaction?.values[0]);
+    }
+    if (componentId === SETTINGS_CONFIG_RAW_COMPONENT_ID) {
       return this.modalResponse(
         {
           modalId: SETTINGS_CONFIG_MODAL_ID,
@@ -2360,10 +2805,26 @@ export class Engine {
     }
     if (componentId === SETTINGS_CONFIG_MODAL_ID) {
       const result = await this.applySettingsConfigEdit(event);
+      if (this.configPreviewer) {
+        return result;
+      }
       return this.handleSettingsCommand(
         event,
         result.commandResponse?.text ?? COMMAND_UNAVAILABLE_TEXT,
       );
+    }
+    if (componentId.startsWith(SETTINGS_CONFIG_EDIT_MODAL_PREFIX)) {
+      const fieldKey = componentId.slice(SETTINGS_CONFIG_EDIT_MODAL_PREFIX.length);
+      return this.previewSettingsConfigFieldEdit(event, fieldKey);
+    }
+    if (componentId.startsWith(SETTINGS_CONFIG_APPLY_COMPONENT_PREFIX)) {
+      const previewId = componentId.slice(SETTINGS_CONFIG_APPLY_COMPONENT_PREFIX.length);
+      return this.applyPendingConfigEdit(event, previewId);
+    }
+    if (componentId.startsWith(SETTINGS_CONFIG_CANCEL_COMPONENT_PREFIX)) {
+      const previewId = componentId.slice(SETTINGS_CONFIG_CANCEL_COMPONENT_PREFIX.length);
+      this.pendingConfigEdits.delete(previewId);
+      return this.handleSettingsCommand(event, '[config edit cancelled]');
     }
     if (componentId === SETTINGS_AGENT_COMPONENT_ID) {
       const result = this.applySettingsAgent(event);
@@ -2400,6 +2861,9 @@ export class Engine {
     }
     if (value === undefined) {
       return this.commandResponse('Config value is required.', event.traceId);
+    }
+    if (this.configPreviewer) {
+      return this.previewConfigEdit(event, path, value);
     }
     const result = await this.configEditor({
       path,

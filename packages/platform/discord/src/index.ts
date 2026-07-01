@@ -575,7 +575,7 @@ function immediateModalForComponent(
       ],
     };
   }
-  if (interaction.customId === 'nexus:settings:config') {
+  if (interaction.customId === 'nexus:settings:config-raw') {
     return {
       modalId: 'nexus:settings:config-modal',
       title: 'Edit Nexus config',
@@ -593,6 +593,22 @@ function immediateModalForComponent(
           kind: 'long_text',
           required: true,
           placeholder: '"/workspace/project"',
+        },
+      ],
+    };
+  }
+  if (interaction.customId.startsWith('nexus:settings:config-edit:')) {
+    const fieldKey = interaction.customId.slice('nexus:settings:config-edit:'.length);
+    return {
+      modalId: `nexus:settings:config-edit-modal:${fieldKey}`,
+      title: 'Edit config value',
+      inputs: [
+        {
+          componentId: 'value',
+          label: 'New value',
+          kind: 'long_text',
+          required: false,
+          placeholder: 'compact or one item per line',
         },
       ],
     };

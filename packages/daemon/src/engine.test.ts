@@ -4132,15 +4132,58 @@ describe('Engine', () => {
     expect(result?.commandResponse?.text).toContain('WorkingDir: `/tmp/settings` · channel default · in-memory');
   });
 
-  it('settings config modal submit edits config.json through the injected config editor', async () => {
+  it('settings config file panel previews a typed field edit before apply writes config.json', async () => {
     const platform = makePlatform({
       supportsSlashCommands: true,
       supportsEphemeral: true,
     });
     const codex = makeAgent();
+    const configFields = vi.fn(async () => ({
+      fields: [
+        {
+          key: 'ui.toolMessages',
+          label: 'UI tool messages',
+          category: 'Hot behavior',
+          path: 'ui.toolMessages',
+          value: 'append',
+          valueKind: 'enum' as const,
+          options: ['append', 'compact'],
+          effect: 'hot' as const,
+          risk: 'normal' as const,
+        },
+        {
+          key: 'daemon.commandRegistry.textPrefixes.newSession',
+          label: 'Text prefix /new',
+          category: 'Daemon command registry',
+          path: 'daemon.commandRegistry.textPrefixes.newSession',
+          value: 'true',
+          valueKind: 'boolean' as const,
+          effect: 'hot' as const,
+          risk: 'normal' as const,
+        },
+        {
+          key: 'bindings[0].match.discord.channelIds',
+          label: 'discord-main-codex channel IDs',
+          category: 'Binding discord-main-codex',
+          path: 'bindings[0].match.discord.channelIds',
+          value: '["C1"]',
+          valueKind: 'string-list' as const,
+          effect: 'conditional-hot' as const,
+          risk: 'normal' as const,
+        },
+      ],
+    }));
+    const configPreviewer = vi.fn(async () => ({
+      path: 'ui.toolMessages',
+      oldValue: 'append',
+      newValue: 'compact',
+      createdPaths: [],
+      effect: 'hot' as const,
+      warnings: [],
+    }));
     const configEditor = vi.fn(async () => ({
       status: 'edited' as const,
-      message: '[config saved: agents[0].codex.workingDir]',
+      message: '[config saved: ui.toolMessages]\n[config reloaded] applied: bindings, auth, ui, text prefixes',
     }));
     const engine = new Engine({
       platform,
@@ -4166,6 +4209,8 @@ describe('Engine', () => {
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
       commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
       daemonCommandHandlerKeys: ['kill', 'settings'],
+      configFields,
+      configPreviewer,
       configEditor,
       logger: SILENT_LOGGER,
       sessionStore: new SessionStore(),
@@ -4173,30 +4218,155 @@ describe('Engine', () => {
 
     await engine.start();
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
-    const result = await dispatchHandler(
-      makeComponentEvent('nexus:settings:config-modal', [], {
+    const panel = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config', [], {
         interaction: {
-          componentId: 'nexus:settings:config-modal',
+          componentId: 'nexus:settings:config',
+          kind: 'button',
+          values: [],
+        },
+      }),
+    );
+
+    expect(configFields).toHaveBeenCalledTimes(1);
+    expect(panel?.commandResponse?.text).toContain('**Config file**');
+    const categorySelect = panel?.commandResponse?.components?.find(
+      (component) =>
+        component.type === 'select' &&
+        component.componentId === 'nexus:settings:config-category',
+    );
+    expect(categorySelect?.type).toBe('select');
+    if (!categorySelect || categorySelect.type !== 'select') {
+      throw new Error('expected config category select');
+    }
+    expect(categorySelect.options).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: 'Hot behavior',
+          value: '0',
+          default: true,
+        }),
+        expect.objectContaining({
+          label: 'Daemon command registry',
+          value: '1',
+        }),
+      ]),
+    );
+    const fieldSelect = panel?.commandResponse?.components?.find(
+      (component) => component.type === 'select' && component.componentId === 'nexus:settings:config-field',
+    );
+    expect(fieldSelect?.type).toBe('select');
+    if (!fieldSelect || fieldSelect.type !== 'select') {
+      throw new Error('expected config field select');
+    }
+    expect(fieldSelect.options[0]).toMatchObject({
+      label: 'UI tool messages',
+      value: 'ui.toolMessages',
+    });
+
+    const commandCategory = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-category', ['1']),
+    );
+    expect(commandCategory?.commandResponse?.text).toContain(
+      'Category: `Daemon command registry`',
+    );
+    const commandFieldSelect = commandCategory?.commandResponse?.components?.find(
+      (component) =>
+        component.type === 'select' &&
+        component.componentId === 'nexus:settings:config-field',
+    );
+    expect(commandFieldSelect?.type).toBe('select');
+    if (!commandFieldSelect || commandFieldSelect.type !== 'select') {
+      throw new Error('expected command registry field select');
+    }
+    expect(commandFieldSelect.options[0]).toMatchObject({
+      label: 'Text prefix /new',
+      value: 'daemon.commandRegistry.textPrefixes.newSession',
+    });
+
+    const selected = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-field', ['ui.toolMessages']),
+    );
+    expect(selected?.commandResponse?.text).toContain('UI tool messages');
+    expect(selected?.commandResponse?.text).toContain('ui.toolMessages');
+    expect(selected?.commandResponse?.components).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'button',
+          componentId: 'nexus:settings:config-edit:ui.toolMessages',
+        }),
+      ]),
+    );
+
+    const preview = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-edit-modal:ui.toolMessages', [], {
+        interaction: {
+          componentId: 'nexus:settings:config-edit-modal:ui.toolMessages',
           kind: 'modal_submit',
-          values: [
-            'path=agents[0].codex.workingDir',
-            'value="/workspace/free-path"',
-          ],
+          values: ['value=compact'],
+        },
+      }),
+    );
+
+    expect(configPreviewer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: 'ui.toolMessages',
+        value: '"compact"',
+        userId: 'U1',
+        channelId: 'C1',
+        traceId: 't-1',
+        platformName: 'discord-main',
+        platform: 'discord',
+      }),
+    );
+    expect(configEditor).not.toHaveBeenCalled();
+    expect(preview?.commandResponse?.text).toContain('[config preview: ui.toolMessages]');
+    expect(preview?.commandResponse?.text).toContain('Old: `append`');
+    expect(preview?.commandResponse?.text).toContain('New: `compact`');
+    const apply = preview?.commandResponse?.components?.find(
+      (component) =>
+        component.type === 'button' &&
+        component.componentId.startsWith('nexus:settings:config-apply:'),
+    );
+    if (!apply || apply.type !== 'button') {
+      throw new Error('expected config apply button');
+    }
+
+    const applied = await dispatchHandler(
+      makeComponentEvent(apply.componentId, [], {
+        interaction: {
+          componentId: apply.componentId,
+          kind: 'button',
+          values: [],
         },
       }),
     );
 
     expect(configEditor).toHaveBeenCalledWith({
-      path: 'agents[0].codex.workingDir',
-      value: '"/workspace/free-path"',
+      path: 'ui.toolMessages',
+      value: '"compact"',
       userId: 'U1',
       channelId: 'C1',
       traceId: 't-1',
     });
-    expect(result?.commandResponse?.text).toContain(
-      'Result: [config saved: agents[0].codex.workingDir]',
+    expect(configPreviewer).toHaveBeenCalledTimes(2);
+    expect(applied?.commandResponse?.text).toContain('Result: [config saved: ui.toolMessages]');
+
+    await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-edit-modal:bindings[0].match.discord.channelIds', [], {
+        interaction: {
+          componentId: 'nexus:settings:config-edit-modal:bindings[0].match.discord.channelIds',
+          kind: 'modal_submit',
+          values: [],
+        },
+      }),
     );
-    expect(result?.commandResponse?.text).toContain('Config: `config.json` · config file · durable');
+    expect(configPreviewer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        path: 'bindings[0].match.discord.channelIds',
+        value: '[]',
+      }),
+    );
   });
 
   it('settings agent binding select changes the channel route for subsequent messages', async () => {

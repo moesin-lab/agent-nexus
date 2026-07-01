@@ -27,6 +27,7 @@ import {
   loadConfig,
   loadDiscordToken,
   loadSecret,
+  previewConfigFileEdit,
 } from './config.js';
 
 const VALID_AUTH = {
@@ -488,6 +489,112 @@ describe('config loader', () => {
         expect.anything(),
       ],
     });
+  });
+
+  it('previewConfigFileEdit 校验候选值并返回 old/new，不写入 config.json', async () => {
+    const path = join(tmp, '.agent-nexus', 'config.json');
+    const original = JSON.stringify(validConfig(), null, 2);
+    await writeFile(path, original);
+
+    const result = await previewConfigFileEdit({
+      path: 'agents[0].codex.workingDir',
+      value: '/workspace/free-path',
+    });
+
+    expect(result).toMatchObject({
+      path: 'agents[0].codex.workingDir',
+      oldValue: '/codex',
+      newValue: '/workspace/free-path',
+      createdPaths: [],
+    });
+    expect(await readFile(path, 'utf8')).toBe(original);
+  });
+
+  it('previewConfigFileEdit 拒绝会移除当前操作者访问权限的 auth 变更', async () => {
+    const path = join(tmp, '.agent-nexus', 'config.json');
+    const original = JSON.stringify(validConfig(), null, 2);
+    await writeFile(path, original);
+
+    await expect(
+      previewConfigFileEdit({
+        path: 'platforms[0].auth.allowlist.userIds',
+        value: '["U2"]',
+        platformName: 'discord-main',
+        platform: 'discord',
+        userId: 'U1',
+        channelId: 'C1',
+        guildId: 'G1',
+      }),
+    ).rejects.toThrow(/remove your current settings access/);
+    expect(await readFile(path, 'utf8')).toBe(original);
+  });
+
+  it('previewConfigFileEdit 允许 role 授权的操作者移除自己的 userId 条目', async () => {
+    const path = join(tmp, '.agent-nexus', 'config.json');
+    const config = validConfig({
+      platforms: [
+        {
+          ...VALID_PLATFORM,
+          auth: {
+            allowlist: {
+              userIds: ['U1'],
+              roleIds: ['R-admin'],
+              allowedGuildIds: ['G1'],
+            },
+          },
+        },
+      ],
+    });
+    const original = JSON.stringify(config, null, 2);
+    await writeFile(path, original);
+
+    const result = await previewConfigFileEdit({
+      path: 'platforms[0].auth.allowlist.userIds',
+      value: '[]',
+      platformName: 'discord-main',
+      platform: 'discord',
+      userId: 'U2',
+      channelId: 'C1',
+      guildId: 'G1',
+      initiatorRoleIds: ['R-admin'],
+    });
+
+    expect(result.newValue).toEqual([]);
+    expect(await readFile(path, 'utf8')).toBe(original);
+  });
+
+  it('previewConfigFileEdit 在 thread 中按父 channel 检查 auth 自锁', async () => {
+    const path = join(tmp, '.agent-nexus', 'config.json');
+    const config = validConfig({
+      platforms: [
+        {
+          ...VALID_PLATFORM,
+          auth: {
+            allowlist: {
+              userIds: ['U1'],
+              allowedGuildIds: ['G1'],
+              allowedChannelIds: ['C-parent'],
+            },
+          },
+        },
+      ],
+    });
+    const original = JSON.stringify(config, null, 2);
+    await writeFile(path, original);
+
+    const result = await previewConfigFileEdit({
+      path: 'platforms[0].auth.allowlist.userIds',
+      value: '["U1"]',
+      platformName: 'discord-main',
+      platform: 'discord',
+      userId: 'U1',
+      channelId: 'C-thread',
+      guildId: 'G1',
+      threadParentChannelId: 'C-parent',
+    });
+
+    expect(result.newValue).toEqual(['U1']);
+    expect(await readFile(path, 'utf8')).toBe(original);
   });
 
   it('editConfigFile 新建 config 路径时在保存反馈里提示用户核对', async () => {

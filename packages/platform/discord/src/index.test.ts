@@ -591,7 +591,68 @@ describe('command registry integration', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('settings config button opens its Discord modal before daemon handling', async () => {
+  it('settings config button dispatches to daemon instead of opening a raw modal', async () => {
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      testGuildId: 'G-dev',
+    });
+    const handler = vi.fn(async () => ({
+      commandResponse: {
+        text: '[config panel]',
+        ephemeral: true,
+      },
+    }));
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    const deferReply = vi.fn(async () => undefined);
+    const editReply = vi.fn(async () => undefined);
+    const showModal = vi.fn(async () => undefined);
+    await interactionCreate({
+      id: 'i-config',
+      applicationId: 'app-1',
+      token: 'interaction-token',
+      type: 3,
+      data: {
+        component_type: 2,
+        custom_id: 'nexus:settings:config',
+      },
+      customId: 'nexus:settings:config',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      channel: { isThread: () => false },
+      deferReply,
+      editReply,
+      showModal,
+      isChatInputCommand: () => false,
+      isStringSelectMenu: () => false,
+      isButton: () => true,
+      isModalSubmit: () => false,
+    });
+
+    expect(showModal).not.toHaveBeenCalled();
+    expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'interaction',
+        interaction: {
+          componentId: 'nexus:settings:config',
+          kind: 'button',
+          values: [],
+        },
+      }),
+    );
+    expect(editReply).toHaveBeenCalledWith({ content: '[config panel]' });
+  });
+
+  it('settings config edit button opens a generic value modal before daemon handling', async () => {
     const platform = createDiscordPlatform({
       token: 'test-token',
       botUserId: BOT_ID,
@@ -602,32 +663,19 @@ describe('command registry integration', () => {
     });
     const handler = vi.fn(async () => undefined);
     const expectedModal = {
-      custom_id: 'nexus:settings:config-modal',
-      title: 'Edit Nexus config',
+      custom_id: 'nexus:settings:config-edit-modal:ui.toolMessages',
+      title: 'Edit config value',
       components: [
         {
           type: 1,
           components: [
             {
               type: 4,
-              custom_id: 'path',
-              label: 'Config path',
-              style: 1,
-              required: true,
-              placeholder: 'agents[0].codex.workingDir',
-            },
-          ],
-        },
-        {
-          type: 1,
-          components: [
-            {
-              type: 4,
               custom_id: 'value',
-              label: 'JSON value',
+              label: 'New value',
               style: 2,
-              required: true,
-              placeholder: '"/workspace/project"',
+              required: false,
+              placeholder: 'compact or one item per line',
             },
           ],
         },
@@ -640,15 +688,15 @@ describe('command registry integration', () => {
     const showModal = vi.fn(async () => undefined);
     const interactionPromise = Promise.resolve(
       interactionCreate({
-        id: 'i-config',
+        id: 'i-config-edit',
         applicationId: 'app-1',
         token: 'interaction-token',
         type: 3,
         data: {
           component_type: 2,
-          custom_id: 'nexus:settings:config',
+          custom_id: 'nexus:settings:config-edit:ui.toolMessages',
         },
-        customId: 'nexus:settings:config',
+        customId: 'nexus:settings:config-edit:ui.toolMessages',
         channelId: 'C1',
         guildId: 'G-dev',
         createdAt: new Date(123),

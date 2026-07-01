@@ -526,6 +526,71 @@ describe('command registry integration', () => {
     });
   });
 
+  it('non-modal button component interaction updates the source message instead of replying again', async () => {
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      testGuildId: 'G-dev',
+    });
+    const handler = vi.fn(async () => ({
+      commandResponse: {
+        text: '[queue advanced]',
+        ephemeral: true,
+      },
+    }));
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    const deferReply = vi.fn(async () => undefined);
+    const deferUpdate = vi.fn(async () => undefined);
+    const editReply = vi.fn(async () => undefined);
+    const showModal = vi.fn(async () => undefined);
+    await interactionCreate({
+      id: 'i-queue-next',
+      applicationId: 'app-1',
+      token: 'interaction-token',
+      type: 3,
+      data: {
+        component_type: 2,
+        custom_id: 'nexus:queue:next',
+      },
+      message: { id: 'm-queue' },
+      customId: 'nexus:queue:next',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      channel: { isThread: () => false },
+      deferReply,
+      deferUpdate,
+      editReply,
+      showModal,
+      isChatInputCommand: () => false,
+      isStringSelectMenu: () => false,
+      isButton: () => true,
+      isModalSubmit: () => false,
+    });
+
+    expect(showModal).not.toHaveBeenCalled();
+    expect(deferUpdate).toHaveBeenCalledTimes(1);
+    expect(deferReply).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'interaction',
+        interaction: {
+          componentId: 'nexus:queue:next',
+          kind: 'button',
+          values: [],
+        },
+      }),
+    );
+    expect(editReply).toHaveBeenCalledWith({ content: '[queue advanced]' });
+  });
+
   it('settings workingDir button opens its Discord modal before daemon handling', async () => {
     const platform = createDiscordPlatform({
       token: 'test-token',

@@ -669,7 +669,7 @@ async function deferCommandInteraction(
   }
 }
 
-async function deferComponentInteraction(
+async function deferComponentMessageUpdate(
   interaction: { id: string; customId?: string; deferUpdate(): Promise<unknown> },
   logger: Logger,
 ): Promise<boolean> {
@@ -1079,7 +1079,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
             }
             return;
           }
-          if (!(await deferComponentInteraction(interaction, logger))) return;
+          if (!(await deferComponentMessageUpdate(interaction, logger))) return;
           const event = componentEventFromInteraction(interaction);
           try {
             const result = await handler(event);

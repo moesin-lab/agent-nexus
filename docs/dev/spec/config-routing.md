@@ -115,6 +115,9 @@ label/path/value 后让用户猜字段含义。
 - 设置列表与设置详情正文不得用省略号截断 label、path、当前值或 description。若完整内容
   超过平台单条消息预算，必须通过分页或拆页让用户继续查看完整内容；select menu 受平台
   option 长度限制，只能作为导航，不得作为完整说明的唯一载体。
+- Settings 内的 category / field select、分页按钮、preview apply / cancel 等非 modal
+  component 交互必须更新原 settings / preview 消息，不得为每次切换或翻页新发一条
+  ephemeral 消息；需要打开表单的按钮按 platform adapter 契约使用 native modal ack。
 
 新增或调整 typed editable field 时，必须同步更新说明表或动态说明模板，并在
 `createConfigFieldsProvider` 相关测试中覆盖非空 description。

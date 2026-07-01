@@ -151,11 +151,22 @@ Platform-native ack/defer/followup/update/rate-limit 编排归 adapter。daemon 
 
 Discord component / modal 的 ack 约束：
 
-- 不打开 modal 的 component interaction：adapter 必须先 native defer，再调用 `EventHandler`。
+- 不打开 modal 的 component interaction：adapter 必须用平台的 message-update ack/defer
+  复用原交互消息，再调用 `EventHandler`。Discord 对应 `deferUpdate()`；daemon
+  返回 `commandResponse` 时，adapter 必须更新原按钮 / 下拉所在消息，不得为每次
+  切换新发 ephemeral reply 或 follow-up。
 - modal submit interaction：adapter 必须先 native defer，再调用 `EventHandler`。
 - 打开 modal 的 component interaction：`showModal` 本身是该 interaction 的 native ack，adapter 必须在进入 daemon handler 前完成；adapter 只拥有 native modal 展示字段，最终会改变状态的提交仍由后续 modal submit 归一化为 `NormalizedEvent`，并在 daemon auth 后由对应 owner 处理。
 
-`EventHandler` 可返回 `EventHandlerResult.commandResponse`，仅用于已被 adapter native defer/ack 的 command / component / modal interaction 收尾。Discord adapter 对非 reply-mode slash command、非 modal-opening component 与 modal submit 先发 ephemeral deferred reply；daemon 若返回 `commandResponse.text`，adapter 必须用 `editReply` 展示该 ephemeral 反馈，否则清理 deferred reply。`commandResponse.components` 可携带平台中立的按钮或 select；Discord adapter 映射为 Action Row + Button / String Select。普通消息与 agent 成功输出仍走 `OutboundMessage`。
+`EventHandler` 可返回 `EventHandlerResult.commandResponse`，仅用于已被 adapter native
+defer/ack 的 command / component / modal interaction 收尾。Discord adapter 对非
+reply-mode slash command 与 modal submit 先发 ephemeral deferred reply；对非
+modal-opening component 先 `deferUpdate()` 原交互消息。daemon 若返回
+`commandResponse.text`，adapter 必须用 `editReply` 收尾：slash command / modal
+submit 展示 deferred ephemeral 反馈，component interaction 更新原按钮 / 下拉所在消息；
+否则清理 deferred reply。`commandResponse.components` 可携带平台中立的按钮或 select；
+Discord adapter 映射为 Action Row + Button / String Select。普通消息与 agent 成功输出仍走
+`OutboundMessage`。
 
 `EventHandlerResult.modalResponse` 用于 native interaction 要求立即打开 modal 的平台。Adapter 负责把平台中立的 `EventModalResponse` 映射到平台 native modal；不能支持 modal 的 adapter 不得声明 `supportsModals`。
 
@@ -571,4 +582,8 @@ MessageEmbed {
 }
 ```
 
-Discord 限制：一个 Action Row 最多 5 个 button，或 1 个 select；string select 最多 25 个 option；interactive component 的 `custom_id` 最长 100 字符。Adapter 必须在收到 component interaction 后按平台时限 native ack/defer，再把 normalized interaction 投递 daemon。
+Discord 限制：一个 Action Row 最多 5 个 button，或 1 个 select；string select 最多 25
+个 option；interactive component 的 `custom_id` 最长 100 字符。Adapter 必须在收到
+component interaction 后按平台时限 native ack/defer，再把 normalized interaction 投递
+daemon；非 modal component 的 ack/defer 必须保留原交互消息用于后续更新，不得创建新的
+ephemeral response。

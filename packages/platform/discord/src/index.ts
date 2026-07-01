@@ -17,7 +17,7 @@ export { discordReplyModeCommandDescriptor } from './reply-mode.js';
 // TODO MVP 跳过：
 // - DM 消息（intents 没开 DirectMessages）
 // - 长文本切片保留代码块边界 → docs/dev/spec/message-protocol.md §文本切片
-// - delete / react → spec/platform-adapter.md 各对应段
+// - delete → spec/platform-adapter.md 各对应段
 
 import { randomUUID } from 'node:crypto';
 import {
@@ -125,7 +125,7 @@ export const DISCORD_CAPABILITIES: CapabilitySet = {
   maxTextLength: 2000,
   supportsEdit: true,
   supportsDelete: false,
-  supportsReactions: false,
+  supportsReactions: true,
   supportsEmbeds: true,
   supportsButtons: true,
   supportsSelects: true,
@@ -1264,8 +1264,15 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
       throw new Error('platform-discord MVP: delete not supported');
     },
 
-    async react(): Promise<void> {
-      throw new Error('platform-discord MVP: react not supported');
+    async react(ref: MessageRef, emoji: string): Promise<void> {
+      const channel = await client.channels.fetch(ref.channelId);
+      if (!channel || !channel.isTextBased()) {
+        throw new Error(
+          `platform-discord: channel ${ref.channelId} is not text-based or not found`,
+        );
+      }
+      const message = await channel.messages.fetch(ref.messageId);
+      await message.react(emoji);
     },
 
     async createThread(input: CreateThreadInput) {

@@ -59,9 +59,11 @@ contracts:
   ├─ daemon 限流/预算检查                       (权威源：infra/cost-and-limits.md)
   │     拒绝 → 流程终止
   │     通过 ↓
-  └─ 投递到 sessionKey 的 FIFO 队列              (权威源：architecture/session-model.md)
+  ├─ 投递到 sessionKey 的 FIFO 队列              (权威源：architecture/session-model.md)
                                                  处理完成后更新 status 为 "processed" / "failed"；
                                                  管理命令 clear pending 时更新为 "cancelled"
+  └─ 入站收到确认 reaction（如 Discord `👀`）    (权威源：platform-adapter.md §Discord Trigger 策略)
+        触发条件、排除条件与失败语义见权威源
         │
         │  (3) AgentInput（按 sessionKey 串行出队，字段权威源：agent-runtime.md §AgentInput）
         ▼

@@ -19,6 +19,7 @@ import {
   CodexConfigError,
 } from '@agent-nexus/agent-codex';
 import {
+  checkPlatformAuth,
   DEFAULT_DAEMON_RUNTIME_CONFIG,
   parseDaemonConfig,
   parseDaemonRuntimeConfig,
@@ -29,6 +30,7 @@ import {
   type RoutingEntry,
   DaemonConfigError,
 } from '@agent-nexus/daemon';
+import type { NormalizedEvent } from '@agent-nexus/protocol';
 
 export type {
   ClaudeCodeConfig,
@@ -88,8 +90,25 @@ export interface ConfigFileEditInput {
   value: string;
 }
 
+export interface ConfigFileEditPreviewInput extends ConfigFileEditInput {
+  platformName?: string;
+  platform?: string;
+  userId?: string;
+  channelId?: string;
+  guildId?: string;
+  initiatorRoleIds?: readonly string[];
+  threadParentChannelId?: string;
+}
+
 export interface ConfigFileEditResult {
   message: string;
+}
+
+export interface ConfigFileEditPreviewResult {
+  path: string;
+  oldValue: unknown;
+  newValue: unknown;
+  createdPaths: string[];
 }
 
 export class ConfigError extends Error {
@@ -536,6 +555,81 @@ function setConfigValueAtPath(
   return createdPaths;
 }
 
+function getConfigValueAtPath(
+  root: Record<string, unknown>,
+  segments: readonly ConfigEditPathSegment[],
+): unknown {
+  let current: unknown = root;
+  for (const segment of segments) {
+    if (typeof segment === 'number') {
+      if (!Array.isArray(current) || segment >= current.length) {
+        return undefined;
+      }
+      current = current[segment];
+      continue;
+    }
+    if (!isRecord(current) || !(segment in current)) {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
+}
+
+function editedPlatformAuthIndex(path: string): number | undefined {
+  const match = /^platforms\[(\d+)\]\.auth(?:\.|$)/.exec(path);
+  if (!match) return undefined;
+  return Number(match[1]);
+}
+
+function assertConfigPreviewKeepsCurrentAccess(
+  input: ConfigFileEditPreviewInput,
+  config: AgentNexusConfig,
+): void {
+  const platformIndex = editedPlatformAuthIndex(input.path.trim());
+  if (platformIndex === undefined) return;
+  if (!input.platformName || !input.platform || !input.userId || !input.channelId) return;
+  const platform = config.platforms[platformIndex];
+  if (!platform || platform.name !== input.platformName) return;
+  const authChannelId = input.threadParentChannelId ?? input.channelId;
+  const event = {
+    eventId: 'config-preview-auth-check',
+    platform: input.platform,
+    sessionKey: {
+      platform: input.platform,
+      channelId: authChannelId,
+      initiatorUserId: input.userId,
+    },
+    traceId: 'config-preview-auth-check',
+    type: 'interaction',
+    text: undefined,
+    interaction: {
+      componentId: 'config-preview-auth-check',
+      kind: 'modal_submit',
+      values: [],
+    },
+    rawPayload: {},
+    rawContentType: 'daemon:config-preview',
+    receivedAt: new Date(0),
+    ...(input.guildId ? { guildId: input.guildId } : {}),
+    ...(input.initiatorRoleIds ? { initiatorRoleIds: [...input.initiatorRoleIds] } : {}),
+    ...(input.threadParentChannelId
+      ? { threadParentChannelId: input.threadParentChannelId }
+      : {}),
+    initiator: {
+      userId: input.userId,
+      displayName: input.userId,
+      isBot: false,
+    },
+  } satisfies NormalizedEvent;
+  const decision = checkPlatformAuth(platform.auth, event);
+  if (!decision.allowed) {
+    throw new ConfigError(
+      `config edit would remove your current settings access: ${decision.reason}`,
+    );
+  }
+}
+
 async function createFileIfMissing(
   path: string,
   content: string,
@@ -952,6 +1046,47 @@ export async function editConfigFile(
         'if this was a typo, edit the intended path.'
       : '';
   return { message: `[config saved: ${editPath}]${warning}` };
+}
+
+export async function previewConfigFileEdit(
+  input: ConfigFileEditPreviewInput,
+): Promise<ConfigFileEditPreviewResult> {
+  const path = configPath();
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new ConfigError(CONFIG_HINT(path));
+    }
+    throw new ConfigError(`读取 ${path} 失败：${(err as Error).message}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new ConfigError(`${path} 不是合法 JSON：${(err as Error).message}`);
+  }
+  if (!isRecord(parsed)) {
+    throw new ConfigError(`${path} 顶层必须是对象`);
+  }
+
+  const editPath = input.path.trim();
+  const segments = parseConfigEditPath(editPath);
+  const value = parseConfigEditValue(input.value);
+  const oldValue = getConfigValueAtPath(parsed, segments);
+  const candidate = JSON.parse(JSON.stringify(parsed)) as Record<string, unknown>;
+  const createdPaths = setConfigValueAtPath(candidate, segments, value, editPath);
+  const validationCandidate = JSON.parse(JSON.stringify(candidate)) as Record<string, unknown>;
+  const result = parseConfigRecord(validationCandidate, path);
+  assertConfigPreviewKeepsCurrentAccess(input, result.config);
+  return {
+    path: editPath,
+    oldValue,
+    newValue: value,
+    createdPaths,
+  };
 }
 
 export function buildRoutingTable(config: AgentNexusConfig): RoutingEntry[] {

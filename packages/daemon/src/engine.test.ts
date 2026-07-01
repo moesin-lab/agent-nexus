@@ -3425,7 +3425,7 @@ describe('Engine', () => {
 
     expect(result).toEqual({
       commandResponse: {
-        text: '[session resumed: sid-old]',
+        text: '会话已恢复: sid-old\nsession resumed: sid-old',
         ephemeral: true,
       },
     });
@@ -3817,11 +3817,15 @@ describe('Engine', () => {
         ]),
       },
     });
-    expect(result?.commandResponse?.text).toContain('**Nexus settings**');
-    expect(result?.commandResponse?.text).toContain('**Current state**');
+    expect(result?.commandResponse?.text).toContain('**Nexus 设置**\n**Nexus settings**');
+    expect(result?.commandResponse?.text).toContain('**当前状态**\n**Current state**');
+    expect(result?.commandResponse?.text).toContain('回复模式: `mention` · Discord 状态 · 持久');
     expect(result?.commandResponse?.text).toContain('Reply mode: `mention` · discord state · durable');
+    expect(result?.commandResponse?.text).toContain('工作目录: `/tmp/channel` · channel 默认值 · 内存态');
     expect(result?.commandResponse?.text).toContain('WorkingDir: `/tmp/channel` · channel default · in-memory');
+    expect(result?.commandResponse?.text).toContain('配置: `config.json` · 配置文件 · 持久');
     expect(result?.commandResponse?.text).toContain('Config: `config.json` · config file · durable');
+    expect(result?.commandResponse?.text).toContain('可恢复会话: `1`');
     expect(result?.commandResponse?.text).toContain('Resumable sessions: `1`');
     expect(result?.commandResponse?.text).toContain('Values marked `in-memory` reset when the daemon restarts.');
   });
@@ -3888,6 +3892,7 @@ describe('Engine', () => {
     const result = await dispatchHandler(makeCommandEvent('nexus-settings'));
 
     const text = result?.commandResponse?.text ?? '';
+    expect(text).toContain('工作目录: `~/private/project` · channel 默认值 · 内存态');
     expect(text).toContain('WorkingDir: `~/private/project` · channel default · in-memory');
     expect(text).not.toContain('/home/node/private');
     expect(text).not.toContain('sk-ant');
@@ -3968,7 +3973,8 @@ describe('Engine', () => {
       userId: 'U1',
       channelId: 'C1',
     });
-    expect(result?.commandResponse?.text).toContain('Result: [reply mode changed]');
+    expect(result?.commandResponse?.text).toContain('结果: reply mode changed');
+    expect(result?.commandResponse?.text).toContain('回复模式: `all` · Discord 状态 · 持久');
     expect(result?.commandResponse?.text).toContain('Reply mode: `all` · discord state · durable');
     expect(result?.commandResponse?.components).toEqual(
       expect.arrayContaining([
@@ -4049,7 +4055,9 @@ describe('Engine', () => {
       agentSessionId: 'sid-old',
       title: 'Resume from settings',
     });
-    expect(result?.commandResponse?.text).toContain('[session resumed: sid-old]');
+    expect(result?.commandResponse?.text).toContain('结果: 会话已恢复: sid-old');
+    expect(result?.commandResponse?.text).toContain('Result: session resumed: sid-old');
+    expect(result?.commandResponse?.text).toContain('可恢复会话: `1`');
     expect(result?.commandResponse?.text).toContain('Resumable sessions: `1`');
   });
 
@@ -4101,13 +4109,13 @@ describe('Engine', () => {
     );
 
     expect(modal).toEqual({
-      modalResponse: {
-        modalId: 'nexus:settings:working-dir-modal',
-        title: 'Set working directory',
+        modalResponse: {
+          modalId: 'nexus:settings:working-dir-modal',
+        title: '设置工作目录',
         inputs: [
           expect.objectContaining({
             componentId: 'path',
-            label: 'Absolute path',
+            label: '绝对路径',
           }),
         ],
       },
@@ -4128,19 +4136,71 @@ describe('Engine', () => {
       platform: 'discord',
       channelId: 'C1',
     })).toBe('/tmp/settings');
-    expect(result?.commandResponse?.text).toContain('[channel workingDir: /tmp/settings]');
-    expect(result?.commandResponse?.text).toContain('WorkingDir: `/tmp/settings` · channel default · in-memory');
+    expect(result?.commandResponse?.text).toContain('结果: channel 工作目录: /tmp/settings');
+    expect(result?.commandResponse?.text).toContain('Result: channel workingDir: /tmp/settings');
+    expect(result?.commandResponse?.text).toContain(
+      '工作目录: `/tmp/settings` · channel 默认值 · 内存态',
+    );
   });
 
-  it('settings config modal submit edits config.json through the injected config editor', async () => {
+  it('settings config file panel previews a typed field edit before apply writes config.json', async () => {
     const platform = makePlatform({
       supportsSlashCommands: true,
       supportsEphemeral: true,
     });
     const codex = makeAgent();
+    const configFields = vi.fn(async () => ({
+      fields: [
+        {
+          key: 'ui.toolMessages',
+          label: '工具消息显示\nUI tool messages',
+          description:
+            '控制工具调用消息在聊天中的展示方式。 / Controls how tool-call messages are shown in chat.',
+          category: 'Hot behavior',
+          path: 'ui.toolMessages',
+          value: 'append',
+          valueKind: 'enum' as const,
+          options: ['append', 'compact'],
+          effect: 'hot' as const,
+          risk: 'normal' as const,
+        },
+        {
+          key: 'daemon.commandRegistry.textPrefixes.newSession',
+          label: '文本前缀 /new\nText prefix /new',
+          description:
+            '控制文本消息中的 @bot /new 是否触发新会话。 / Controls whether @bot /new starts a new session.',
+          category: 'Daemon command registry',
+          path: 'daemon.commandRegistry.textPrefixes.newSession',
+          value: 'true',
+          valueKind: 'boolean' as const,
+          effect: 'hot' as const,
+          risk: 'normal' as const,
+        },
+        {
+          key: 'bindings[0].match.discord.channelIds',
+          label: 'discord-main-codex 频道 ID\ndiscord-main-codex channel IDs',
+          description:
+            'Discord channel IDs matched by this binding. / Discord channel IDs matched by this binding.',
+          category: 'Binding discord-main-codex',
+          path: 'bindings[0].match.discord.channelIds',
+          value: '["C1"]',
+          valueKind: 'string-list' as const,
+          effect: 'conditional-hot' as const,
+          risk: 'normal' as const,
+        },
+      ],
+    }));
+    const configPreviewer = vi.fn(async () => ({
+      path: 'ui.toolMessages',
+      oldValue: 'append',
+      newValue: 'compact',
+      createdPaths: [],
+      effect: 'hot' as const,
+      warnings: [],
+    }));
     const configEditor = vi.fn(async () => ({
       status: 'edited' as const,
-      message: '[config saved: agents[0].codex.workingDir]',
+      message: '[config saved: ui.toolMessages]\n[config reloaded] applied: bindings, auth, ui, text prefixes',
     }));
     const engine = new Engine({
       platform,
@@ -4166,6 +4226,8 @@ describe('Engine', () => {
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
       commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
       daemonCommandHandlerKeys: ['kill', 'settings'],
+      configFields,
+      configPreviewer,
       configEditor,
       logger: SILENT_LOGGER,
       sessionStore: new SessionStore(),
@@ -4173,30 +4235,379 @@ describe('Engine', () => {
 
     await engine.start();
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
-    const result = await dispatchHandler(
-      makeComponentEvent('nexus:settings:config-modal', [], {
+    const panel = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config', [], {
         interaction: {
-          componentId: 'nexus:settings:config-modal',
+          componentId: 'nexus:settings:config',
+          kind: 'button',
+          values: [],
+        },
+      }),
+    );
+
+    expect(configFields).toHaveBeenCalledTimes(1);
+    expect(panel?.commandResponse?.text).toContain('**配置文件**\n**Config file**');
+    expect(panel?.commandResponse?.text).toContain('**可修改设置**\n**Available settings**');
+    expect(panel?.commandResponse?.text).toContain('UI tool messages');
+    expect(panel?.commandResponse?.text).toContain('ui.toolMessages');
+    const categorySelect = panel?.commandResponse?.components?.find(
+      (component) =>
+        component.type === 'select' &&
+        component.componentId === 'nexus:settings:config-category',
+    );
+    expect(categorySelect?.type).toBe('select');
+    if (!categorySelect || categorySelect.type !== 'select') {
+      throw new Error('expected config category select');
+    }
+    expect(categorySelect.options).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: 'Hot behavior',
+          value: '0',
+          description: '1 个设置项: 工具消息显示',
+          default: true,
+        }),
+        expect.objectContaining({
+          label: 'Daemon command registry',
+          value: '1',
+        }),
+      ]),
+    );
+    const fieldSelect = panel?.commandResponse?.components?.find(
+      (component) => component.type === 'select' && component.componentId === 'nexus:settings:config-field',
+    );
+    expect(fieldSelect?.type).toBe('select');
+    if (!fieldSelect || fieldSelect.type !== 'select') {
+      throw new Error('expected config field select');
+    }
+    expect(fieldSelect.placeholder).toBe('选择设置项');
+    expect(fieldSelect.options[0]).toMatchObject({
+      label: '工具消息显示',
+      value: 'ui.toolMessages',
+    });
+
+    const commandCategory = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-category', ['1']),
+    );
+    expect(commandCategory?.commandResponse?.text).toContain(
+      '分组: `Daemon command registry`',
+    );
+    expect(commandCategory?.commandResponse?.text).toContain('文本前缀 /new');
+    expect(commandCategory?.commandResponse?.text).toContain('Text prefix /new');
+    expect(commandCategory?.commandResponse?.text).toContain(
+      'daemon.commandRegistry.textPrefixes.newSession',
+    );
+    expect(commandCategory?.commandResponse?.text).toContain(
+      '说明:\nDescription:\n-# 控制文本消息中的 @bot /new 是否触发新会话。',
+    );
+    const commandFieldSelect = commandCategory?.commandResponse?.components?.find(
+      (component) =>
+        component.type === 'select' &&
+        component.componentId === 'nexus:settings:config-field',
+    );
+    expect(commandFieldSelect?.type).toBe('select');
+    if (!commandFieldSelect || commandFieldSelect.type !== 'select') {
+      throw new Error('expected command registry field select');
+    }
+    expect(commandFieldSelect.options[0]).toMatchObject({
+      label: '文本前缀 /new',
+      value: 'daemon.commandRegistry.textPrefixes.newSession',
+      description:
+        '控制文本消息中的 @bot /new 是否触发新会话。',
+    });
+
+    const selected = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-field', [
+        'daemon.commandRegistry.textPrefixes.newSession',
+      ]),
+    );
+    expect(selected?.commandResponse?.text).toContain('**设置项详情**\n**Setting detail**');
+    expect(selected?.commandResponse?.text).toContain('文本前缀 /new');
+    expect(selected?.commandResponse?.text).toContain('Text prefix /new');
+    expect(selected?.commandResponse?.text).toContain(
+      'daemon.commandRegistry.textPrefixes.newSession',
+    );
+    expect(selected?.commandResponse?.text).toContain(
+      '-# 控制文本消息中的 @bot /new 是否触发新会话。',
+    );
+    expect(selected?.commandResponse?.components).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'button',
+          componentId:
+            'nexus:settings:config-edit:daemon.commandRegistry.textPrefixes.newSession',
+          label: '编辑设置值',
+        }),
+      ]),
+    );
+
+    const preview = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-edit-modal:ui.toolMessages', [], {
+        interaction: {
+          componentId: 'nexus:settings:config-edit-modal:ui.toolMessages',
           kind: 'modal_submit',
-          values: [
-            'path=agents[0].codex.workingDir',
-            'value="/workspace/free-path"',
-          ],
+          values: ['value=compact'],
+        },
+      }),
+    );
+
+    expect(configPreviewer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: 'ui.toolMessages',
+        value: '"compact"',
+        userId: 'U1',
+        channelId: 'C1',
+        traceId: 't-1',
+        platformName: 'discord-main',
+        platform: 'discord',
+      }),
+    );
+    expect(configEditor).not.toHaveBeenCalled();
+    expect(preview?.commandResponse?.text).toContain('配置预览');
+    expect(preview?.commandResponse?.text).toContain('Config preview: ui.toolMessages');
+    expect(preview?.commandResponse?.text).toContain('旧值: `append`');
+    expect(preview?.commandResponse?.text).toContain('Old: `append`');
+    expect(preview?.commandResponse?.text).toContain('新值: `compact`');
+    expect(preview?.commandResponse?.text).toContain('New: `compact`');
+    const apply = preview?.commandResponse?.components?.find(
+      (component) =>
+        component.type === 'button' &&
+        component.componentId.startsWith('nexus:settings:config-apply:'),
+    );
+    if (!apply || apply.type !== 'button') {
+      throw new Error('expected config apply button');
+    }
+
+    const applied = await dispatchHandler(
+      makeComponentEvent(apply.componentId, [], {
+        interaction: {
+          componentId: apply.componentId,
+          kind: 'button',
+          values: [],
         },
       }),
     );
 
     expect(configEditor).toHaveBeenCalledWith({
-      path: 'agents[0].codex.workingDir',
-      value: '"/workspace/free-path"',
+      path: 'ui.toolMessages',
+      value: '"compact"',
       userId: 'U1',
       channelId: 'C1',
       traceId: 't-1',
     });
-    expect(result?.commandResponse?.text).toContain(
-      'Result: [config saved: agents[0].codex.workingDir]',
+    expect(configPreviewer).toHaveBeenCalledTimes(2);
+    expect(applied?.commandResponse?.text).toContain('结果: [config saved: ui.toolMessages]');
+
+    await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-edit-modal:bindings[0].match.discord.channelIds', [], {
+        interaction: {
+          componentId: 'nexus:settings:config-edit-modal:bindings[0].match.discord.channelIds',
+          kind: 'modal_submit',
+          values: [],
+        },
+      }),
     );
-    expect(result?.commandResponse?.text).toContain('Config: `config.json` · config file · durable');
+    expect(configPreviewer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        path: 'bindings[0].match.discord.channelIds',
+        value: '[]',
+      }),
+    );
+  });
+
+  it('settings config file panel paginates long setting previews without truncating field text', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const fields = Array.from({ length: 30 }, (_, index) => ({
+      key: `daemon.longSetting${index}`,
+      label: `Very long setting label ${index} with extra descriptive text for humans`,
+      description: `Very long setting description ${index} ${'d'.repeat(180)}`,
+      category: 'Large config group',
+      path: `daemon.deeply.nested.config.section.with.a.very.long.path.setting${index}.enabled`,
+      value: `value-${index}-${'x'.repeat(120)}`,
+      valueKind: 'string' as const,
+      effect: 'conditional-hot' as const,
+      risk: 'normal' as const,
+    }));
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: makeAgent().runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
+      daemonCommandHandlerKeys: ['settings'],
+      configFields: vi.fn(async () => ({ fields })),
+      configEditor: vi.fn(),
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const panel = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config', [], {
+        interaction: {
+          componentId: 'nexus:settings:config',
+          kind: 'button',
+          values: [],
+        },
+      }),
+    );
+
+    const text = panel?.commandResponse?.text ?? '';
+    expect(text.length).toBeLessThanOrEqual(1900);
+    expect(text).toContain('**可修改设置**\n**Available settings**');
+    expect(text).toContain('第 1 页，共 30 页 · 显示第 1-1 个，共 30 个设置项');
+    expect(text).toContain('Very long setting label 0 with extra descriptive text for humans');
+    expect(text).toContain(`value-0-${'x'.repeat(120)}`);
+    expect(text).toContain(`Very long setting description 0 ${'d'.repeat(180)}`);
+    expect(text).toContain('字段下拉最多显示前 25 个');
+    expect(text).not.toContain('...');
+    const fieldSelect = panel?.commandResponse?.components?.find(
+      (component) =>
+        component.type === 'select' &&
+        component.componentId === 'nexus:settings:config-field',
+    );
+    expect(fieldSelect?.type).toBe('select');
+    if (!fieldSelect || fieldSelect.type !== 'select') {
+      throw new Error('expected config field select');
+    }
+    expect(fieldSelect.options).toHaveLength(25);
+
+    const next = panel?.commandResponse?.components?.find(
+      (component) =>
+        component.type === 'button' &&
+        component.componentId === 'nexus:settings:config-page:0:1',
+    );
+    expect(next).toMatchObject({
+      type: 'button',
+      label: '下一页',
+      disabled: false,
+    });
+    const nextPage = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-page:0:1', [], {
+        interaction: {
+          componentId: 'nexus:settings:config-page:0:1',
+          kind: 'button',
+          values: [],
+        },
+      }),
+    );
+    const nextText = nextPage?.commandResponse?.text ?? '';
+    expect(nextText.length).toBeLessThanOrEqual(1900);
+    expect(nextText).toContain('第 2 页，共 30 页 · 显示第 2-2 个，共 30 个设置项');
+    expect(nextText).toContain('Very long setting label 1 with extra descriptive text for humans');
+    expect(nextText).toContain(`value-1-${'x'.repeat(120)}`);
+    expect(nextText).toContain(`Very long setting description 1 ${'d'.repeat(180)}`);
+    expect(nextText).not.toContain('...');
+  });
+
+  it('settings config field detail paginates oversized field text without truncation', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const longDescription = `${'detail '.repeat(260)}detail-description-tail`;
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: makeAgent().runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
+      daemonCommandHandlerKeys: ['settings'],
+      configFields: vi.fn(async () => ({
+        fields: [
+          {
+            key: 'daemon.hugeSetting',
+            label: 'Huge setting',
+            description: longDescription,
+            category: 'Large config group',
+            path: 'daemon.hugeSetting',
+            value: 'active',
+            valueKind: 'string' as const,
+            effect: 'restart' as const,
+            risk: 'normal' as const,
+          },
+        ],
+      })),
+      configEditor: vi.fn(),
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const detail = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-field', ['daemon.hugeSetting']),
+    );
+    const text = detail?.commandResponse?.text ?? '';
+    expect(text.length).toBeLessThanOrEqual(1900);
+    expect(text).toContain('**设置项详情**\n**Setting detail**');
+    expect(text).toContain('第 1 页，共 2 页');
+    expect(text).toContain('Page 1 of 2');
+    expect(text).not.toContain('...');
+    const next = detail?.commandResponse?.components?.find(
+      (component) =>
+        component.type === 'button' &&
+        component.componentId === 'nexus:settings:config-field-page:0:1',
+    );
+    expect(next).toMatchObject({
+      type: 'button',
+      label: '下一页',
+      disabled: false,
+    });
+
+    const nextPage = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-field-page:0:1', [], {
+        interaction: {
+          componentId: 'nexus:settings:config-field-page:0:1',
+          kind: 'button',
+          values: [],
+        },
+      }),
+    );
+    const nextText = nextPage?.commandResponse?.text ?? '';
+    expect(nextText.length).toBeLessThanOrEqual(1900);
+    expect(nextText).toContain('第 2 页，共 2 页');
+    expect(nextText).toContain('Page 2 of 2');
+    expect(nextText).toContain('detail-description-tail');
+    expect(nextText).not.toContain('...');
   });
 
   it('settings agent binding select changes the channel route for subsequent messages', async () => {
@@ -4246,7 +4657,9 @@ describe('Engine', () => {
       makeComponentEvent('nexus:settings:agent', ['claude-prod']),
     );
 
-    expect(result?.commandResponse?.text).toContain('[agent binding: claude-prod]');
+    expect(result?.commandResponse?.text).toContain('结果: Agent 绑定: claude-prod');
+    expect(result?.commandResponse?.text).toContain('Result: Agent binding: claude-prod');
+    expect(result?.commandResponse?.text).toContain('Agent: `claude-prod` · channel 覆盖 · 内存态');
     expect(result?.commandResponse?.text).toContain('Agent: `claude-prod` · channel override · in-memory');
 
     claude.queueEvents([
@@ -4526,7 +4939,7 @@ describe('Engine', () => {
 
     expect(result).toEqual({
       commandResponse: {
-        text: '[workingDir update queued: /tmp/channel]',
+        text: 'workingDir 更新已排队: /tmp/channel\nworkingDir update queued: /tmp/channel',
         ephemeral: true,
       },
     });
@@ -4553,7 +4966,9 @@ describe('Engine', () => {
         platform: 'discord',
         channelId: 'C1',
       }),
-      expect.objectContaining({ text: '[channel workingDir: /tmp/channel]' }),
+      expect.objectContaining({
+        text: 'channel 工作目录: /tmp/channel\nchannel workingDir: /tmp/channel',
+      }),
     );
   });
 
@@ -4665,7 +5080,7 @@ describe('Engine', () => {
       platform: 'discord',
       channelId: 'C1',
     })).toBe('/workspace/other');
-    expect(result?.commandResponse?.text).toBe('[channel workingDir: /workspace/other]');
+    expect(result?.commandResponse?.text).toBe('channel 工作目录: /workspace/other\nchannel workingDir: /workspace/other');
   });
 
   it('daemon /nexus-working-dir in a thread affects only that thread next session', async () => {
@@ -4733,7 +5148,7 @@ describe('Engine', () => {
 
     expect(result).toEqual({
       commandResponse: {
-        text: '[next session workingDir: /tmp/thread]',
+        text: '下一会话 workingDir: /tmp/thread\nnext session workingDir: /tmp/thread',
         ephemeral: true,
       },
     });
@@ -4825,7 +5240,7 @@ describe('Engine', () => {
 
     expect(result).toEqual({
       commandResponse: {
-        text: '[channel workingDir: /tmp/channel]',
+        text: 'channel 工作目录: /tmp/channel\nchannel workingDir: /tmp/channel',
         ephemeral: true,
       },
     });

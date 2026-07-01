@@ -5,7 +5,12 @@ import {
   type EngineRuntimeUpdate,
 } from '@agent-nexus/daemon';
 import { ConfigError, type AgentConfig, type AgentNexusConfig } from './config.js';
-import { createConfigEditor, createConfigReloader } from './config-reload.js';
+import {
+  createConfigEditor,
+  createConfigFieldsProvider,
+  createConfigPreviewer,
+  createConfigReloader,
+} from './config-reload.js';
 
 const SILENT_LOGGER = createLogger({ level: 'fatal', pretty: false });
 
@@ -273,6 +278,93 @@ describe('createConfigReloader', () => {
     expect(update).not.toHaveProperty('trajectoryEnabled');
     expect(result.message).toContain('restart required');
     expect(result.message).toContain('daemon');
+  });
+});
+
+describe('createConfigFieldsProvider', () => {
+  it('returns grouped editable fields for common config paths', async () => {
+    const provider = createConfigFieldsProvider({
+      load: async () => baseConfig({ agents: [codexAgent, claudeAgent] }),
+    });
+
+    const result = await provider({
+      userId: 'U1',
+      channelId: 'C1',
+      traceId: 't-1',
+    });
+    const byPath = new Map(result.fields.map((field) => [field.path, field]));
+    const missingDescriptions = result.fields.filter(
+      (field) => field.description.trim().length === 0,
+    );
+    expect(missingDescriptions).toEqual([]);
+
+    expect(byPath.get('platforms[0].auth.allowlist.allowedGuildIds')).toMatchObject({
+      category: 'Platform discord-main',
+      valueKind: 'string-list',
+      description: expect.stringContaining('Allowed Discord guild IDs'),
+      effect: 'hot',
+      risk: 'high',
+    });
+    expect(byPath.get('bindings[0].agentName')).toMatchObject({
+      category: 'Binding discord-main-codex',
+      valueKind: 'enum',
+      description: expect.stringContaining('Agent selected by binding'),
+      options: ['codex-dev', 'claude-prod'],
+      effect: 'conditional-hot',
+    });
+    expect(byPath.get('agents[0].codex.bin')).toMatchObject({
+      category: 'Agent codex-dev',
+      description: expect.stringContaining('Executable path or command name'),
+      risk: 'high',
+    });
+    expect(byPath.get('daemon.trajectory.providerCapture.port')).toMatchObject({
+      category: 'Daemon trajectory',
+      valueKind: 'json',
+      effect: 'restart',
+      risk: 'high',
+    });
+    expect(byPath.get('daemon.commandRegistry.registration.applyTimeoutMs')).toMatchObject({
+      category: 'Daemon command registry',
+      valueKind: 'number',
+      description: expect.stringContaining('applyCommandPlan 的最长等待时间'),
+      effect: 'restart',
+    });
+    expect(byPath.get('log.level')).toMatchObject({
+      category: 'Process',
+      valueKind: 'enum',
+      options: ['trace', 'debug', 'info', 'warn', 'error', 'fatal'],
+      effect: 'restart',
+    });
+  });
+});
+
+describe('createConfigPreviewer', () => {
+  it('warns when a binding target edit may require restart', async () => {
+    const preview = createConfigPreviewer({
+      preview: vi.fn(async () => ({
+        path: 'bindings[0].agentName',
+        oldValue: 'codex-dev',
+        newValue: 'claude-prod',
+        createdPaths: [],
+      })),
+    });
+
+    const result = await preview({
+      path: 'bindings[0].agentName',
+      value: '"claude-prod"',
+      userId: 'U1',
+      channelId: 'C1',
+      traceId: 't-1',
+      platformName: 'discord-main',
+      platform: 'discord',
+    });
+
+    expect(result.effect).toBe('conditional-hot');
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        'binding target changes may save but require restart if the agent owner set changes',
+      ]),
+    );
   });
 });
 

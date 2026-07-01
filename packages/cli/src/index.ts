@@ -21,6 +21,8 @@ import { createAgentRegistry } from './agent.js';
 import { buildCliCommandRegistrationPlan } from './command-registry.js';
 import {
   createConfigEditor,
+  createConfigFieldsProvider,
+  createConfigPreviewer,
   createConfigReloader,
   type ConfigReloadTarget,
 } from './config-reload.js';
@@ -33,6 +35,7 @@ import {
   editConfigFile,
   loadConfig,
   loadSecret,
+  previewConfigFileEdit,
 } from './config.js';
 
 const PROVIDER_RETENTION_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -148,6 +151,12 @@ async function main(): Promise<void> {
     reload: configReloader,
     logger,
   });
+  const configFields = createConfigFieldsProvider({
+    load: loadConfig,
+  });
+  const configPreviewer = createConfigPreviewer({
+    preview: previewConfigFileEdit,
+  });
 
   for (const platformConfig of config.platforms) {
     logger.info(
@@ -224,6 +233,8 @@ async function main(): Promise<void> {
         (descriptor) => descriptor.handlerKey,
       ),
       configReloader,
+      configFields,
+      configPreviewer,
       configEditor,
       agents,
       routingTable,

@@ -92,6 +92,14 @@ export interface DaemonConfigEditInput {
   traceId: string;
 }
 
+export interface DaemonConfigPreviewInput extends DaemonConfigEditInput {
+  platformName: string;
+  platform: string;
+  guildId?: string;
+  initiatorRoleIds?: readonly string[];
+  threadParentChannelId?: string;
+}
+
 export type DaemonConfigEditResult =
   | { status: 'edited'; message: string }
   | { status: 'rejected'; message: string };
@@ -99,6 +107,56 @@ export type DaemonConfigEditResult =
 export type DaemonConfigEditor = (
   input: DaemonConfigEditInput,
 ) => Promise<DaemonConfigEditResult>;
+
+export type DaemonConfigValueKind =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'enum'
+  | 'string-list'
+  | 'json';
+export type DaemonConfigEditEffect =
+  | 'hot'
+  | 'conditional-hot'
+  | 'restart'
+  | 'unknown';
+export type DaemonConfigEditRisk = 'normal' | 'high';
+
+export interface DaemonConfigEditableField {
+  key: string;
+  label: string;
+  description: string;
+  category: string;
+  path: string;
+  value: string;
+  valueKind: DaemonConfigValueKind;
+  options?: readonly string[];
+  effect: DaemonConfigEditEffect;
+  risk: DaemonConfigEditRisk;
+}
+
+export interface DaemonConfigFieldsResult {
+  fields: readonly DaemonConfigEditableField[];
+}
+
+export type DaemonConfigFieldsProvider = (input: {
+  userId: string;
+  channelId: string;
+  traceId: string;
+}) => Promise<DaemonConfigFieldsResult>;
+
+export interface DaemonConfigPreviewResult {
+  path: string;
+  oldValue: unknown;
+  newValue: unknown;
+  createdPaths: readonly string[];
+  effect: DaemonConfigEditEffect;
+  warnings: readonly string[];
+}
+
+export type DaemonConfigPreviewer = (
+  input: DaemonConfigPreviewInput,
+) => Promise<DaemonConfigPreviewResult>;
 
 export interface EngineRuntimeUpdate {
   routingTable: readonly RoutingEntry[];
@@ -119,6 +177,8 @@ export interface EngineDeps {
   platformCommandHandlerKeys?: readonly string[];
   daemonCommandHandlerKeys?: readonly string[];
   configReloader?: DaemonConfigReloader;
+  configFields?: DaemonConfigFieldsProvider;
+  configPreviewer?: DaemonConfigPreviewer;
   configEditor?: DaemonConfigEditor;
   idempotencyStore?: IdempotencyStore;
   redactor?: Redactor;
@@ -168,9 +228,22 @@ const SETTINGS_WORKING_DIR_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}working-d
 const SETTINGS_WORKING_DIR_MODAL_ID = `${SETTINGS_COMPONENT_PREFIX}working-dir-modal`;
 const SETTINGS_WORKING_DIR_PATH_FIELD_ID = 'path';
 const SETTINGS_CONFIG_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}config`;
+const SETTINGS_CONFIG_CATEGORY_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}config-category`;
+const SETTINGS_CONFIG_FIELD_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}config-field`;
+const SETTINGS_CONFIG_PAGE_COMPONENT_PREFIX = `${SETTINGS_COMPONENT_PREFIX}config-page:`;
+const SETTINGS_CONFIG_FIELD_PAGE_COMPONENT_PREFIX = `${SETTINGS_COMPONENT_PREFIX}config-field-page:`;
+const SETTINGS_CONFIG_RAW_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}config-raw`;
+const SETTINGS_CONFIG_EDIT_COMPONENT_PREFIX = `${SETTINGS_COMPONENT_PREFIX}config-edit:`;
+const SETTINGS_CONFIG_EDIT_MODAL_PREFIX = `${SETTINGS_COMPONENT_PREFIX}config-edit-modal:`;
+const SETTINGS_CONFIG_APPLY_COMPONENT_PREFIX = `${SETTINGS_COMPONENT_PREFIX}config-apply:`;
+const SETTINGS_CONFIG_CANCEL_COMPONENT_PREFIX = `${SETTINGS_COMPONENT_PREFIX}config-cancel:`;
 const SETTINGS_CONFIG_MODAL_ID = `${SETTINGS_COMPONENT_PREFIX}config-modal`;
 const SETTINGS_CONFIG_PATH_FIELD_ID = 'path';
 const SETTINGS_CONFIG_VALUE_FIELD_ID = 'value';
+const SETTINGS_CONFIG_PREVIEW_TTL_MS = 10 * 60 * 1000;
+const SETTINGS_CONFIG_PANEL_TEXT_LIMIT = 1900;
+const SETTINGS_CONFIG_SELECT_OPTION_LIMIT = 25;
+const SETTINGS_CONFIG_CATEGORY_DESCRIPTION_LABEL_LIMIT = 30;
 const SETTINGS_AGENT_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}agent`;
 const QUEUE_ACTION_ARG = 'action';
 const QUEUE_FULL_TEXT = 'Nexus queue is full. Try again after current tasks finish.';
@@ -235,6 +308,12 @@ type PreparedWorkingDirUpdate =
       apply(): string;
     }
   | { ok: false; message: string };
+
+interface PendingConfigEdit {
+  path: string;
+  value: string;
+  createdAtMs: number;
+}
 
 function codeBlock(lang: string, text: string): string {
   const fence = text.includes('```') ? '````' : '```';
@@ -354,6 +433,8 @@ export class Engine {
   private readonly platformCommandHandlerKeys: readonly string[];
   private readonly daemonCommandHandlerKeys: readonly string[];
   private readonly configReloader?: DaemonConfigReloader;
+  private readonly configFields?: DaemonConfigFieldsProvider;
+  private readonly configPreviewer?: DaemonConfigPreviewer;
   private readonly configEditor?: DaemonConfigEditor;
   private readonly idempotencyStore?: IdempotencyStore;
   private readonly redactor: Redactor;
@@ -368,6 +449,7 @@ export class Engine {
   private readonly typingRefreshMs: number;
   private readonly agentSessions = new Map<string, ActiveAgentSession>();
   private readonly agentOverridesByChannel = new Map<string, string>();
+  private readonly pendingConfigEdits = new Map<string, PendingConfigEdit>();
   /**
    * Daemon 级 per-SessionKey barrier：同 key 的 message / queued command
    * 按到达序执行，不同 key 之间互不阻塞。
@@ -394,6 +476,8 @@ export class Engine {
     this.platformCommandHandlerKeys = deps.platformCommandHandlerKeys ?? [];
     this.daemonCommandHandlerKeys = deps.daemonCommandHandlerKeys ?? [];
     this.configReloader = deps.configReloader;
+    this.configFields = deps.configFields;
+    this.configPreviewer = deps.configPreviewer;
     this.configEditor = deps.configEditor;
     this.idempotencyStore = deps.idempotencyStore;
     this.redactor = deps.redactor ?? new BasicRedactor();
@@ -1614,7 +1698,7 @@ export class Engine {
             parsed.workingDir,
             new Date(),
           );
-          return `[next session workingDir: ${parsed.workingDir}]`;
+          return `下一会话 workingDir: ${parsed.workingDir}\nnext session workingDir: ${parsed.workingDir}`;
         }
         this.sessionStore.setChannelWorkingDir(
           {
@@ -1624,7 +1708,7 @@ export class Engine {
           },
           parsed.workingDir,
         );
-        return `[channel workingDir: ${parsed.workingDir}]`;
+        return `channel 工作目录: ${parsed.workingDir}\nchannel workingDir: ${parsed.workingDir}`;
       },
     };
   }
@@ -1682,7 +1766,7 @@ export class Engine {
         );
       });
     return this.commandResponse(
-      `[workingDir update queued: ${update.workingDir}]`,
+      `workingDir 更新已排队: ${update.workingDir}\nworkingDir update queued: ${update.workingDir}`,
       event.traceId,
     );
   }
@@ -1735,28 +1819,109 @@ export class Engine {
     const agent = items.find((item) => item.key === 'daemon.agent');
     const workingDir = items.find((item) => item.key === 'daemon.workingDir');
     const config = items.find((item) => item.key === 'daemon.config');
-    const lines = ['**Nexus settings**'];
+    const lines = ['**Nexus 设置**', '**Nexus settings**'];
     if (prefix) {
-      lines.push('', `Result: ${prefix}`);
+      lines.push('', ...this.renderBilingualFieldLines('结果', 'Result', prefix));
     }
     lines.push(
       '',
+      '**当前状态**',
       '**Current state**',
-      `Reply mode: ${this.renderSettingsValue(replyMode)}`,
-      `Agent: ${this.renderSettingsValue(agent)}`,
-      `WorkingDir: ${this.renderSettingsValue(workingDir)}`,
-      `Config: ${this.renderSettingsValue(config)}`,
+      ...this.renderSettingsItemLines('回复模式', 'Reply mode', replyMode),
+      ...this.renderSettingsItemLines('Agent', 'Agent', agent),
+      ...this.renderSettingsItemLines('工作目录', 'WorkingDir', workingDir),
+      ...this.renderSettingsItemLines('配置', 'Config', config),
+      `可恢复会话: \`${sessionCount}\``,
       `Resumable sessions: \`${sessionCount}\``,
       '',
+      '**说明**',
       '**Notes**',
+      '下方控件只作用于当前 channel/thread；标记为 `in-memory` 的值会在 daemon 重启后重置。',
       'Controls below apply to this channel/thread. Values marked `in-memory` reset when the daemon restarts.',
     );
     return lines.join('\n');
   }
 
-  private renderSettingsValue(item: SettingsSnapshotItem | undefined): string {
-    if (!item) return '`unavailable`';
-    return `\`${item.value}\` · ${item.source} · ${item.durability}`;
+  private renderSettingsItemLines(
+    labelCn: string,
+    labelEn: string,
+    item: SettingsSnapshotItem | undefined,
+  ): string[] {
+    if (!item) {
+      return [`${labelCn}: \`unavailable\``, `${labelEn}: \`unavailable\``];
+    }
+    const source = this.settingsMetaParts(item.source);
+    const durability = this.settingsMetaParts(item.durability);
+    return [
+      `${labelCn}: \`${item.value}\` · ${source.cn} · ${durability.cn}`,
+      `${labelEn}: \`${item.value}\` · ${source.en} · ${durability.en}`,
+    ];
+  }
+
+  private settingsMetaParts(value: string): { cn: string; en: string } {
+    const bilingual: Record<string, string> = {
+      'discord state': 'Discord 状态\ndiscord state',
+      'channel override': 'channel 覆盖\nchannel override',
+      'binding route': 'binding 路由\nbinding route',
+      'config file': '配置文件\nconfig file',
+      'next session override': '下一会话覆盖\nnext session override',
+      'channel default': 'channel 默认值\nchannel default',
+      'parent channel default': '父 channel 默认值\nparent channel default',
+      'agent default': 'agent 默认值\nagent default',
+      durable: '持久\ndurable',
+      'in-memory': '内存态\nin-memory',
+      derived: '派生\nderived',
+    };
+    const parts = this.bilingualParts(bilingual[value] ?? value);
+    return { cn: parts.cn, en: parts.en ?? parts.cn };
+  }
+
+  private bilingualParts(text: string): { cn: string; en?: string } {
+    const normalized =
+      text.startsWith('[') && text.endsWith(']') ? text.slice(1, -1) : text;
+    const newlineIndex = normalized.indexOf('\n');
+    if (newlineIndex >= 0) {
+      return {
+        cn: normalized.slice(0, newlineIndex).trim(),
+        en: normalized.slice(newlineIndex + 1).trim(),
+      };
+    }
+    const slashIndex = normalized.indexOf(' / ');
+    if (slashIndex >= 0) {
+      return {
+        cn: normalized.slice(0, slashIndex).trim(),
+        en: normalized.slice(slashIndex + 3).trim(),
+      };
+    }
+    return { cn: normalized };
+  }
+
+  private componentLabel(text: string): string {
+    return this.bilingualParts(text).cn.slice(0, 100);
+  }
+
+  private renderBilingualFieldLines(
+    labelCn: string,
+    labelEn: string,
+    value: string,
+  ): string[] {
+    const parts = this.bilingualParts(value);
+    if (!parts.en) return [`${labelCn}: ${parts.cn}`];
+    return [`${labelCn}: ${parts.cn}`, `${labelEn}: ${parts.en}`];
+  }
+
+  private renderBilingualValueLines(
+    labelCn: string,
+    labelEn: string,
+    value: string,
+  ): string[] {
+    return [`${labelCn}: ${value}`, `${labelEn}: ${value}`];
+  }
+
+  private renderSubtextLines(text: string): string[] {
+    const parts = this.bilingualParts(text);
+    return [parts.cn, parts.en].filter((line): line is string => Boolean(line))
+      .map((line) => `-# ${line}`);
   }
 
   private daemonSettingsSnapshotItems(
@@ -1769,7 +1934,7 @@ export class Engine {
     );
     const bindingItem: SettingsSnapshotItem = {
       key: 'daemon.agent',
-      label: 'Agent',
+      label: 'Agent\nAgent',
       owner: 'daemon',
       value: agentOverride ?? route?.agentName ?? '[unavailable]',
       source: agentOverride ? 'channel override' : 'binding route',
@@ -1784,7 +1949,7 @@ export class Engine {
         ...items,
         {
           key: 'daemon.config',
-          label: 'Config',
+          label: '配置\nConfig',
           owner: 'daemon',
           value: 'config.json',
           source: 'config file',
@@ -1804,7 +1969,7 @@ export class Engine {
         bindingItem,
         {
           key: 'daemon.workingDir',
-          label: 'WorkingDir',
+          label: '工作目录\nWorkingDir',
           owner: 'daemon',
           value: nextWorkingDir,
           source: 'next session override',
@@ -1823,7 +1988,7 @@ export class Engine {
         bindingItem,
         {
           key: 'daemon.workingDir',
-          label: 'WorkingDir',
+          label: '工作目录\nWorkingDir',
           owner: 'daemon',
           value: currentChannelWorkingDir,
           source: 'channel default',
@@ -1849,7 +2014,7 @@ export class Engine {
           bindingItem,
           {
             key: 'daemon.workingDir',
-            label: 'WorkingDir',
+            label: '工作目录\nWorkingDir',
             owner: 'daemon',
             value: parentWorkingDir,
             source: 'parent channel default',
@@ -1864,7 +2029,7 @@ export class Engine {
       bindingItem,
       {
         key: 'daemon.workingDir',
-        label: 'WorkingDir',
+        label: '工作目录\nWorkingDir',
         owner: 'daemon',
         value: agentSlot?.defaultSessionConfig.workingDir ?? '[unavailable]',
         source: 'agent default',
@@ -1884,20 +2049,20 @@ export class Engine {
       components.push({
         type: 'select',
         componentId: SETTINGS_REPLY_MODE_COMPONENT_ID,
-        placeholder: 'Change reply mode',
+        placeholder: '切换回复模式',
         minValues: 1,
         maxValues: 1,
         options: [
           {
             label: 'mention',
             value: 'mention',
-            description: 'Only replies when mentioned or slash commands are used',
+            description: '仅 @ 或 slash 时回复',
             default: replyMode.value === 'mention',
           },
           {
             label: 'all',
             value: 'all',
-            description: 'Replies to all allowed messages in the channel',
+            description: '回复所有已授权消息',
             default: replyMode.value === 'all',
           },
         ],
@@ -1908,7 +2073,7 @@ export class Engine {
       components.push({
         type: 'select',
         componentId: SETTINGS_AGENT_COMPONENT_ID,
-        placeholder: 'Switch agent binding',
+        placeholder: '切换 agent binding',
         minValues: 1,
         maxValues: 1,
         options: [...this.agents.values()].map((agent) => ({
@@ -1923,7 +2088,7 @@ export class Engine {
       components.push({
         type: 'select',
         componentId: SETTINGS_RESUME_COMPONENT_ID,
-        placeholder: 'Resume a session',
+        placeholder: '恢复会话',
         minValues: 1,
         maxValues: 1,
         options: sessions.map((session) => ({
@@ -1936,14 +2101,14 @@ export class Engine {
     components.push({
       type: 'button',
       componentId: SETTINGS_WORKING_DIR_COMPONENT_ID,
-      label: 'Set workingDir',
+      label: '设置 workingDir',
       style: 'secondary',
     });
     if (this.configEditor) {
       components.push({
         type: 'button',
         componentId: SETTINGS_CONFIG_COMPONENT_ID,
-        label: 'Edit config',
+        label: '配置文件',
         style: 'secondary',
       });
     }
@@ -1954,11 +2119,643 @@ export class Engine {
       components.push({
         type: 'button',
         componentId: SETTINGS_NEW_THREAD_COMPONENT_ID,
-        label: 'Create thread',
+        label: '新建 thread',
         style: 'primary',
       });
     }
     return components;
+  }
+
+  private async configFieldsForEvent(
+    event: NormalizedEvent,
+  ): Promise<readonly DaemonConfigEditableField[]> {
+    if (!this.configFields) return [];
+    const result = await this.configFields({
+      userId: event.initiator.userId,
+      channelId: event.sessionKey.channelId,
+      traceId: event.traceId,
+    });
+    return result.fields;
+  }
+
+  private configFieldByKey(
+    fields: readonly DaemonConfigEditableField[],
+    key: string | undefined,
+  ): DaemonConfigEditableField | undefined {
+    if (!key) return undefined;
+    return fields.find((field) => field.key === key);
+  }
+
+  private configCategories(
+    fields: readonly DaemonConfigEditableField[],
+  ): string[] {
+    return [...new Set(fields.map((field) => field.category))];
+  }
+
+  private configSelectedCategory(
+    fields: readonly DaemonConfigEditableField[],
+    selected: DaemonConfigEditableField | undefined,
+    selectedCategory: string | undefined,
+  ): string | undefined {
+    if (selected) return selected.category;
+    if (
+      selectedCategory &&
+      fields.some((field) => field.category === selectedCategory)
+    ) {
+      return selectedCategory;
+    }
+    return fields[0]?.category;
+  }
+
+  private configCategoryFromSelection(
+    categories: readonly string[],
+    selectedCategory: string | undefined,
+  ): string | undefined {
+    if (selectedCategory === undefined) return undefined;
+    const index = Number(selectedCategory);
+    if (Number.isInteger(index) && index >= 0 && index < categories.length) {
+      return categories[index];
+    }
+    return categories.includes(selectedCategory) ? selectedCategory : undefined;
+  }
+
+  private renderConfigValue(value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (value === undefined) return '缺失 (missing)';
+    return JSON.stringify(value);
+  }
+
+  private renderConfigEffect(effect: DaemonConfigEditEffect): string {
+    if (effect === 'hot') return '立即生效\napplies immediately';
+    if (effect === 'conditional-hot') {
+      return 'reload 后按运行态约束生效\napplies after reload if runtime constraints allow it';
+    }
+    if (effect === 'restart') return '需要重启\nrequires restart';
+    return '高级\nadvanced';
+  }
+
+  private configPageIndex(pageIndex: number, pageCount: number): number {
+    const requestedPageIndex = Number.isFinite(pageIndex)
+      ? Math.trunc(pageIndex)
+      : 0;
+    return Math.max(0, Math.min(requestedPageIndex, pageCount - 1));
+  }
+
+  private splitConfigText(text: string, maxLength: number): string[] {
+    const limit = Math.max(1, maxLength);
+    if (text.length <= limit) return [text];
+    const chunks: string[] = [];
+    let cursor = 0;
+    while (cursor < text.length) {
+      const remainingLength = text.length - cursor;
+      if (remainingLength <= limit) {
+        chunks.push(text.slice(cursor));
+        break;
+      }
+      const hardEnd = cursor + limit;
+      const newlineEnd = text.lastIndexOf('\n', hardEnd);
+      const spaceEnd = text.lastIndexOf(' ', hardEnd);
+      const softEnd = Math.max(newlineEnd, spaceEnd);
+      const end = softEnd > cursor ? softEnd : hardEnd;
+      chunks.push(text.slice(cursor, end));
+      cursor = end;
+    }
+    return chunks;
+  }
+
+  private renderConfigFieldDetail(
+    field: DaemonConfigEditableField,
+    pageIndex: number,
+  ): { text: string; pageIndex: number; pageCount: number } {
+    const label = this.bilingualParts(field.label);
+    const effect = this.bilingualParts(this.renderConfigEffect(field.effect));
+    const headerLines = [
+      '**设置项详情**',
+      '**Setting detail**',
+      `设置项: ${label.cn}`,
+      ...(label.en ? [`Setting: ${label.en}`] : []),
+      `路径: ${field.path}`,
+      `Path: ${field.path}`,
+    ];
+    const bodyLines = [
+      ...this.renderBilingualValueLines(
+        '当前值',
+        'Current',
+        `\`${this.renderConfigValue(field.value)}\``,
+      ),
+      `生效方式: ${effect.cn}`,
+      `Effect: ${effect.en ?? effect.cn}`,
+    ];
+    if (field.description) {
+      bodyLines.push('说明:', 'Description:', ...this.renderSubtextLines(field.description));
+    }
+    if (field.options && field.options.length > 0) {
+      bodyLines.push(
+        `可选值: ${field.options.map((option) => `\`${option}\``).join(', ')}`,
+        `Allowed: ${field.options.map((option) => `\`${option}\``).join(', ')}`,
+      );
+    }
+    if (field.risk === 'high') {
+      bodyLines.push('风险: 高', 'Risk: high');
+    }
+    const pageOverhead = [
+      ...headerLines,
+      '第 1 页，共 1 页',
+      'Page 1 of 1',
+      '使用上一页和下一页查看完整详情。',
+      'Use Previous and Next to view the complete detail.',
+    ].join('\n').length;
+    const chunks = this.splitConfigText(
+      bodyLines.join('\n'),
+      SETTINGS_CONFIG_PANEL_TEXT_LIMIT - pageOverhead,
+    );
+    const normalizedPageIndex = this.configPageIndex(pageIndex, chunks.length);
+    const pageLines = [...headerLines];
+    if (chunks.length > 1) {
+      pageLines.push(
+        `第 ${normalizedPageIndex + 1} 页，共 ${chunks.length} 页`,
+        `Page ${normalizedPageIndex + 1} of ${chunks.length}`,
+      );
+    }
+    pageLines.push(chunks[normalizedPageIndex]!);
+    if (chunks.length > 1) {
+      pageLines.push(
+        '使用上一页和下一页查看完整详情。',
+        'Use Previous and Next to view the complete detail.',
+      );
+    }
+    return {
+      text: pageLines.join('\n'),
+      pageIndex: normalizedPageIndex,
+      pageCount: chunks.length,
+    };
+  }
+
+  private renderConfigFieldPreview(
+    field: DaemonConfigEditableField,
+    index: number,
+  ): string {
+    const label = this.bilingualParts(field.label);
+    const effect = this.bilingualParts(this.renderConfigEffect(field.effect));
+    const lines = [
+      `${index + 1}. **${label.cn}**`,
+      ...(label.en ? [label.en] : []),
+      `当前: \`${this.renderConfigValue(field.value)}\``,
+      `Current: \`${this.renderConfigValue(field.value)}\``,
+      `生效: ${effect.cn}${field.risk === 'high' ? ' · 高风险' : ''}`,
+      `Effect: ${effect.en ?? effect.cn}${field.risk === 'high' ? ' · high risk' : ''}`,
+      `-# Path: ${field.path}`,
+    ];
+    if (field.description) {
+      lines.push('说明:', 'Description:', ...this.renderSubtextLines(field.description));
+    }
+    return lines.join('\n');
+  }
+
+  private renderConfigFieldList(
+    fields: readonly DaemonConfigEditableField[],
+    pageIndex: number,
+    textBudget: number,
+  ): { lines: string[]; pageIndex: number; pageCount: number } {
+    if (fields.length === 0) return { lines: [], pageIndex: 0, pageCount: 0 };
+    const menuFieldCount = Math.min(
+      fields.length,
+      SETTINGS_CONFIG_SELECT_OPTION_LIMIT,
+    );
+    const rawOnlyFieldCount = fields.length - menuFieldCount;
+    const rawOnlyLine = rawOnlyFieldCount > 0
+      ? [
+          `字段下拉最多显示前 ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT} 个；第 ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT + 1} 个起请用高级路径编辑。`,
+          `The setting menu shows the first ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT} fields; use Raw path for field ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT + 1} and later.`,
+        ].join('\n')
+      : undefined;
+    const listOverhead = [
+      '',
+      '**可修改设置**',
+      '**Available settings**',
+      `第 1 页，共 ${fields.length} 页 · 显示第 1-${fields.length} 个，共 ${fields.length} 个设置项`,
+      `Page 1 of ${fields.length} · showing settings 1-${fields.length} of ${fields.length}`,
+      '使用上一页和下一页查看其余完整说明。',
+      'Use Previous and Next to view the remaining full descriptions.',
+      rawOnlyLine,
+    ].filter((line): line is string => line !== undefined).join('\n').length;
+    const contentBudget = Math.max(1, textBudget - listOverhead);
+    const pages: { start: number; end: number; entries: string[] }[] = [];
+    let start = 0;
+    let end = 0;
+    let entries: string[] = [];
+    let currentLength = 0;
+    fields.forEach((field, index) => {
+      const entryChunks = this.splitConfigText(
+        this.renderConfigFieldPreview(field, index),
+        contentBudget,
+      );
+      for (const entry of entryChunks) {
+        const separatorLength = entries.length > 0 ? 1 : 0;
+        const nextLength = currentLength + separatorLength + entry.length;
+        if (entries.length > 0 && nextLength > contentBudget) {
+          pages.push({ start, end, entries });
+          start = index;
+          end = index;
+          entries = [];
+          currentLength = 0;
+        }
+        entries.push(entry);
+        end = index + 1;
+        currentLength += (entries.length > 1 ? 1 : 0) + entry.length;
+      }
+    });
+    if (entries.length > 0) {
+      pages.push({ start, end, entries });
+    }
+    const pageCount = pages.length;
+    const normalizedPageIndex = this.configPageIndex(pageIndex, pageCount);
+    const page = pages[normalizedPageIndex]!;
+    const lines = [
+      '',
+      '**可修改设置**',
+      '**Available settings**',
+      `第 ${normalizedPageIndex + 1} 页，共 ${pageCount} 页 · 显示第 ${page.start + 1}-${page.end} 个，共 ${fields.length} 个设置项`,
+      `Page ${normalizedPageIndex + 1} of ${pageCount} · showing settings ${page.start + 1}-${page.end} of ${fields.length}`,
+      ...page.entries,
+    ];
+    if (pageCount > 1) {
+      lines.push(
+        '使用上一页和下一页查看其余完整说明。',
+        'Use Previous and Next to view the remaining full descriptions.',
+      );
+    }
+    if (rawOnlyLine) {
+      lines.push(rawOnlyLine);
+    }
+    return { lines, pageIndex: normalizedPageIndex, pageCount };
+  }
+
+  private configCategoryDescription(
+    fields: readonly DaemonConfigEditableField[],
+  ): string {
+    const labels = fields
+      .slice(0, 2)
+      .map((field) =>
+        truncateText(
+          this.componentLabel(field.label),
+          SETTINGS_CONFIG_CATEGORY_DESCRIPTION_LABEL_LIMIT,
+        ),
+      )
+      .join(', ');
+    const suffix = labels ? `: ${labels}` : '';
+    return `${fields.length} 个设置项${suffix}`.slice(0, 100);
+  }
+
+  private async configPanelResponse(
+    event: NormalizedEvent,
+    selectedKey?: string,
+    selectedCategory?: string,
+    pageIndex = 0,
+    selectedIndex?: number,
+  ): Promise<EventHandlerResult> {
+    if (!this.configEditor) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    const fields = await this.configFieldsForEvent(event);
+    const selectedIndexValue = selectedIndex ?? -1;
+    const indexedField = Number.isInteger(selectedIndexValue) &&
+      selectedIndexValue >= 0 &&
+      selectedIndexValue < fields.length
+      ? fields[selectedIndexValue]
+      : undefined;
+    const selected = indexedField ?? this.configFieldByKey(fields, selectedKey);
+    const selectedFieldIndex = selected
+      ? fields.findIndex((field) => field.key === selected.key)
+      : -1;
+    const categories = this.configCategories(fields);
+    const requestedCategory = this.configCategoryFromSelection(
+      categories,
+      selectedCategory,
+    );
+    const activeCategory = this.configSelectedCategory(
+      fields,
+      selected,
+      requestedCategory,
+    );
+    const categoryFields = activeCategory
+      ? fields.filter((field) => field.category === activeCategory)
+      : fields;
+    const selectedDetail = selected
+      ? this.renderConfigFieldDetail(selected, pageIndex)
+      : undefined;
+    let fieldList: { lines: string[]; pageIndex: number; pageCount: number } = {
+      lines: [],
+      pageIndex: 0,
+      pageCount: 0,
+    };
+    const headerLines = selectedDetail
+      ? []
+      : [
+          '**配置文件**',
+          '**Config file**',
+          activeCategory
+            ? `分组: \`${activeCategory}\``
+            : undefined,
+          activeCategory
+            ? `Category: \`${activeCategory}\``
+            : undefined,
+          '先看下方设置项列表，再用下拉选择要编辑的设置项。',
+          'Review the settings below, then choose one from the menu to edit.',
+          '提交前会先预览持久化 config.json 改动。',
+          'Changes are previewed before they are written to config.json.',
+          '未列出的设置项可继续用高级 raw path 编辑。',
+          'Advanced raw path remains available for unsupported settings.',
+        ].filter((line): line is string => line !== undefined);
+    const categoryLimitLine = !selectedDetail &&
+      categories.length > SETTINGS_CONFIG_SELECT_OPTION_LIMIT
+      ? [
+          '仅显示前 25 个分组；其余请用高级 raw path。',
+          'Showing first 25 categories; use Advanced raw path for the rest.',
+        ].join('\n')
+      : undefined;
+    if (!selectedDetail) {
+      const fixedTextLength = [
+        ...headerLines,
+        categoryLimitLine,
+      ].filter((line): line is string => line !== undefined).join('\n').length;
+      fieldList = this.renderConfigFieldList(
+        categoryFields,
+        pageIndex,
+        SETTINGS_CONFIG_PANEL_TEXT_LIMIT - fixedTextLength,
+      );
+    }
+    const text = selectedDetail
+      ? selectedDetail.text
+      : [
+          ...headerLines,
+          ...fieldList.lines,
+          categoryLimitLine,
+        ].filter((line): line is string => line !== undefined).join('\n');
+    const components: NonNullable<EventHandlerResult['commandResponse']>['components'] = [];
+    if (categories.length > 1) {
+      components.push({
+        type: 'select',
+        componentId: SETTINGS_CONFIG_CATEGORY_COMPONENT_ID,
+        placeholder: '选择配置分组',
+        minValues: 1,
+        maxValues: 1,
+        options: categories
+          .slice(0, SETTINGS_CONFIG_SELECT_OPTION_LIMIT)
+          .map((category, index) => ({
+            label: category.slice(0, 100),
+            value: String(index),
+            description: this.configCategoryDescription(
+              fields.filter((field) => field.category === category),
+            ),
+            default: category === activeCategory,
+          })),
+      });
+    }
+    if (categoryFields.length > 0) {
+      components.push({
+        type: 'select',
+        componentId: SETTINGS_CONFIG_FIELD_COMPONENT_ID,
+        placeholder: '选择设置项',
+        minValues: 1,
+        maxValues: 1,
+        options: categoryFields
+          .slice(0, SETTINGS_CONFIG_SELECT_OPTION_LIMIT)
+          .map((field) => ({
+            label: this.componentLabel(field.label),
+            value: field.key,
+            description: this.componentLabel(field.description ?? field.path),
+            default: field.key === selected?.key,
+          })),
+      });
+    }
+    if (!selected && fieldList.pageCount > 1) {
+      const activeCategoryIndex = activeCategory
+        ? categories.indexOf(activeCategory)
+        : 0;
+      components.push(
+        {
+          type: 'button',
+          componentId: `${SETTINGS_CONFIG_PAGE_COMPONENT_PREFIX}${activeCategoryIndex}:${Math.max(0, fieldList.pageIndex - 1)}`,
+          label: '上一页',
+          style: 'secondary',
+          disabled: fieldList.pageIndex === 0,
+        },
+        {
+          type: 'button',
+          componentId: `${SETTINGS_CONFIG_PAGE_COMPONENT_PREFIX}${activeCategoryIndex}:${Math.min(fieldList.pageCount - 1, fieldList.pageIndex + 1)}`,
+          label: '下一页',
+          style: 'secondary',
+          disabled: fieldList.pageIndex === fieldList.pageCount - 1,
+        },
+      );
+    }
+    if (selected) {
+      if (selectedDetail && selectedDetail.pageCount > 1) {
+        components.push(
+          {
+            type: 'button',
+            componentId: `${SETTINGS_CONFIG_FIELD_PAGE_COMPONENT_PREFIX}${selectedFieldIndex}:${Math.max(0, selectedDetail.pageIndex - 1)}`,
+            label: '上一页',
+            style: 'secondary',
+            disabled: selectedDetail.pageIndex === 0,
+          },
+          {
+            type: 'button',
+            componentId: `${SETTINGS_CONFIG_FIELD_PAGE_COMPONENT_PREFIX}${selectedFieldIndex}:${Math.min(selectedDetail.pageCount - 1, selectedDetail.pageIndex + 1)}`,
+            label: '下一页',
+            style: 'secondary',
+            disabled: selectedDetail.pageIndex === selectedDetail.pageCount - 1,
+          },
+        );
+      }
+      components.push({
+        type: 'button',
+        componentId: `${SETTINGS_CONFIG_EDIT_COMPONENT_PREFIX}${selected.key}`,
+        label: '编辑设置值',
+        style: selected.risk === 'high' ? 'danger' : 'primary',
+      });
+    }
+    components.push({
+      type: 'button',
+      componentId: SETTINGS_CONFIG_RAW_COMPONENT_ID,
+      label: '高级路径',
+      style: 'secondary',
+    });
+    return this.commandResponseResult(
+      { text, ephemeral: true, components },
+      event.traceId,
+    );
+  }
+
+  private configFieldValueForEdit(
+    field: DaemonConfigEditableField,
+    rawValue: string,
+  ): string {
+    const trimmed = rawValue.trim();
+    if (field.valueKind === 'string-list') {
+      return JSON.stringify(
+        rawValue
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0),
+      );
+    }
+    if (field.valueKind === 'enum' || field.valueKind === 'string') {
+      return JSON.stringify(trimmed);
+    }
+    return trimmed;
+  }
+
+  private configPreviewInput(
+    event: NormalizedEvent,
+    path: string,
+    value: string,
+  ): DaemonConfigPreviewInput {
+    return {
+      path,
+      value,
+      userId: event.initiator.userId,
+      channelId: event.sessionKey.channelId,
+      traceId: event.traceId,
+      platformName: this.platformName,
+      platform: event.sessionKey.platform,
+      ...(event.guildId ? { guildId: event.guildId } : {}),
+      ...(event.initiatorRoleIds ? { initiatorRoleIds: event.initiatorRoleIds } : {}),
+      ...(event.threadParentChannelId
+        ? { threadParentChannelId: event.threadParentChannelId }
+        : {}),
+    };
+  }
+
+  private pruneExpiredConfigEdits(nowMs = Date.now()): void {
+    for (const [previewId, pending] of this.pendingConfigEdits) {
+      if (nowMs - pending.createdAtMs > SETTINGS_CONFIG_PREVIEW_TTL_MS) {
+        this.pendingConfigEdits.delete(previewId);
+      }
+    }
+  }
+
+  private async previewConfigEdit(
+    event: NormalizedEvent,
+    path: string,
+    value: string,
+  ): Promise<EventHandlerResult> {
+    if (!this.configPreviewer) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    let preview: DaemonConfigPreviewResult;
+    try {
+      preview = await this.configPreviewer(
+        this.configPreviewInput(event, path, value),
+      );
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      return this.commandResponse(`配置编辑被拒绝\nconfig edit rejected\n${reason}`, event.traceId);
+    }
+    this.pruneExpiredConfigEdits();
+    const previewId = randomUUID();
+    this.pendingConfigEdits.set(previewId, {
+      path,
+      value,
+      createdAtMs: Date.now(),
+    });
+    const effect = this.bilingualParts(this.renderConfigEffect(preview.effect));
+    const lines = [
+      '配置预览',
+      `Config preview: ${preview.path}`,
+      `旧值: \`${this.renderConfigValue(preview.oldValue)}\``,
+      `Old: \`${this.renderConfigValue(preview.oldValue)}\``,
+      `新值: \`${this.renderConfigValue(preview.newValue)}\``,
+      `New: \`${this.renderConfigValue(preview.newValue)}\``,
+      `生效方式: ${effect.cn}`,
+      `Effect: ${effect.en ?? effect.cn}`,
+    ];
+    if (preview.createdPaths.length > 0) {
+      lines.push(
+        `新建路径: ${preview.createdPaths.map((item) => `\`${item}\``).join(', ')}`,
+        `Created path(s): ${preview.createdPaths.map((item) => `\`${item}\``).join(', ')}`,
+      );
+    }
+    for (const warning of preview.warnings) {
+      lines.push(`警告: ${warning}`, `Warning: ${warning}`);
+    }
+    return this.commandResponseResult(
+      {
+        text: lines.join('\n'),
+        ephemeral: true,
+        components: [
+          {
+            type: 'button',
+            componentId: `${SETTINGS_CONFIG_APPLY_COMPONENT_PREFIX}${previewId}`,
+            label: '应用',
+            style: 'primary',
+          },
+          {
+            type: 'button',
+            componentId: `${SETTINGS_CONFIG_CANCEL_COMPONENT_PREFIX}${previewId}`,
+            label: '取消',
+            style: 'secondary',
+          },
+        ],
+      },
+      event.traceId,
+    );
+  }
+
+  private async previewSettingsConfigFieldEdit(
+    event: NormalizedEvent,
+    fieldKey: string,
+  ): Promise<EventHandlerResult> {
+    const fields = await this.configFieldsForEvent(event);
+    const field = this.configFieldByKey(fields, fieldKey);
+    if (!field) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    const rawValue = this.modalValue(event, SETTINGS_CONFIG_VALUE_FIELD_ID) ?? '';
+    return this.previewConfigEdit(
+      event,
+      field.path,
+      this.configFieldValueForEdit(field, rawValue),
+    );
+  }
+
+  private async applyPendingConfigEdit(
+    event: NormalizedEvent,
+    previewId: string,
+  ): Promise<EventHandlerResult> {
+    if (!this.configEditor) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    const nowMs = Date.now();
+    this.pruneExpiredConfigEdits(nowMs);
+    const pending = this.pendingConfigEdits.get(previewId);
+    if (!pending) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    if (nowMs - pending.createdAtMs > SETTINGS_CONFIG_PREVIEW_TTL_MS) {
+      this.pendingConfigEdits.delete(previewId);
+      return this.commandResponse('配置预览已过期\nconfig preview expired', event.traceId);
+    }
+    if (this.configPreviewer) {
+      try {
+        await this.configPreviewer(
+          this.configPreviewInput(event, pending.path, pending.value),
+        );
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        return this.commandResponse(`配置编辑被拒绝\nconfig edit rejected\n${reason}`, event.traceId);
+      }
+    }
+    this.pendingConfigEdits.delete(previewId);
+    const result = await this.configEditor({
+      path: pending.path,
+      value: pending.value,
+      userId: event.initiator.userId,
+      channelId: event.sessionKey.channelId,
+      traceId: event.traceId,
+    });
+    return this.handleSettingsCommand(event, result.message);
   }
 
   private async dispatchInteraction(event: NormalizedEvent): Promise<EventHandlerResult | void> {
@@ -2223,7 +3020,7 @@ export class Engine {
       return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
     }
     return this.commandResponse(
-      `[session resumed: ${rebound.agentSessionId}]`,
+      `会话已恢复: ${rebound.agentSessionId}\nsession resumed: ${rebound.agentSessionId}`,
       event.traceId,
     );
   }
@@ -2291,7 +3088,7 @@ export class Engine {
         result?.message ??
         (result?.status === 'unsupported'
           ? COMMAND_UNAVAILABLE_TEXT
-          : `[reply mode requested: ${value}]`);
+          : `已请求回复模式: ${value}\nreply mode requested: ${value}`);
       return this.handleSettingsCommand(event, message);
     }
     if (componentId === SETTINGS_RESUME_COMPONENT_ID) {
@@ -2312,11 +3109,11 @@ export class Engine {
       return this.modalResponse(
         {
           modalId: SETTINGS_WORKING_DIR_MODAL_ID,
-          title: 'Set working directory',
+          title: '设置工作目录',
           inputs: [
             {
               componentId: SETTINGS_WORKING_DIR_PATH_FIELD_ID,
-              label: 'Absolute path',
+              label: '绝对路径',
               kind: 'short_text',
               required: true,
               placeholder: '/workspace/project',
@@ -2327,21 +3124,78 @@ export class Engine {
       );
     }
     if (componentId === SETTINGS_CONFIG_COMPONENT_ID) {
+      if (this.configFields) {
+        return this.configPanelResponse(event);
+      }
       return this.modalResponse(
         {
           modalId: SETTINGS_CONFIG_MODAL_ID,
-          title: 'Edit Nexus config',
+          title: '编辑 Nexus 配置',
           inputs: [
             {
               componentId: SETTINGS_CONFIG_PATH_FIELD_ID,
-              label: 'Config path',
+              label: '配置路径',
               kind: 'short_text',
               required: true,
               placeholder: 'agents[0].codex.workingDir',
             },
             {
               componentId: SETTINGS_CONFIG_VALUE_FIELD_ID,
-              label: 'JSON value',
+              label: 'JSON 值',
+              kind: 'long_text',
+              required: true,
+              placeholder: '"/workspace/project"',
+            },
+          ],
+        },
+        event.traceId,
+      );
+    }
+    if (componentId === SETTINGS_CONFIG_CATEGORY_COMPONENT_ID) {
+      return this.configPanelResponse(event, undefined, event.interaction?.values[0]);
+    }
+    if (componentId.startsWith(SETTINGS_CONFIG_PAGE_COMPONENT_PREFIX)) {
+      const [categoryIndex, page] = componentId
+        .slice(SETTINGS_CONFIG_PAGE_COMPONENT_PREFIX.length)
+        .split(':');
+      return this.configPanelResponse(
+        event,
+        undefined,
+        categoryIndex,
+        Number(page),
+      );
+    }
+    if (componentId.startsWith(SETTINGS_CONFIG_FIELD_PAGE_COMPONENT_PREFIX)) {
+      const [fieldIndex, page] = componentId
+        .slice(SETTINGS_CONFIG_FIELD_PAGE_COMPONENT_PREFIX.length)
+        .split(':');
+      return this.configPanelResponse(
+        event,
+        undefined,
+        undefined,
+        Number(page),
+        Number(fieldIndex),
+      );
+    }
+    if (componentId === SETTINGS_CONFIG_FIELD_COMPONENT_ID) {
+      return this.configPanelResponse(event, event.interaction?.values[0]);
+    }
+    if (componentId === SETTINGS_CONFIG_RAW_COMPONENT_ID) {
+      return this.modalResponse(
+        {
+          modalId: SETTINGS_CONFIG_MODAL_ID,
+          title: '编辑 Nexus 配置',
+          inputs: [
+            {
+              componentId: SETTINGS_CONFIG_PATH_FIELD_ID,
+              label: '配置路径',
+              kind: 'short_text',
+              required: true,
+              placeholder: 'agents[0].codex.workingDir',
+            },
+            {
+              componentId: SETTINGS_CONFIG_VALUE_FIELD_ID,
+              label: 'JSON 值',
               kind: 'long_text',
               required: true,
               placeholder: '"/workspace/project"',
@@ -2360,10 +3214,26 @@ export class Engine {
     }
     if (componentId === SETTINGS_CONFIG_MODAL_ID) {
       const result = await this.applySettingsConfigEdit(event);
+      if (this.configPreviewer) {
+        return result;
+      }
       return this.handleSettingsCommand(
         event,
         result.commandResponse?.text ?? COMMAND_UNAVAILABLE_TEXT,
       );
+    }
+    if (componentId.startsWith(SETTINGS_CONFIG_EDIT_MODAL_PREFIX)) {
+      const fieldKey = componentId.slice(SETTINGS_CONFIG_EDIT_MODAL_PREFIX.length);
+      return this.previewSettingsConfigFieldEdit(event, fieldKey);
+    }
+    if (componentId.startsWith(SETTINGS_CONFIG_APPLY_COMPONENT_PREFIX)) {
+      const previewId = componentId.slice(SETTINGS_CONFIG_APPLY_COMPONENT_PREFIX.length);
+      return this.applyPendingConfigEdit(event, previewId);
+    }
+    if (componentId.startsWith(SETTINGS_CONFIG_CANCEL_COMPONENT_PREFIX)) {
+      const previewId = componentId.slice(SETTINGS_CONFIG_CANCEL_COMPONENT_PREFIX.length);
+      this.pendingConfigEdits.delete(previewId);
+      return this.handleSettingsCommand(event, '配置编辑已取消\nconfig edit cancelled');
     }
     if (componentId === SETTINGS_AGENT_COMPONENT_ID) {
       const result = this.applySettingsAgent(event);
@@ -2396,10 +3266,13 @@ export class Engine {
     const path = this.modalValue(event, SETTINGS_CONFIG_PATH_FIELD_ID)?.trim();
     const value = this.modalValue(event, SETTINGS_CONFIG_VALUE_FIELD_ID);
     if (!path) {
-      return this.commandResponse('Config path is required.', event.traceId);
+      return this.commandResponse('配置路径必填\nConfig path is required.', event.traceId);
     }
     if (value === undefined) {
-      return this.commandResponse('Config value is required.', event.traceId);
+      return this.commandResponse('配置值必填\nConfig value is required.', event.traceId);
+    }
+    if (this.configPreviewer) {
+      return this.previewConfigEdit(event, path, value);
     }
     const result = await this.configEditor({
       path,
@@ -2427,7 +3300,7 @@ export class Engine {
     );
     this.stopActiveSession(serializeSessionKey(routedSessionKey), event.traceId);
     this.sessionStore.delete(routedSessionKey);
-    return this.commandResponse(`[agent binding: ${agentName}]`, event.traceId);
+    return this.commandResponse(`Agent 绑定: ${agentName}\nAgent binding: ${agentName}`, event.traceId);
   }
 
   private route(event: NormalizedEvent):

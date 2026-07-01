@@ -461,6 +461,7 @@ describe('command registry integration', () => {
     await platform.start(handler);
     const interactionCreate = registeredHandler('interactionCreate');
     const deferReply = vi.fn(async () => undefined);
+    const deferUpdate = vi.fn(async () => undefined);
     const editReply = vi.fn(async () => undefined);
     await interactionCreate({
       id: 'i-select',
@@ -482,13 +483,15 @@ describe('command registry integration', () => {
       member: { roles: { cache: new Map([['R1', { id: 'R1' }]]) } },
       channel: { isThread: () => true, parentId: 'C1' },
       deferReply,
+      deferUpdate,
       editReply,
       isChatInputCommand: () => false,
       isStringSelectMenu: () => true,
       isButton: () => false,
     });
 
-    expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(deferUpdate).toHaveBeenCalledTimes(1);
+    expect(deferReply).not.toHaveBeenCalled();
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler.mock.calls[0]![0]).toMatchObject({
       eventId: 'i-select',
@@ -523,6 +526,71 @@ describe('command registry integration', () => {
     });
   });
 
+  it('non-modal button component interaction updates the source message instead of replying again', async () => {
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      testGuildId: 'G-dev',
+    });
+    const handler = vi.fn(async () => ({
+      commandResponse: {
+        text: '[queue advanced]',
+        ephemeral: true,
+      },
+    }));
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    const deferReply = vi.fn(async () => undefined);
+    const deferUpdate = vi.fn(async () => undefined);
+    const editReply = vi.fn(async () => undefined);
+    const showModal = vi.fn(async () => undefined);
+    await interactionCreate({
+      id: 'i-queue-next',
+      applicationId: 'app-1',
+      token: 'interaction-token',
+      type: 3,
+      data: {
+        component_type: 2,
+        custom_id: 'nexus:queue:next',
+      },
+      message: { id: 'm-queue' },
+      customId: 'nexus:queue:next',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      channel: { isThread: () => false },
+      deferReply,
+      deferUpdate,
+      editReply,
+      showModal,
+      isChatInputCommand: () => false,
+      isStringSelectMenu: () => false,
+      isButton: () => true,
+      isModalSubmit: () => false,
+    });
+
+    expect(showModal).not.toHaveBeenCalled();
+    expect(deferUpdate).toHaveBeenCalledTimes(1);
+    expect(deferReply).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'interaction',
+        interaction: {
+          componentId: 'nexus:queue:next',
+          kind: 'button',
+          values: [],
+        },
+      }),
+    );
+    expect(editReply).toHaveBeenCalledWith({ content: '[queue advanced]' });
+  });
+
   it('settings workingDir button opens its Discord modal before daemon handling', async () => {
     const platform = createDiscordPlatform({
       token: 'test-token',
@@ -535,7 +603,7 @@ describe('command registry integration', () => {
     const handler = vi.fn(async () => undefined);
     const expectedModal = {
       custom_id: 'nexus:settings:working-dir-modal',
-      title: 'Set working directory',
+      title: '设置工作目录',
       components: [
         {
           type: 1,
@@ -543,7 +611,7 @@ describe('command registry integration', () => {
             {
               type: 4,
               custom_id: 'path',
-              label: 'Absolute path',
+              label: '绝对路径',
               style: 1,
               required: true,
             },
@@ -591,7 +659,71 @@ describe('command registry integration', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('settings config button opens its Discord modal before daemon handling', async () => {
+  it('settings config button dispatches to daemon instead of opening a raw modal', async () => {
+    const platform = createDiscordPlatform({
+      token: 'test-token',
+      botUserId: BOT_ID,
+      logger: makeLogger(),
+      statePath: '/tmp/agent-nexus-discord-state-test.json',
+      allowedUserIds: ALLOWED,
+      testGuildId: 'G-dev',
+    });
+    const handler = vi.fn(async () => ({
+      commandResponse: {
+        text: '[config panel]',
+        ephemeral: true,
+      },
+    }));
+
+    await platform.start(handler);
+    const interactionCreate = registeredHandler('interactionCreate');
+    const deferReply = vi.fn(async () => undefined);
+    const deferUpdate = vi.fn(async () => undefined);
+    const editReply = vi.fn(async () => undefined);
+    const showModal = vi.fn(async () => undefined);
+    await interactionCreate({
+      id: 'i-config',
+      applicationId: 'app-1',
+      token: 'interaction-token',
+      type: 3,
+      data: {
+        component_type: 2,
+        custom_id: 'nexus:settings:config',
+      },
+      customId: 'nexus:settings:config',
+      channelId: 'C1',
+      guildId: 'G-dev',
+      createdAt: new Date(123),
+      user: { id: OTHER_ID, username: 'alice', bot: false },
+      member: { roles: { cache: new Map() } },
+      channel: { isThread: () => false },
+      deferReply,
+      deferUpdate,
+      editReply,
+      showModal,
+      isChatInputCommand: () => false,
+      isStringSelectMenu: () => false,
+      isButton: () => true,
+      isModalSubmit: () => false,
+    });
+
+    expect(showModal).not.toHaveBeenCalled();
+    expect(deferUpdate).toHaveBeenCalledTimes(1);
+    expect(deferReply).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'interaction',
+        interaction: {
+          componentId: 'nexus:settings:config',
+          kind: 'button',
+          values: [],
+        },
+      }),
+    );
+    expect(editReply).toHaveBeenCalledWith({ content: '[config panel]' });
+  });
+
+  it('settings config edit button opens a generic value modal before daemon handling', async () => {
     const platform = createDiscordPlatform({
       token: 'test-token',
       botUserId: BOT_ID,
@@ -602,32 +734,19 @@ describe('command registry integration', () => {
     });
     const handler = vi.fn(async () => undefined);
     const expectedModal = {
-      custom_id: 'nexus:settings:config-modal',
-      title: 'Edit Nexus config',
+      custom_id: 'nexus:settings:config-edit-modal:ui.toolMessages',
+      title: '编辑配置值',
       components: [
         {
           type: 1,
           components: [
             {
               type: 4,
-              custom_id: 'path',
-              label: 'Config path',
-              style: 1,
-              required: true,
-              placeholder: 'agents[0].codex.workingDir',
-            },
-          ],
-        },
-        {
-          type: 1,
-          components: [
-            {
-              type: 4,
               custom_id: 'value',
-              label: 'JSON value',
+              label: '新值',
               style: 2,
-              required: true,
-              placeholder: '"/workspace/project"',
+              required: false,
+              placeholder: 'compact 或逐行输入',
             },
           ],
         },
@@ -640,15 +759,15 @@ describe('command registry integration', () => {
     const showModal = vi.fn(async () => undefined);
     const interactionPromise = Promise.resolve(
       interactionCreate({
-        id: 'i-config',
+        id: 'i-config-edit',
         applicationId: 'app-1',
         token: 'interaction-token',
         type: 3,
         data: {
           component_type: 2,
-          custom_id: 'nexus:settings:config',
+          custom_id: 'nexus:settings:config-edit:ui.toolMessages',
         },
-        customId: 'nexus:settings:config',
+        customId: 'nexus:settings:config-edit:ui.toolMessages',
         channelId: 'C1',
         guildId: 'G-dev',
         createdAt: new Date(123),
@@ -789,7 +908,7 @@ describe('command registry integration', () => {
       items: [
         {
           key: 'discord.replyMode',
-          label: 'Reply mode',
+          label: '回复模式\nReply mode',
           owner: 'platform',
           value: 'mention',
           source: 'discord state',
@@ -832,7 +951,7 @@ describe('command registry integration', () => {
 
     expect(result).toEqual({
       status: 'handled',
-      message: 'reply mode: `mention` -> `all`',
+      message: '回复模式: `mention` -> `all`\nreply mode: `mention` -> `all`',
     });
     expect(
       await platform.settingsSnapshot!({ userId: OTHER_ID, channelId: 'C1' }),

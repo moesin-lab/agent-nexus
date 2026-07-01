@@ -96,6 +96,35 @@ DaemonCommandRegistryConfig {
 | `daemon.commandRegistry.textPrefixes.newSession` | 控制文本前缀 `@bot /new` / `@bot /new <prompt>`；不影响 slash command stable names |
 | `daemon.trajectory` | daemon-owned trajectory read model、外部 session 导入与 provider-call observation 配置；字段权威源见 [`trajectory-observability.md`](infra/trajectory-observability.md#配置) |
 
+## Settings config editor 字段说明
+
+settings config editor 暴露的每个 typed editable field 都必须携带面向用户的
+`description`。`description` 是 `DaemonConfigEditableField` 的必填元数据，不得只给
+label/path/value 后让用户猜字段含义。
+
+说明文字要求：
+
+- 必须中英双语，中文优先；英文用于保留术语和辅助非中文用户理解。
+- UI 正文中的双语文案必须采用“中文一行、英文一行”的排版；不得用 `中文 / English`
+  拼在同一行。Discord 原生组件 label、placeholder、modal title 等不适合换行的短字段可只放
+  中文短文案，完整英文说明必须出现在正文或 description 中。
+- 必须说明字段控制什么行为、修改后影响哪个运行链路或用户路径。
+- 对权限、secret、路径、sandbox、provider capture、auth allowlist、command
+  registration 等高风险字段，必须说明风险边界和误配后果。
+- 对数值字段，必须写清单位和调大/调小的影响。
+- 对 enum/boolean 字段，必须写清主要取值或 true/false 的行为差异。
+- UI 渲染时 label 用于快速识别，path 和 description 作为辅助信息；Discord 可用
+  `-#` subtext 展示辅助信息，但不得依赖任意字号能力。
+- 设置列表与设置详情正文不得用省略号截断 label、path、当前值或 description。若完整内容
+  超过平台单条消息预算，必须通过分页或拆页让用户继续查看完整内容；select menu 受平台
+  option 长度限制，只能作为导航，不得作为完整说明的唯一载体。
+- Settings 内的 category / field select、分页按钮、preview apply / cancel 等非 modal
+  component 交互必须更新原 settings / preview 消息，不得为每次切换或翻页新发一条
+  ephemeral 消息；需要打开表单的按钮按 platform adapter 契约使用 native modal ack。
+
+新增或调整 typed editable field 时，必须同步更新说明表或动态说明模板，并在
+`createConfigFieldsProvider` 相关测试中覆盖非空 description。
+
 ## PlatformConfig
 
 ```text
@@ -316,19 +345,21 @@ v1 的 override 是 channel 级路由覆盖，但清理动作只覆盖触发者 
 
 ### Settings config editor
 
-`/nexus-settings` 可以暴露 config editor 控件，用于按路径修改 `config.json`。该能力由 CLI 组装层注入 daemon；daemon 只负责鉴权、收集 interaction 输入并调用注入的 editor，不直接读取或写入配置文件。
+`/nexus-settings` 可以暴露 config editor 控件，用于浏览并修改 `config.json`。该能力由 CLI 组装层注入 daemon；daemon 只负责鉴权、收集 interaction 输入、维护短期 preview 状态并调用注入的 editor，不直接读取或写入配置文件。
 
-编辑输入由两部分组成：
+编辑入口分两类：
 
-- `path`：配置路径，使用 dot / bracket 语法，例如 `agents[0].codex.workingDir`、`bindings[0].match.discord.channelIds`。
-- `value`：目标值。合法 JSON 按 JSON 解析；无法解析为 JSON 的非空文本按字符串处理。
+- 常用字段浏览：daemon 展示由组装层提供的字段清单。列表用稳定名称展示 platform / agent / binding，保存时再解析为 dot / bracket path。
+- Advanced raw path：保留 `path` + `value` 输入。`path` 使用 dot / bracket 语法，例如 `agents[0].codex.workingDir`、`bindings[0].match.discord.channelIds`。`value` 合法 JSON 按 JSON 解析；无法解析为 JSON 的非空文本按字符串处理。
 
-写入语义：
+Preview / Apply 语义：
 
-- editor 先在内存中生成候选 config，并用与启动 / reload 相同的 loader 完整校验。校验失败时不得写入 `config.json`，错误以 ephemeral settings 反馈返回触发者。
-- 校验通过后写回 `config.json`，随后触发与 `/nexus-reload-config` 相同的 reload。热生效字段按 §配置热重载 立即应用；仅重启生效字段仍写入文件，并由 reload 结果提示需要重启。
+- 用户提交字段值后，daemon 必须先调用 preview，在内存中生成候选 config，并用与启动 / reload 相同的 loader 完整校验。preview 校验失败时不得写入 `config.json`，错误以 ephemeral settings 反馈返回触发者。
+- preview 成功时返回 pending edit，不立即写文件。反馈必须包含 resolved path、旧值、新值、生效方式（立即生效 / 需重启 / 可能保存但 reload 失败）以及高风险提示。
+- 用户点击 `Apply` 后必须基于当前磁盘配置重跑同一 preview 校验，通过后才写回 `config.json`，随后触发与 `/nexus-reload-config` 相同的 reload。热生效字段按 §配置热重载 立即应用；仅重启生效字段仍写入文件，并由 reload 结果提示需要重启。
 - 写入成功但 reload 因运行态约束失败时，`config.json` 保留新内容，当前运行态配置保持不变；用户可继续编辑或重启进程使文件配置生效。
 - 路径中不存在的对象字段会按需要创建，以支持私有字段、future 字段与注释字段；反馈必须提示新建的路径段，避免用户把 `codex` 拼成 `codx` 这类输入误认为修改了既有字段。
+- preview 是防误操作机制，不是新的授权边界。config editor 仍复用 auth spec 中定义的 allowlist 作为唯一授权层。对于当前 platform 的 auth 修改，如果候选配置会让当前触发者在当前 channel / thread 上失去权限，daemon 必须拒绝该 preview，避免热应用后 UI self-lockout。
 
 ## Session 隔离
 
@@ -377,10 +408,10 @@ platformName + platform + channelId + initiatorUserId
 成功语义：
 
 - 应用 all-or-nothing：先验证所有 engine 目标，再统一替换；不得出现部分 engine 用新配置、部分用旧配置。
-- 热生效字段：`bindings[]`（routing table）、`platforms[].auth`、`ui.toolMessages`、`daemon.commandRegistry.textPrefixes`。
+- 热生效字段：`bindings[]`（routing table，前提是不违反上文运行态约束）、`platforms[].auth`、`ui.toolMessages`、`daemon.commandRegistry.textPrefixes.newSession`。
 - `platforms[].auth` 的热应用以**重启等价**为准：成功 reload 后 daemon engine 鉴权（全维度 allowlist）与 platform adapter 内部授权数据（inbound guard、`/discord-reply-mode` 的 userIds 列表）必须与用新配置重启进程后一致；只换其一视为违反本 spec。
 - 已知限制（重启路径同样受限）：adapter 内部命令（`/discord-reply-mode`）的授权仅基于 `userIds` 维度；role / guild / channel 维度待 platform command 经 daemon dispatch 统一鉴权后覆盖。
-- `ui.toolMessages` 与 `textPrefixes` 在 turn 边界生效：进行中的 turn 沿用其开始时的值，不得中途混合渲染。
+- `ui.toolMessages` 与 `daemon.commandRegistry.textPrefixes.newSession` 在 turn 边界生效：进行中的 turn 沿用其开始时的值，不得中途混合渲染。
 - 仅重启生效字段：`platforms[]` 其余字段、`agents[]`、`log`、`daemon.commandRegistry` 其余字段、`daemon.trajectory`。这些 section 有变化时，成功响应必须提示重启后才生效。
 
 并发与时序：

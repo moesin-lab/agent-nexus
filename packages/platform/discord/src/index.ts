@@ -564,35 +564,51 @@ function immediateModalForComponent(
   if (interaction.customId === 'nexus:settings:working-dir') {
     return {
       modalId: 'nexus:settings:working-dir-modal',
-      title: 'Set working directory',
+      title: '设置工作目录',
       inputs: [
         {
           componentId: 'path',
-          label: 'Absolute path',
+          label: '绝对路径',
           kind: 'short_text',
           required: true,
         },
       ],
     };
   }
-  if (interaction.customId === 'nexus:settings:config') {
+  if (interaction.customId === 'nexus:settings:config-raw') {
     return {
       modalId: 'nexus:settings:config-modal',
-      title: 'Edit Nexus config',
+      title: '编辑 Nexus 配置',
       inputs: [
         {
           componentId: 'path',
-          label: 'Config path',
+          label: '配置路径',
           kind: 'short_text',
           required: true,
           placeholder: 'agents[0].codex.workingDir',
         },
         {
           componentId: 'value',
-          label: 'JSON value',
+          label: 'JSON 值',
           kind: 'long_text',
           required: true,
           placeholder: '"/workspace/project"',
+        },
+      ],
+    };
+  }
+  if (interaction.customId.startsWith('nexus:settings:config-edit:')) {
+    const fieldKey = interaction.customId.slice('nexus:settings:config-edit:'.length);
+    return {
+      modalId: `nexus:settings:config-edit-modal:${fieldKey}`,
+      title: '编辑配置值',
+      inputs: [
+        {
+          componentId: 'value',
+          label: '新值',
+          kind: 'long_text',
+          required: false,
+          placeholder: 'compact 或逐行输入',
         },
       ],
     };
@@ -648,6 +664,22 @@ async function deferCommandInteraction(
     logger.error(
       { err, interactionId: interaction.id, commandName: interaction.commandName },
       'discord_command_ack_failed',
+    );
+    return false;
+  }
+}
+
+async function deferComponentMessageUpdate(
+  interaction: { id: string; customId?: string; deferUpdate(): Promise<unknown> },
+  logger: Logger,
+): Promise<boolean> {
+  try {
+    await interaction.deferUpdate();
+    return true;
+  } catch (err) {
+    logger.error(
+      { err, interactionId: interaction.id, customId: interaction.customId },
+      'discord_component_ack_failed',
     );
     return false;
   }
@@ -872,7 +904,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
         items: [
           {
             key: 'discord.replyMode',
-            label: 'Reply mode',
+            label: '回复模式\nReply mode',
             owner: 'platform',
             value: replyMode,
             source: 'discord state',
@@ -887,34 +919,34 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
       if (input.action !== 'discord.replyMode') {
         return {
           status: 'unsupported' as const,
-          message: 'This setting is not supported by Discord.',
+          message: 'Discord 不支持这个设置\nThis setting is not supported by Discord.',
         };
       }
       if (!allowedUserIds.includes(input.userId)) {
         logger.info({ userId: input.userId }, 'discord_settings_unauthorized');
         return {
           status: 'rejected' as const,
-          message: `Permission denied. Your User ID is \`${input.userId}\`; ask the bot operator to add it.`,
+          message: `没有权限。你的 User ID 是 \`${input.userId}\`；请让 bot operator 加入 allowlist。\nPermission denied. Your User ID is \`${input.userId}\`; ask the bot operator to add it.`,
         };
       }
       if (input.value !== 'mention' && input.value !== 'all') {
         return {
           status: 'rejected' as const,
-          message: `invalid mode: \`${input.value ?? ''}\` (must be \`mention\` or \`all\`)`,
+          message: `模式无效: \`${input.value ?? ''}\`\nInvalid mode: \`${input.value ?? ''}\` (must be \`mention\` or \`all\`)`,
         };
       }
       const from = replyMode;
       const to = input.value;
       if (from === to) {
         logger.info({ mode: to, userId: input.userId }, 'discord_reply_mode_noop');
-        return { status: 'handled' as const, message: `already in \`${to}\`` };
+        return { status: 'handled' as const, message: `已经是 \`${to}\`\nalready in \`${to}\`` };
       }
       await writeReplyModeState(statePath, to);
       replyMode = to;
       logger.info({ from, to, userId: input.userId }, 'discord_reply_mode_changed');
       return {
         status: 'handled' as const,
-        message: `reply mode: \`${from}\` -> \`${to}\``,
+        message: `回复模式: \`${from}\` -> \`${to}\`\nreply mode: \`${from}\` -> \`${to}\``,
       };
     },
 
@@ -1047,15 +1079,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
             }
             return;
           }
-          try {
-            await interaction.deferReply({ ephemeral: true });
-          } catch (err) {
-            logger.error(
-              { err, interactionId: interaction.id },
-              'discord_component_ack_failed',
-            );
-            return;
-          }
+          if (!(await deferComponentMessageUpdate(interaction, logger))) return;
           const event = componentEventFromInteraction(interaction);
           try {
             const result = await handler(event);

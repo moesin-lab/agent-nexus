@@ -535,7 +535,7 @@ describe('command registry integration', () => {
     const handler = vi.fn(async () => undefined);
     const expectedModal = {
       custom_id: 'nexus:settings:working-dir-modal',
-      title: 'Set working directory',
+      title: '设置工作目录 / Set dir',
       components: [
         {
           type: 1,
@@ -543,7 +543,7 @@ describe('command registry integration', () => {
             {
               type: 4,
               custom_id: 'path',
-              label: 'Absolute path',
+              label: '绝对路径 / Absolute path',
               style: 1,
               required: true,
             },
@@ -664,7 +664,7 @@ describe('command registry integration', () => {
     const handler = vi.fn(async () => undefined);
     const expectedModal = {
       custom_id: 'nexus:settings:config-edit-modal:ui.toolMessages',
-      title: 'Edit config value',
+      title: '编辑配置值 / Edit value',
       components: [
         {
           type: 1,
@@ -672,10 +672,10 @@ describe('command registry integration', () => {
             {
               type: 4,
               custom_id: 'value',
-              label: 'New value',
+              label: '新值 / New value',
               style: 2,
               required: false,
-              placeholder: 'compact or one item per line',
+              placeholder: 'compact 或逐行输入 / compact or one per line',
             },
           ],
         },
@@ -837,7 +837,7 @@ describe('command registry integration', () => {
       items: [
         {
           key: 'discord.replyMode',
-          label: 'Reply mode',
+          label: '回复模式 / Reply mode',
           owner: 'platform',
           value: 'mention',
           source: 'discord state',
@@ -880,7 +880,7 @@ describe('command registry integration', () => {
 
     expect(result).toEqual({
       status: 'handled',
-      message: 'reply mode: `mention` -> `all`',
+      message: '回复模式 / reply mode: `mention` -> `all`',
     });
     expect(
       await platform.settingsSnapshot!({ userId: OTHER_ID, channelId: 'C1' }),

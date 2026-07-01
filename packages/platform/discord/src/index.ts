@@ -564,11 +564,11 @@ function immediateModalForComponent(
   if (interaction.customId === 'nexus:settings:working-dir') {
     return {
       modalId: 'nexus:settings:working-dir-modal',
-      title: 'Set working directory',
+      title: '设置工作目录 / Set dir',
       inputs: [
         {
           componentId: 'path',
-          label: 'Absolute path',
+          label: '绝对路径 / Absolute path',
           kind: 'short_text',
           required: true,
         },
@@ -578,18 +578,18 @@ function immediateModalForComponent(
   if (interaction.customId === 'nexus:settings:config-raw') {
     return {
       modalId: 'nexus:settings:config-modal',
-      title: 'Edit Nexus config',
+      title: '编辑 Nexus 配置 / Edit config',
       inputs: [
         {
           componentId: 'path',
-          label: 'Config path',
+          label: '配置路径 / Config path',
           kind: 'short_text',
           required: true,
           placeholder: 'agents[0].codex.workingDir',
         },
         {
           componentId: 'value',
-          label: 'JSON value',
+          label: 'JSON 值 / JSON value',
           kind: 'long_text',
           required: true,
           placeholder: '"/workspace/project"',
@@ -601,14 +601,14 @@ function immediateModalForComponent(
     const fieldKey = interaction.customId.slice('nexus:settings:config-edit:'.length);
     return {
       modalId: `nexus:settings:config-edit-modal:${fieldKey}`,
-      title: 'Edit config value',
+      title: '编辑配置值 / Edit value',
       inputs: [
         {
           componentId: 'value',
-          label: 'New value',
+          label: '新值 / New value',
           kind: 'long_text',
           required: false,
-          placeholder: 'compact or one item per line',
+          placeholder: 'compact 或逐行输入 / compact or one per line',
         },
       ],
     };
@@ -888,7 +888,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
         items: [
           {
             key: 'discord.replyMode',
-            label: 'Reply mode',
+            label: '回复模式 / Reply mode',
             owner: 'platform',
             value: replyMode,
             source: 'discord state',
@@ -903,34 +903,34 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
       if (input.action !== 'discord.replyMode') {
         return {
           status: 'unsupported' as const,
-          message: 'This setting is not supported by Discord.',
+          message: 'Discord 不支持这个设置 / This setting is not supported by Discord.',
         };
       }
       if (!allowedUserIds.includes(input.userId)) {
         logger.info({ userId: input.userId }, 'discord_settings_unauthorized');
         return {
           status: 'rejected' as const,
-          message: `Permission denied. Your User ID is \`${input.userId}\`; ask the bot operator to add it.`,
+          message: `没有权限 / Permission denied. Your User ID is \`${input.userId}\`; ask the bot operator to add it.`,
         };
       }
       if (input.value !== 'mention' && input.value !== 'all') {
         return {
           status: 'rejected' as const,
-          message: `invalid mode: \`${input.value ?? ''}\` (must be \`mention\` or \`all\`)`,
+          message: `模式无效 / invalid mode: \`${input.value ?? ''}\` (must be \`mention\` or \`all\`)`,
         };
       }
       const from = replyMode;
       const to = input.value;
       if (from === to) {
         logger.info({ mode: to, userId: input.userId }, 'discord_reply_mode_noop');
-        return { status: 'handled' as const, message: `already in \`${to}\`` };
+        return { status: 'handled' as const, message: `已经是 / already in \`${to}\`` };
       }
       await writeReplyModeState(statePath, to);
       replyMode = to;
       logger.info({ from, to, userId: input.userId }, 'discord_reply_mode_changed');
       return {
         status: 'handled' as const,
-        message: `reply mode: \`${from}\` -> \`${to}\``,
+        message: `回复模式 / reply mode: \`${from}\` -> \`${to}\``,
       };
     },
 

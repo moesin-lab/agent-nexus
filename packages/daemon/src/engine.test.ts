@@ -3425,7 +3425,7 @@ describe('Engine', () => {
 
     expect(result).toEqual({
       commandResponse: {
-        text: '[session resumed: sid-old]',
+        text: '[会话已恢复 / session resumed: sid-old]',
         ephemeral: true,
       },
     });
@@ -3817,12 +3817,12 @@ describe('Engine', () => {
         ]),
       },
     });
-    expect(result?.commandResponse?.text).toContain('**Nexus settings**');
-    expect(result?.commandResponse?.text).toContain('**Current state**');
-    expect(result?.commandResponse?.text).toContain('Reply mode: `mention` · discord state · durable');
-    expect(result?.commandResponse?.text).toContain('WorkingDir: `/tmp/channel` · channel default · in-memory');
-    expect(result?.commandResponse?.text).toContain('Config: `config.json` · config file · durable');
-    expect(result?.commandResponse?.text).toContain('Resumable sessions: `1`');
+    expect(result?.commandResponse?.text).toContain('**Nexus 设置 / Nexus settings**');
+    expect(result?.commandResponse?.text).toContain('**当前状态 / Current state**');
+    expect(result?.commandResponse?.text).toContain('回复模式 / Reply mode: `mention` · Discord 状态 / discord state · 持久 / durable');
+    expect(result?.commandResponse?.text).toContain('工作目录 / WorkingDir: `/tmp/channel` · channel 默认值 / channel default · 内存态 / in-memory');
+    expect(result?.commandResponse?.text).toContain('配置 / Config: `config.json` · 配置文件 / config file · 持久 / durable');
+    expect(result?.commandResponse?.text).toContain('可恢复会话 / Resumable sessions: `1`');
     expect(result?.commandResponse?.text).toContain('Values marked `in-memory` reset when the daemon restarts.');
   });
 
@@ -3888,7 +3888,7 @@ describe('Engine', () => {
     const result = await dispatchHandler(makeCommandEvent('nexus-settings'));
 
     const text = result?.commandResponse?.text ?? '';
-    expect(text).toContain('WorkingDir: `~/private/project` · channel default · in-memory');
+    expect(text).toContain('工作目录 / WorkingDir: `~/private/project` · channel 默认值 / channel default · 内存态 / in-memory');
     expect(text).not.toContain('/home/node/private');
     expect(text).not.toContain('sk-ant');
     const resume = result?.commandResponse?.components?.find(
@@ -3968,8 +3968,8 @@ describe('Engine', () => {
       userId: 'U1',
       channelId: 'C1',
     });
-    expect(result?.commandResponse?.text).toContain('Result: [reply mode changed]');
-    expect(result?.commandResponse?.text).toContain('Reply mode: `all` · discord state · durable');
+    expect(result?.commandResponse?.text).toContain('结果 / Result: [reply mode changed]');
+    expect(result?.commandResponse?.text).toContain('回复模式 / Reply mode: `all` · Discord 状态 / discord state · 持久 / durable');
     expect(result?.commandResponse?.components).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -4049,8 +4049,8 @@ describe('Engine', () => {
       agentSessionId: 'sid-old',
       title: 'Resume from settings',
     });
-    expect(result?.commandResponse?.text).toContain('[session resumed: sid-old]');
-    expect(result?.commandResponse?.text).toContain('Resumable sessions: `1`');
+    expect(result?.commandResponse?.text).toContain('[会话已恢复 / session resumed: sid-old]');
+    expect(result?.commandResponse?.text).toContain('可恢复会话 / Resumable sessions: `1`');
   });
 
   it('settings workingDir button opens a modal and modal submit changes the channel default', async () => {
@@ -4103,11 +4103,11 @@ describe('Engine', () => {
     expect(modal).toEqual({
       modalResponse: {
         modalId: 'nexus:settings:working-dir-modal',
-        title: 'Set working directory',
+        title: '设置工作目录 / Set dir',
         inputs: [
           expect.objectContaining({
             componentId: 'path',
-            label: 'Absolute path',
+            label: '绝对路径 / Absolute path',
           }),
         ],
       },
@@ -4128,8 +4128,10 @@ describe('Engine', () => {
       platform: 'discord',
       channelId: 'C1',
     })).toBe('/tmp/settings');
-    expect(result?.commandResponse?.text).toContain('[channel workingDir: /tmp/settings]');
-    expect(result?.commandResponse?.text).toContain('WorkingDir: `/tmp/settings` · channel default · in-memory');
+    expect(result?.commandResponse?.text).toContain('[channel 工作目录 / channel workingDir: /tmp/settings]');
+    expect(result?.commandResponse?.text).toContain(
+      '工作目录 / WorkingDir: `/tmp/settings` · channel 默认值 / channel default · 内存态 / in-memory',
+    );
   });
 
   it('settings config file panel previews a typed field edit before apply writes config.json', async () => {
@@ -4229,7 +4231,7 @@ describe('Engine', () => {
     );
 
     expect(configFields).toHaveBeenCalledTimes(1);
-    expect(panel?.commandResponse?.text).toContain('**Config file**');
+    expect(panel?.commandResponse?.text).toContain('**配置文件 / Config file**');
     const categorySelect = panel?.commandResponse?.components?.find(
       (component) =>
         component.type === 'select' &&
@@ -4268,7 +4270,7 @@ describe('Engine', () => {
       makeComponentEvent('nexus:settings:config-category', ['1']),
     );
     expect(commandCategory?.commandResponse?.text).toContain(
-      'Category: `Daemon command registry`',
+      '分组 / Category: `Daemon command registry`',
     );
     const commandFieldSelect = commandCategory?.commandResponse?.components?.find(
       (component) =>
@@ -4320,9 +4322,9 @@ describe('Engine', () => {
       }),
     );
     expect(configEditor).not.toHaveBeenCalled();
-    expect(preview?.commandResponse?.text).toContain('[config preview: ui.toolMessages]');
-    expect(preview?.commandResponse?.text).toContain('Old: `append`');
-    expect(preview?.commandResponse?.text).toContain('New: `compact`');
+    expect(preview?.commandResponse?.text).toContain('[配置预览 / config preview: ui.toolMessages]');
+    expect(preview?.commandResponse?.text).toContain('旧值 / Old: `append`');
+    expect(preview?.commandResponse?.text).toContain('新值 / New: `compact`');
     const apply = preview?.commandResponse?.components?.find(
       (component) =>
         component.type === 'button' &&
@@ -4350,7 +4352,7 @@ describe('Engine', () => {
       traceId: 't-1',
     });
     expect(configPreviewer).toHaveBeenCalledTimes(2);
-    expect(applied?.commandResponse?.text).toContain('Result: [config saved: ui.toolMessages]');
+    expect(applied?.commandResponse?.text).toContain('结果 / Result: [config saved: ui.toolMessages]');
 
     await dispatchHandler(
       makeComponentEvent('nexus:settings:config-edit-modal:bindings[0].match.discord.channelIds', [], {
@@ -4416,8 +4418,8 @@ describe('Engine', () => {
       makeComponentEvent('nexus:settings:agent', ['claude-prod']),
     );
 
-    expect(result?.commandResponse?.text).toContain('[agent binding: claude-prod]');
-    expect(result?.commandResponse?.text).toContain('Agent: `claude-prod` · channel override · in-memory');
+    expect(result?.commandResponse?.text).toContain('[Agent 绑定 / agent binding: claude-prod]');
+    expect(result?.commandResponse?.text).toContain('Agent / Agent: `claude-prod` · channel 覆盖 / channel override · 内存态 / in-memory');
 
     claude.queueEvents([
       ev('session_started', { agentSessionId: 'sid-claude' }),
@@ -4696,7 +4698,7 @@ describe('Engine', () => {
 
     expect(result).toEqual({
       commandResponse: {
-        text: '[workingDir update queued: /tmp/channel]',
+        text: '[workingDir 更新已排队 / workingDir update queued: /tmp/channel]',
         ephemeral: true,
       },
     });
@@ -4723,7 +4725,7 @@ describe('Engine', () => {
         platform: 'discord',
         channelId: 'C1',
       }),
-      expect.objectContaining({ text: '[channel workingDir: /tmp/channel]' }),
+      expect.objectContaining({ text: '[channel 工作目录 / channel workingDir: /tmp/channel]' }),
     );
   });
 
@@ -4835,7 +4837,7 @@ describe('Engine', () => {
       platform: 'discord',
       channelId: 'C1',
     })).toBe('/workspace/other');
-    expect(result?.commandResponse?.text).toBe('[channel workingDir: /workspace/other]');
+    expect(result?.commandResponse?.text).toBe('[channel 工作目录 / channel workingDir: /workspace/other]');
   });
 
   it('daemon /nexus-working-dir in a thread affects only that thread next session', async () => {
@@ -4903,7 +4905,7 @@ describe('Engine', () => {
 
     expect(result).toEqual({
       commandResponse: {
-        text: '[next session workingDir: /tmp/thread]',
+        text: '[下一会话 workingDir / next session workingDir: /tmp/thread]',
         ephemeral: true,
       },
     });
@@ -4995,7 +4997,7 @@ describe('Engine', () => {
 
     expect(result).toEqual({
       commandResponse: {
-        text: '[channel workingDir: /tmp/channel]',
+        text: '[channel 工作目录 / channel workingDir: /tmp/channel]',
         ephemeral: true,
       },
     });

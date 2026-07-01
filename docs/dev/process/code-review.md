@@ -38,7 +38,7 @@ GitHub ruleset + `pr-metadata` workflow 是 merge 门禁；它们不能保证 ag
 node scripts/validate-pr-metadata.mjs --hook
 ```
 
-脚本从 stdin 读取 hook JSON；仅命中 GitHub MCP `create_pull_request` / `update_pull_request` 类工具时校验 `tool_input.title` / `tool_input.body`，其他工具直接放行。校验失败时 exit 2 并在 stderr 输出缺失项，agent 不应继续创建或改坏 PR。
+脚本从 stdin 读取 hook JSON；仅命中 GitHub MCP `create_pull_request` / `update_pull_request` 类工具时校验 `tool_input.title` / `tool_input.body`，其他工具直接放行。校验内容包括 Conventional Commits 标题、正文必填段落、checkbox、review 字段，以及 PR 正文中文要求（标题不纳入中文要求）。校验失败时 exit 2 并在 stderr 输出缺失项，agent 不应继续创建或改坏 PR。
 
 本地 hook 配置不入库。Claude Code 示例：
 

@@ -95,6 +95,59 @@ npm install -g packages/cli/agent-nexus-cli-*.tgz
 
 升级后重启进程。若升级涉及配置字段，按 `README.md` 与 [`../product/user-guide.md`](../product/user-guide.md) 更新 `~/.agent-nexus/config.json`。
 
+## Stable 自动更新
+
+stable 实例由 host LaunchAgent 拉起容器内 watchdog：`~/.agent-nexus-stable/bin/keepalive-stable.sh run`。本仓库维护脚本源位于 `scripts/ops/agent-nexus-stable/`；安装到 stable home 后，watchdog 重启才会加载新脚本。
+
+自动更新启用后，watchdog 会定时检查 `origin/main`：
+
+- 专属源码 checkout：`~/.agent-nexus-stable/source/agent-nexus`
+- 构建产物 release：`~/.agent-nexus-stable/releases/<hash>`
+- 当前运行 release：`~/.agent-nexus-stable/current`
+- 自动更新状态：`~/.agent-nexus-stable/state/auto-update/`
+
+关键状态文件：
+
+| 路径 | 用途 |
+|---|---|
+| `stable_hash` | 最近通过健康检查和 promote 窗口的稳定版本 |
+| `pending_candidate_hash` | 已切到 current、等待健康检查或 promote 的候选版本 |
+| `bad_hashes.tsv` | 已知错误版本，包含 hash、时间、分类和原因 |
+| `last_error.log` | 最近一次自动更新错误 |
+| `restart-requested` | 区分自动更新主动重启和普通崩溃 |
+
+更新流程：
+
+1. `git fetch origin main` 解析远端 hash。
+2. 如果 hash 已在 `bad_hashes.tsv`，跳过。
+3. 在专属 release worktree 中执行 `pnpm install --frozen-lockfile` 与 `pnpm build`。
+4. 构建成功后，只有当 child 无子进程且 stdout/stderr 静默超过 idle 窗口，才切换 `current` 并 SIGTERM child。
+5. 候选启动后必须在新 stdout 中出现 `engine_started` 与 `discord_ready`；通过后再等 promote 窗口，才写入 `stable_hash`。
+6. 候选失败时切回 `stable_hash` 指向的 release；回退不重新 build。
+
+健康检查依赖 `engine_started` 与 `discord_ready` 两条 info 级日志继续写入 stdout。不要把 stable 的 log level 调到 `warn` 以上，也不要把 pino 输出改到非 stdout sink；否则候选会 readiness timeout，并进入临时 cooldown。
+
+默认配置可用环境变量调整：
+
+| 变量 | 默认值 | 说明 |
+|---|---:|---|
+| `AGENT_NEXUS_STABLE_AUTO_UPDATE_ENABLED` | `1` | 是否启用自动更新 |
+| `AGENT_NEXUS_STABLE_AUTO_UPDATE_INTERVAL_SECONDS` | `600` | 检查间隔 |
+| `AGENT_NEXUS_STABLE_AUTO_UPDATE_IDLE_SECONDS` | `300` | 重启前静默窗口 |
+| `AGENT_NEXUS_STABLE_AUTO_UPDATE_PROMOTE_SECONDS` | `180` | 候选晋升为 stable 前的存活窗口 |
+| `AGENT_NEXUS_STABLE_AUTO_UPDATE_RELEASE_KEEP_COUNT` | `3` | 除 stable / pending / current 外保留的旧 release 数 |
+| `AGENT_NEXUS_STABLE_AUTO_UPDATE_LOG_MAX_BYTES` | `10485760` | 单个 stable 日志文件超过该大小时保留尾部内容 |
+| `AGENT_NEXUS_STABLE_AUTO_UPDATE_READINESS_COOLDOWN_SECONDS` | `3600` | readiness timeout 后临时跳过同一 hash 的时间 |
+| `AGENT_NEXUS_STABLE_AUTO_UPDATE_BUILD_BAD_THRESHOLD` | `2` | 同一 hash 连续 build 失败达到该次数才写入 `bad_hashes.tsv` |
+
+手动检查一次更新：
+
+```bash
+~/.agent-nexus-stable/bin/keepalive-stable.sh update-once
+```
+
+注意：首次安装新脚本后，不要从正在由 stable child 托管的 agent 会话里直接重启 watchdog；重启会中断该会话。应在会话结束后运行 `~/.agent-nexus-stable/bin/keepalive-stable.sh restart`，或由 host LaunchAgent 后续重启加载。
+
 ## 备份与清理
 
 - 备份 `~/.agent-nexus/config.json` 时不要把 token 一起提交到仓库。

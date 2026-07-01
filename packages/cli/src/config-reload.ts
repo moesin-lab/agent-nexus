@@ -112,10 +112,19 @@ function field(
 ): DaemonConfigEditableField {
   return {
     ...input,
+    description: splitBilingualInline(input.description),
     value: configValue(input.value),
     effect: effectForPath(input.path),
     risk: riskForPath(input.path),
   };
+}
+
+function bilingualLabel(cn: string, en: string): string {
+  return `${cn}\n${en}`;
+}
+
+function splitBilingualInline(text: string): string {
+  return text.replace(' / ', '\n');
 }
 
 const COMMAND_REGISTRY_FIELD_DESCRIPTIONS: Record<string, string> = {
@@ -194,7 +203,7 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
   return [
     field({
       key: `${base}.botUserId`,
-      label: `${platform.name} bot user ID`,
+      label: bilingualLabel(`${platform.name} bot 用户 ID`, `${platform.name} bot user ID`),
       description:
         `平台 ${platform.name} 的 Discord bot user ID。用于识别 bot 自己的用户身份，避免把 bot 自己的消息当成用户输入，也用于 mention/slash 相关判断。填错会导致消息过滤、mention 判断或自消息保护异常。 / Discord bot user ID for platform ${platform.name}. It identifies the bot itself so self messages are ignored and mention/slash checks work correctly. Wrong values can break message filtering or self-message protection.`,
       category,
@@ -204,7 +213,7 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
     }),
     field({
       key: `${base}.tokenRef`,
-      label: `${platform.name} token ref`,
+      label: bilingualLabel(`${platform.name} token 引用`, `${platform.name} token ref`),
       description:
         `平台 ${platform.name} 的 secret reference 名称，不是 token 明文。用于从 secret provider 或 secret 文件加载 Discord bot token；不要在这里填写明文 token。修改会影响平台登录，通常需要重启。 / Secret reference name for platform ${platform.name}, not the token value itself. It is used to load the Discord bot token from the secret provider or secret file. Do not put the raw token here. Changing it affects platform login and usually requires restart.`,
       category,
@@ -214,7 +223,7 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
     }),
     field({
       key: `${base}.statePath`,
-      label: `${platform.name} state path`,
+      label: bilingualLabel(`${platform.name} 状态文件路径`, `${platform.name} state path`),
       description:
         `平台 ${platform.name} 的 state file 路径。保存 Discord reply mode 等平台本地状态；多 bot 不应共用同一个 statePath，否则状态会串扰。修改后通常需要重启并确认旧状态是否迁移。 / State file path for platform ${platform.name}. It stores local platform state such as Discord reply mode. Multiple bots should not share the same statePath, or state can leak across instances. Changing it usually requires restart and state migration review.`,
       category,
@@ -224,7 +233,7 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
     }),
     field({
       key: `${base}.testGuildId`,
-      label: `${platform.name} test guild`,
+      label: bilingualLabel(`${platform.name} 测试服务器`, `${platform.name} test guild`),
       description:
         `平台 ${platform.name} 的 Discord test guild ID。设置后 slash command registration 通常走 guild scope，便于快速测试；留空时可走全局注册，生效更慢且影响范围更大。 / Discord test guild ID for platform ${platform.name}. When set, slash command registration usually targets that guild for faster testing. When empty, global registration may be used, which propagates slower and has broader impact.`,
       category,
@@ -234,7 +243,10 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
     }),
     field({
       key: `${base}.publicChannelMode`,
-      label: `${platform.name} public channel mode`,
+      label: bilingualLabel(
+        `${platform.name} 公开频道模式`,
+        `${platform.name} public channel mode`,
+      ),
       description:
         `Discord 平台 ${platform.name} 的 public-channel handling mode。disabled 禁止公开频道直接对话；thread 会把公开频道入口导向 thread；public 允许公开频道直接交互。该设置影响用户可见范围和权限边界。 / Public-channel handling mode for Discord platform ${platform.name}. disabled blocks direct public-channel conversations, thread routes public-channel entry into threads, and public allows direct interaction. This affects visibility and auth boundaries.`,
       category,
@@ -245,7 +257,7 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
     }),
     field({
       key: `${base}.auth.allowlist.userIds`,
-      label: `${platform.name} allowed users`,
+      label: bilingualLabel(`${platform.name} 允许用户`, `${platform.name} allowed users`),
       description:
         `平台 ${platform.name} 允许通过鉴权的 Discord user IDs。只有列表中的用户可通过鉴权；空列表通常表示不按用户维度放行，需要结合 role/guild/channel/DM 规则理解。热重载后应与重启效果一致。 / Allowed Discord user IDs for platform ${platform.name}. Only listed users pass this auth dimension. An empty list usually means this dimension is not granting access by itself; interpret it with role/guild/channel/DM rules. Hot reload should match restart behavior.`,
       category,
@@ -255,7 +267,7 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
     }),
     field({
       key: `${base}.auth.allowlist.roleIds`,
-      label: `${platform.name} allowed roles`,
+      label: bilingualLabel(`${platform.name} 允许角色`, `${platform.name} allowed roles`),
       description:
         `平台 ${platform.name} 允许通过鉴权的 Discord role IDs。用于按 guild role 放行用户；只对带 guild/role 上下文的事件有效，DM 场景不依赖 role。 / Allowed Discord role IDs for platform ${platform.name}. It grants access by guild role and only applies to events with guild/role context; DM flows do not rely on roles.`,
       category,
@@ -265,7 +277,7 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
     }),
     field({
       key: `${base}.auth.allowlist.allowedGuildIds`,
-      label: `${platform.name} allowed guilds`,
+      label: bilingualLabel(`${platform.name} 允许服务器`, `${platform.name} allowed guilds`),
       description:
         `平台 ${platform.name} 允许响应的 Discord guild IDs。限制 bot 只响应指定服务器中的事件；填错会导致整个服务器无法使用或意外放开其他服务器。 / Allowed Discord guild IDs for platform ${platform.name}. It restricts responses to events from selected servers. Wrong values can block a whole server or unintentionally allow another server.`,
       category,
@@ -275,7 +287,10 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
     }),
     field({
       key: `${base}.auth.allowlist.allowedChannelIds`,
-      label: `${platform.name} allowed channels`,
+      label: bilingualLabel(
+        `${platform.name} 允许频道`,
+        `${platform.name} allowed channels`,
+      ),
       description:
         `平台 ${platform.name} 允许响应的 Discord channel IDs。限制 bot 只响应指定 channel/thread；公开频道和 thread 策略仍需结合 publicChannelMode 理解。 / Allowed Discord channel IDs for platform ${platform.name}. It restricts responses to selected channels or threads; interpret public channels and threads together with publicChannelMode.`,
       category,
@@ -285,7 +300,7 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
     }),
     field({
       key: `${base}.auth.allowlist.allowDM`,
-      label: `${platform.name} allow DM`,
+      label: bilingualLabel(`${platform.name} 允许私信`, `${platform.name} allow DM`),
       description:
         `控制平台 ${platform.name} 是否允许 direct messages。开启后允许符合用户维度规则的 DM 进入 daemon；关闭后 DM 会被拒绝，即使 userId 在 allowlist 中。 / Controls whether direct messages are allowed for platform ${platform.name}. When enabled, DMs that satisfy user rules can reach the daemon. When disabled, DMs are rejected even if the userId is allowed.`,
       category,
@@ -295,7 +310,10 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
     }),
     field({
       key: `${base}.auth.allowlist.requireMentionOrSlash`,
-      label: `${platform.name} require mention or slash`,
+      label: bilingualLabel(
+        `${platform.name} 要求 mention 或 slash`,
+        `${platform.name} require mention or slash`,
+      ),
       description:
         `控制平台 ${platform.name} 是否要求 mention 或 slash command 后才处理消息。开启后可减少公开频道误触发；关闭后符合 allowlist 的普通文本也可能进入 agent。 / Controls whether platform ${platform.name} requires a mention or slash command before handling messages. Enabling it reduces accidental public-channel triggers; disabling it lets allowed plain text reach the agent.`,
       category,
@@ -311,7 +329,7 @@ function agentFields(agent: AgentConfig, index: number): DaemonConfigEditableFie
   const common = [
     field({
       key: `${base}.timeoutMs`,
-      label: `${agent.name} timeout`,
+      label: bilingualLabel(`${agent.name} 超时时间`, `${agent.name} timeout`),
       description:
         `agent ${agent.name} 单次调用的最长运行时间，单位毫秒。这个值限制单次 agent 调用最长执行时间；过短会打断正常长任务，过长会让卡住的任务占用队列更久。 / Maximum runtime in milliseconds for agent ${agent.name} before the daemon treats a turn as timed out. Too low interrupts legitimate long tasks; too high keeps stuck tasks occupying the queue longer.`,
       category: `Agent ${agent.name}`,
@@ -325,7 +343,7 @@ function agentFields(agent: AgentConfig, index: number): DaemonConfigEditableFie
       ...common,
       field({
         key: `${base}.codex.workingDir`,
-        label: `${agent.name} workingDir`,
+        label: bilingualLabel(`${agent.name} 工作目录`, `${agent.name} workingDir`),
         description:
           `Codex agent ${agent.name} 的默认 working directory。作为会话未显式设置 workingDir 时的项目根目录；路径错误会导致命令在错误目录运行或无法启动。 / Default working directory for Codex agent ${agent.name}. It is the project root when a session does not override workingDir. Wrong paths can run commands in the wrong directory or prevent startup.`,
         category: `Agent ${agent.name}`,
@@ -335,7 +353,7 @@ function agentFields(agent: AgentConfig, index: number): DaemonConfigEditableFie
       }),
       field({
         key: `${base}.codex.bin`,
-        label: `${agent.name} codex bin`,
+        label: bilingualLabel(`${agent.name} Codex 可执行文件`, `${agent.name} codex bin`),
         description:
           `Codex agent ${agent.name} 使用的 executable path 或 command name。修改会影响 daemon 如何启动 Codex CLI；错误值会导致 agent spawn 失败，属于高风险运行边界。 / Executable path or command name for Codex agent ${agent.name}. It controls how the daemon starts Codex CLI. Wrong values cause agent spawn failures and are a high-risk runtime boundary.`,
         category: `Agent ${agent.name}`,
@@ -345,7 +363,7 @@ function agentFields(agent: AgentConfig, index: number): DaemonConfigEditableFie
       }),
       field({
         key: `${base}.codex.model`,
-        label: `${agent.name} model`,
+        label: bilingualLabel(`${agent.name} 模型`, `${agent.name} model`),
         description:
           `Codex agent ${agent.name} 的可选 model override。留空时使用 Codex CLI 默认模型；填写后会影响质量、速度和成本，需确认当前 Codex CLI 支持该模型名。 / Optional model override for Codex agent ${agent.name}. Empty uses the Codex CLI default. Setting it affects quality, latency, and cost, and the model name must be supported by the current Codex CLI.`,
         category: `Agent ${agent.name}`,
@@ -355,7 +373,7 @@ function agentFields(agent: AgentConfig, index: number): DaemonConfigEditableFie
       }),
       field({
         key: `${base}.codex.sandbox`,
-        label: `${agent.name} sandbox`,
+        label: bilingualLabel(`${agent.name} 沙箱`, `${agent.name} sandbox`),
         description:
           `Codex agent ${agent.name} 的 filesystem sandbox mode。read-only 最安全但不能写文件；workspace-write 允许写工作区；danger-full-access 解除文件系统限制，风险最高。 / Filesystem sandbox mode for Codex agent ${agent.name}. read-only is safest but cannot write files; workspace-write allows workspace edits; danger-full-access removes filesystem restrictions and is highest risk.`,
         category: `Agent ${agent.name}`,
@@ -366,7 +384,7 @@ function agentFields(agent: AgentConfig, index: number): DaemonConfigEditableFie
       }),
       field({
         key: `${base}.codex.addDirs`,
-        label: `${agent.name} addDirs`,
+        label: bilingualLabel(`${agent.name} 额外目录`, `${agent.name} addDirs`),
         description:
           `额外暴露给 Codex agent ${agent.name} 的 directories。用于让 agent 读取或操作工作区外的路径；每增加一个目录都会扩大文件访问边界，需避免包含 secrets 或无关数据。 / Additional directories exposed to Codex agent ${agent.name}. It lets the agent read or operate outside the main workspace. Each directory broadens file access and should avoid secrets or unrelated data.`,
         category: `Agent ${agent.name}`,
@@ -376,7 +394,10 @@ function agentFields(agent: AgentConfig, index: number): DaemonConfigEditableFie
       }),
       field({
         key: `${base}.codex.loadUserConfig`,
-        label: `${agent.name} load user config`,
+        label: bilingualLabel(
+          `${agent.name} 加载用户配置`,
+          `${agent.name} load user config`,
+        ),
         description:
           `控制 Codex agent ${agent.name} 是否加载用户级 Codex config。开启后会继承用户级模型、工具或行为偏好；关闭后运行更可预测。 / Controls whether Codex agent ${agent.name} loads the user's Codex config. Enabling it inherits user-level model, tool, or behavior preferences; disabling it makes runtime behavior more predictable.`,
         category: `Agent ${agent.name}`,
@@ -386,7 +407,7 @@ function agentFields(agent: AgentConfig, index: number): DaemonConfigEditableFie
       }),
       field({
         key: `${base}.codex.loadRules`,
-        label: `${agent.name} load rules`,
+        label: bilingualLabel(`${agent.name} 加载规则`, `${agent.name} load rules`),
         description:
           `控制 Codex agent ${agent.name} 是否加载 project/user rules。开启后 agent 会遵循额外规则文件；关闭后可减少隐式行为差异，但可能丢失项目约定。 / Controls whether Codex agent ${agent.name} loads project or user rules. Enabling it applies additional rule files; disabling it reduces implicit behavior differences but can drop project conventions.`,
         category: `Agent ${agent.name}`,
@@ -400,7 +421,7 @@ function agentFields(agent: AgentConfig, index: number): DaemonConfigEditableFie
     ...common,
     field({
       key: `${base}.claudeCode.workingDir`,
-      label: `${agent.name} workingDir`,
+      label: bilingualLabel(`${agent.name} 工作目录`, `${agent.name} workingDir`),
       description:
         `Claude Code agent ${agent.name} 的默认 working directory。作为会话未显式设置 workingDir 时的项目根目录；路径错误会导致命令在错误目录运行或无法启动。 / Default working directory for Claude Code agent ${agent.name}. It is the project root when a session does not override workingDir. Wrong paths can run commands in the wrong directory or prevent startup.`,
       category: `Agent ${agent.name}`,
@@ -410,7 +431,7 @@ function agentFields(agent: AgentConfig, index: number): DaemonConfigEditableFie
     }),
     field({
       key: `${base}.claudeCode.bin`,
-      label: `${agent.name} Claude bin`,
+      label: bilingualLabel(`${agent.name} Claude 可执行文件`, `${agent.name} Claude bin`),
       description:
         `Claude Code agent ${agent.name} 使用的 executable path 或 command name。修改会影响 daemon 如何启动 Claude Code CLI；错误值会导致 agent spawn 失败，属于高风险运行边界。 / Executable path or command name for Claude Code agent ${agent.name}. It controls how the daemon starts Claude Code CLI. Wrong values cause agent spawn failures and are a high-risk runtime boundary.`,
       category: `Agent ${agent.name}`,
@@ -420,7 +441,7 @@ function agentFields(agent: AgentConfig, index: number): DaemonConfigEditableFie
     }),
     field({
       key: `${base}.claudeCode.allowedTools`,
-      label: `${agent.name} allowed tools`,
+      label: bilingualLabel(`${agent.name} 允许工具`, `${agent.name} allowed tools`),
       description:
         `Claude Code agent ${agent.name} 的 allowed tool list。该列表限制或放开 Claude Code 可调用的工具；配置过宽会扩大操作能力，配置过窄会导致任务无法完成。 / Allowed tool list for Claude Code agent ${agent.name}. It constrains or enables tools Claude Code may call. Too broad expands operational capability; too narrow can prevent tasks from completing.`,
       category: `Agent ${agent.name}`,
@@ -430,7 +451,10 @@ function agentFields(agent: AgentConfig, index: number): DaemonConfigEditableFie
     }),
     field({
       key: `${base}.claudeCode.permissionLevel`,
-      label: `${agent.name} permission level`,
+      label: bilingualLabel(
+        `${agent.name} 权限级别`,
+        `${agent.name} permission level`,
+      ),
       description:
         `传给 Claude Code agent ${agent.name} 的 permission level。非 default 值可能减少确认提示或放宽工具执行边界；bypassPermissions 风险最高，修改前需确认运行环境隔离。 / Permission level passed to Claude Code agent ${agent.name}. Non-default values can reduce prompts or loosen tool execution boundaries; bypassPermissions is highest risk and requires runtime isolation review.`,
       category: `Agent ${agent.name}`,
@@ -452,7 +476,7 @@ function bindingFields(
   return [
     field({
       key: `${base}.name`,
-      label: `${binding.name} name`,
+      label: bilingualLabel(`${binding.name} 名称`, `${binding.name} name`),
       description:
         `路由 ${binding.name} 的 stable binding name。用于日志、诊断和用户可见路由标识；重命名会影响排查和配置引用，但不直接改变匹配规则。 / Stable binding name for route ${binding.name}. It is used in logs, diagnostics, and user-visible route labels. Renaming affects troubleshooting and references but does not directly change match rules.`,
       category,
@@ -462,7 +486,7 @@ function bindingFields(
     }),
     field({
       key: `${base}.platformName`,
-      label: `${binding.name} platform`,
+      label: bilingualLabel(`${binding.name} 平台`, `${binding.name} platform`),
       description:
         `binding ${binding.name} 选择的 platform instance。修改会把该路由指向另一个 platform bot；如果运行中 platform 或 agent owner 集合变化，保存可能成功但需要重启才能安全生效。 / Platform instance selected by binding ${binding.name}. Changing it routes this binding to another platform bot. If running platform or agent-owner sets change, saving may succeed but safe activation can require restart.`,
       category,
@@ -473,7 +497,7 @@ function bindingFields(
     }),
     field({
       key: `${base}.agentName`,
-      label: `${binding.name} agent`,
+      label: bilingualLabel(`${binding.name} agent`, `${binding.name} agent`),
       description:
         `binding ${binding.name} 选择的 agent。修改会让匹配到该 binding 的消息进入另一个 agent；如果 agent owner 集合变化，slash command registration 与路由可能需要重启保持一致。 / Agent selected by binding ${binding.name}. Changing it sends matching messages to another agent. If the agent-owner set changes, slash command registration and routing may require restart to stay consistent.`,
       category,
@@ -484,7 +508,7 @@ function bindingFields(
     }),
     field({
       key: `${base}.match.discord.channelIds`,
-      label: `${binding.name} channel IDs`,
+      label: bilingualLabel(`${binding.name} 频道 ID`, `${binding.name} channel IDs`),
       description:
         `binding ${binding.name} 匹配的 Discord channel/thread IDs。只有这些 channel 或 thread 的事件会走该路由；修改后可热重载，但必须避免多个 binding 同时匹配同一事件。 / Discord channel or thread IDs matched by binding ${binding.name}. Only events from these channels or threads use this route. This can hot-reload, but avoid multiple bindings matching the same event.`,
       category,
@@ -501,7 +525,7 @@ function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableFiel
   return [
     field({
       key: 'daemon.commandRegistry.registration.enabled',
-      label: 'Command registration enabled',
+      label: bilingualLabel('命令注册已启用', 'Command registration enabled'),
       description: descriptionForPath('daemon.commandRegistry.registration.enabled'),
       category,
       path: 'daemon.commandRegistry.registration.enabled',
@@ -510,7 +534,7 @@ function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableFiel
     }),
     field({
       key: 'daemon.commandRegistry.registration.applyTimeoutMs',
-      label: 'Command registration timeout',
+      label: bilingualLabel('命令注册超时', 'Command registration timeout'),
       description: descriptionForPath(
         'daemon.commandRegistry.registration.applyTimeoutMs',
       ),
@@ -521,7 +545,10 @@ function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableFiel
     }),
     field({
       key: 'daemon.commandRegistry.registration.retry.maxAttempts',
-      label: 'Command registration retry attempts',
+      label: bilingualLabel(
+        '命令注册重试次数',
+        'Command registration retry attempts',
+      ),
       description: descriptionForPath(
         'daemon.commandRegistry.registration.retry.maxAttempts',
       ),
@@ -532,7 +559,10 @@ function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableFiel
     }),
     field({
       key: 'daemon.commandRegistry.registration.retry.backoffMs',
-      label: 'Command registration retry backoff',
+      label: bilingualLabel(
+        '命令注册重试间隔',
+        'Command registration retry backoff',
+      ),
       description: descriptionForPath(
         'daemon.commandRegistry.registration.retry.backoffMs',
       ),
@@ -543,7 +573,7 @@ function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableFiel
     }),
     field({
       key: 'daemon.commandRegistry.aliases.singleAgent.enabled',
-      label: 'Single-agent bare aliases',
+      label: bilingualLabel('单 agent 裸别名', 'Single-agent bare aliases'),
       description: descriptionForPath(
         'daemon.commandRegistry.aliases.singleAgent.enabled',
       ),
@@ -554,7 +584,7 @@ function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableFiel
     }),
     field({
       key: 'daemon.commandRegistry.aliases.legacy.replyMode',
-      label: 'Legacy reply-mode alias',
+      label: bilingualLabel('旧 reply-mode 别名', 'Legacy reply-mode alias'),
       description: descriptionForPath('daemon.commandRegistry.aliases.legacy.replyMode'),
       category,
       path: 'daemon.commandRegistry.aliases.legacy.replyMode',
@@ -563,7 +593,7 @@ function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableFiel
     }),
     field({
       key: 'daemon.commandRegistry.textPrefixes.newSession',
-      label: 'Text prefix /new',
+      label: bilingualLabel('文本前缀 /new', 'Text prefix /new'),
       description: descriptionForPath('daemon.commandRegistry.textPrefixes.newSession'),
       category,
       path: 'daemon.commandRegistry.textPrefixes.newSession',
@@ -581,7 +611,7 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
   return [
     field({
       key: 'daemon.trajectory.enabled',
-      label: 'Trajectory enabled',
+      label: bilingualLabel('Trajectory 已启用', 'Trajectory enabled'),
       description: descriptionForPath('daemon.trajectory.enabled'),
       category,
       path: 'daemon.trajectory.enabled',
@@ -590,7 +620,7 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.externalImport.enabled',
-      label: 'External import enabled',
+      label: bilingualLabel('外部导入已启用', 'External import enabled'),
       description: descriptionForPath('daemon.trajectory.externalImport.enabled'),
       category,
       path: 'daemon.trajectory.externalImport.enabled',
@@ -599,7 +629,7 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.externalImport.sources',
-      label: 'External import sources',
+      label: bilingualLabel('外部导入来源', 'External import sources'),
       description: descriptionForPath('daemon.trajectory.externalImport.sources'),
       category,
       path: 'daemon.trajectory.externalImport.sources',
@@ -608,7 +638,7 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.externalImport.metadataOnlyDiscovery',
-      label: 'Metadata-only discovery',
+      label: bilingualLabel('仅发现 metadata', 'Metadata-only discovery'),
       description: descriptionForPath(
         'daemon.trajectory.externalImport.metadataOnlyDiscovery',
       ),
@@ -619,7 +649,7 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.externalImport.importContent',
-      label: 'External import content',
+      label: bilingualLabel('外部导入正文', 'External import content'),
       description: descriptionForPath('daemon.trajectory.externalImport.importContent'),
       category,
       path: 'daemon.trajectory.externalImport.importContent',
@@ -628,7 +658,10 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.externalImport.maxFileBytes',
-      label: 'External import max file bytes',
+      label: bilingualLabel(
+        '外部导入单文件字节上限',
+        'External import max file bytes',
+      ),
       description: descriptionForPath('daemon.trajectory.externalImport.maxFileBytes'),
       category,
       path: 'daemon.trajectory.externalImport.maxFileBytes',
@@ -637,7 +670,10 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.externalImport.maxRecordsPerSession',
-      label: 'External import max records',
+      label: bilingualLabel(
+        '外部导入记录上限',
+        'External import max records',
+      ),
       description: descriptionForPath(
         'daemon.trajectory.externalImport.maxRecordsPerSession',
       ),
@@ -648,7 +684,10 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.externalImport.maxAgeDays',
-      label: 'External import max age days',
+      label: bilingualLabel(
+        '外部导入最大历史天数',
+        'External import max age days',
+      ),
       description: descriptionForPath('daemon.trajectory.externalImport.maxAgeDays'),
       category,
       path: 'daemon.trajectory.externalImport.maxAgeDays',
@@ -657,7 +696,7 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.providerCapture.enabled',
-      label: 'Provider capture enabled',
+      label: bilingualLabel('Provider capture 已启用', 'Provider capture enabled'),
       description: descriptionForPath('daemon.trajectory.providerCapture.enabled'),
       category,
       path: 'daemon.trajectory.providerCapture.enabled',
@@ -666,7 +705,7 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.providerCapture.mode',
-      label: 'Provider capture mode',
+      label: bilingualLabel('Provider capture 模式', 'Provider capture mode'),
       description: descriptionForPath('daemon.trajectory.providerCapture.mode'),
       category,
       path: 'daemon.trajectory.providerCapture.mode',
@@ -676,7 +715,10 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.providerCapture.bindHost',
-      label: 'Provider capture bind host',
+      label: bilingualLabel(
+        'Provider capture 绑定地址',
+        'Provider capture bind host',
+      ),
       description: descriptionForPath('daemon.trajectory.providerCapture.bindHost'),
       category,
       path: 'daemon.trajectory.providerCapture.bindHost',
@@ -685,7 +727,7 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.providerCapture.port',
-      label: 'Provider capture port',
+      label: bilingualLabel('Provider capture 端口', 'Provider capture port'),
       description: descriptionForPath('daemon.trajectory.providerCapture.port'),
       category,
       path: 'daemon.trajectory.providerCapture.port',
@@ -694,7 +736,10 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.providerCapture.storeRawStreams',
-      label: 'Provider capture raw streams',
+      label: bilingualLabel(
+        'Provider capture 原始流',
+        'Provider capture raw streams',
+      ),
       description: descriptionForPath(
         'daemon.trajectory.providerCapture.storeRawStreams',
       ),
@@ -705,7 +750,10 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.providerCapture.maxRequestBytes',
-      label: 'Provider capture max request bytes',
+      label: bilingualLabel(
+        'Provider capture 请求字节上限',
+        'Provider capture max request bytes',
+      ),
       description: descriptionForPath(
         'daemon.trajectory.providerCapture.maxRequestBytes',
       ),
@@ -716,7 +764,10 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.providerCapture.maxResponseBytes',
-      label: 'Provider capture max response bytes',
+      label: bilingualLabel(
+        'Provider capture 响应字节上限',
+        'Provider capture max response bytes',
+      ),
       description: descriptionForPath(
         'daemon.trajectory.providerCapture.maxResponseBytes',
       ),
@@ -727,7 +778,10 @@ function trajectoryFields(config: AgentNexusConfig): DaemonConfigEditableField[]
     }),
     field({
       key: 'daemon.trajectory.providerCapture.retentionDays',
-      label: 'Provider capture retention days',
+      label: bilingualLabel(
+        'Provider capture 保留天数',
+        'Provider capture retention days',
+      ),
       description: descriptionForPath('daemon.trajectory.providerCapture.retentionDays'),
       category,
       path: 'daemon.trajectory.providerCapture.retentionDays',
@@ -741,7 +795,7 @@ function configEditableFields(config: AgentNexusConfig): DaemonConfigEditableFie
   return [
     field({
       key: 'ui.toolMessages',
-      label: 'UI tool messages',
+      label: bilingualLabel('工具消息显示', 'UI tool messages'),
       description: descriptionForPath('ui.toolMessages'),
       category: 'Hot behavior',
       path: 'ui.toolMessages',
@@ -758,7 +812,7 @@ function configEditableFields(config: AgentNexusConfig): DaemonConfigEditableFie
     ...config.agents.flatMap((agent, index) => agentFields(agent, index)),
     field({
       key: 'log.level',
-      label: 'Log level',
+      label: bilingualLabel('日志级别', 'Log level'),
       description: descriptionForPath('log.level'),
       category: 'Process',
       path: 'log.level',

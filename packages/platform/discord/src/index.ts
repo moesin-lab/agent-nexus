@@ -564,11 +564,11 @@ function immediateModalForComponent(
   if (interaction.customId === 'nexus:settings:working-dir') {
     return {
       modalId: 'nexus:settings:working-dir-modal',
-      title: '设置工作目录 / Set dir',
+      title: '设置工作目录',
       inputs: [
         {
           componentId: 'path',
-          label: '绝对路径 / Absolute path',
+          label: '绝对路径',
           kind: 'short_text',
           required: true,
         },
@@ -578,18 +578,18 @@ function immediateModalForComponent(
   if (interaction.customId === 'nexus:settings:config-raw') {
     return {
       modalId: 'nexus:settings:config-modal',
-      title: '编辑 Nexus 配置 / Edit config',
+      title: '编辑 Nexus 配置',
       inputs: [
         {
           componentId: 'path',
-          label: '配置路径 / Config path',
+          label: '配置路径',
           kind: 'short_text',
           required: true,
           placeholder: 'agents[0].codex.workingDir',
         },
         {
           componentId: 'value',
-          label: 'JSON 值 / JSON value',
+          label: 'JSON 值',
           kind: 'long_text',
           required: true,
           placeholder: '"/workspace/project"',
@@ -601,14 +601,14 @@ function immediateModalForComponent(
     const fieldKey = interaction.customId.slice('nexus:settings:config-edit:'.length);
     return {
       modalId: `nexus:settings:config-edit-modal:${fieldKey}`,
-      title: '编辑配置值 / Edit value',
+      title: '编辑配置值',
       inputs: [
         {
           componentId: 'value',
-          label: '新值 / New value',
+          label: '新值',
           kind: 'long_text',
           required: false,
-          placeholder: 'compact 或逐行输入 / compact or one per line',
+          placeholder: 'compact 或逐行输入',
         },
       ],
     };
@@ -904,7 +904,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
         items: [
           {
             key: 'discord.replyMode',
-            label: '回复模式 / Reply mode',
+            label: '回复模式\nReply mode',
             owner: 'platform',
             value: replyMode,
             source: 'discord state',
@@ -919,34 +919,34 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
       if (input.action !== 'discord.replyMode') {
         return {
           status: 'unsupported' as const,
-          message: 'Discord 不支持这个设置 / This setting is not supported by Discord.',
+          message: 'Discord 不支持这个设置\nThis setting is not supported by Discord.',
         };
       }
       if (!allowedUserIds.includes(input.userId)) {
         logger.info({ userId: input.userId }, 'discord_settings_unauthorized');
         return {
           status: 'rejected' as const,
-          message: `没有权限 / Permission denied. Your User ID is \`${input.userId}\`; ask the bot operator to add it.`,
+          message: `没有权限。你的 User ID 是 \`${input.userId}\`；请让 bot operator 加入 allowlist。\nPermission denied. Your User ID is \`${input.userId}\`; ask the bot operator to add it.`,
         };
       }
       if (input.value !== 'mention' && input.value !== 'all') {
         return {
           status: 'rejected' as const,
-          message: `模式无效 / invalid mode: \`${input.value ?? ''}\` (must be \`mention\` or \`all\`)`,
+          message: `模式无效: \`${input.value ?? ''}\`\nInvalid mode: \`${input.value ?? ''}\` (must be \`mention\` or \`all\`)`,
         };
       }
       const from = replyMode;
       const to = input.value;
       if (from === to) {
         logger.info({ mode: to, userId: input.userId }, 'discord_reply_mode_noop');
-        return { status: 'handled' as const, message: `已经是 / already in \`${to}\`` };
+        return { status: 'handled' as const, message: `已经是 \`${to}\`\nalready in \`${to}\`` };
       }
       await writeReplyModeState(statePath, to);
       replyMode = to;
       logger.info({ from, to, userId: input.userId }, 'discord_reply_mode_changed');
       return {
         status: 'handled' as const,
-        message: `回复模式 / reply mode: \`${from}\` -> \`${to}\``,
+        message: `回复模式: \`${from}\` -> \`${to}\`\nreply mode: \`${from}\` -> \`${to}\``,
       };
     },
 

@@ -1698,7 +1698,7 @@ export class Engine {
             parsed.workingDir,
             new Date(),
           );
-          return `[下一会话 workingDir / next session workingDir: ${parsed.workingDir}]`;
+          return `下一会话 workingDir: ${parsed.workingDir}\nnext session workingDir: ${parsed.workingDir}`;
         }
         this.sessionStore.setChannelWorkingDir(
           {
@@ -1708,7 +1708,7 @@ export class Engine {
           },
           parsed.workingDir,
         );
-        return `[channel 工作目录 / channel workingDir: ${parsed.workingDir}]`;
+        return `channel 工作目录: ${parsed.workingDir}\nchannel workingDir: ${parsed.workingDir}`;
       },
     };
   }
@@ -1766,7 +1766,7 @@ export class Engine {
         );
       });
     return this.commandResponse(
-      `[workingDir 更新已排队 / workingDir update queued: ${update.workingDir}]`,
+      `workingDir 更新已排队: ${update.workingDir}\nworkingDir update queued: ${update.workingDir}`,
       event.traceId,
     );
   }
@@ -1819,46 +1819,109 @@ export class Engine {
     const agent = items.find((item) => item.key === 'daemon.agent');
     const workingDir = items.find((item) => item.key === 'daemon.workingDir');
     const config = items.find((item) => item.key === 'daemon.config');
-    const lines = ['**Nexus 设置 / Nexus settings**'];
+    const lines = ['**Nexus 设置**', '**Nexus settings**'];
     if (prefix) {
-      lines.push('', `结果 / Result: ${prefix}`);
+      lines.push('', ...this.renderBilingualFieldLines('结果', 'Result', prefix));
     }
     lines.push(
       '',
-      '**当前状态 / Current state**',
-      `回复模式 / Reply mode: ${this.renderSettingsValue(replyMode)}`,
-      `Agent / Agent: ${this.renderSettingsValue(agent)}`,
-      `工作目录 / WorkingDir: ${this.renderSettingsValue(workingDir)}`,
-      `配置 / Config: ${this.renderSettingsValue(config)}`,
-      `可恢复会话 / Resumable sessions: \`${sessionCount}\``,
+      '**当前状态**',
+      '**Current state**',
+      ...this.renderSettingsItemLines('回复模式', 'Reply mode', replyMode),
+      ...this.renderSettingsItemLines('Agent', 'Agent', agent),
+      ...this.renderSettingsItemLines('工作目录', 'WorkingDir', workingDir),
+      ...this.renderSettingsItemLines('配置', 'Config', config),
+      `可恢复会话: \`${sessionCount}\``,
+      `Resumable sessions: \`${sessionCount}\``,
       '',
-      '**说明 / Notes**',
+      '**说明**',
+      '**Notes**',
       '下方控件只作用于当前 channel/thread；标记为 `in-memory` 的值会在 daemon 重启后重置。',
       'Controls below apply to this channel/thread. Values marked `in-memory` reset when the daemon restarts.',
     );
     return lines.join('\n');
   }
 
-  private renderSettingsValue(item: SettingsSnapshotItem | undefined): string {
-    if (!item) return '`unavailable`';
-    return `\`${item.value}\` · ${this.renderSettingsMeta(item.source)} · ${this.renderSettingsMeta(item.durability)}`;
+  private renderSettingsItemLines(
+    labelCn: string,
+    labelEn: string,
+    item: SettingsSnapshotItem | undefined,
+  ): string[] {
+    if (!item) {
+      return [`${labelCn}: \`unavailable\``, `${labelEn}: \`unavailable\``];
+    }
+    const source = this.settingsMetaParts(item.source);
+    const durability = this.settingsMetaParts(item.durability);
+    return [
+      `${labelCn}: \`${item.value}\` · ${source.cn} · ${durability.cn}`,
+      `${labelEn}: \`${item.value}\` · ${source.en} · ${durability.en}`,
+    ];
   }
 
-  private renderSettingsMeta(value: string): string {
+  private settingsMetaParts(value: string): { cn: string; en: string } {
     const bilingual: Record<string, string> = {
-      'discord state': 'Discord 状态 / discord state',
-      'channel override': 'channel 覆盖 / channel override',
-      'binding route': 'binding 路由 / binding route',
-      'config file': '配置文件 / config file',
-      'next session override': '下一会话覆盖 / next session override',
-      'channel default': 'channel 默认值 / channel default',
-      'parent channel default': '父 channel 默认值 / parent channel default',
-      'agent default': 'agent 默认值 / agent default',
-      durable: '持久 / durable',
-      'in-memory': '内存态 / in-memory',
-      derived: '派生 / derived',
+      'discord state': 'Discord 状态\ndiscord state',
+      'channel override': 'channel 覆盖\nchannel override',
+      'binding route': 'binding 路由\nbinding route',
+      'config file': '配置文件\nconfig file',
+      'next session override': '下一会话覆盖\nnext session override',
+      'channel default': 'channel 默认值\nchannel default',
+      'parent channel default': '父 channel 默认值\nparent channel default',
+      'agent default': 'agent 默认值\nagent default',
+      durable: '持久\ndurable',
+      'in-memory': '内存态\nin-memory',
+      derived: '派生\nderived',
     };
-    return bilingual[value] ?? value;
+    const parts = this.bilingualParts(bilingual[value] ?? value);
+    return { cn: parts.cn, en: parts.en ?? parts.cn };
+  }
+
+  private bilingualParts(text: string): { cn: string; en?: string } {
+    const normalized =
+      text.startsWith('[') && text.endsWith(']') ? text.slice(1, -1) : text;
+    const newlineIndex = normalized.indexOf('\n');
+    if (newlineIndex >= 0) {
+      return {
+        cn: normalized.slice(0, newlineIndex).trim(),
+        en: normalized.slice(newlineIndex + 1).trim(),
+      };
+    }
+    const slashIndex = normalized.indexOf(' / ');
+    if (slashIndex >= 0) {
+      return {
+        cn: normalized.slice(0, slashIndex).trim(),
+        en: normalized.slice(slashIndex + 3).trim(),
+      };
+    }
+    return { cn: normalized };
+  }
+
+  private componentLabel(text: string): string {
+    return this.bilingualParts(text).cn.slice(0, 100);
+  }
+
+  private renderBilingualFieldLines(
+    labelCn: string,
+    labelEn: string,
+    value: string,
+  ): string[] {
+    const parts = this.bilingualParts(value);
+    if (!parts.en) return [`${labelCn}: ${parts.cn}`];
+    return [`${labelCn}: ${parts.cn}`, `${labelEn}: ${parts.en}`];
+  }
+
+  private renderBilingualValueLines(
+    labelCn: string,
+    labelEn: string,
+    value: string,
+  ): string[] {
+    return [`${labelCn}: ${value}`, `${labelEn}: ${value}`];
+  }
+
+  private renderSubtextLines(text: string): string[] {
+    const parts = this.bilingualParts(text);
+    return [parts.cn, parts.en].filter((line): line is string => Boolean(line))
+      .map((line) => `-# ${line}`);
   }
 
   private daemonSettingsSnapshotItems(
@@ -1871,7 +1934,7 @@ export class Engine {
     );
     const bindingItem: SettingsSnapshotItem = {
       key: 'daemon.agent',
-      label: 'Agent / Agent',
+      label: 'Agent\nAgent',
       owner: 'daemon',
       value: agentOverride ?? route?.agentName ?? '[unavailable]',
       source: agentOverride ? 'channel override' : 'binding route',
@@ -1886,7 +1949,7 @@ export class Engine {
         ...items,
         {
           key: 'daemon.config',
-          label: '配置 / Config',
+          label: '配置\nConfig',
           owner: 'daemon',
           value: 'config.json',
           source: 'config file',
@@ -1906,7 +1969,7 @@ export class Engine {
         bindingItem,
         {
           key: 'daemon.workingDir',
-          label: '工作目录 / WorkingDir',
+          label: '工作目录\nWorkingDir',
           owner: 'daemon',
           value: nextWorkingDir,
           source: 'next session override',
@@ -1925,7 +1988,7 @@ export class Engine {
         bindingItem,
         {
           key: 'daemon.workingDir',
-          label: '工作目录 / WorkingDir',
+          label: '工作目录\nWorkingDir',
           owner: 'daemon',
           value: currentChannelWorkingDir,
           source: 'channel default',
@@ -1951,7 +2014,7 @@ export class Engine {
           bindingItem,
           {
             key: 'daemon.workingDir',
-            label: '工作目录 / WorkingDir',
+            label: '工作目录\nWorkingDir',
             owner: 'daemon',
             value: parentWorkingDir,
             source: 'parent channel default',
@@ -1966,7 +2029,7 @@ export class Engine {
       bindingItem,
       {
         key: 'daemon.workingDir',
-        label: '工作目录 / WorkingDir',
+        label: '工作目录\nWorkingDir',
         owner: 'daemon',
         value: agentSlot?.defaultSessionConfig.workingDir ?? '[unavailable]',
         source: 'agent default',
@@ -1986,20 +2049,20 @@ export class Engine {
       components.push({
         type: 'select',
         componentId: SETTINGS_REPLY_MODE_COMPONENT_ID,
-        placeholder: '切换回复模式 / Change reply mode',
+        placeholder: '切换回复模式',
         minValues: 1,
         maxValues: 1,
         options: [
           {
             label: 'mention',
             value: 'mention',
-            description: '仅 @ 或 slash 时回复 / Mention or slash only',
+            description: '仅 @ 或 slash 时回复',
             default: replyMode.value === 'mention',
           },
           {
             label: 'all',
             value: 'all',
-            description: '回复所有已授权消息 / Reply to all allowed messages',
+            description: '回复所有已授权消息',
             default: replyMode.value === 'all',
           },
         ],
@@ -2010,7 +2073,7 @@ export class Engine {
       components.push({
         type: 'select',
         componentId: SETTINGS_AGENT_COMPONENT_ID,
-        placeholder: '切换 agent binding / Switch agent binding',
+        placeholder: '切换 agent binding',
         minValues: 1,
         maxValues: 1,
         options: [...this.agents.values()].map((agent) => ({
@@ -2025,7 +2088,7 @@ export class Engine {
       components.push({
         type: 'select',
         componentId: SETTINGS_RESUME_COMPONENT_ID,
-        placeholder: '恢复会话 / Resume session',
+        placeholder: '恢复会话',
         minValues: 1,
         maxValues: 1,
         options: sessions.map((session) => ({
@@ -2038,14 +2101,14 @@ export class Engine {
     components.push({
       type: 'button',
       componentId: SETTINGS_WORKING_DIR_COMPONENT_ID,
-      label: '设置 workingDir / Set workingDir',
+      label: '设置 workingDir',
       style: 'secondary',
     });
     if (this.configEditor) {
       components.push({
         type: 'button',
         componentId: SETTINGS_CONFIG_COMPONENT_ID,
-        label: '配置文件 / Config file',
+        label: '配置文件',
         style: 'secondary',
       });
     }
@@ -2056,7 +2119,7 @@ export class Engine {
       components.push({
         type: 'button',
         componentId: SETTINGS_NEW_THREAD_COMPONENT_ID,
-        label: '新建 thread / Create thread',
+        label: '新建 thread',
         style: 'primary',
       });
     }
@@ -2118,17 +2181,17 @@ export class Engine {
 
   private renderConfigValue(value: unknown): string {
     if (typeof value === 'string') return value;
-    if (value === undefined) return '[缺失 / missing]';
+    if (value === undefined) return '缺失 (missing)';
     return JSON.stringify(value);
   }
 
   private renderConfigEffect(effect: DaemonConfigEditEffect): string {
-    if (effect === 'hot') return '立即生效 / applies immediately';
+    if (effect === 'hot') return '立即生效\napplies immediately';
     if (effect === 'conditional-hot') {
-      return 'reload 后按运行态约束生效 / applies after reload if runtime constraints allow it';
+      return 'reload 后按运行态约束生效\napplies after reload if runtime constraints allow it';
     }
-    if (effect === 'restart') return '需要重启 / requires restart';
-    return '高级 / advanced';
+    if (effect === 'restart') return '需要重启\nrequires restart';
+    return '高级\nadvanced';
   }
 
   private configPageIndex(pageIndex: number, pageCount: number): number {
@@ -2164,30 +2227,43 @@ export class Engine {
     field: DaemonConfigEditableField,
     pageIndex: number,
   ): { text: string; pageIndex: number; pageCount: number } {
+    const label = this.bilingualParts(field.label);
+    const effect = this.bilingualParts(this.renderConfigEffect(field.effect));
     const headerLines = [
-      '**设置项详情 / Setting detail**',
-      `设置项 / Setting: ${field.label}`,
-      `路径 / Path: ${field.path}`,
+      '**设置项详情**',
+      '**Setting detail**',
+      `设置项: ${label.cn}`,
+      ...(label.en ? [`Setting: ${label.en}`] : []),
+      `路径: ${field.path}`,
+      `Path: ${field.path}`,
     ];
     const bodyLines = [
-      `当前值 / Current: \`${this.renderConfigValue(field.value)}\``,
-      `生效方式 / Effect: ${this.renderConfigEffect(field.effect)}`,
+      ...this.renderBilingualValueLines(
+        '当前值',
+        'Current',
+        `\`${this.renderConfigValue(field.value)}\``,
+      ),
+      `生效方式: ${effect.cn}`,
+      `Effect: ${effect.en ?? effect.cn}`,
     ];
     if (field.description) {
-      bodyLines.push('说明 / Description:', `-# ${field.description}`);
+      bodyLines.push('说明:', 'Description:', ...this.renderSubtextLines(field.description));
     }
     if (field.options && field.options.length > 0) {
       bodyLines.push(
-        `可选值 / Allowed: ${field.options.map((option) => `\`${option}\``).join(', ')}`,
+        `可选值: ${field.options.map((option) => `\`${option}\``).join(', ')}`,
+        `Allowed: ${field.options.map((option) => `\`${option}\``).join(', ')}`,
       );
     }
     if (field.risk === 'high') {
-      bodyLines.push('风险 / Risk: 高 / high');
+      bodyLines.push('风险: 高', 'Risk: high');
     }
     const pageOverhead = [
       ...headerLines,
-      `第 1 / 1 页 / Page 1 / 1`,
-      '使用上一页 / 下一页查看完整详情。 / Use Previous / Next to view the complete detail.',
+      '第 1 页，共 1 页',
+      'Page 1 of 1',
+      '使用上一页和下一页查看完整详情。',
+      'Use Previous and Next to view the complete detail.',
     ].join('\n').length;
     const chunks = this.splitConfigText(
       bodyLines.join('\n'),
@@ -2197,13 +2273,15 @@ export class Engine {
     const pageLines = [...headerLines];
     if (chunks.length > 1) {
       pageLines.push(
-        `第 ${normalizedPageIndex + 1} / ${chunks.length} 页 / Page ${normalizedPageIndex + 1} / ${chunks.length}`,
+        `第 ${normalizedPageIndex + 1} 页，共 ${chunks.length} 页`,
+        `Page ${normalizedPageIndex + 1} of ${chunks.length}`,
       );
     }
     pageLines.push(chunks[normalizedPageIndex]!);
     if (chunks.length > 1) {
       pageLines.push(
-        '使用上一页 / 下一页查看完整详情。 / Use Previous / Next to view the complete detail.',
+        '使用上一页和下一页查看完整详情。',
+        'Use Previous and Next to view the complete detail.',
       );
     }
     return {
@@ -2217,15 +2295,19 @@ export class Engine {
     field: DaemonConfigEditableField,
     index: number,
   ): string {
-    const risk = field.risk === 'high' ? ' · 高风险 / high risk' : '';
+    const label = this.bilingualParts(field.label);
+    const effect = this.bilingualParts(this.renderConfigEffect(field.effect));
     const lines = [
-      `${index + 1}. **${field.label}**`,
-      `当前 / Current: \`${this.renderConfigValue(field.value)}\``,
-      `生效 / Effect: ${this.renderConfigEffect(field.effect)}${risk}`,
+      `${index + 1}. **${label.cn}**`,
+      ...(label.en ? [label.en] : []),
+      `当前: \`${this.renderConfigValue(field.value)}\``,
+      `Current: \`${this.renderConfigValue(field.value)}\``,
+      `生效: ${effect.cn}${field.risk === 'high' ? ' · 高风险' : ''}`,
+      `Effect: ${effect.en ?? effect.cn}${field.risk === 'high' ? ' · high risk' : ''}`,
       `-# Path: ${field.path}`,
     ];
     if (field.description) {
-      lines.push(`-# 说明 / Description: ${field.description}`);
+      lines.push('说明:', 'Description:', ...this.renderSubtextLines(field.description));
     }
     return lines.join('\n');
   }
@@ -2242,14 +2324,19 @@ export class Engine {
     );
     const rawOnlyFieldCount = fields.length - menuFieldCount;
     const rawOnlyLine = rawOnlyFieldCount > 0
-      ? `字段下拉最多显示前 ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT} 个；第 ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT + 1} 个起请用高级路径编辑。 / The setting menu shows the first ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT} fields; use Raw path for field ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT + 1} and later.`
+      ? [
+          `字段下拉最多显示前 ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT} 个；第 ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT + 1} 个起请用高级路径编辑。`,
+          `The setting menu shows the first ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT} fields; use Raw path for field ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT + 1} and later.`,
+        ].join('\n')
       : undefined;
     const listOverhead = [
       '',
-      '**可修改设置 / Available settings**',
-      `第 1 / ${fields.length} 页 · 显示 1-${fields.length} / ${fields.length} 个设置项`,
-      `Page 1 / ${fields.length} · showing settings 1-${fields.length} of ${fields.length}`,
-      '使用上一页 / 下一页查看其余完整说明。 / Use Previous / Next to view the remaining full descriptions.',
+      '**可修改设置**',
+      '**Available settings**',
+      `第 1 页，共 ${fields.length} 页 · 显示第 1-${fields.length} 个，共 ${fields.length} 个设置项`,
+      `Page 1 of ${fields.length} · showing settings 1-${fields.length} of ${fields.length}`,
+      '使用上一页和下一页查看其余完整说明。',
+      'Use Previous and Next to view the remaining full descriptions.',
       rawOnlyLine,
     ].filter((line): line is string => line !== undefined).join('\n').length;
     const contentBudget = Math.max(1, textBudget - listOverhead);
@@ -2286,14 +2373,16 @@ export class Engine {
     const page = pages[normalizedPageIndex]!;
     const lines = [
       '',
-      '**可修改设置 / Available settings**',
-      `第 ${normalizedPageIndex + 1} / ${pageCount} 页 · 显示 ${page.start + 1}-${page.end} / ${fields.length} 个设置项`,
-      `Page ${normalizedPageIndex + 1} / ${pageCount} · showing settings ${page.start + 1}-${page.end} of ${fields.length}`,
+      '**可修改设置**',
+      '**Available settings**',
+      `第 ${normalizedPageIndex + 1} 页，共 ${pageCount} 页 · 显示第 ${page.start + 1}-${page.end} 个，共 ${fields.length} 个设置项`,
+      `Page ${normalizedPageIndex + 1} of ${pageCount} · showing settings ${page.start + 1}-${page.end} of ${fields.length}`,
       ...page.entries,
     ];
     if (pageCount > 1) {
       lines.push(
-        '使用上一页 / 下一页查看其余完整说明。 / Use Previous / Next to view the remaining full descriptions.',
+        '使用上一页和下一页查看其余完整说明。',
+        'Use Previous and Next to view the remaining full descriptions.',
       );
     }
     if (rawOnlyLine) {
@@ -2309,13 +2398,13 @@ export class Engine {
       .slice(0, 2)
       .map((field) =>
         truncateText(
-          field.label,
+          this.componentLabel(field.label),
           SETTINGS_CONFIG_CATEGORY_DESCRIPTION_LABEL_LIMIT,
         ),
       )
       .join(', ');
     const suffix = labels ? `: ${labels}` : '';
-    return `${fields.length} 个设置项 / settings${suffix}`.slice(0, 100);
+    return `${fields.length} 个设置项${suffix}`.slice(0, 100);
   }
 
   private async configPanelResponse(
@@ -2363,9 +2452,13 @@ export class Engine {
     const headerLines = selectedDetail
       ? []
       : [
-          '**配置文件 / Config file**',
+          '**配置文件**',
+          '**Config file**',
           activeCategory
-            ? `分组 / Category: \`${activeCategory}\``
+            ? `分组: \`${activeCategory}\``
+            : undefined,
+          activeCategory
+            ? `Category: \`${activeCategory}\``
             : undefined,
           '先看下方设置项列表，再用下拉选择要编辑的设置项。',
           'Review the settings below, then choose one from the menu to edit.',
@@ -2376,7 +2469,10 @@ export class Engine {
         ].filter((line): line is string => line !== undefined);
     const categoryLimitLine = !selectedDetail &&
       categories.length > SETTINGS_CONFIG_SELECT_OPTION_LIMIT
-      ? '仅显示前 25 个分组；其余请用高级 raw path。 / Showing first 25 categories; use Advanced raw path for the rest.'
+      ? [
+          '仅显示前 25 个分组；其余请用高级 raw path。',
+          'Showing first 25 categories; use Advanced raw path for the rest.',
+        ].join('\n')
       : undefined;
     if (!selectedDetail) {
       const fixedTextLength = [
@@ -2401,7 +2497,7 @@ export class Engine {
       components.push({
         type: 'select',
         componentId: SETTINGS_CONFIG_CATEGORY_COMPONENT_ID,
-        placeholder: '选择配置分组 / Choose category',
+        placeholder: '选择配置分组',
         minValues: 1,
         maxValues: 1,
         options: categories
@@ -2420,15 +2516,15 @@ export class Engine {
       components.push({
         type: 'select',
         componentId: SETTINGS_CONFIG_FIELD_COMPONENT_ID,
-        placeholder: '选择设置项 / Choose setting',
+        placeholder: '选择设置项',
         minValues: 1,
         maxValues: 1,
         options: categoryFields
           .slice(0, SETTINGS_CONFIG_SELECT_OPTION_LIMIT)
           .map((field) => ({
-            label: field.label.slice(0, 100),
+            label: this.componentLabel(field.label),
             value: field.key,
-            description: (field.description ?? field.path).slice(0, 100),
+            description: this.componentLabel(field.description ?? field.path),
             default: field.key === selected?.key,
           })),
       });
@@ -2441,14 +2537,14 @@ export class Engine {
         {
           type: 'button',
           componentId: `${SETTINGS_CONFIG_PAGE_COMPONENT_PREFIX}${activeCategoryIndex}:${Math.max(0, fieldList.pageIndex - 1)}`,
-          label: '上一页 / Previous',
+          label: '上一页',
           style: 'secondary',
           disabled: fieldList.pageIndex === 0,
         },
         {
           type: 'button',
           componentId: `${SETTINGS_CONFIG_PAGE_COMPONENT_PREFIX}${activeCategoryIndex}:${Math.min(fieldList.pageCount - 1, fieldList.pageIndex + 1)}`,
-          label: '下一页 / Next',
+          label: '下一页',
           style: 'secondary',
           disabled: fieldList.pageIndex === fieldList.pageCount - 1,
         },
@@ -2460,14 +2556,14 @@ export class Engine {
           {
             type: 'button',
             componentId: `${SETTINGS_CONFIG_FIELD_PAGE_COMPONENT_PREFIX}${selectedFieldIndex}:${Math.max(0, selectedDetail.pageIndex - 1)}`,
-            label: '上一页 / Previous',
+            label: '上一页',
             style: 'secondary',
             disabled: selectedDetail.pageIndex === 0,
           },
           {
             type: 'button',
             componentId: `${SETTINGS_CONFIG_FIELD_PAGE_COMPONENT_PREFIX}${selectedFieldIndex}:${Math.min(selectedDetail.pageCount - 1, selectedDetail.pageIndex + 1)}`,
-            label: '下一页 / Next',
+            label: '下一页',
             style: 'secondary',
             disabled: selectedDetail.pageIndex === selectedDetail.pageCount - 1,
           },
@@ -2476,14 +2572,14 @@ export class Engine {
       components.push({
         type: 'button',
         componentId: `${SETTINGS_CONFIG_EDIT_COMPONENT_PREFIX}${selected.key}`,
-        label: '编辑设置值 / Edit value',
+        label: '编辑设置值',
         style: selected.risk === 'high' ? 'danger' : 'primary',
       });
     }
     components.push({
       type: 'button',
       componentId: SETTINGS_CONFIG_RAW_COMPONENT_ID,
-      label: '高级路径 / Raw path',
+      label: '高级路径',
       style: 'secondary',
     });
     return this.commandResponseResult(
@@ -2555,7 +2651,7 @@ export class Engine {
       );
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      return this.commandResponse(`[配置编辑被拒绝 / config edit rejected]\n${reason}`, event.traceId);
+      return this.commandResponse(`配置编辑被拒绝\nconfig edit rejected\n${reason}`, event.traceId);
     }
     this.pruneExpiredConfigEdits();
     const previewId = randomUUID();
@@ -2564,17 +2660,25 @@ export class Engine {
       value,
       createdAtMs: Date.now(),
     });
+    const effect = this.bilingualParts(this.renderConfigEffect(preview.effect));
     const lines = [
-      `[配置预览 / config preview: ${preview.path}]`,
-      `旧值 / Old: \`${this.renderConfigValue(preview.oldValue)}\``,
-      `新值 / New: \`${this.renderConfigValue(preview.newValue)}\``,
-      `生效方式 / Effect: ${this.renderConfigEffect(preview.effect)}`,
+      '配置预览',
+      `Config preview: ${preview.path}`,
+      `旧值: \`${this.renderConfigValue(preview.oldValue)}\``,
+      `Old: \`${this.renderConfigValue(preview.oldValue)}\``,
+      `新值: \`${this.renderConfigValue(preview.newValue)}\``,
+      `New: \`${this.renderConfigValue(preview.newValue)}\``,
+      `生效方式: ${effect.cn}`,
+      `Effect: ${effect.en ?? effect.cn}`,
     ];
     if (preview.createdPaths.length > 0) {
-      lines.push(`新建路径 / Created path(s): ${preview.createdPaths.map((item) => `\`${item}\``).join(', ')}`);
+      lines.push(
+        `新建路径: ${preview.createdPaths.map((item) => `\`${item}\``).join(', ')}`,
+        `Created path(s): ${preview.createdPaths.map((item) => `\`${item}\``).join(', ')}`,
+      );
     }
     for (const warning of preview.warnings) {
-      lines.push(`警告 / Warning: ${warning}`);
+      lines.push(`警告: ${warning}`, `Warning: ${warning}`);
     }
     return this.commandResponseResult(
       {
@@ -2584,13 +2688,13 @@ export class Engine {
           {
             type: 'button',
             componentId: `${SETTINGS_CONFIG_APPLY_COMPONENT_PREFIX}${previewId}`,
-            label: '应用 / Apply',
+            label: '应用',
             style: 'primary',
           },
           {
             type: 'button',
             componentId: `${SETTINGS_CONFIG_CANCEL_COMPONENT_PREFIX}${previewId}`,
-            label: '取消 / Cancel',
+            label: '取消',
             style: 'secondary',
           },
         ],
@@ -2631,7 +2735,7 @@ export class Engine {
     }
     if (nowMs - pending.createdAtMs > SETTINGS_CONFIG_PREVIEW_TTL_MS) {
       this.pendingConfigEdits.delete(previewId);
-      return this.commandResponse('[配置预览已过期 / config preview expired]', event.traceId);
+      return this.commandResponse('配置预览已过期\nconfig preview expired', event.traceId);
     }
     if (this.configPreviewer) {
       try {
@@ -2640,7 +2744,7 @@ export class Engine {
         );
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
-        return this.commandResponse(`[配置编辑被拒绝 / config edit rejected]\n${reason}`, event.traceId);
+        return this.commandResponse(`配置编辑被拒绝\nconfig edit rejected\n${reason}`, event.traceId);
       }
     }
     this.pendingConfigEdits.delete(previewId);
@@ -2916,7 +3020,7 @@ export class Engine {
       return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
     }
     return this.commandResponse(
-      `[会话已恢复 / session resumed: ${rebound.agentSessionId}]`,
+      `会话已恢复: ${rebound.agentSessionId}\nsession resumed: ${rebound.agentSessionId}`,
       event.traceId,
     );
   }
@@ -2984,7 +3088,7 @@ export class Engine {
         result?.message ??
         (result?.status === 'unsupported'
           ? COMMAND_UNAVAILABLE_TEXT
-          : `[已请求回复模式 / reply mode requested: ${value}]`);
+          : `已请求回复模式: ${value}\nreply mode requested: ${value}`);
       return this.handleSettingsCommand(event, message);
     }
     if (componentId === SETTINGS_RESUME_COMPONENT_ID) {
@@ -3005,11 +3109,11 @@ export class Engine {
       return this.modalResponse(
         {
           modalId: SETTINGS_WORKING_DIR_MODAL_ID,
-          title: '设置工作目录 / Set dir',
+          title: '设置工作目录',
           inputs: [
             {
               componentId: SETTINGS_WORKING_DIR_PATH_FIELD_ID,
-              label: '绝对路径 / Absolute path',
+              label: '绝对路径',
               kind: 'short_text',
               required: true,
               placeholder: '/workspace/project',
@@ -3026,18 +3130,18 @@ export class Engine {
       return this.modalResponse(
         {
           modalId: SETTINGS_CONFIG_MODAL_ID,
-          title: '编辑 Nexus 配置 / Edit config',
+          title: '编辑 Nexus 配置',
           inputs: [
             {
               componentId: SETTINGS_CONFIG_PATH_FIELD_ID,
-              label: '配置路径 / Config path',
+              label: '配置路径',
               kind: 'short_text',
               required: true,
               placeholder: 'agents[0].codex.workingDir',
             },
             {
               componentId: SETTINGS_CONFIG_VALUE_FIELD_ID,
-              label: 'JSON 值 / JSON value',
+              label: 'JSON 值',
               kind: 'long_text',
               required: true,
               placeholder: '"/workspace/project"',
@@ -3080,18 +3184,18 @@ export class Engine {
       return this.modalResponse(
         {
           modalId: SETTINGS_CONFIG_MODAL_ID,
-          title: '编辑 Nexus 配置 / Edit config',
+          title: '编辑 Nexus 配置',
           inputs: [
             {
               componentId: SETTINGS_CONFIG_PATH_FIELD_ID,
-              label: '配置路径 / Config path',
+              label: '配置路径',
               kind: 'short_text',
               required: true,
               placeholder: 'agents[0].codex.workingDir',
             },
             {
               componentId: SETTINGS_CONFIG_VALUE_FIELD_ID,
-              label: 'JSON 值 / JSON value',
+              label: 'JSON 值',
               kind: 'long_text',
               required: true,
               placeholder: '"/workspace/project"',
@@ -3129,7 +3233,7 @@ export class Engine {
     if (componentId.startsWith(SETTINGS_CONFIG_CANCEL_COMPONENT_PREFIX)) {
       const previewId = componentId.slice(SETTINGS_CONFIG_CANCEL_COMPONENT_PREFIX.length);
       this.pendingConfigEdits.delete(previewId);
-      return this.handleSettingsCommand(event, '[配置编辑已取消 / config edit cancelled]');
+      return this.handleSettingsCommand(event, '配置编辑已取消\nconfig edit cancelled');
     }
     if (componentId === SETTINGS_AGENT_COMPONENT_ID) {
       const result = this.applySettingsAgent(event);
@@ -3162,10 +3266,10 @@ export class Engine {
     const path = this.modalValue(event, SETTINGS_CONFIG_PATH_FIELD_ID)?.trim();
     const value = this.modalValue(event, SETTINGS_CONFIG_VALUE_FIELD_ID);
     if (!path) {
-      return this.commandResponse('配置路径必填 / Config path is required.', event.traceId);
+      return this.commandResponse('配置路径必填\nConfig path is required.', event.traceId);
     }
     if (value === undefined) {
-      return this.commandResponse('配置值必填 / Config value is required.', event.traceId);
+      return this.commandResponse('配置值必填\nConfig value is required.', event.traceId);
     }
     if (this.configPreviewer) {
       return this.previewConfigEdit(event, path, value);
@@ -3196,7 +3300,7 @@ export class Engine {
     );
     this.stopActiveSession(serializeSessionKey(routedSessionKey), event.traceId);
     this.sessionStore.delete(routedSessionKey);
-    return this.commandResponse(`[Agent 绑定 / agent binding: ${agentName}]`, event.traceId);
+    return this.commandResponse(`Agent 绑定: ${agentName}\nAgent binding: ${agentName}`, event.traceId);
   }
 
   private route(event: NormalizedEvent):

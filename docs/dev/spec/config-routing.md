@@ -105,6 +105,9 @@ label/path/value 后让用户猜字段含义。
 说明文字要求：
 
 - 必须中英双语，中文优先；英文用于保留术语和辅助非中文用户理解。
+- UI 正文中的双语文案必须采用“中文一行、英文一行”的排版；不得用 `中文 / English`
+  拼在同一行。Discord 原生组件 label、placeholder、modal title 等不适合换行的短字段可只放
+  中文短文案，完整英文说明必须出现在正文或 description 中。
 - 必须说明字段控制什么行为、修改后影响哪个运行链路或用户路径。
 - 对权限、secret、路径、sandbox、provider capture、auth allowlist、command
   registration 等高风险字段，必须说明风险边界和误配后果。

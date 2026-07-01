@@ -603,7 +603,7 @@ describe('command registry integration', () => {
     const handler = vi.fn(async () => undefined);
     const expectedModal = {
       custom_id: 'nexus:settings:working-dir-modal',
-      title: '设置工作目录 / Set dir',
+      title: '设置工作目录',
       components: [
         {
           type: 1,
@@ -611,7 +611,7 @@ describe('command registry integration', () => {
             {
               type: 4,
               custom_id: 'path',
-              label: '绝对路径 / Absolute path',
+              label: '绝对路径',
               style: 1,
               required: true,
             },
@@ -735,7 +735,7 @@ describe('command registry integration', () => {
     const handler = vi.fn(async () => undefined);
     const expectedModal = {
       custom_id: 'nexus:settings:config-edit-modal:ui.toolMessages',
-      title: '编辑配置值 / Edit value',
+      title: '编辑配置值',
       components: [
         {
           type: 1,
@@ -743,10 +743,10 @@ describe('command registry integration', () => {
             {
               type: 4,
               custom_id: 'value',
-              label: '新值 / New value',
+              label: '新值',
               style: 2,
               required: false,
-              placeholder: 'compact 或逐行输入 / compact or one per line',
+              placeholder: 'compact 或逐行输入',
             },
           ],
         },
@@ -908,7 +908,7 @@ describe('command registry integration', () => {
       items: [
         {
           key: 'discord.replyMode',
-          label: '回复模式 / Reply mode',
+          label: '回复模式\nReply mode',
           owner: 'platform',
           value: 'mention',
           source: 'discord state',
@@ -951,7 +951,7 @@ describe('command registry integration', () => {
 
     expect(result).toEqual({
       status: 'handled',
-      message: '回复模式 / reply mode: `mention` -> `all`',
+      message: '回复模式: `mention` -> `all`\nreply mode: `mention` -> `all`',
     });
     expect(
       await platform.settingsSnapshot!({ userId: OTHER_ID, channelId: 'C1' }),

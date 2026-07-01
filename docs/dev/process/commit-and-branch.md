@@ -40,6 +40,8 @@ main
 
 ### 开分支前工作区检查
 
+这里的"新任务"按 topic 判断：新的需求、bug、文档主题、规则调整，或不依赖当前未合并 PR 分支的独立 follow-up，默认都是新 topic。新 topic 的基线必须是 `main`。
+
 开任何新任务分支前，先确认当前分支和工作区：
 
 ```bash
@@ -51,7 +53,7 @@ git status --short --branch
 
 - 当前分支是 `main`
 - 工作区没有未提交改动
-- 新任务不是明确声明的 stacked PR / 修复链
+- 新任务不是明确依赖当前未合并 PR 分支的 stacked PR / 同会话连续修复链
 
 如果当前 worktree 已在 feature 分支、或有无关未提交改动，禁止在其上为无关任务继续 `git switch -c`。正确做法是从 `main` 开独立 worktree，例如：
 
@@ -59,7 +61,9 @@ git status --short --branch
 git worktree add -b <type>/<short-description> ../<repo>-<short-description> main
 ```
 
-只有当新任务明确依赖当前 feature 分支，才允许从该分支开 stacked PR；此时必须在分支说明或 PR body 里写清 `base=<当前 PR 分支>`。
+同会话连续修复链指同一会话内连续暴露的 bug，scope 差距不大、同主题、且新问题在当前 PR 合并前无法独立验证 / 独立合并（典型：A 不修就跑不到 B 的代码路径）。判据：在新开分支前先问"这个新 fix 在当前 PR 合并前能独立 run 通 / 独立合并吗？"——答否就不该并行。
+
+只有当新任务明确依赖当前未合并 PR 分支，才允许从该分支继续提交或开 stacked PR；开 stacked PR 时必须在分支说明或 PR body 里写清 `base=<当前 PR 分支>`。
 
 ## 合并策略
 

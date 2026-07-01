@@ -41,6 +41,7 @@ import type {
   EventHandlerResult,
   EventModalResponse,
   MessageComponent,
+  MessageEmbed,
   MessageRef,
   NormalizedEvent,
   OutboundMessage,
@@ -125,7 +126,7 @@ export const DISCORD_CAPABILITIES: CapabilitySet = {
   supportsEdit: true,
   supportsDelete: false,
   supportsReactions: false,
-  supportsEmbeds: false,
+  supportsEmbeds: true,
   supportsButtons: true,
   supportsSelects: true,
   supportsModals: true,
@@ -509,6 +510,30 @@ function discordMessageComponents(
   }
   flushButtons();
   return rows;
+}
+
+function discordMessageEmbeds(
+  embeds: readonly MessageEmbed[] | undefined,
+): MessageEmbed[] | undefined {
+  if (embeds === undefined) return undefined;
+  return embeds.map((embed) => ({
+    ...embed,
+    ...(embed.fields
+      ? {
+          fields: embed.fields.map((field) => ({ ...field })),
+        }
+      : {}),
+    ...(embed.footer ? { footer: { ...embed.footer } } : {}),
+  }));
+}
+
+function discordMessagePayload(
+  content: string,
+  embeds: readonly MessageEmbed[] | undefined,
+): string | { content: string; embeds: MessageEmbed[] } {
+  const discordEmbeds = discordMessageEmbeds(embeds);
+  if (discordEmbeds === undefined) return content;
+  return { content, embeds: discordEmbeds };
 }
 
 function discordModal(response: EventModalResponse): unknown {
@@ -1147,8 +1172,13 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
 
       const sentIds: string[] = [];
       try {
-        for (const slice of slices) {
-          const msg = await channel.send(slice);
+        for (const [index, slice] of slices.entries()) {
+          const msg = await channel.send(
+            discordMessagePayload(
+              slice,
+              index === 0 ? message.embeds : undefined,
+            ),
+          );
           sentIds.push(msg.id);
         }
       } catch (err) {
@@ -1192,7 +1222,13 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
         const existingIds = [...ref.messageIds];
 
         for (let i = 0; i < Math.min(slices.length, existingIds.length); i++) {
-          await channel.messages.edit(existingIds[i]!, slices[i]!);
+          await channel.messages.edit(
+            existingIds[i]!,
+            discordMessagePayload(
+              slices[i]!,
+              i === 0 ? message.embeds : undefined,
+            ),
+          );
         }
 
         if (slices.length > existingIds.length) {

@@ -239,13 +239,15 @@ ADR-0012 已把模式 B 纳入 stream-json 主路径；daemon 在 `supportsEdit=
 
 ### 工具消息展示
 
-daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `tool_call_started` 追加一条独立工具消息，消息正文包含工具名与目标摘要。`tool_result` 与 `tool_call_finished` 不再产生用户可见消息，也不编辑 start 消息；完整 result 细节只进入 trace 日志。后续 assistant 正文走自己的消息，不覆盖已发出的工具轨迹。
+daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `tool_call_started` 追加一条独立工具消息，消息正文包含工具名与目标摘要。平台声明 `supportsEmbeds=true` 时，这条独立工具消息可以同时携带一个平台中立的 `MessageEmbed` 工具卡片；`text` 仍必须保留可读 fallback。平台不支持 embed、fallback 文本超过平台单条消息长度、或处于 `compact` 模式时，必须退回纯文本展示。
 
 同一 turn 内，daemon 对平台的用户可见输出（status、tool start、assistant 正文、final reply）必须按 AgentEvent 到达顺序串行执行：前一条 `send` / `edit` 完成前，不得启动后一条用户可见输出。否则慢平台请求会造成工具消息与 assistant 正文在 IM 侧错位。
 
 `status` 是非终端工作状态：支持 edit 的平台应复用同一条工作消息连续更新，后续 assistant 正文、工具消息或终端错误到达时清除该临时状态；不支持 edit 的平台可降级为追加状态消息。
 
 在 `append` 模式下，`tool_call_started` 是 assistant 消息分段边界：如果 tool 前已经发送或缓冲了 assistant 文本，daemon 必须先固定该段文本，再发送 tool start；tool 之后到达的 `text_delta` / `text_final` 必须创建新的 assistant 消息，不得回头编辑 tool 前的消息。用户可见顺序应保持为 `assistant before tool` → `tool start` → `assistant after tool`。
+
+工具卡片只表达 start 事件，不承载 result。若同一个 append 工具消息后续被 edit，未显式传空 `embeds` 时沿用平台原有 embed 保留语义；需要清空时必须显式传 `embeds: []`。
 
 工具目标摘要由 agent backend 归一化为 `tool_call_started.payload.inputSummary`，daemon 只负责展示，不重新解析 backend 原始 input。Claude Code backend 的摘要规则：
 
@@ -256,7 +258,9 @@ daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `t
 
 工具 result 内容默认不进入用户消息。文件内容、diff、搜索命中、Bash stdout/stderr 等富展示需另行定义代码块、行号剥离、脱敏和消息位置策略后再启用。
 
-`ui.toolMessages="compact"` 用于低噪声模式：工具状态合并进当前回复消息，后续 final reply 可覆盖这条状态消息。该模式不保证保留完整用户可见工具轨迹；结构化日志仍按 observability 事件记录。
+工具 start fallback 文本与工具卡片字段都必须先经过出站脱敏，再按平台限制截断；禁止先截断再脱敏。这样避免长 input 在截断边界打碎 token 后绕过脱敏规则。工具卡片字段截断只影响卡片，不能改变 trace 日志里的结构化 tool 事件。
+
+`ui.toolMessages="compact"` 用于低噪声模式：工具状态合并进当前回复消息，后续 final reply 可覆盖这条状态消息。该模式不保证保留完整用户可见工具轨迹；结构化日志仍按 observability 事件记录。`compact` 模式本期不挂工具卡片，避免临时状态消息被 final reply 编辑覆盖时产生 stale embed。
 
 ## 控制语义
 

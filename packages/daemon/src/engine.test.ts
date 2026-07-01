@@ -4232,6 +4232,9 @@ describe('Engine', () => {
 
     expect(configFields).toHaveBeenCalledTimes(1);
     expect(panel?.commandResponse?.text).toContain('**配置文件 / Config file**');
+    expect(panel?.commandResponse?.text).toContain('**可修改设置 / Available settings**');
+    expect(panel?.commandResponse?.text).toContain('UI tool messages');
+    expect(panel?.commandResponse?.text).toContain('ui.toolMessages');
     const categorySelect = panel?.commandResponse?.components?.find(
       (component) =>
         component.type === 'select' &&
@@ -4246,6 +4249,7 @@ describe('Engine', () => {
         expect.objectContaining({
           label: 'Hot behavior',
           value: '0',
+          description: '1 个设置项 / settings: UI tool messages',
           default: true,
         }),
         expect.objectContaining({
@@ -4261,6 +4265,7 @@ describe('Engine', () => {
     if (!fieldSelect || fieldSelect.type !== 'select') {
       throw new Error('expected config field select');
     }
+    expect(fieldSelect.placeholder).toBe('选择设置项 / Choose setting');
     expect(fieldSelect.options[0]).toMatchObject({
       label: 'UI tool messages',
       value: 'ui.toolMessages',
@@ -4271,6 +4276,10 @@ describe('Engine', () => {
     );
     expect(commandCategory?.commandResponse?.text).toContain(
       '分组 / Category: `Daemon command registry`',
+    );
+    expect(commandCategory?.commandResponse?.text).toContain('Text prefix /new');
+    expect(commandCategory?.commandResponse?.text).toContain(
+      'daemon.commandRegistry.textPrefixes.newSession',
     );
     const commandFieldSelect = commandCategory?.commandResponse?.components?.find(
       (component) =>
@@ -4289,6 +4298,7 @@ describe('Engine', () => {
     const selected = await dispatchHandler(
       makeComponentEvent('nexus:settings:config-field', ['ui.toolMessages']),
     );
+    expect(selected?.commandResponse?.text).toContain('**设置项详情 / Setting detail**');
     expect(selected?.commandResponse?.text).toContain('UI tool messages');
     expect(selected?.commandResponse?.text).toContain('ui.toolMessages');
     expect(selected?.commandResponse?.components).toEqual(
@@ -4296,6 +4306,7 @@ describe('Engine', () => {
         expect.objectContaining({
           type: 'button',
           componentId: 'nexus:settings:config-edit:ui.toolMessages',
+          label: '编辑设置值 / Edit value',
         }),
       ]),
     );
@@ -4369,6 +4380,82 @@ describe('Engine', () => {
         value: '[]',
       }),
     );
+  });
+
+  it('settings config file panel keeps long setting previews bounded', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const fields = Array.from({ length: 30 }, (_, index) => ({
+      key: `daemon.longSetting${index}`,
+      label: `Very long setting label ${index} with extra descriptive text for humans`,
+      category: 'Large config group',
+      path: `daemon.deeply.nested.config.section.with.a.very.long.path.setting${index}.enabled`,
+      value: `value-${index}-${'x'.repeat(120)}`,
+      valueKind: 'string' as const,
+      effect: 'conditional-hot' as const,
+      risk: 'normal' as const,
+    }));
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: makeAgent().runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
+      daemonCommandHandlerKeys: ['settings'],
+      configFields: vi.fn(async () => ({ fields })),
+      configEditor: vi.fn(),
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const panel = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config', [], {
+        interaction: {
+          componentId: 'nexus:settings:config',
+          kind: 'button',
+          values: [],
+        },
+      }),
+    );
+
+    const text = panel?.commandResponse?.text ?? '';
+    expect(text.length).toBeLessThanOrEqual(1900);
+    expect(text).toContain('**可修改设置 / Available settings**');
+    expect(text).toContain('Very long setting label 0 with extra descript...');
+    expect(text).toContain('value-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...');
+    expect(text).toContain('下拉菜单还有 20 个设置项。');
+    expect(text).toContain('另有 5 个设置项需用高级路径编辑。');
+    const fieldSelect = panel?.commandResponse?.components?.find(
+      (component) =>
+        component.type === 'select' &&
+        component.componentId === 'nexus:settings:config-field',
+    );
+    expect(fieldSelect?.type).toBe('select');
+    if (!fieldSelect || fieldSelect.type !== 'select') {
+      throw new Error('expected config field select');
+    }
+    expect(fieldSelect.options).toHaveLength(25);
   });
 
   it('settings agent binding select changes the channel route for subsequent messages', async () => {

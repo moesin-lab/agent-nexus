@@ -238,6 +238,13 @@ const SETTINGS_CONFIG_MODAL_ID = `${SETTINGS_COMPONENT_PREFIX}config-modal`;
 const SETTINGS_CONFIG_PATH_FIELD_ID = 'path';
 const SETTINGS_CONFIG_VALUE_FIELD_ID = 'value';
 const SETTINGS_CONFIG_PREVIEW_TTL_MS = 10 * 60 * 1000;
+const SETTINGS_CONFIG_PANEL_TEXT_LIMIT = 1900;
+const SETTINGS_CONFIG_FIELD_PREVIEW_COUNT = 5;
+const SETTINGS_CONFIG_SELECT_OPTION_LIMIT = 25;
+const SETTINGS_CONFIG_FIELD_LABEL_PREVIEW_LIMIT = 48;
+const SETTINGS_CONFIG_FIELD_PATH_PREVIEW_LIMIT = 72;
+const SETTINGS_CONFIG_FIELD_VALUE_PREVIEW_LIMIT = 48;
+const SETTINGS_CONFIG_CATEGORY_DESCRIPTION_LABEL_LIMIT = 30;
 const SETTINGS_AGENT_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}agent`;
 const QUEUE_ACTION_ARG = 'action';
 const QUEUE_FULL_TEXT = 'Nexus queue is full. Try again after current tasks finish.';
@@ -2116,6 +2123,13 @@ export class Engine {
     return JSON.stringify(value);
   }
 
+  private renderConfigValuePreview(value: unknown): string {
+    return truncateText(
+      this.renderConfigValue(value),
+      SETTINGS_CONFIG_FIELD_VALUE_PREVIEW_LIMIT,
+    );
+  }
+
   private renderConfigEffect(effect: DaemonConfigEditEffect): string {
     if (effect === 'hot') return '立即生效 / applies immediately';
     if (effect === 'conditional-hot') {
@@ -2127,19 +2141,86 @@ export class Engine {
 
   private renderConfigFieldText(field: DaemonConfigEditableField): string {
     const lines = [
-      '**配置字段 / Config field**',
-      `字段 / Field: \`${field.label}\``,
+      '**设置项详情 / Setting detail**',
+      `设置项 / Setting: \`${field.label}\``,
       `路径 / Path: \`${field.path}\``,
       `当前值 / Current: \`${this.renderConfigValue(field.value)}\``,
       `生效方式 / Effect: ${this.renderConfigEffect(field.effect)}`,
     ];
     if (field.options && field.options.length > 0) {
-      lines.push(`可选值 / Allowed: ${field.options.map((option) => `\`${option}\``).join(', ')}`);
+      lines.push(
+        `可选值 / Allowed: ${field.options.map((option) => `\`${option}\``).join(', ')}`,
+      );
     }
     if (field.risk === 'high') {
       lines.push('风险 / Risk: 高 / high');
     }
     return lines.join('\n');
+  }
+
+  private renderConfigFieldPreview(
+    field: DaemonConfigEditableField,
+    index: number,
+  ): string {
+    const risk = field.risk === 'high' ? ' · 高风险 / high risk' : '';
+    const label = truncateText(
+      field.label,
+      SETTINGS_CONFIG_FIELD_LABEL_PREVIEW_LIMIT,
+    );
+    const path = truncateText(
+      field.path,
+      SETTINGS_CONFIG_FIELD_PATH_PREVIEW_LIMIT,
+    );
+    const value = this.renderConfigValuePreview(field.value);
+    const effect = this.renderConfigEffect(field.effect);
+    return `${index + 1}. \`${label}\`\n   ${path} · 当前 / Current: \`${value}\` · ${effect}${risk}`;
+  }
+
+  private renderConfigFieldList(
+    fields: readonly DaemonConfigEditableField[],
+  ): string[] {
+    if (fields.length === 0) return [];
+    const visibleFields = fields.slice(0, SETTINGS_CONFIG_FIELD_PREVIEW_COUNT);
+    const menuFieldCount = Math.min(
+      fields.length,
+      SETTINGS_CONFIG_SELECT_OPTION_LIMIT,
+    );
+    const hiddenMenuFieldCount = menuFieldCount - visibleFields.length;
+    const rawOnlyFieldCount = fields.length - menuFieldCount;
+    const lines = [
+      '',
+      '**可修改设置 / Available settings**',
+      ...visibleFields.map((field, index) =>
+        this.renderConfigFieldPreview(field, index),
+      ),
+    ];
+    if (hiddenMenuFieldCount > 0) {
+      lines.push(
+        `下拉菜单还有 ${hiddenMenuFieldCount} 个设置项。 / ${hiddenMenuFieldCount} more settings are in the menu.`,
+      );
+    }
+    if (rawOnlyFieldCount > 0) {
+      lines.push(
+        `另有 ${rawOnlyFieldCount} 个设置项需用高级路径编辑。 / ${rawOnlyFieldCount} additional settings require Raw path.`,
+      );
+    }
+    return lines;
+  }
+
+  private configCategoryDescription(
+    fields: readonly DaemonConfigEditableField[],
+  ): string {
+    const labels = fields
+      .slice(0, 2)
+      .map((field) =>
+        truncateText(
+          field.label,
+          SETTINGS_CONFIG_CATEGORY_DESCRIPTION_LABEL_LIMIT,
+        ),
+      )
+      .join(', ');
+    const suffix = labels ? `: ${labels}` : '';
+    return `${fields.length} 个设置项 / settings${suffix}`.slice(0, 100);
   }
 
   private async configPanelResponse(
@@ -2165,22 +2246,27 @@ export class Engine {
     const categoryFields = activeCategory
       ? fields.filter((field) => field.category === activeCategory)
       : fields;
-    const text = selected
-      ? this.renderConfigFieldText(selected)
-      : [
-          '**配置文件 / Config file**',
-          activeCategory ? `分组 / Category: \`${activeCategory}\`` : undefined,
-          '选择分组和字段，先预览持久化 config.json 改动。',
-          'Select a category and field to preview durable config.json changes.',
-          '未列出的字段可继续用高级 raw path 编辑。',
-          'Advanced raw path remains available for unsupported fields.',
-          categories.length > 25
-            ? '仅显示前 25 个分组；其余请用高级 raw path。 / Showing first 25 categories; use Advanced raw path for the rest.'
-            : undefined,
-          categoryFields.length > 25
-            ? '仅显示该分组前 25 个字段；其余请用高级 raw path。 / Showing first 25 fields in this category; use Advanced raw path for the rest.'
-            : undefined,
-        ].filter((line): line is string => line !== undefined).join('\n');
+    const text = truncateText(
+      selected
+        ? this.renderConfigFieldText(selected)
+        : [
+            '**配置文件 / Config file**',
+            activeCategory
+              ? `分组 / Category: \`${activeCategory}\``
+              : undefined,
+            '先看下方设置项列表，再用下拉选择要编辑的设置项。',
+            'Review the settings below, then choose one from the menu to edit.',
+            '提交前会先预览持久化 config.json 改动。',
+            'Changes are previewed before they are written to config.json.',
+            '未列出的设置项可继续用高级 raw path 编辑。',
+            'Advanced raw path remains available for unsupported settings.',
+            ...this.renderConfigFieldList(categoryFields),
+            categories.length > SETTINGS_CONFIG_SELECT_OPTION_LIMIT
+              ? '仅显示前 25 个分组；其余请用高级 raw path。 / Showing first 25 categories; use Advanced raw path for the rest.'
+              : undefined,
+          ].filter((line): line is string => line !== undefined).join('\n'),
+      SETTINGS_CONFIG_PANEL_TEXT_LIMIT,
+    );
     const components: NonNullable<EventHandlerResult['commandResponse']>['components'] = [];
     if (categories.length > 1) {
       components.push({
@@ -2189,34 +2275,40 @@ export class Engine {
         placeholder: '选择配置分组 / Choose category',
         minValues: 1,
         maxValues: 1,
-        options: categories.slice(0, 25).map((category, index) => ({
-          label: category.slice(0, 100),
-          value: String(index),
-          description: `${fields.filter((field) => field.category === category).length} 个字段 / fields`.slice(0, 100),
-          default: category === activeCategory,
-        })),
+        options: categories
+          .slice(0, SETTINGS_CONFIG_SELECT_OPTION_LIMIT)
+          .map((category, index) => ({
+            label: category.slice(0, 100),
+            value: String(index),
+            description: this.configCategoryDescription(
+              fields.filter((field) => field.category === category),
+            ),
+            default: category === activeCategory,
+          })),
       });
     }
     if (categoryFields.length > 0) {
       components.push({
         type: 'select',
         componentId: SETTINGS_CONFIG_FIELD_COMPONENT_ID,
-        placeholder: '选择配置字段 / Choose field',
+        placeholder: '选择设置项 / Choose setting',
         minValues: 1,
         maxValues: 1,
-        options: categoryFields.slice(0, 25).map((field) => ({
-          label: field.label.slice(0, 100),
-          value: field.key,
-          description: field.path.slice(0, 100),
-          default: field.key === selected?.key,
-        })),
+        options: categoryFields
+          .slice(0, SETTINGS_CONFIG_SELECT_OPTION_LIMIT)
+          .map((field) => ({
+            label: field.label.slice(0, 100),
+            value: field.key,
+            description: field.path.slice(0, 100),
+            default: field.key === selected?.key,
+          })),
       });
     }
     if (selected) {
       components.push({
         type: 'button',
         componentId: `${SETTINGS_CONFIG_EDIT_COMPONENT_PREFIX}${selected.key}`,
-        label: '编辑值 / Edit value',
+        label: '编辑设置值 / Edit value',
         style: selected.risk === 'high' ? 'danger' : 'primary',
       });
     }

@@ -230,6 +230,8 @@ const SETTINGS_WORKING_DIR_PATH_FIELD_ID = 'path';
 const SETTINGS_CONFIG_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}config`;
 const SETTINGS_CONFIG_CATEGORY_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}config-category`;
 const SETTINGS_CONFIG_FIELD_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}config-field`;
+const SETTINGS_CONFIG_PAGE_COMPONENT_PREFIX = `${SETTINGS_COMPONENT_PREFIX}config-page:`;
+const SETTINGS_CONFIG_FIELD_PAGE_COMPONENT_PREFIX = `${SETTINGS_COMPONENT_PREFIX}config-field-page:`;
 const SETTINGS_CONFIG_RAW_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}config-raw`;
 const SETTINGS_CONFIG_EDIT_COMPONENT_PREFIX = `${SETTINGS_COMPONENT_PREFIX}config-edit:`;
 const SETTINGS_CONFIG_EDIT_MODAL_PREFIX = `${SETTINGS_COMPONENT_PREFIX}config-edit-modal:`;
@@ -240,12 +242,7 @@ const SETTINGS_CONFIG_PATH_FIELD_ID = 'path';
 const SETTINGS_CONFIG_VALUE_FIELD_ID = 'value';
 const SETTINGS_CONFIG_PREVIEW_TTL_MS = 10 * 60 * 1000;
 const SETTINGS_CONFIG_PANEL_TEXT_LIMIT = 1900;
-const SETTINGS_CONFIG_FIELD_PREVIEW_COUNT = 4;
 const SETTINGS_CONFIG_SELECT_OPTION_LIMIT = 25;
-const SETTINGS_CONFIG_FIELD_LABEL_PREVIEW_LIMIT = 48;
-const SETTINGS_CONFIG_FIELD_PATH_PREVIEW_LIMIT = 64;
-const SETTINGS_CONFIG_FIELD_VALUE_PREVIEW_LIMIT = 48;
-const SETTINGS_CONFIG_FIELD_DESCRIPTION_PREVIEW_LIMIT = 88;
 const SETTINGS_CONFIG_CATEGORY_DESCRIPTION_LABEL_LIMIT = 30;
 const SETTINGS_AGENT_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}agent`;
 const QUEUE_ACTION_ARG = 'action';
@@ -2125,13 +2122,6 @@ export class Engine {
     return JSON.stringify(value);
   }
 
-  private renderConfigValuePreview(value: unknown): string {
-    return truncateText(
-      this.renderConfigValue(value),
-      SETTINGS_CONFIG_FIELD_VALUE_PREVIEW_LIMIT,
-    );
-  }
-
   private renderConfigEffect(effect: DaemonConfigEditEffect): string {
     if (effect === 'hot') return '立即生效 / applies immediately';
     if (effect === 'conditional-hot') {
@@ -2141,33 +2131,86 @@ export class Engine {
     return '高级 / advanced';
   }
 
-  private renderConfigEffectPreview(effect: DaemonConfigEditEffect): string {
-    if (effect === 'hot') return '立即 / hot';
-    if (effect === 'conditional-hot') return 'reload 条件 / conditional';
-    if (effect === 'restart') return '重启 / restart';
-    return '高级 / advanced';
+  private configPageIndex(pageIndex: number, pageCount: number): number {
+    const requestedPageIndex = Number.isFinite(pageIndex)
+      ? Math.trunc(pageIndex)
+      : 0;
+    return Math.max(0, Math.min(requestedPageIndex, pageCount - 1));
   }
 
-  private renderConfigFieldText(field: DaemonConfigEditableField): string {
-    const lines = [
+  private splitConfigText(text: string, maxLength: number): string[] {
+    const limit = Math.max(1, maxLength);
+    if (text.length <= limit) return [text];
+    const chunks: string[] = [];
+    let cursor = 0;
+    while (cursor < text.length) {
+      const remainingLength = text.length - cursor;
+      if (remainingLength <= limit) {
+        chunks.push(text.slice(cursor));
+        break;
+      }
+      const hardEnd = cursor + limit;
+      const newlineEnd = text.lastIndexOf('\n', hardEnd);
+      const spaceEnd = text.lastIndexOf(' ', hardEnd);
+      const softEnd = Math.max(newlineEnd, spaceEnd);
+      const end = softEnd > cursor ? softEnd : hardEnd;
+      chunks.push(text.slice(cursor, end));
+      cursor = end;
+    }
+    return chunks;
+  }
+
+  private renderConfigFieldDetail(
+    field: DaemonConfigEditableField,
+    pageIndex: number,
+  ): { text: string; pageIndex: number; pageCount: number } {
+    const headerLines = [
       '**设置项详情 / Setting detail**',
-      `设置项 / Setting: \`${field.label}\``,
-      `路径 / Path: \`${field.path}\``,
+      `设置项 / Setting: ${field.label}`,
+      `路径 / Path: ${field.path}`,
+    ];
+    const bodyLines = [
       `当前值 / Current: \`${this.renderConfigValue(field.value)}\``,
       `生效方式 / Effect: ${this.renderConfigEffect(field.effect)}`,
     ];
     if (field.description) {
-      lines.push('说明 / Description:', `-# ${field.description}`);
+      bodyLines.push('说明 / Description:', `-# ${field.description}`);
     }
     if (field.options && field.options.length > 0) {
-      lines.push(
+      bodyLines.push(
         `可选值 / Allowed: ${field.options.map((option) => `\`${option}\``).join(', ')}`,
       );
     }
     if (field.risk === 'high') {
-      lines.push('风险 / Risk: 高 / high');
+      bodyLines.push('风险 / Risk: 高 / high');
     }
-    return lines.join('\n');
+    const pageOverhead = [
+      ...headerLines,
+      `第 1 / 1 页 / Page 1 / 1`,
+      '使用上一页 / 下一页查看完整详情。 / Use Previous / Next to view the complete detail.',
+    ].join('\n').length;
+    const chunks = this.splitConfigText(
+      bodyLines.join('\n'),
+      SETTINGS_CONFIG_PANEL_TEXT_LIMIT - pageOverhead,
+    );
+    const normalizedPageIndex = this.configPageIndex(pageIndex, chunks.length);
+    const pageLines = [...headerLines];
+    if (chunks.length > 1) {
+      pageLines.push(
+        `第 ${normalizedPageIndex + 1} / ${chunks.length} 页 / Page ${normalizedPageIndex + 1} / ${chunks.length}`,
+      );
+    }
+    pageLines.push(chunks[normalizedPageIndex]!);
+    if (chunks.length > 1) {
+      pageLines.push(
+        '使用上一页 / 下一页查看完整详情。 / Use Previous / Next to view the complete detail.',
+      );
+    }
+    return {
+      text: pageLines.join('\n'),
+      pageIndex: normalizedPageIndex,
+      pageCount: chunks.length,
+    };
   }
 
   private renderConfigFieldPreview(
@@ -2175,58 +2218,88 @@ export class Engine {
     index: number,
   ): string {
     const risk = field.risk === 'high' ? ' · 高风险 / high risk' : '';
-    const label = truncateText(
-      field.label,
-      SETTINGS_CONFIG_FIELD_LABEL_PREVIEW_LIMIT,
-    );
-    const path = truncateText(
-      field.path,
-      SETTINGS_CONFIG_FIELD_PATH_PREVIEW_LIMIT,
-    );
-    const value = this.renderConfigValuePreview(field.value);
-    const effect = this.renderConfigEffectPreview(field.effect);
     const lines = [
-      `${index + 1}. **${label}**`,
-      `当前 / Current: \`${value}\` · 生效 / Effect: ${effect}${risk}`,
-      `-# Path: ${path}`,
+      `${index + 1}. **${field.label}**`,
+      `当前 / Current: \`${this.renderConfigValue(field.value)}\``,
+      `生效 / Effect: ${this.renderConfigEffect(field.effect)}${risk}`,
+      `-# Path: ${field.path}`,
     ];
     if (field.description) {
-      lines.push(
-        `-# 说明 / Description: ${truncateText(field.description, SETTINGS_CONFIG_FIELD_DESCRIPTION_PREVIEW_LIMIT)}`,
-      );
+      lines.push(`-# 说明 / Description: ${field.description}`);
     }
     return lines.join('\n');
   }
 
   private renderConfigFieldList(
     fields: readonly DaemonConfigEditableField[],
-  ): string[] {
-    if (fields.length === 0) return [];
-    const visibleFields = fields.slice(0, SETTINGS_CONFIG_FIELD_PREVIEW_COUNT);
+    pageIndex: number,
+    textBudget: number,
+  ): { lines: string[]; pageIndex: number; pageCount: number } {
+    if (fields.length === 0) return { lines: [], pageIndex: 0, pageCount: 0 };
     const menuFieldCount = Math.min(
       fields.length,
       SETTINGS_CONFIG_SELECT_OPTION_LIMIT,
     );
-    const hiddenMenuFieldCount = menuFieldCount - visibleFields.length;
     const rawOnlyFieldCount = fields.length - menuFieldCount;
+    const rawOnlyLine = rawOnlyFieldCount > 0
+      ? `字段下拉最多显示前 ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT} 个；第 ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT + 1} 个起请用高级路径编辑。 / The setting menu shows the first ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT} fields; use Raw path for field ${SETTINGS_CONFIG_SELECT_OPTION_LIMIT + 1} and later.`
+      : undefined;
+    const listOverhead = [
+      '',
+      '**可修改设置 / Available settings**',
+      `第 1 / ${fields.length} 页 · 显示 1-${fields.length} / ${fields.length} 个设置项`,
+      `Page 1 / ${fields.length} · showing settings 1-${fields.length} of ${fields.length}`,
+      '使用上一页 / 下一页查看其余完整说明。 / Use Previous / Next to view the remaining full descriptions.',
+      rawOnlyLine,
+    ].filter((line): line is string => line !== undefined).join('\n').length;
+    const contentBudget = Math.max(1, textBudget - listOverhead);
+    const pages: { start: number; end: number; entries: string[] }[] = [];
+    let start = 0;
+    let end = 0;
+    let entries: string[] = [];
+    let currentLength = 0;
+    fields.forEach((field, index) => {
+      const entryChunks = this.splitConfigText(
+        this.renderConfigFieldPreview(field, index),
+        contentBudget,
+      );
+      for (const entry of entryChunks) {
+        const separatorLength = entries.length > 0 ? 1 : 0;
+        const nextLength = currentLength + separatorLength + entry.length;
+        if (entries.length > 0 && nextLength > contentBudget) {
+          pages.push({ start, end, entries });
+          start = index;
+          end = index;
+          entries = [];
+          currentLength = 0;
+        }
+        entries.push(entry);
+        end = index + 1;
+        currentLength += (entries.length > 1 ? 1 : 0) + entry.length;
+      }
+    });
+    if (entries.length > 0) {
+      pages.push({ start, end, entries });
+    }
+    const pageCount = pages.length;
+    const normalizedPageIndex = this.configPageIndex(pageIndex, pageCount);
+    const page = pages[normalizedPageIndex]!;
     const lines = [
       '',
       '**可修改设置 / Available settings**',
-      ...visibleFields.map((field, index) =>
-        this.renderConfigFieldPreview(field, index),
-      ),
+      `第 ${normalizedPageIndex + 1} / ${pageCount} 页 · 显示 ${page.start + 1}-${page.end} / ${fields.length} 个设置项`,
+      `Page ${normalizedPageIndex + 1} / ${pageCount} · showing settings ${page.start + 1}-${page.end} of ${fields.length}`,
+      ...page.entries,
     ];
-    if (hiddenMenuFieldCount > 0) {
+    if (pageCount > 1) {
       lines.push(
-        `下拉菜单还有 ${hiddenMenuFieldCount} 个设置项。 / ${hiddenMenuFieldCount} more settings are in the menu.`,
+        '使用上一页 / 下一页查看其余完整说明。 / Use Previous / Next to view the remaining full descriptions.',
       );
     }
-    if (rawOnlyFieldCount > 0) {
-      lines.push(
-        `另有 ${rawOnlyFieldCount} 个设置项需用高级路径编辑。 / ${rawOnlyFieldCount} additional settings require Raw path.`,
-      );
+    if (rawOnlyLine) {
+      lines.push(rawOnlyLine);
     }
-    return lines;
+    return { lines, pageIndex: normalizedPageIndex, pageCount };
   }
 
   private configCategoryDescription(
@@ -2249,12 +2322,23 @@ export class Engine {
     event: NormalizedEvent,
     selectedKey?: string,
     selectedCategory?: string,
+    pageIndex = 0,
+    selectedIndex?: number,
   ): Promise<EventHandlerResult> {
     if (!this.configEditor) {
       return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
     }
     const fields = await this.configFieldsForEvent(event);
-    const selected = this.configFieldByKey(fields, selectedKey);
+    const selectedIndexValue = selectedIndex ?? -1;
+    const indexedField = Number.isInteger(selectedIndexValue) &&
+      selectedIndexValue >= 0 &&
+      selectedIndexValue < fields.length
+      ? fields[selectedIndexValue]
+      : undefined;
+    const selected = indexedField ?? this.configFieldByKey(fields, selectedKey);
+    const selectedFieldIndex = selected
+      ? fields.findIndex((field) => field.key === selected.key)
+      : -1;
     const categories = this.configCategories(fields);
     const requestedCategory = this.configCategoryFromSelection(
       categories,
@@ -2268,27 +2352,50 @@ export class Engine {
     const categoryFields = activeCategory
       ? fields.filter((field) => field.category === activeCategory)
       : fields;
-    const text = truncateText(
-      selected
-        ? this.renderConfigFieldText(selected)
-        : [
-            '**配置文件 / Config file**',
-            activeCategory
-              ? `分组 / Category: \`${activeCategory}\``
-              : undefined,
-            '先看下方设置项列表，再用下拉选择要编辑的设置项。',
-            'Review the settings below, then choose one from the menu to edit.',
-            '提交前会先预览持久化 config.json 改动。',
-            'Changes are previewed before they are written to config.json.',
-            '未列出的设置项可继续用高级 raw path 编辑。',
-            'Advanced raw path remains available for unsupported settings.',
-            ...this.renderConfigFieldList(categoryFields),
-            categories.length > SETTINGS_CONFIG_SELECT_OPTION_LIMIT
-              ? '仅显示前 25 个分组；其余请用高级 raw path。 / Showing first 25 categories; use Advanced raw path for the rest.'
-              : undefined,
-          ].filter((line): line is string => line !== undefined).join('\n'),
-      SETTINGS_CONFIG_PANEL_TEXT_LIMIT,
-    );
+    const selectedDetail = selected
+      ? this.renderConfigFieldDetail(selected, pageIndex)
+      : undefined;
+    let fieldList: { lines: string[]; pageIndex: number; pageCount: number } = {
+      lines: [],
+      pageIndex: 0,
+      pageCount: 0,
+    };
+    const headerLines = selectedDetail
+      ? []
+      : [
+          '**配置文件 / Config file**',
+          activeCategory
+            ? `分组 / Category: \`${activeCategory}\``
+            : undefined,
+          '先看下方设置项列表，再用下拉选择要编辑的设置项。',
+          'Review the settings below, then choose one from the menu to edit.',
+          '提交前会先预览持久化 config.json 改动。',
+          'Changes are previewed before they are written to config.json.',
+          '未列出的设置项可继续用高级 raw path 编辑。',
+          'Advanced raw path remains available for unsupported settings.',
+        ].filter((line): line is string => line !== undefined);
+    const categoryLimitLine = !selectedDetail &&
+      categories.length > SETTINGS_CONFIG_SELECT_OPTION_LIMIT
+      ? '仅显示前 25 个分组；其余请用高级 raw path。 / Showing first 25 categories; use Advanced raw path for the rest.'
+      : undefined;
+    if (!selectedDetail) {
+      const fixedTextLength = [
+        ...headerLines,
+        categoryLimitLine,
+      ].filter((line): line is string => line !== undefined).join('\n').length;
+      fieldList = this.renderConfigFieldList(
+        categoryFields,
+        pageIndex,
+        SETTINGS_CONFIG_PANEL_TEXT_LIMIT - fixedTextLength,
+      );
+    }
+    const text = selectedDetail
+      ? selectedDetail.text
+      : [
+          ...headerLines,
+          ...fieldList.lines,
+          categoryLimitLine,
+        ].filter((line): line is string => line !== undefined).join('\n');
     const components: NonNullable<EventHandlerResult['commandResponse']>['components'] = [];
     if (categories.length > 1) {
       components.push({
@@ -2326,7 +2433,46 @@ export class Engine {
           })),
       });
     }
+    if (!selected && fieldList.pageCount > 1) {
+      const activeCategoryIndex = activeCategory
+        ? categories.indexOf(activeCategory)
+        : 0;
+      components.push(
+        {
+          type: 'button',
+          componentId: `${SETTINGS_CONFIG_PAGE_COMPONENT_PREFIX}${activeCategoryIndex}:${Math.max(0, fieldList.pageIndex - 1)}`,
+          label: '上一页 / Previous',
+          style: 'secondary',
+          disabled: fieldList.pageIndex === 0,
+        },
+        {
+          type: 'button',
+          componentId: `${SETTINGS_CONFIG_PAGE_COMPONENT_PREFIX}${activeCategoryIndex}:${Math.min(fieldList.pageCount - 1, fieldList.pageIndex + 1)}`,
+          label: '下一页 / Next',
+          style: 'secondary',
+          disabled: fieldList.pageIndex === fieldList.pageCount - 1,
+        },
+      );
+    }
     if (selected) {
+      if (selectedDetail && selectedDetail.pageCount > 1) {
+        components.push(
+          {
+            type: 'button',
+            componentId: `${SETTINGS_CONFIG_FIELD_PAGE_COMPONENT_PREFIX}${selectedFieldIndex}:${Math.max(0, selectedDetail.pageIndex - 1)}`,
+            label: '上一页 / Previous',
+            style: 'secondary',
+            disabled: selectedDetail.pageIndex === 0,
+          },
+          {
+            type: 'button',
+            componentId: `${SETTINGS_CONFIG_FIELD_PAGE_COMPONENT_PREFIX}${selectedFieldIndex}:${Math.min(selectedDetail.pageCount - 1, selectedDetail.pageIndex + 1)}`,
+            label: '下一页 / Next',
+            style: 'secondary',
+            disabled: selectedDetail.pageIndex === selectedDetail.pageCount - 1,
+          },
+        );
+      }
       components.push({
         type: 'button',
         componentId: `${SETTINGS_CONFIG_EDIT_COMPONENT_PREFIX}${selected.key}`,
@@ -2903,6 +3049,29 @@ export class Engine {
     }
     if (componentId === SETTINGS_CONFIG_CATEGORY_COMPONENT_ID) {
       return this.configPanelResponse(event, undefined, event.interaction?.values[0]);
+    }
+    if (componentId.startsWith(SETTINGS_CONFIG_PAGE_COMPONENT_PREFIX)) {
+      const [categoryIndex, page] = componentId
+        .slice(SETTINGS_CONFIG_PAGE_COMPONENT_PREFIX.length)
+        .split(':');
+      return this.configPanelResponse(
+        event,
+        undefined,
+        categoryIndex,
+        Number(page),
+      );
+    }
+    if (componentId.startsWith(SETTINGS_CONFIG_FIELD_PAGE_COMPONENT_PREFIX)) {
+      const [fieldIndex, page] = componentId
+        .slice(SETTINGS_CONFIG_FIELD_PAGE_COMPONENT_PREFIX.length)
+        .split(':');
+      return this.configPanelResponse(
+        event,
+        undefined,
+        undefined,
+        Number(page),
+        Number(fieldIndex),
+      );
     }
     if (componentId === SETTINGS_CONFIG_FIELD_COMPONENT_ID) {
       return this.configPanelResponse(event, event.interaction?.values[0]);

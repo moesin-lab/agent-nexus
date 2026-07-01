@@ -112,6 +112,9 @@ label/path/value 后让用户猜字段含义。
 - 对 enum/boolean 字段，必须写清主要取值或 true/false 的行为差异。
 - UI 渲染时 label 用于快速识别，path 和 description 作为辅助信息；Discord 可用
   `-#` subtext 展示辅助信息，但不得依赖任意字号能力。
+- 设置列表与设置详情正文不得用省略号截断 label、path、当前值或 description。若完整内容
+  超过平台单条消息预算，必须通过分页或拆页让用户继续查看完整内容；select menu 受平台
+  option 长度限制，只能作为导航，不得作为完整说明的唯一载体。
 
 新增或调整 typed editable field 时，必须同步更新说明表或动态说明模板，并在
 `createConfigFieldsProvider` 相关测试中覆盖非空 description。

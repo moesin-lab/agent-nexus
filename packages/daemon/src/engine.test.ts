@@ -4401,7 +4401,7 @@ describe('Engine', () => {
     );
   });
 
-  it('settings config file panel keeps long setting previews bounded', async () => {
+  it('settings config file panel paginates long setting previews without truncating field text', async () => {
     const platform = makePlatform({
       supportsSlashCommands: true,
       supportsEphemeral: true,
@@ -4462,10 +4462,12 @@ describe('Engine', () => {
     const text = panel?.commandResponse?.text ?? '';
     expect(text.length).toBeLessThanOrEqual(1900);
     expect(text).toContain('**可修改设置 / Available settings**');
-    expect(text).toContain('Very long setting label 0 with extra descript...');
-    expect(text).toContain('value-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...');
-    expect(text).toContain('下拉菜单还有 21 个设置项。');
-    expect(text).toContain('另有 5 个设置项需用高级路径编辑。');
+    expect(text).toContain('第 1 / 15 页 · 显示 1-2 / 30 个设置项');
+    expect(text).toContain('Very long setting label 0 with extra descriptive text for humans');
+    expect(text).toContain(`value-0-${'x'.repeat(120)}`);
+    expect(text).toContain(`Very long setting description 0 ${'d'.repeat(180)}`);
+    expect(text).toContain('字段下拉最多显示前 25 个');
+    expect(text).not.toContain('...');
     const fieldSelect = panel?.commandResponse?.components?.find(
       (component) =>
         component.type === 'select' &&
@@ -4476,6 +4478,120 @@ describe('Engine', () => {
       throw new Error('expected config field select');
     }
     expect(fieldSelect.options).toHaveLength(25);
+
+    const next = panel?.commandResponse?.components?.find(
+      (component) =>
+        component.type === 'button' &&
+        component.componentId === 'nexus:settings:config-page:0:1',
+    );
+    expect(next).toMatchObject({
+      type: 'button',
+      label: '下一页 / Next',
+      disabled: false,
+    });
+    const nextPage = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-page:0:1', [], {
+        interaction: {
+          componentId: 'nexus:settings:config-page:0:1',
+          kind: 'button',
+          values: [],
+        },
+      }),
+    );
+    const nextText = nextPage?.commandResponse?.text ?? '';
+    expect(nextText.length).toBeLessThanOrEqual(1900);
+    expect(nextText).toContain('第 2 / 15 页 · 显示 3-4 / 30 个设置项');
+    expect(nextText).toContain('Very long setting label 2 with extra descriptive text for humans');
+    expect(nextText).toContain(`value-2-${'x'.repeat(120)}`);
+    expect(nextText).toContain(`Very long setting description 2 ${'d'.repeat(180)}`);
+    expect(nextText).not.toContain('...');
+  });
+
+  it('settings config field detail paginates oversized field text without truncation', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const longDescription = `${'detail '.repeat(260)}detail-description-tail`;
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: makeAgent().runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          match: { discord: { channelIds: ['C1'] } },
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
+      daemonCommandHandlerKeys: ['settings'],
+      configFields: vi.fn(async () => ({
+        fields: [
+          {
+            key: 'daemon.hugeSetting',
+            label: 'Huge setting',
+            description: longDescription,
+            category: 'Large config group',
+            path: 'daemon.hugeSetting',
+            value: 'active',
+            valueKind: 'string' as const,
+            effect: 'restart' as const,
+            risk: 'normal' as const,
+          },
+        ],
+      })),
+      configEditor: vi.fn(),
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const detail = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-field', ['daemon.hugeSetting']),
+    );
+    const text = detail?.commandResponse?.text ?? '';
+    expect(text.length).toBeLessThanOrEqual(1900);
+    expect(text).toContain('**设置项详情 / Setting detail**');
+    expect(text).toContain('第 1 / 2 页 / Page 1 / 2');
+    expect(text).not.toContain('...');
+    const next = detail?.commandResponse?.components?.find(
+      (component) =>
+        component.type === 'button' &&
+        component.componentId === 'nexus:settings:config-field-page:0:1',
+    );
+    expect(next).toMatchObject({
+      type: 'button',
+      label: '下一页 / Next',
+      disabled: false,
+    });
+
+    const nextPage = await dispatchHandler(
+      makeComponentEvent('nexus:settings:config-field-page:0:1', [], {
+        interaction: {
+          componentId: 'nexus:settings:config-field-page:0:1',
+          kind: 'button',
+          values: [],
+        },
+      }),
+    );
+    const nextText = nextPage?.commandResponse?.text ?? '';
+    expect(nextText.length).toBeLessThanOrEqual(1900);
+    expect(nextText).toContain('第 2 / 2 页 / Page 2 / 2');
+    expect(nextText).toContain('detail-description-tail');
+    expect(nextText).not.toContain('...');
   });
 
   it('settings agent binding select changes the channel route for subsequent messages', async () => {

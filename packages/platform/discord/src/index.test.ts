@@ -461,6 +461,7 @@ describe('command registry integration', () => {
     await platform.start(handler);
     const interactionCreate = registeredHandler('interactionCreate');
     const deferReply = vi.fn(async () => undefined);
+    const deferUpdate = vi.fn(async () => undefined);
     const editReply = vi.fn(async () => undefined);
     await interactionCreate({
       id: 'i-select',
@@ -482,13 +483,15 @@ describe('command registry integration', () => {
       member: { roles: { cache: new Map([['R1', { id: 'R1' }]]) } },
       channel: { isThread: () => true, parentId: 'C1' },
       deferReply,
+      deferUpdate,
       editReply,
       isChatInputCommand: () => false,
       isStringSelectMenu: () => true,
       isButton: () => false,
     });
 
-    expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(deferUpdate).toHaveBeenCalledTimes(1);
+    expect(deferReply).not.toHaveBeenCalled();
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler.mock.calls[0]![0]).toMatchObject({
       eventId: 'i-select',
@@ -610,6 +613,7 @@ describe('command registry integration', () => {
     await platform.start(handler);
     const interactionCreate = registeredHandler('interactionCreate');
     const deferReply = vi.fn(async () => undefined);
+    const deferUpdate = vi.fn(async () => undefined);
     const editReply = vi.fn(async () => undefined);
     const showModal = vi.fn(async () => undefined);
     await interactionCreate({
@@ -629,6 +633,7 @@ describe('command registry integration', () => {
       member: { roles: { cache: new Map() } },
       channel: { isThread: () => false },
       deferReply,
+      deferUpdate,
       editReply,
       showModal,
       isChatInputCommand: () => false,
@@ -638,7 +643,8 @@ describe('command registry integration', () => {
     });
 
     expect(showModal).not.toHaveBeenCalled();
-    expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(deferUpdate).toHaveBeenCalledTimes(1);
+    expect(deferReply).not.toHaveBeenCalled();
     expect(handler).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'interaction',

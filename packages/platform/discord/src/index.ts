@@ -669,6 +669,22 @@ async function deferCommandInteraction(
   }
 }
 
+async function deferComponentInteraction(
+  interaction: { id: string; customId?: string; deferUpdate(): Promise<unknown> },
+  logger: Logger,
+): Promise<boolean> {
+  try {
+    await interaction.deferUpdate();
+    return true;
+  } catch (err) {
+    logger.error(
+      { err, interactionId: interaction.id, customId: interaction.customId },
+      'discord_component_ack_failed',
+    );
+    return false;
+  }
+}
+
 async function deleteDeferredCommandReply(
   interaction: DeferredInteraction,
   logger: Logger,
@@ -1063,15 +1079,7 @@ export function createDiscordPlatform(opts: DiscordPlatformOptions): DiscordPlat
             }
             return;
           }
-          try {
-            await interaction.deferReply({ ephemeral: true });
-          } catch (err) {
-            logger.error(
-              { err, interactionId: interaction.id },
-              'discord_component_ack_failed',
-            );
-            return;
-          }
+          if (!(await deferComponentInteraction(interaction, logger))) return;
           const event = componentEventFromInteraction(interaction);
           try {
             const result = await handler(event);

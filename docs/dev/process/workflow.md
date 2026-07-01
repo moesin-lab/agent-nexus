@@ -56,6 +56,7 @@ related:
 ## 分支先行（不可跳过）
 
 - 一切改动必须在从 `main` checkout 的新分支上进行，包括纯文档、错别字、依赖补丁升级。
+- **每个新 topic 都必须重新从 `main` 派生**：topic 定义、worktree 操作与同会话连续修复链 / stacked PR 例外判定见 [`commit-and-branch.md` §开分支前工作区检查](commit-and-branch.md#开分支前工作区检查)。
 - 禁止在 `main` 上直接编辑、commit 或累积未 PR 的改动。
 - 即便是"一行改动"，也走 分支 → PR → review → squash merge 的完整链路。
 
@@ -107,7 +108,7 @@ related:
 
 - **及时同步文档**：代码改了接口，同 PR 改 spec；不接受"下 PR 再补"。
 - **范围收敛**：一旦发现当前改动牵扯到**无关**问题，开新 Issue，不要在当前 PR 里顺手改。
-- **同会话连续修复链**：同一会话内连续暴露的 bug，若 scope 差距不大、同主题、且新问题在当前 PR 合并前无法独立验证（典型：A 不修就跑不到 B 的代码路径），**应叠在当前分支继续提交（首选）或开 stacked PR 声明 `base=<当前 PR 分支>`（次选）**，禁止机械地从 `main` 拉并行 PR。判据：在新开分支前先问"这个新 fix 在当前 PR 合并前能独立 run 通 / 独立合并吗？"——答否就不该并行。"范围收敛"管的是无关顺手改，本条管的是有关连环修；两者互补不冲突。
+- **同会话连续修复链先分流**：有关连环修与无关顺手改的分界见 [`commit-and-branch.md` §开分支前工作区检查](commit-and-branch.md#开分支前工作区检查)；无关问题开新 Issue，有依赖的同会话连续修复链不要机械地从 `main` 拉并行 PR。
 - **失败时暂停**：如果某一步发现前提不成立（ADR 前提错了、spec 里某字段设计不对），**回到上一步**而不是绕过。
 
 ## 本地开发
@@ -120,6 +121,7 @@ related:
 ## 反模式
 
 - **在 `main` 上直接实现 / commit**（违反"分支先行"，绕过 PR 与独立 agent review）
+- 在已有 feature 分支上继续做无关新 topic，或从 feature 分支切出无依赖新分支（见 [`commit-and-branch.md` §禁止事项](commit-and-branch.md#禁止事项行为)）
 - 先写实现再补测试（违反 TDD，见 `process/tdd.md`）
 - 先写实现再补 spec（违反"契约先行"）
 - ADR 写完就开始写代码，跳过评审

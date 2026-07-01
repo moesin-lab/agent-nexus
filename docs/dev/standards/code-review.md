@@ -18,10 +18,16 @@ related:
 
 PR 描述沿用仓库既有形态：`Summary` / `Why` / `Test plan` / `Out of scope`。可以加其它小节，但不能省略 [`../process/code-review.md` §PR 必答三问](../process/code-review.md#pr-必答三问)、review 与验证；Test plan 必须用 checkbox 明示，便于 reviewer 一眼拒绝未完成项。
 
+PR 正文整体与各必填段落都必须以中文为主；固定英文 section 标题、`ADR:` / `Spec:` / `Tests:` 等字段名、命令、路径、代码标识符和专有名词可以保留英文。PR title 不受本条约束，仍按 [`commit-style.md`](commit-style.md) 使用 Conventional Commits。
+
+`pr-metadata` 同步门禁用正文整体与必填段落的中文比例做近似校验；reviewer 仍按本节规则判断正文是否实际可读、是否用英文段落绕过门禁。
+
+各必填段落不接受裸 `N/A`；确实不适用时也写中文理由，例如 `N/A - 本 PR 不涉及运行时路径。`。
+
 ```markdown
 ## Summary
 
-<背景和当前问题，1-2 段>
+<用中文说明背景和当前问题，1-2 段>
 
 本 PR：
 - <改了什么，1-5 条>
@@ -30,8 +36,8 @@ PR 描述沿用仓库既有形态：`Summary` / `Why` / `Test plan` / `Out of sc
 
 <为什么要做；对应的 issue / ADR / spec，或 N/A + 理由>
 
-ADR: <链接或 N/A + 理由>
-Spec: <链接或 N/A + 理由>
+ADR: <链接或 N/A + 中文理由>
+Spec: <链接或 N/A + 中文理由>
 
 ## Test plan
 
@@ -41,8 +47,8 @@ Spec: <链接或 N/A + 理由>
 
 ## Review notes
 
-- Independent agent review: <review log / PR comment / N/A + 理由>
-- Deep review: <触发条件满足时的 review log；未触发则写 N/A + 理由>
+- Independent agent review: <review log / PR comment / N/A + 中文理由>
+- Deep review: <触发条件满足时的 review log；未触发则写 N/A + 中文理由>
 
 ## Out of scope
 

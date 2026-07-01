@@ -316,6 +316,12 @@ describe('createConfigFieldsProvider', () => {
       effect: 'restart',
       risk: 'high',
     });
+    expect(byPath.get('daemon.commandRegistry.registration.applyTimeoutMs')).toMatchObject({
+      category: 'Daemon command registry',
+      valueKind: 'number',
+      description: expect.stringContaining('applyCommandPlan 的最长等待时间'),
+      effect: 'restart',
+    });
     expect(byPath.get('log.level')).toMatchObject({
       category: 'Process',
       valueKind: 'enum',

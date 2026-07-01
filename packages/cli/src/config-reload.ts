@@ -118,6 +118,23 @@ function field(
   };
 }
 
+const COMMAND_REGISTRY_FIELD_DESCRIPTIONS: Record<string, string> = {
+  'daemon.commandRegistry.registration.enabled':
+    '控制启动或重载时是否向 Discord 等平台提交 slash command registration plan。关闭后不会注册或更新远端命令；由于没有持久化 active map，command dispatch 会 fail-closed。通常只在排查注册问题时临时关闭。 / Controls whether the daemon applies the slash-command registration plan to remote platforms during startup or reload. When false, commands are not registered or updated; without a persisted active map, command dispatch stays fail-closed. Use mainly for registration troubleshooting.',
+  'daemon.commandRegistry.registration.applyTimeoutMs':
+    'daemon 调用平台 applyCommandPlan 的最长等待时间，单位毫秒。超时等价于 registration failure，daemon 会保留旧 active map，避免进入半注册状态；网络慢或 Discord API 响应慢时可适当增大。 / Maximum time in milliseconds for the daemon to wait for platform applyCommandPlan. Timeout is treated as a registration failure, and the previous active map is kept to avoid a partially registered state. Increase it when the network or Discord API is slow.',
+  'daemon.commandRegistry.registration.retry.maxAttempts':
+    'daemon 启动时 apply registration plan 失败后的最大重试次数。只有 generation 匹配的成功结果能激活 active map；增大该值可容忍临时 API 或网络抖动，但会延长启动失败前的等待时间。 / Maximum retry attempts after applying the registration plan fails during daemon startup. Only a successful result with the matching generation activates the active map. Higher values tolerate temporary API or network failures but extend startup wait time.',
+  'daemon.commandRegistry.registration.retry.backoffMs':
+    '每次 registration retry 之间的等待时间，单位毫秒。0 表示立即重试；建议与 maxAttempts 一起调整，避免 Discord/API 短暂故障时连续打满请求。 / Delay in milliseconds between registration retries. 0 retries immediately. Tune it with maxAttempts to avoid hammering Discord/API during transient failures.',
+  'daemon.commandRegistry.aliases.singleAgent.enabled':
+    '控制 single-agent 场景是否注册裸别名 slash commands，例如 /new 和 /stop。关闭后仍保留稳定命名 commands，例如 /codex-new、/codex-stop、/claudecode-new、/claudecode-stop；适合多 agent 环境或需要避免短命令冲突时关闭。 / Controls whether bare alias slash commands such as /new and /stop are registered for single-agent setups. Stable commands such as /codex-new, /codex-stop, /claudecode-new, and /claudecode-stop remain available. Disable it in multi-agent environments or when short command names may conflict.',
+  'daemon.commandRegistry.aliases.legacy.replyMode':
+    '控制历史兼容的 /reply-mode 裸别名是否进入 registration plan。关闭后只影响 legacy alias；reply-mode 仍保留为 historical reserved bare name，避免被其他命令误用。 / Controls whether the legacy bare /reply-mode alias is included in the registration plan. Disabling it only removes the legacy alias; reply-mode remains a historical reserved bare name so other commands cannot accidentally reuse it.',
+  'daemon.commandRegistry.textPrefixes.newSession':
+    '控制文本消息中的 @bot /new 和 @bot /new <prompt> 是否触发新会话。不影响 slash command 的稳定命名；适合想禁用聊天文本快捷入口、只保留 slash commands 的场景。 / Controls whether text messages like @bot /new and @bot /new <prompt> start a new session. It does not affect stable slash command names. Disable it when chat-text shortcuts should be off and only slash commands should remain.',
+};
+
 function platformFields(platform: PlatformConfig, index: number): DaemonConfigEditableField[] {
   const base = `platforms[${index}]`;
   const category = `Platform ${platform.name}`;
@@ -379,6 +396,8 @@ function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableFiel
     field({
       key: 'daemon.commandRegistry.registration.enabled',
       label: 'Command registration enabled',
+      description:
+        COMMAND_REGISTRY_FIELD_DESCRIPTIONS['daemon.commandRegistry.registration.enabled'],
       category,
       path: 'daemon.commandRegistry.registration.enabled',
       value: commandRegistry.registration.enabled,
@@ -387,6 +406,8 @@ function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableFiel
     field({
       key: 'daemon.commandRegistry.registration.applyTimeoutMs',
       label: 'Command registration timeout',
+      description:
+        COMMAND_REGISTRY_FIELD_DESCRIPTIONS['daemon.commandRegistry.registration.applyTimeoutMs'],
       category,
       path: 'daemon.commandRegistry.registration.applyTimeoutMs',
       value: commandRegistry.registration.applyTimeoutMs,
@@ -395,6 +416,8 @@ function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableFiel
     field({
       key: 'daemon.commandRegistry.registration.retry.maxAttempts',
       label: 'Command registration retry attempts',
+      description:
+        COMMAND_REGISTRY_FIELD_DESCRIPTIONS['daemon.commandRegistry.registration.retry.maxAttempts'],
       category,
       path: 'daemon.commandRegistry.registration.retry.maxAttempts',
       value: commandRegistry.registration.retry.maxAttempts,
@@ -403,6 +426,8 @@ function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableFiel
     field({
       key: 'daemon.commandRegistry.registration.retry.backoffMs',
       label: 'Command registration retry backoff',
+      description:
+        COMMAND_REGISTRY_FIELD_DESCRIPTIONS['daemon.commandRegistry.registration.retry.backoffMs'],
       category,
       path: 'daemon.commandRegistry.registration.retry.backoffMs',
       value: commandRegistry.registration.retry.backoffMs,
@@ -411,6 +436,8 @@ function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableFiel
     field({
       key: 'daemon.commandRegistry.aliases.singleAgent.enabled',
       label: 'Single-agent bare aliases',
+      description:
+        COMMAND_REGISTRY_FIELD_DESCRIPTIONS['daemon.commandRegistry.aliases.singleAgent.enabled'],
       category,
       path: 'daemon.commandRegistry.aliases.singleAgent.enabled',
       value: commandRegistry.aliases.singleAgent.enabled,
@@ -419,6 +446,8 @@ function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableFiel
     field({
       key: 'daemon.commandRegistry.aliases.legacy.replyMode',
       label: 'Legacy reply-mode alias',
+      description:
+        COMMAND_REGISTRY_FIELD_DESCRIPTIONS['daemon.commandRegistry.aliases.legacy.replyMode'],
       category,
       path: 'daemon.commandRegistry.aliases.legacy.replyMode',
       value: commandRegistry.aliases.legacy.replyMode,
@@ -427,6 +456,8 @@ function daemonCommandFields(config: AgentNexusConfig): DaemonConfigEditableFiel
     field({
       key: 'daemon.commandRegistry.textPrefixes.newSession',
       label: 'Text prefix /new',
+      description:
+        COMMAND_REGISTRY_FIELD_DESCRIPTIONS['daemon.commandRegistry.textPrefixes.newSession'],
       category,
       path: 'daemon.commandRegistry.textPrefixes.newSession',
       value: commandRegistry.textPrefixes.newSession,

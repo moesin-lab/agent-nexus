@@ -4156,6 +4156,8 @@ describe('Engine', () => {
         {
           key: 'daemon.commandRegistry.textPrefixes.newSession',
           label: 'Text prefix /new',
+          description:
+            '控制文本消息中的 @bot /new 是否触发新会话。 / Controls whether @bot /new starts a new session.',
           category: 'Daemon command registry',
           path: 'daemon.commandRegistry.textPrefixes.newSession',
           value: 'true',
@@ -4281,6 +4283,9 @@ describe('Engine', () => {
     expect(commandCategory?.commandResponse?.text).toContain(
       'daemon.commandRegistry.textPrefixes.newSession',
     );
+    expect(commandCategory?.commandResponse?.text).toContain(
+      '说明 / Description: 控制文本消息中的 @bot /new 是否触发新会话。',
+    );
     const commandFieldSelect = commandCategory?.commandResponse?.components?.find(
       (component) =>
         component.type === 'select' &&
@@ -4293,19 +4298,29 @@ describe('Engine', () => {
     expect(commandFieldSelect.options[0]).toMatchObject({
       label: 'Text prefix /new',
       value: 'daemon.commandRegistry.textPrefixes.newSession',
+      description:
+        '控制文本消息中的 @bot /new 是否触发新会话。 / Controls whether @bot /new starts a new session.',
     });
 
     const selected = await dispatchHandler(
-      makeComponentEvent('nexus:settings:config-field', ['ui.toolMessages']),
+      makeComponentEvent('nexus:settings:config-field', [
+        'daemon.commandRegistry.textPrefixes.newSession',
+      ]),
     );
     expect(selected?.commandResponse?.text).toContain('**设置项详情 / Setting detail**');
-    expect(selected?.commandResponse?.text).toContain('UI tool messages');
-    expect(selected?.commandResponse?.text).toContain('ui.toolMessages');
+    expect(selected?.commandResponse?.text).toContain('Text prefix /new');
+    expect(selected?.commandResponse?.text).toContain(
+      'daemon.commandRegistry.textPrefixes.newSession',
+    );
+    expect(selected?.commandResponse?.text).toContain(
+      '-# 控制文本消息中的 @bot /new 是否触发新会话。',
+    );
     expect(selected?.commandResponse?.components).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: 'button',
-          componentId: 'nexus:settings:config-edit:ui.toolMessages',
+          componentId:
+            'nexus:settings:config-edit:daemon.commandRegistry.textPrefixes.newSession',
           label: '编辑设置值 / Edit value',
         }),
       ]),

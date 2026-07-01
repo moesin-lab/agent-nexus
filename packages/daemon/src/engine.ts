@@ -125,6 +125,7 @@ export type DaemonConfigEditRisk = 'normal' | 'high';
 export interface DaemonConfigEditableField {
   key: string;
   label: string;
+  description?: string;
   category: string;
   path: string;
   value: string;
@@ -244,6 +245,7 @@ const SETTINGS_CONFIG_SELECT_OPTION_LIMIT = 25;
 const SETTINGS_CONFIG_FIELD_LABEL_PREVIEW_LIMIT = 48;
 const SETTINGS_CONFIG_FIELD_PATH_PREVIEW_LIMIT = 72;
 const SETTINGS_CONFIG_FIELD_VALUE_PREVIEW_LIMIT = 48;
+const SETTINGS_CONFIG_FIELD_DESCRIPTION_PREVIEW_LIMIT = 140;
 const SETTINGS_CONFIG_CATEGORY_DESCRIPTION_LABEL_LIMIT = 30;
 const SETTINGS_AGENT_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}agent`;
 const QUEUE_ACTION_ARG = 'action';
@@ -2147,6 +2149,9 @@ export class Engine {
       `当前值 / Current: \`${this.renderConfigValue(field.value)}\``,
       `生效方式 / Effect: ${this.renderConfigEffect(field.effect)}`,
     ];
+    if (field.description) {
+      lines.push('说明 / Description:', `-# ${field.description}`);
+    }
     if (field.options && field.options.length > 0) {
       lines.push(
         `可选值 / Allowed: ${field.options.map((option) => `\`${option}\``).join(', ')}`,
@@ -2173,7 +2178,17 @@ export class Engine {
     );
     const value = this.renderConfigValuePreview(field.value);
     const effect = this.renderConfigEffect(field.effect);
-    return `${index + 1}. \`${label}\`\n   ${path} · 当前 / Current: \`${value}\` · ${effect}${risk}`;
+    const lines = [
+      `${index + 1}. **${label}**`,
+      `当前 / Current: \`${value}\` · 生效 / Effect: ${effect}${risk}`,
+      `-# Path: ${path}`,
+    ];
+    if (field.description) {
+      lines.push(
+        `-# 说明 / Description: ${truncateText(field.description, SETTINGS_CONFIG_FIELD_DESCRIPTION_PREVIEW_LIMIT)}`,
+      );
+    }
+    return lines.join('\n');
   }
 
   private renderConfigFieldList(
@@ -2299,7 +2314,7 @@ export class Engine {
           .map((field) => ({
             label: field.label.slice(0, 100),
             value: field.key,
-            description: field.path.slice(0, 100),
+            description: (field.description ?? field.path).slice(0, 100),
             default: field.key === selected?.key,
           })),
       });

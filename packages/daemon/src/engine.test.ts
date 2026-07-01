@@ -55,6 +55,8 @@ const platformCaps: CapabilitySet = {
   supportsSlashCommands: false,
 };
 
+const INBOUND_ACK_REACTION_EMOJI = '👀';
+
 const agentCaps: AgentCapabilitySet = {
   supportsThinking: false,
   supportsStreaming: false,
@@ -96,6 +98,7 @@ function makePlatform(capOverrides: Partial<CapabilitySet> = {}): PlatformAdapte
   capabilities: ReturnType<typeof vi.fn>;
   send: ReturnType<typeof vi.fn>;
   edit: ReturnType<typeof vi.fn>;
+  react: ReturnType<typeof vi.fn>;
   setTyping: ReturnType<typeof vi.fn>;
   clearTyping: ReturnType<typeof vi.fn>;
   createThread: ReturnType<typeof vi.fn>;
@@ -607,6 +610,224 @@ describe('Engine', () => {
     expect(out.text).toBe('hi from agent');
 
     expect(agent.stopSession).not.toHaveBeenCalled();
+  });
+
+  it('Discord message 通过 daemon 后先添加收到确认 reaction，再递交 agent', async () => {
+    const platform = makePlatform({ supportsReactions: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const order: string[] = [];
+    platform.react.mockImplementation(async () => {
+      order.push('react');
+    });
+    const originalSendInput = agent.sendInput.getMockImplementation();
+    agent.sendInput.mockImplementation(async (...args) => {
+      order.push('agent');
+      return originalSendInput?.(...args);
+    });
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    agent.queueEvents([
+      ev('text_final', { text: 'hi from agent' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello', {
+      messageId: 'm-inbound',
+      platformTimestamp: new Date(123),
+    }));
+
+    expect(platform.react).toHaveBeenCalledWith({
+      platform: 'discord',
+      channelId: 'C1',
+      messageId: 'm-inbound',
+      messageIds: ['m-inbound'],
+      sentAt: new Date(123),
+    }, INBOUND_ACK_REACTION_EMOJI);
+    expect(order).toEqual(['react', 'agent']);
+    expect(agent.sendInput).toHaveBeenCalledTimes(1);
+  });
+
+  it('平台不支持 reactions 时不添加收到确认 reaction，但仍递交 agent', async () => {
+    const platform = makePlatform({ supportsReactions: false });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    agent.queueEvents([
+      ev('text_final', { text: 'hi from agent' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello', { messageId: 'm-no-reaction-cap' }));
+
+    expect(platform.react).not.toHaveBeenCalled();
+    expect(agent.sendInput).toHaveBeenCalledTimes(1);
+  });
+
+  it('同 session 前一轮仍在运行时，新入队消息也会立即添加收到确认 reaction', async () => {
+    const platform = makePlatform({ supportsReactions: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const firstSendInputStarted = deferred<void>();
+    const releaseFirstSendInput = deferred<void>();
+    const originalSendInput = agent.sendInput.getMockImplementation();
+    agent.sendInput.mockImplementation(async (...args) => {
+      if (agent.sendInput.mock.calls.length === 1) {
+        firstSendInputStarted.resolve();
+        await releaseFirstSendInput.promise;
+      }
+      return originalSendInput?.(...args);
+    });
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    agent.queueEvents([
+      ev('text_final', { text: 'first reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    agent.queueEvents([
+      ev('text_final', { text: 'second reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 2 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const first = dispatchHandler(makeEvent('first', {
+      eventId: 'e-ack-first',
+      messageId: 'm-ack-first',
+    }));
+    await firstSendInputStarted.promise;
+
+    const second = dispatchHandler(makeEvent('second', {
+      eventId: 'e-ack-second',
+      messageId: 'm-ack-second',
+    }));
+
+    expect(platform.react).toHaveBeenCalledTimes(2);
+    expect(platform.react.mock.calls[1]?.[0]).toMatchObject({
+      messageId: 'm-ack-second',
+    });
+    expect(agent.sendInput).toHaveBeenCalledTimes(1);
+
+    releaseFirstSendInput.resolve(undefined);
+    await first;
+    await second;
+    expect(agent.sendInput).toHaveBeenCalledTimes(2);
+  });
+
+  it('session queue full 时不添加收到确认 reaction，并发送 queue full notice', async () => {
+    const platform = makePlatform({ supportsReactions: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const firstSendInputStarted = deferred<void>();
+    const releaseFirstSendInput = deferred<void>();
+    const originalSendInput = agent.sendInput.getMockImplementation();
+    agent.sendInput.mockImplementation(async (...args) => {
+      if (agent.sendInput.mock.calls.length === 1) {
+        firstSendInputStarted.resolve();
+        await releaseFirstSendInput.promise;
+      }
+      return originalSendInput?.(...args);
+    });
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    const running = dispatchHandler(makeEvent('running', {
+      eventId: 'e-queue-running',
+      messageId: 'm-queue-running',
+    }));
+    await firstSendInputStarted.promise;
+
+    const pending: Promise<unknown>[] = [];
+    for (let i = 0; i < 20; i++) {
+      pending.push(dispatchHandler(makeEvent(`pending ${i}`, {
+        eventId: `e-queue-pending-${i}`,
+        messageId: `m-queue-pending-${i}`,
+      })));
+    }
+    expect(platform.react).toHaveBeenCalledTimes(21);
+
+    await dispatchHandler(makeEvent('overflow', {
+      eventId: 'e-queue-overflow',
+      messageId: 'm-queue-overflow',
+    }));
+
+    expect(platform.react).toHaveBeenCalledTimes(21);
+    expect(platform.react.mock.calls.some(([ref]) =>
+      ref.messageId === 'm-queue-overflow',
+    )).toBe(false);
+    expect(platform.send).toHaveBeenCalledWith(
+      expect.objectContaining({ channelId: 'C1' }),
+      expect.objectContaining({ text: 'Nexus queue is full. Try again after current tasks finish.' }),
+    );
+
+    releaseFirstSendInput.resolve(undefined);
+    await running;
+    await Promise.all(pending);
+  });
+
+  it('收到确认 reaction 失败时记录 debug，但仍递交 agent', async () => {
+    const platform = makePlatform({ supportsReactions: true });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const mockLogger = makeMockLogger();
+    const reactionErr = new Error('missing reaction permission');
+    platform.react.mockRejectedValueOnce(reactionErr);
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: mockLogger,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    agent.queueEvents([
+      ev('text_final', { text: 'hi from agent' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('hello', { messageId: 'm-react-fail' }));
+
+    expect(agent.sendInput).toHaveBeenCalledTimes(1);
+    expect(mockLogger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: reactionErr,
+        traceId: 't-1',
+        messageId: 'm-react-fail',
+      }),
+      'platform_inbound_ack_reaction_failed',
+    );
   });
 
   it('trajectory enabled 时把路由输入和 AgentEvent 写入同一个 runtime sessionId', async () => {
@@ -1210,7 +1431,7 @@ describe('Engine', () => {
   });
 
   it('注入 IdempotencyStore 后同 session/messageId 重放不触发第二次 agent 调用', async () => {
-    const platform = makePlatform();
+    const platform = makePlatform({ supportsReactions: true });
     const agent = makeAgent();
     const store = new SessionStore();
     const mockLogger = {
@@ -1248,6 +1469,7 @@ describe('Engine', () => {
     }));
 
     expect(agent.sendInput).toHaveBeenCalledTimes(1);
+    expect(platform.react).toHaveBeenCalledTimes(1);
     expect(platform.send).toHaveBeenCalledTimes(1);
     expect((mockLogger.info as ReturnType<typeof vi.fn>).mock.calls).toEqual(
       expect.arrayContaining([
@@ -1465,7 +1687,7 @@ describe('Engine', () => {
   });
 
   it('routing 命中后 user 不在 platform auth allowlist 时 auth_denied 且不调用 agent / 不创建 session', async () => {
-    const platform = makePlatform();
+    const platform = makePlatform({ supportsReactions: true });
     const codex = makeAgent();
     const claude = makeAgent();
     const store = new SessionStore();
@@ -1518,6 +1740,7 @@ describe('Engine', () => {
 
     expect(codex.startSession).not.toHaveBeenCalled();
     expect(codex.sendInput).not.toHaveBeenCalled();
+    expect(platform.react).not.toHaveBeenCalled();
     expect(store.size).toBe(0);
     const infoCalls = (mockLogger.info as ReturnType<typeof vi.fn>).mock.calls;
     const authLog = infoCalls.find(([, msg]) => msg === 'auth_denied');

@@ -1111,6 +1111,7 @@ describe('command registry integration', () => {
 function makeTextChannel(overrides: {
   edit?: ReturnType<typeof vi.fn>;
   delete?: ReturnType<typeof vi.fn>;
+  fetch?: ReturnType<typeof vi.fn>;
   send?: ReturnType<typeof vi.fn>;
   sendTyping?: ReturnType<typeof vi.fn>;
   sendable?: boolean;
@@ -1121,6 +1122,7 @@ function makeTextChannel(overrides: {
     messages: {
       edit: overrides.edit ?? vi.fn(async (id: string) => ({ id })),
       delete: overrides.delete ?? vi.fn(async () => undefined),
+      fetch: overrides.fetch ?? vi.fn(async (id: string) => ({ id })),
     },
     send: overrides.send ?? vi.fn(async () => ({ id: 'new-1' })),
     sendTyping: overrides.sendTyping ?? vi.fn(async () => undefined),
@@ -1289,13 +1291,14 @@ describe('PartialSendError', () => {
   });
 });
 
-describe('edit / typing capabilities', () => {
-  it('声明 supportsEdit=true 和 supportsTypingIndicator=true', () => {
+describe('edit / react / typing capabilities', () => {
+  it('声明 supportsEdit=true、supportsReactions=true 和 supportsTypingIndicator=true', () => {
     const platform = makePlatform();
 
     expect(platform.capabilities()).toMatchObject({
       supportsEdit: true,
       supportsEmbeds: true,
+      supportsReactions: true,
       supportsTypingIndicator: true,
       supportsSlashCommands: true,
       supportsThreads: true,
@@ -1813,6 +1816,25 @@ describe('edit / typing capabilities', () => {
     const channel = await discordMock.channelsFetch.mock.results[0]!.value;
     expect(channel.send).toHaveBeenCalledTimes(1);
     expect(ref.messageIds).toEqual(['m-1', 'm-2']);
+  });
+
+  it('react fetches the target message and adds the emoji reaction', async () => {
+    const react = vi.fn(async () => undefined);
+    const fetch = vi.fn(async () => ({ id: 'm-1', react }));
+    const emoji = '✅';
+    discordMock.channelsFetch.mockResolvedValueOnce(makeTextChannel({ fetch }));
+    const platform = makePlatform();
+
+    await platform.react({
+      platform: 'discord',
+      channelId: 'C1',
+      messageId: 'm-1',
+      messageIds: ['m-1'],
+      sentAt: new Date(0),
+    }, emoji);
+
+    expect(fetch).toHaveBeenCalledWith('m-1');
+    expect(react).toHaveBeenCalledWith(emoji);
   });
 
   it('setTyping 调用 Discord sendTyping', async () => {

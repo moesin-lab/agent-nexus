@@ -185,6 +185,7 @@ const QUEUE_MOVE_UP_COMPONENT_PREFIX = `${QUEUE_COMPONENT_PREFIX}up:`;
 const QUEUE_MOVE_DOWN_COMPONENT_PREFIX = `${QUEUE_COMPONENT_PREFIX}down:`;
 const QUEUE_CANCEL_COMPONENT_PREFIX = `${QUEUE_COMPONENT_PREFIX}cancel:`;
 const QUEUE_PROMPT_FIELD_ID = 'prompt';
+const INBOUND_ACK_REACTION_EMOJI = '👀';
 const TOOL_EMBED_ACCENT_COLOR = 0x64748b;
 const EMBED_TITLE_LIMIT = 256;
 const EMBED_DESCRIPTION_LIMIT = 4000;
@@ -602,9 +603,10 @@ export class Engine {
     }
     const keyStr = queueKeyFromEvent(event, this.platformName);
     const queuedMessage = { text: event.text };
+    let inboundAck = Promise.resolve();
     let queued: Promise<void>;
     try {
-      queued = this.messageQueue.enqueue({
+      const handle = this.messageQueue.enqueueWithHandle({
         key: keyStr,
         kind: 'message',
         traceId: event.traceId,
@@ -623,6 +625,8 @@ export class Engine {
           }
         },
         run: async () => {
+          // The queue schedules run in a microtask; wait here so the inbound ack is attempted before agent dispatch.
+          await inboundAck;
           try {
             await this.dispatchImpl(
               this.withQueuedText(routedEvent, queuedMessage.text),
@@ -645,6 +649,8 @@ export class Engine {
           }
         },
       });
+      queued = handle.done;
+      inboundAck = this.acknowledgeInboundMessage(routedEvent, keyStr);
     } catch (err) {
       if (err instanceof QueueFullError) {
         if (this.idempotencyStore && idempotencyMessageId) {
@@ -2491,6 +2497,34 @@ export class Engine {
         channelId: parentChannelId,
       },
     };
+  }
+
+  private async acknowledgeInboundMessage(
+    event: NormalizedEvent & { sessionKey: SessionKey },
+    sessionKeyStr: string,
+  ): Promise<void> {
+    if (event.type !== 'message' || !event.messageId) return;
+    if (!this.platform.capabilities().supportsReactions) return;
+    const ref: MessageRef = {
+      platform: event.platform,
+      channelId: event.sessionKey.channelId,
+      messageId: event.messageId,
+      messageIds: [event.messageId],
+      sentAt: event.platformTimestamp ?? event.receivedAt,
+    };
+    try {
+      await this.platform.react(ref, INBOUND_ACK_REACTION_EMOJI);
+    } catch (err) {
+      this.logger.debug(
+        {
+          traceId: event.traceId,
+          sessionKey: sessionKeyStr,
+          messageId: event.messageId,
+          err,
+        },
+        'platform_inbound_ack_reaction_failed',
+      );
+    }
   }
 
   private renameThreadBestEffort(

@@ -125,7 +125,7 @@ export type DaemonConfigEditRisk = 'normal' | 'high';
 export interface DaemonConfigEditableField {
   key: string;
   label: string;
-  description?: string;
+  description: string;
   category: string;
   path: string;
   value: string;
@@ -240,12 +240,12 @@ const SETTINGS_CONFIG_PATH_FIELD_ID = 'path';
 const SETTINGS_CONFIG_VALUE_FIELD_ID = 'value';
 const SETTINGS_CONFIG_PREVIEW_TTL_MS = 10 * 60 * 1000;
 const SETTINGS_CONFIG_PANEL_TEXT_LIMIT = 1900;
-const SETTINGS_CONFIG_FIELD_PREVIEW_COUNT = 5;
+const SETTINGS_CONFIG_FIELD_PREVIEW_COUNT = 4;
 const SETTINGS_CONFIG_SELECT_OPTION_LIMIT = 25;
 const SETTINGS_CONFIG_FIELD_LABEL_PREVIEW_LIMIT = 48;
-const SETTINGS_CONFIG_FIELD_PATH_PREVIEW_LIMIT = 72;
+const SETTINGS_CONFIG_FIELD_PATH_PREVIEW_LIMIT = 64;
 const SETTINGS_CONFIG_FIELD_VALUE_PREVIEW_LIMIT = 48;
-const SETTINGS_CONFIG_FIELD_DESCRIPTION_PREVIEW_LIMIT = 140;
+const SETTINGS_CONFIG_FIELD_DESCRIPTION_PREVIEW_LIMIT = 88;
 const SETTINGS_CONFIG_CATEGORY_DESCRIPTION_LABEL_LIMIT = 30;
 const SETTINGS_AGENT_COMPONENT_ID = `${SETTINGS_COMPONENT_PREFIX}agent`;
 const QUEUE_ACTION_ARG = 'action';
@@ -2141,6 +2141,13 @@ export class Engine {
     return '高级 / advanced';
   }
 
+  private renderConfigEffectPreview(effect: DaemonConfigEditEffect): string {
+    if (effect === 'hot') return '立即 / hot';
+    if (effect === 'conditional-hot') return 'reload 条件 / conditional';
+    if (effect === 'restart') return '重启 / restart';
+    return '高级 / advanced';
+  }
+
   private renderConfigFieldText(field: DaemonConfigEditableField): string {
     const lines = [
       '**设置项详情 / Setting detail**',
@@ -2177,7 +2184,7 @@ export class Engine {
       SETTINGS_CONFIG_FIELD_PATH_PREVIEW_LIMIT,
     );
     const value = this.renderConfigValuePreview(field.value);
-    const effect = this.renderConfigEffect(field.effect);
+    const effect = this.renderConfigEffectPreview(field.effect);
     const lines = [
       `${index + 1}. **${label}**`,
       `当前 / Current: \`${value}\` · 生效 / Effect: ${effect}${risk}`,

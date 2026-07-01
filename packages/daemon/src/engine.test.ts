@@ -4145,6 +4145,8 @@ describe('Engine', () => {
         {
           key: 'ui.toolMessages',
           label: 'UI tool messages',
+          description:
+            '控制工具调用消息在聊天中的展示方式。 / Controls how tool-call messages are shown in chat.',
           category: 'Hot behavior',
           path: 'ui.toolMessages',
           value: 'append',
@@ -4168,6 +4170,8 @@ describe('Engine', () => {
         {
           key: 'bindings[0].match.discord.channelIds',
           label: 'discord-main-codex channel IDs',
+          description:
+            'Discord channel IDs matched by this binding. / Discord channel IDs matched by this binding.',
           category: 'Binding discord-main-codex',
           path: 'bindings[0].match.discord.channelIds',
           value: '["C1"]',
@@ -4405,6 +4409,7 @@ describe('Engine', () => {
     const fields = Array.from({ length: 30 }, (_, index) => ({
       key: `daemon.longSetting${index}`,
       label: `Very long setting label ${index} with extra descriptive text for humans`,
+      description: `Very long setting description ${index} ${'d'.repeat(180)}`,
       category: 'Large config group',
       path: `daemon.deeply.nested.config.section.with.a.very.long.path.setting${index}.enabled`,
       value: `value-${index}-${'x'.repeat(120)}`,
@@ -4459,7 +4464,7 @@ describe('Engine', () => {
     expect(text).toContain('**可修改设置 / Available settings**');
     expect(text).toContain('Very long setting label 0 with extra descript...');
     expect(text).toContain('value-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...');
-    expect(text).toContain('下拉菜单还有 20 个设置项。');
+    expect(text).toContain('下拉菜单还有 21 个设置项。');
     expect(text).toContain('另有 5 个设置项需用高级路径编辑。');
     const fieldSelect = panel?.commandResponse?.components?.find(
       (component) =>

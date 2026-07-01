@@ -293,21 +293,28 @@ describe('createConfigFieldsProvider', () => {
       traceId: 't-1',
     });
     const byPath = new Map(result.fields.map((field) => [field.path, field]));
+    const missingDescriptions = result.fields.filter(
+      (field) => field.description.trim().length === 0,
+    );
+    expect(missingDescriptions).toEqual([]);
 
     expect(byPath.get('platforms[0].auth.allowlist.allowedGuildIds')).toMatchObject({
       category: 'Platform discord-main',
       valueKind: 'string-list',
+      description: expect.stringContaining('Allowed Discord guild IDs'),
       effect: 'hot',
       risk: 'high',
     });
     expect(byPath.get('bindings[0].agentName')).toMatchObject({
       category: 'Binding discord-main-codex',
       valueKind: 'enum',
+      description: expect.stringContaining('Agent selected by binding'),
       options: ['codex-dev', 'claude-prod'],
       effect: 'conditional-hot',
     });
     expect(byPath.get('agents[0].codex.bin')).toMatchObject({
       category: 'Agent codex-dev',
+      description: expect.stringContaining('Executable path or command name'),
       risk: 'high',
     });
     expect(byPath.get('daemon.trajectory.providerCapture.port')).toMatchObject({

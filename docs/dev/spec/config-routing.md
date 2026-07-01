@@ -96,6 +96,26 @@ DaemonCommandRegistryConfig {
 | `daemon.commandRegistry.textPrefixes.newSession` | 控制文本前缀 `@bot /new` / `@bot /new <prompt>`；不影响 slash command stable names |
 | `daemon.trajectory` | daemon-owned trajectory read model、外部 session 导入与 provider-call observation 配置；字段权威源见 [`trajectory-observability.md`](infra/trajectory-observability.md#配置) |
 
+## Settings config editor 字段说明
+
+settings config editor 暴露的每个 typed editable field 都必须携带面向用户的
+`description`。`description` 是 `DaemonConfigEditableField` 的必填元数据，不得只给
+label/path/value 后让用户猜字段含义。
+
+说明文字要求：
+
+- 必须中英双语，中文优先；英文用于保留术语和辅助非中文用户理解。
+- 必须说明字段控制什么行为、修改后影响哪个运行链路或用户路径。
+- 对权限、secret、路径、sandbox、provider capture、auth allowlist、command
+  registration 等高风险字段，必须说明风险边界和误配后果。
+- 对数值字段，必须写清单位和调大/调小的影响。
+- 对 enum/boolean 字段，必须写清主要取值或 true/false 的行为差异。
+- UI 渲染时 label 用于快速识别，path 和 description 作为辅助信息；Discord 可用
+  `-#` subtext 展示辅助信息，但不得依赖任意字号能力。
+
+新增或调整 typed editable field 时，必须同步更新说明表或动态说明模板，并在
+`createConfigFieldsProvider` 相关测试中覆盖非空 description。
+
 ## PlatformConfig
 
 ```text

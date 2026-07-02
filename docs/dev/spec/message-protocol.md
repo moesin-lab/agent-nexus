@@ -258,7 +258,7 @@ daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `t
 
 工具 result 内容默认不进入用户消息。文件内容、diff、搜索命中、Bash stdout/stderr 等富展示需另行定义代码块、行号剥离、脱敏和消息位置策略后再启用。
 
-工具 start fallback 文本与工具卡片字段都必须先经过出站脱敏，再按平台限制截断；禁止先截断再脱敏。这样避免长 input 在截断边界打碎 token 后绕过脱敏规则。工具卡片字段截断只影响卡片，不能改变 trace 日志里的结构化 tool 事件。
+工具 start 的纯文本回退内容、用于长度判定的 fallback 文本，以及工具卡片字段都必须先经过出站脱敏，再按平台限制截断；禁止先截断再脱敏。这样避免长 input 在截断边界打碎 token 后绕过脱敏规则。工具卡片字段截断只影响卡片，不能改变 trace 日志里的结构化 tool 事件。
 
 `ui.toolMessages="compact"` 用于低噪声模式：工具状态合并进当前回复消息，后续 final reply 可覆盖这条状态消息。该模式不保证保留完整用户可见工具轨迹；结构化日志仍按 observability 事件记录。`compact` 模式本期不挂工具卡片，避免临时状态消息被 final reply 编辑覆盖时产生 stale embed。
 

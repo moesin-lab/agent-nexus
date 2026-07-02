@@ -1589,6 +1589,37 @@ describe('edit / react / typing capabilities', () => {
     expect(ref.messageId).toBe('m-1');
   });
 
+  it('send 空正文带 embed：保留空 content 和 embeds 给 Discord', async () => {
+    const send = vi.fn(async () => ({ id: 'm-1' }));
+    discordMock.channelsFetch.mockResolvedValueOnce(makeTextChannel({ send }));
+    const platform = makePlatform();
+    const embeds = [
+      {
+        title: 'Tool: Read',
+        description: 'src/index.ts',
+        color: 0x5865f2,
+      },
+    ];
+
+    const ref = await platform.send({
+      platform: 'discord',
+      channelId: 'C1',
+      initiatorUserId: OTHER_ID,
+    }, {
+      text: '',
+      embeds,
+      traceId: 't-1',
+      sessionKey: { platform: 'discord', channelId: 'C1', initiatorUserId: OTHER_ID },
+    });
+
+    expect(send).toHaveBeenCalledWith({
+      content: '',
+      embeds,
+    });
+    expect(ref.messageIds).toEqual(['m-1']);
+    expect(ref.messageId).toBe('m-1');
+  });
+
   it('send 多片带 embed：只在第一片带 embeds', async () => {
     const send = vi
       .fn()

@@ -239,7 +239,7 @@ ADR-0012 已把模式 B 纳入 stream-json 主路径；daemon 在 `supportsEdit=
 
 ### 工具消息展示
 
-daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `tool_call_started` 追加一条独立工具消息，消息正文包含工具名与目标摘要。平台声明 `supportsEmbeds=true` 时，这条独立工具消息可以同时携带一个平台中立的 `MessageEmbed` 工具卡片；`text` 仍必须保留可读 fallback。平台不支持 embed、fallback 文本超过平台单条消息长度、或处于 `compact` 模式时，必须退回纯文本展示。
+daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `tool_call_started` 追加一条独立工具消息，消息包含工具名与目标摘要。平台声明 `supportsEmbeds=true` 且 fallback 文本未超过平台单条消息长度时，daemon 必须发送平台中立的 `MessageEmbed` 工具卡片，并让消息正文为空，避免平台同时渲染正文 fallback 与 embed 造成重复展示。平台不支持 embed、fallback 文本超过平台单条消息长度、或处于 `compact` 模式时，必须退回纯文本展示。
 
 同一 turn 内，daemon 对平台的用户可见输出（status、tool start、assistant 正文、final reply）必须按 AgentEvent 到达顺序串行执行：前一条 `send` / `edit` 完成前，不得启动后一条用户可见输出。否则慢平台请求会造成工具消息与 assistant 正文在 IM 侧错位。
 

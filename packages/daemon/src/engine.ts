@@ -4324,9 +4324,10 @@ export class Engine {
                 redactedStartText.length <= platformCaps.maxTextLength
                   ? [start.embed]
                   : undefined;
+              const toolMessageText = embeds !== undefined ? '' : start.text;
               await upsertToolMessage(
                 e.payload.callId,
-                start.text,
+                toolMessageText,
                 e.payload.toolName,
                 embeds,
               );

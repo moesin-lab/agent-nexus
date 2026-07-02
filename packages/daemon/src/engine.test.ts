@@ -6616,7 +6616,7 @@ describe('Engine', () => {
     expect((platform.send.mock.calls[1]![1] as OutboundMessage).text).toBe('done');
   });
 
-  it('默认 append 且平台支持 embeds：tool start 发送 fallback text 和工具卡片', async () => {
+  it('默认 append 且平台支持 embeds：tool start 只发送 embed 可见卡片', async () => {
     const platform = makePlatform({ supportsEdit: true, supportsEmbeds: true });
     const agent = makeAgent();
     const store = new SessionStore();
@@ -6645,7 +6645,7 @@ describe('Engine', () => {
 
     expect(platform.send).toHaveBeenCalledTimes(2);
     const toolMessage = platform.send.mock.calls[0]![1] as OutboundMessage;
-    expect(toolMessage.text).toBe('Read: src/index.ts');
+    expect(toolMessage.text).toBe('');
     expect(toolMessage.embeds).toEqual([
       {
         title: 'Tool: Read',
@@ -6684,7 +6684,7 @@ describe('Engine', () => {
     await dispatchHandler(makeEvent('run tests'));
 
     const toolMessage = platform.send.mock.calls[0]![1] as OutboundMessage;
-    expect(toolMessage.text).toBe('Bash:\n```bash\nnpm test\n```');
+    expect(toolMessage.text).toBe('');
     expect(toolMessage.embeds?.[0]).toMatchObject({
       title: 'Tool: Bash',
       description: '```bash\nnpm test\n```',

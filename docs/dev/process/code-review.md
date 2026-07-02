@@ -85,7 +85,7 @@ PreToolUse 只能在创建 / 更新 PR 前拦截 metadata 错误；GitHub Action
 scripts/posttool-pr-check-guard.mjs
 ```
 
-脚本从 tool result 里提取 PR number / head SHA，轮询 required checks。默认 required checks 为 `check,pr-metadata`，默认总超时 10 分钟，轮询间隔为 `5s, 10s, 15s, 20s, 30s, 45s, 60s...`。任一 required check 失败、取消、超时，或总超时后仍 pending / expected，脚本都 exit 2，并在 stderr 明确写出失败 / pending check。agent 不得把这类 PR 汇报为 ready。
+脚本从 tool result 里提取 PR number / head SHA，轮询 required checks。默认 required checks 为 `check,pr-metadata`，默认总超时 10 分钟，单次远端查询超时 30 秒，轮询间隔为 `5s, 10s, 15s, 20s, 30s, 45s, 60s...`。查询来源默认 `auto`：若运行环境提供 `MCP_GITHUB_URL`，优先通过 GitHub MCP gateway 调 `pull_request_read.get_check_runs`；否则回退 GitHub REST API。需要强制 MCP 时设置 `POSTTOOL_PR_CHECK_SOURCE=mcp`。MCP 模式按 PR 当前 head 查询；若 hook 输入同时提供 head SHA，脚本会先校验 PR 当前 head 与该 SHA 一致，不一致则 fail-safe。任一 required check 失败、取消、超时，或总超时后仍 pending / expected，脚本都 exit 2，并在 stderr 明确写出失败 / pending check。agent 不得把这类 PR 汇报为 ready。
 
 Claude Code 示例：
 
@@ -114,8 +114,11 @@ Claude Code 示例：
 
 - `POSTTOOL_PR_CHECK_REQUIRED=check,pr-metadata`
 - `POSTTOOL_PR_CHECK_TIMEOUT_MS=600000`
+- `POSTTOOL_PR_CHECK_REQUEST_TIMEOUT_MS=30000`
 - `POSTTOOL_PR_CHECK_DELAYS_MS=5000,10000,15000,20000,30000,45000`
 - `POSTTOOL_PR_CHECK_MAX_DELAY_MS=60000`
+- `POSTTOOL_PR_CHECK_SOURCE=auto|mcp|github-api`
+- `MCP_GITHUB_URL=http://mcp-gateway:8080/servers/github/mcp`
 
 ## 作者自查时机
 

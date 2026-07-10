@@ -32,7 +32,7 @@ contracts:
 ## 入站链路（外部 IM → agent 后端）
 
 ```
-[外部 IM 服务，如 Discord gateway]
+[外部 IM 服务，如 Discord gateway / Lark WebSocket]
         │
         │  (1) IM 协议事件
         ▼
@@ -109,13 +109,14 @@ contracts:
   │                       AgentEvent{type:usage} → llm_call_finished 结构化日志（字段一一对应）
   ├─ daemon.redact       脱敏（绝对路径/token/secrets）
   │                                              (权威源：security/redaction.md)
-  └─ daemon.sessions     按 sessionKey 切片合并   (权威源：message-protocol.md §切片 +
-                                                  architecture/session-model.md)
+  └─ daemon.sessions     按 sessionKey 聚合流式输出 (权威源：message-protocol.md §流式语义 +
+                                                    architecture/session-model.md)
         │
         │  (3) OutboundMessage（字段权威源：platform-adapter.md §OutboundMessage）
         ▼
 @agent-nexus/platform-<name>.send(sessionKey, OutboundMessage)
   - 把 OutboundMessage 反译为 IM 协议
+  - 按平台预算切片并处理 partial-send
   - 记录 MessageRef（platform-adapter.md §MessageRef）
         │
         │  (4) IM 协议消息

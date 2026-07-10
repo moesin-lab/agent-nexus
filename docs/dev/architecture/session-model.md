@@ -62,6 +62,14 @@ Daemon-owned `/nexus-new-thread` 是当前内存态 MVP：daemon 在当前 Disco
 
 Discord 上原生存在、但不是 `/nexus-new-thread` 创建或 registry 已丢失的 thread，只通过 `threadParentChannelId` 继承父 channel 的 route/auth；daemon 不会把首个发言者提升为 owner，也不会自动把该 thread 改名。进程重启会丢失内存 thread registry，因此 managed thread 会降级为 native thread fallback：仍可继承父频道 route/auth，但不再保留 owner-only 约束、自动改名能力或 session switcher 列表。
 
+### Lark P2P 的映射
+
+- `channelId = chat_id`
+- `initiatorUserId = sender open_id`
+- `platform = "lark"`，configured instance name 仍由 routing context 单独携带
+
+同一 P2P chat 内不同 open_id 仍形成不同 SessionKey；首版 auth 要求 `userIds` 显式包含 sender open_id。
+
 ### 不在 SessionKey 里的东西
 
 - **不包含 messageId**：messageId 是消息级概念，不是会话级
@@ -170,7 +178,8 @@ workingDir 解析分三层：一次性 session override > channel workingDir def
 
 ### 为什么需要
 
-Discord gateway 会重发事件（at-least-once）。同一条用户消息可能被 adapter 收到多次；去重能力由 daemon 在入队前提供。
+平台连接可能重发事件。同一条用户消息可能被 adapter 收到多次；去重能力由 daemon 在入队前提供。没有 replay
+cursor 的平台还可能在断线窗口丢失事件，幂等只能消除重复，不能补回缺失。
 
 详细规则、存储、流程与合约测试见独立 spec：[`idempotency.md`](../spec/infra/idempotency.md)。
 
@@ -228,12 +237,12 @@ Discord gateway 会重发事件（at-least-once）。同一条用户消息可能
 
 ## 断线与重启恢复
 
-### gateway 断连
+### platform 连接断开
 
-- Discord gateway WebSocket 断开
-- adapter 重连（带 session resume）
-- 期间产生的事件 gateway 会重放 → 幂等表过滤重复
-- session registry **不受影响**（是本地内存 + 持久化，不依赖 gateway 状态）
+- Discord gateway 断开后使用 session resume；期间重放事件由幂等表过滤
+- Lark CLI event consumer 断开后按 adapter 退避重启，但上游没有 resume / replay cursor；记录可能丢失窗口，
+  不承诺补回窗口内事件
+- session registry **不受影响**（是本地内存 + 持久化，不依赖 platform connection 状态）
 
 ### 进程重启
 

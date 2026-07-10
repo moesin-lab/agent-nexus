@@ -33,8 +33,8 @@ contracts:
 ```text
 NormalizedEvent {
     // 标识
-    eventId: string                          // 平台事件 ID（全局唯一，含时间序）
-    platform: string                         // "discord"
+    eventId: string                          // 平台事件 ID（全局唯一；不承诺可排序）
+    platform: string                         // "discord" / "lark"
     sessionKey: PlatformSessionKey
     messageId: string?                       // 消息类事件必填
     traceId: string                          // adapter 生成或从上下文继承
@@ -50,9 +50,9 @@ NormalizedEvent {
     interaction: InteractionPayload?         // type == "interaction" 时
     reaction: ReactionPayload?               // type == "reaction" 时
 
-    // 原始负载（仅供 adapter 内部调试）
+    // adapter 外部协议边界收到的完整 wire payload（不得写日志 / IM）
     rawPayload: opaque
-    rawContentType: string                   // "discord:message" / "discord:interaction" 等
+    rawContentType: string                   // "discord:message" / "lark-cli:im.message.receive_v1@1.0.68" 等
 
     // 时间
     receivedAt: timestamp                    // adapter 收到的时间
@@ -86,8 +86,8 @@ Platform adapter 产出的入站事件只包含平台类型、频道和发起者
 
 ```text
 PlatformSessionKey {
-    platform: string                // IM 平台标识，例 "discord"
-    channelId: string               // 会话容器 ID（Discord channel ID 或 thread ID）
+    platform: string                // IM 平台标识，例 "discord" / "lark"
+    channelId: string               // 会话容器 ID（Discord channel/thread ID 或 Lark chat_id）
     initiatorUserId: string         // 发起者 ID
 }
 
@@ -190,7 +190,9 @@ data、interaction token）留在 `rawPayload`，不得升入通用 payload。
 
 - 同 `sessionKey` 串行
 - 跨 `sessionKey` 并发
-- `eventId` 作为序号；需要严格顺序时按 `platformTimestamp` 回退，再按 `eventId` 字典序
+- 单次连接内按 adapter 调用 handler 的先后顺序入队
+- `eventId` 只用于身份与幂等，不作为排序键；`platformTimestamp` 可用于展示，但不能重排已经接收的事件
+- 断线重连后的跨连接全序不属于本协议保证；平台无 replay cursor 时还可能存在事件缺口
 
 ## OutboundMessage
 
@@ -198,13 +200,17 @@ daemon → adapter 的出站消息。见 [`platform-adapter.md`](platform-adapte
 
 ### 文本切片
 
-Discord 单条消息上限 2000 字符。超过时：
+Adapter 按 `CapabilitySet.maxTextLength` 执行平台单条消息预算。超过时：
 
 1. 按段落（`\n\n`）分割
 2. 每段不超过 `CapabilitySet.maxTextLength - 50`（预留标记）
 3. 仍超长的段按 `\n` 分；还不行按字符
 4. 每段首行加 `[续 N/M]` 标记（可选；在 spec/observability 里的实验开关控制）
 5. 各段保持代码块（```) 的边界（不在代码块中间切）
+
+切片由 adapter 在平台发送边界执行并聚合 `MessageRef.messageIds`；daemon 只传完整 `OutboundMessage`，
+不得复制平台长度与 partial-send 语义。可复用的纯切片算法可以下沉公共 helper，但 message id 聚合与中途失败
+仍由具体 adapter 负责。
 
 ### 代码块
 
@@ -298,8 +304,8 @@ daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `t
 
 ## 反模式
 
-- 在 NormalizedEvent 里塞 Discord 特定类型（应留在 rawPayload）
+- 在 NormalizedEvent 里塞平台 SDK / CLI 特定类型（应留在 rawPayload）
 - 把 `text` 字段当生日礼物塞 mention / emoji 原文（都要归一化或剥离）
-- 切片策略在 adapter 里做（应在 daemon 的公共模块）
+- daemon 复制具体平台的长度、message id 聚合或 partial-send 语义（应由 adapter 负责）
 - 跨语言序列化用非 UTF-8 或 BOM
 - 新增字段时不更新本 spec（代码与 spec 漂移）

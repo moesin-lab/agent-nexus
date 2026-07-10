@@ -2,7 +2,7 @@
 title: Spec：Auth（身份与授权）
 type: spec
 status: active
-summary: Discord 身份四元组 allowlist、会话绑定、公开 channel 默认转私域；权限检查位置与流程
+summary: IM 平台身份 allowlist、会话绑定与公开 channel 策略；权限检查位置与流程
 tags: [spec, security, auth, allowlist]
 related:
   - dev/spec/security/README
@@ -17,13 +17,14 @@ contracts:
 
 # Spec：Auth（身份与授权）
 
-定义 Discord 身份到 agent-nexus 的权限映射。与 `security.md`（威胁模型 + 安全索引）、`tool-boundary.md`（能做什么）、`redaction.md`（出口脱敏）、`secrets.md`（密钥）一起构成 security 分区。
+定义 IM 平台身份到 agent-nexus 的权限映射。与 `security.md`（威胁模型 + 安全索引）、`tool-boundary.md`（能做什么）、`redaction.md`（出口脱敏）、`secrets.md`（密钥）一起构成 security 分区。
 
 对应模块：`daemon.auth`。
 
 ## Allowlist
 
-权限判断基于**四元组** `(guildId, channelId, userId, roleIds)`，不是只看 `userId`。
+权限判断使用平台能提供的身份维度 `(guildId?, channelId, userId, roleIds?)`，不是只看 `userId`。
+Discord 提供完整四元组；Lark 首版 P2P 只提供 `(chatId, openId)`，按 DM 规则判定。
 
 legacy 单实例配置项为 `config.security.allowlist`。多平台多 Agent 配置启用后，allowlist 按
 platform instance 下沉到 `platforms[].auth.allowlist`，字段语义不变；配置形态见
@@ -31,18 +32,19 @@ platform instance 下沉到 `platforms[].auth.allowlist`，字段语义不变；
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `userIds` | string[] | 允许的 Discord user id |
-| `roleIds` | string[] | 允许的 Discord role id（guild 内） |
-| `allowedGuildIds` | string[] | 允许的 guild id（空列表 = 不限制 guild） |
-| `allowedChannelIds` | string[] | 允许的 channel / thread id（可选；留空则 guild 内任意 channel） |
-| `allowDM` | bool | 是否允许 Discord DM 触发（默认 `true`） |
-| `requireMentionOrSlash` | bool | 是否要求消息 @ bot 或走 slash command 才触发（默认 `true`；仅 DM 自动豁免） |
+| `userIds` | string[] | 允许的平台用户 ID；Discord user id / Lark `open_id` |
+| `roleIds` | string[] | 允许的平台角色 ID；当前仅 Discord guild role 使用 |
+| `allowedGuildIds` | string[] | 允许的平台 guild ID；当前仅 Discord 使用（空列表 = 不限制） |
+| `allowedChannelIds` | string[] | 允许的 channel / thread / chat ID；Lark 对应 `chat_id` |
+| `allowDM` | bool | 是否允许私聊 / P2P 触发（默认 `true`） |
+| `requireMentionOrSlash` | bool | 是否要求 mention 或 command 才触发（默认 `true`）；Discord DM 与 Lark P2P 自动豁免，当前仅 Discord 非私聊 adapter 使用 |
 
 **约束**：
 
 - **fail-closed**：启动时至少需要一个 ID 列表非空；所有 ID 列表都缺省或为空时拒绝启动。
 - 空的 `roleIds` / `allowedChannelIds` / `allowedGuildIds` 表示该维度不额外收窄；空的 `userIds` 只有在 `roleIds` 非空时才可用于角色授权。
-- DM 事件没有 guild / role 上下文；即使 `allowDM=true`，DM 也必须命中 `userIds`。只靠 `roleIds` / `allowedGuildIds` / `allowedChannelIds` 的配置不得放行 DM。
+- DM / P2P 事件没有 guild / role 上下文；即使 `allowDM=true`，也必须命中 `userIds`。只靠 `roleIds` / `allowedGuildIds` / `allowedChannelIds` 的配置不得放行私聊。
+- 因 Lark 首版只接收 P2P，Lark owner parser 必须额外要求 `userIds` 非空，启动期拒绝运行时必然全拒的配置。
 - 启动时验证格式，有错立即失败。
 
 ## 权限检查位置
@@ -57,7 +59,7 @@ runtime 执行的 allowlist 维度：
 - `userIds` 与 `roleIds` 是身份 allowlist；任一命中即可通过身份检查。
 - `allowedGuildIds` 非空时，guild 消息必须来自其中一个 guild；DM 不走 guild 匹配。
 - `allowedChannelIds` 非空时，消息 channel/thread 必须命中。
-- `allowDM=false` 时，缺少 `guildId` 的 DM 事件拒绝；`allowDM=true` 时，DM 仍必须命中 `userIds`，role 授权不适用于 DM。
+- `allowDM=false` 时，缺少 `guildId` 的 DM / P2P 事件拒绝；`allowDM=true` 时仍必须命中 `userIds`，role 授权不适用于私聊。
 - `requireMentionOrSlash` 由 Discord adapter 的 trigger 策略控制，不由 router 判断。
 
 ## Settings config editor 信任边界

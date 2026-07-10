@@ -16,7 +16,7 @@ contracts:
 
 # Spec：Idempotency（幂等去重）
 
-定义"同一条 IM 事件只处理一次"的契约。Discord gateway **at-least-once** 语义下，同一 user message 可能被 adapter 收到多次——不能让 CC CLI 被触发多次。
+定义"同一条 IM 事件只处理一次"的契约。IM transport 可能重放同一 user message，不能让 agent runtime 被重复触发。
 
 对应模块：`daemon.idempotency`。
 
@@ -25,7 +25,7 @@ contracts:
 同一 `(sessionKey, messageId)` 在 TTL 窗口内**最多处理一次**。
 
 - `sessionKey`：见 [`../../architecture/session-model.md`](../../architecture/session-model.md) §SessionKey
-- `messageId`：平台给的消息 ID（Discord snowflake）
+- `messageId`：平台给的消息 ID（Discord snowflake / Lark message_id）
 - TTL：默认 24 小时（配置项在下文）
 
 ## 职责划分
@@ -165,6 +165,5 @@ gcBatchSize = 10000
 
 ## Out of spec
 
-- 跨平台幂等（未来多平台时发 ADR）
 - 基于内容 hash 的语义去重（仅按平台 messageId，简单可靠）
 - 分布式场景下的锁协调（本机桌面形态不需要）

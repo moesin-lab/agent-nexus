@@ -74,6 +74,11 @@ MVP 阶段不引入独立的 metric/tracing backend。所有观测从结构化�
 | `gateway_connected` | Discord gateway 建立 | `latencyMs` |
 | `gateway_disconnected` | 断连 | `reason`, `durationMs` |
 | `gateway_reconnecting` | 重连尝试 | `attempt` |
+| `platform_connection_ready` | 非 gateway transport 已 ready | `platform`, `platformName`, `transport`, `latencyMs` |
+| `platform_connection_lost` | 非 gateway transport 意外断开 | `platform`, `platformName`, `transport`, `reason`, `durationMs` |
+| `platform_connection_retrying` | 非 gateway transport 退避重连 | `platform`, `platformName`, `transport`, `attempt`, `backoffMs` |
+| `platform_connection_restored` | 非 gateway transport 恢复 | `platform`, `platformName`, `transport`, `outageDurationMs`, `possibleLossWindowMs?` |
+| `platform_start_failed` | adapter 启动自检/ready 失败 | `platform`, `platformName`, `stage`, `code`, `retryable` |
 | `inbound_received` | 收到 IM 事件 | `rawContentType`, `sizeBytes` |
 | `inbound_normalized` | 归一化完成 | `type` |
 | `idempotency_hit` | 幂等命中 | `status` |
@@ -156,6 +161,9 @@ MVP 阶段不引入独立的 metric/tracing backend。所有观测从结构化�
 | `inbound_received` | `platform`, `rawContentType`, `sizeBytes` |
 | `outbound_send_succeeded` | `platform`, `latencyMs`, `messageId`, `attempts` |
 | `rate_limit_hit` | `platform`, `scope`, `retryAfterMs`, `resource` |
+
+Lark CLI adapter 的 `transport="lark-cli-event"`。上述 lifecycle 事件不得携带 profile 输出、stderr 原文、
+消息正文、raw payload 或环境变量值；错误详情只使用 platform-adapter spec 登记的稳定 code 与脱敏 cause。
 
 ## inbound / outbound 对偶事件
 

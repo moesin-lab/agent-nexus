@@ -2,14 +2,16 @@
 title: Spec：Platform Adapter 接口
 type: spec
 status: active
-summary: IM 平台适配层接口契约；事件归一化、发送能力、能力声明、Discord 专属映射
-tags: [spec, platform-adapter, discord, normalized-event, gateway]
+summary: IM 平台适配层接口契约；事件归一化、发送能力、能力声明、Discord 与 Lark 专属映射
+tags: [spec, platform-adapter, discord, lark, normalized-event, gateway]
 related:
+  - dev/adr/0019-lark-platform-via-official-cli
   - dev/spec/message-protocol
   - dev/spec/command-registry
   - dev/spec/config-routing
   - dev/architecture/overview
   - dev/spec/infra/cost-and-limits
+  - dev/spec/infra/observability
   - dev/spec/security/README
 contracts:
   - PlatformAdapter
@@ -32,7 +34,7 @@ contracts:
 
 # Spec：Platform Adapter 接口
 
-定义 IM 平台适配层的接口契约。每个 IM 平台（当前仅 Discord）实现此接口并注册到 daemon。
+定义 IM 平台适配层的接口契约。Discord 已实现；ADR-0019 规划的 Lark adapter 也必须实现此接口并注册到 daemon。
 
 > **package 归属**：`PlatformAdapter` 接口与相关类型（`OutboundMessage` / `MessageRef` / `CapabilitySet`）定义在 `@agent-nexus/protocol` package；**具体平台实现** 住在 `@agent-nexus/platform-<name>` 独立 package（如 `@agent-nexus/platform-discord`）。详见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7。
 
@@ -87,7 +89,7 @@ interface PlatformAdapter {
 type EventHandler = fn(NormalizedEvent) -> void
 ```
 
-`PlatformAdapter.name()` 表示 platform type，不是配置里的 platform instance name。多 bot / 多
+`PlatformAdapter.name()` 表示 platform type（例如 `discord` / `lark`），不是配置里的 platform instance name。多 bot / 多
 platform instance 的稳定实例名由 [`config-routing.md`](config-routing.md) 的 `PlatformConfig.name`
 定义；CLI / daemon 在注册 adapter 时把该实例名包进 `RouteContext`。
 
@@ -107,7 +109,8 @@ platform instance 的稳定实例名由 [`config-routing.md`](config-routing.md)
 `start` 必须：
 
 - 在连接建立前不向 handler 投递事件
-- 重连时通过 session resume 避免丢失事件
+- 上游提供 session resume / replay cursor 时必须使用，避免丢失事件
+- 上游不提供 resume 时不得声称断线无损；adapter 必须记录断线开始、恢复时间与可能丢失窗口
 - 失败进入指数退避（与 [`cost-and-limits.md`](infra/cost-and-limits.md) 对齐）
 
 ## NormalizedEvent
@@ -117,13 +120,14 @@ platform instance 的稳定实例名由 [`config-routing.md`](config-routing.md)
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `eventId` | 是 | 平台事件 ID（Discord interaction id / message id） |
-| `platform` | 是 | `"discord"` |
+| `platform` | 是 | 平台类型，例如 `"discord"` / `"lark"` |
 | `sessionKey` | 是 | adapter 层 `PlatformSessionKey(platform, channelId, userId)`；daemon routing 层再注入 `platformName` |
 | `messageId` | 视事件 | 消息类事件必填（Discord message snowflake） |
 | `type` | 是 | `message | command | reaction | ...` |
 | `text` | 视事件 | 消息正文（已去除 bot mention） |
 | `attachments` | 视事件 | 附件列表（URL + meta） |
-| `rawPayload` | 是 | 平台原始负载（调试用；不得外泄到日志或 IM） |
+| `rawPayload` | 是 | adapter 外部协议边界收到的完整 wire payload；SDK adapter 通常是平台原始负载，CLI-backed adapter 可以是上游预处理 payload；不得外泄到日志或 IM |
+| `rawContentType` | 是 | 标识 wire payload 来源与版本，caller 不得据此解析平台业务字段 |
 | `receivedAt` | 是 | Adapter 收到时间 |
 | `guildId` | 否 | guild 消息所属 guild；DM 无该字段 |
 | `initiatorRoleIds` | 否 | guild 内发起者角色 ID，用于 daemon.auth；DM 缺省或空数组 |
@@ -231,7 +235,7 @@ Adapter 声明自己支持的能力，daemon 据此降级或拒绝操作。
 
 ```text
 CapabilitySet {
-    maxTextLength: int                 // 单条消息最大字符数（Discord: 2000）
+    maxTextLength: int                 // 单条消息的保守 UTF-16 code unit 预算（Discord: 2000）
     supportsEdit: bool
     supportsDelete: bool
     supportsReactions: bool
@@ -249,7 +253,9 @@ CapabilitySet {
 }
 ```
 
-daemon 在发送前检查能力：超出 `maxTextLength` 的文本必须切片；不支持的能力不使用。新增 optional capability 字段缺省等同 `false`，用于保持旧 adapter capability literal 可编译；实现声明支持后必须有对应实现和合约测试。
+daemon 用 capability 选择 UI 降级路径，但把完整 `OutboundMessage` 传给 adapter；具体 adapter 按
+`maxTextLength` 切片并拥有 message id 聚合与 partial-send 语义。不支持的能力不使用。新增 optional capability
+字段缺省等同 `false`，用于保持旧 adapter capability literal 可编译；实现声明支持后必须有对应实现和合约测试。
 
 ## Thread / Settings 可选 port
 
@@ -339,9 +345,10 @@ MessageRef 由 adapter 构造，daemon 原样存储，不做解释。
 
 ## 事件分发语义
 
-### at-least-once
+### 重复投递与断线缺口
 
-Discord gateway 会重放事件。Adapter **不**做去重（daemon 的 idempotency 层做）。Adapter 只保证：
+平台连接可能重放事件；没有 replay cursor 的平台也可能在断线窗口丢失事件。Adapter **不**做去重（daemon 的
+idempotency 层做），也不把 best-effort 重连包装成端到端 delivery guarantee。Adapter 只保证：
 
 - 每个平台事件被解析为 0 或 1 个 `NormalizedEvent`
 - 同一平台事件可能被 handler 调用多次（重放场景）
@@ -349,12 +356,13 @@ Discord gateway 会重放事件。Adapter **不**做去重（daemon 的 idempote
 
 ### 顺序
 
-Adapter 按**平台给的顺序**投递事件。不做重排序。如有乱序风险，通过 `messageId` 的时间戳可恢复顺序。
+Adapter 按外部协议边界收到的顺序调用 handler，不做重排序。`eventId` / `messageId` 不作为跨平台排序键；
+断线后的跨连接顺序与缺口边界见 [`message-protocol.md`](message-protocol.md#顺序)。
 
 ### 错误处理
 
 - Adapter 自身错误（解析失败、反序列化失败）：打 `error` 日志并丢弃事件（不调用 handler）
-- 连接错误：按退避重连，不影响事件分发语义
+- 连接错误：按平台专属退避重连；没有 replay cursor 时记录可能丢失窗口
 - Handler 抛出异常：adapter 捕获后打日志，不中止事件循环
 
 ## Discord 专属映射
@@ -536,6 +544,164 @@ CreateThreadResult {
 - `threads.create` 失败：直接返回失败，未产生 thread。
 - `members.add(initiatorUserId)` 失败：thread 对发起者不可用；adapter 可 best-effort 删除或归档已创建 thread，然后返回失败。
 - `initialMessage` 发送失败：不得删除或归档已创建 thread；adapter 记录包含 `traceId` / `threadId` / 原始错误的结构化错误日志，并返回带 `setupWarnings[{ code: "initial_message_failed" }]` 的 `CreateThreadResult`，让上层后续消息仍可在已创建 thread 内继续或恢复。
+
+## Lark 专属映射
+
+Lark 首版按 ADR-0019 以官方 `lark-cli` 为进程外协议边界，只支持 bot 身份的 P2P 纯文本消息。
+兼容契约固定为 `lark-cli` 1.0.68；升级版本前必须先更新本节 wire fixture 并通过合约测试。
+
+### 配置与启动自检
+
+adapter 接收配置中的 `profile` 与 `botOpenId`。`profile` 是官方 CLI 的命名 app profile，不是 secret；凭据边界见
+[`security/secrets.md`](security/secrets.md)。可执行文件固定从 `PATH` 解析为 `lark-cli`，不接受配置提供的任意
+executable。adapter 不读取 `AGENT_NEXUS_HOME`、用户 home 或 profile 文件。
+
+`start(handler)` 的顺序：
+
+1. 直接执行 `lark-cli --version`，不经 shell；5 秒内未退出或版本不是 `1.0.68` 时启动失败。
+2. 执行 `lark-cli --profile <profile> auth status --json --verify` 做只读 profile/bot 自检，30 秒内未退出则启动失败；
+   exit code 必须为 0，stdout 必须是单个 JSON object，且 `identities.bot.status="ready"`、
+   `identities.bot.available=true`、`identities.bot.verified=true`、`identities.bot.openId=botOpenId`。不得把输出原文写入日志。
+3. 执行 `lark-cli --profile <profile> event consume im.message.receive_v1 --as bot`，保持 stdin 打开。
+4. stderr 在 30 秒内出现固定行 `[event] ready event_key=im.message.receive_v1` 后，`start()` 才 resolve；
+   此前超时、退出或输出结构化错误时 reject，并按本节停止序列回收子进程。
+5. ready 后逐行解析 stdout NDJSON；stderr 只用于 lifecycle marker、结构化错误与脱敏日志分类。
+
+所有子进程固定设置 `LARKSUITE_CLI_NO_UPDATE_NOTIFIER=1` 与
+`LARKSUITE_CLI_NO_SKILLS_NOTIFIER=1`，避免 notice 污染机器输出。`profile` 和其它参数必须通过 argv 数组传递，
+禁止 `sh -c` / shell 字符串拼接。子进程不得继承完整 `process.env`；只允许传递运行 CLI 所需的
+`PATH`、`HOME`、`TMPDIR`、locale、代理/CA、`LARKSUITE_CLI_CONFIG_DIR` 与上述 notifier 变量，必须剔除
+agent/provider API key、token、app secret 和 `AGENT_NEXUS_*` 变量。
+
+单个 stdout NDJSON 行和单次命令 stdout 分别以 1 MiB 为硬上限，stderr 单行以 64 KiB 为硬上限。超限内容不得
+完整缓存或写日志：事件行按协议错误丢弃；启动/发送命令按 `lark_cli_protocol_error` 失败。
+
+ready 后非预期退出时，adapter 记录退出码、错误分类、断线开始时间，不记录 stderr 原文；随后以 1 秒为基数、
+2 倍增长、30 秒封顶并加入 full jitter 的指数退避无限重启。连接连续稳定 60 秒后重置退避级数。重启成功时记录
+恢复时间和可能丢失窗口。上游没有 resume / replay cursor，首版不承诺窗口内事件无损。
+
+生命周期日志使用 [`observability.md`](infra/observability.md) 登记的 `platform_connection_ready`、
+`platform_connection_lost`、`platform_connection_retrying`、`platform_connection_restored` 与
+`platform_start_failed`；`transport` 固定为 `lark-cli-event`。
+
+`stop()` 必须先关闭 event consumer stdin 并等待最多 5 秒；仍未退出时发送一次 SIGTERM，再等待最多 5 秒。
+第二段超时后返回 `stop_timeout`，保留结构化诊断但不把 stderr 原文写入日志。不得发送 SIGKILL，也不得无条件
+执行 `lark-cli event stop --all` 影响同机其它 consumer。进入 stopping 后禁止安排重启；重复 `stop()` 返回同一个
+pending promise，停止完成后的调用是 no-op。
+
+adapter instance 的外部生命周期是 `idle → starting → running → stopping → stopped`。`start()` 只允许从
+`idle` 调用；重复调用 fail-closed 且不得生成第二个 consumer。`stop()` 在 starting / backoff sleep 期间也必须
+取消计时器并进入同一停止序列；stopped instance 不复用，重新加载配置时创建新 instance。
+
+启动失败使用稳定错误码，日志只写 code、stage、exit code、retryable 与脱敏 cause：
+
+| 条件 | code | retryable |
+|---|---|---|
+| 找不到 CLI、版本命令超时 | `lark_cli_unavailable` | false |
+| 版本不是 1.0.68 | `lark_cli_version_mismatch` | false |
+| profile 未配置、bot identity 不可用或输出非法 | `lark_profile_unavailable` | false |
+| bot server verification 失败 | `lark_profile_verify_failed` | true |
+| `identities.bot.openId` 与 `botOpenId` 不同 | `lark_bot_identity_mismatch` | false |
+| ready 超时、握手网络/内部错误 | `lark_event_start_failed` | true |
+
+### 入站事件映射
+
+官方 CLI 为 `im.message.receive_v1` 输出下列扁平 NDJSON 字段：
+
+| lark-cli 字段 | NormalizedEvent |
+|---|---|
+| `event_id` | `eventId`；缺失时丢弃，不用 `message_id` 伪造 |
+| `message_id` | `messageId` |
+| `chat_id` | `sessionKey.channelId` |
+| `sender_id` | Lark `open_id`；映射到 `sessionKey.initiatorUserId`、`initiator.userId`，并作为首版 `initiator.displayName` fallback |
+| `content` | `text`；CLI 已预渲染，adapter 不再 JSON decode |
+| `create_time` | `platformTimestamp`；合法毫秒时间戳才设置 |
+| 完整 NDJSON object | `rawPayload` |
+
+固定字段：`platform="lark"`、`sessionKey.platform="lark"`、`type="message"`、
+`initiator.isBot=false`、`rawContentType="lark-cli:im.message.receive_v1@1.0.68"`。
+`traceId` 由 adapter 生成，`receivedAt` 使用本机收到 NDJSON 行的时间。
+
+只有 `type="im.message.receive_v1"`、`chat_type="p2p"`、`message_type="text"`、`sender_id != botOpenId` 且
+`event_id/message_id/chat_id/sender_id/content` 类型正确时才调用 handler。group、非 text、字段缺失、非法 JSON
+与 bot 自身消息均丢弃；日志只记事件分类、message id / event id 与字段名，不记 `content`、sender display data 或
+raw payload。1.0.68 的扁平形状没有独立显示名与 sender type；首版用 open_id 作为显示名 fallback，并通过
+`botOpenId` 自消息过滤和 daemon `userIds` allowlist 阻断自回环。handler 抛错只记结构化错误，不终止消费循环。
+
+### 出站纯文本
+
+Lark 首版声明 `supportsEdit=false`；daemon 的流式与工具消息降级遵守
+[`message-protocol.md`](message-protocol.md#流式语义)，同一 turn 仍可能调用多次 `send()`。adapter 每次进入
+`send()` 时生成独立的 128-bit 随机 `sendId`（32 位小写 hex），并在该次调用及其内部重试期间保持不变。
+adapter 以 4000 UTF-16 code unit 的保守预算切片，按顺序为每片用 bot identity 调用一次 raw IM API；
+消息正文不得进入 argv、env 或日志：
+
+```text
+argv = [
+  "--profile", profile,
+  "api", "POST", "/open-apis/im/v1/messages",
+  "--as", "bot",
+  "--params", "{\"receive_id_type\":\"chat_id\"}",
+  "--data", "-"
+]
+
+stdin = {
+  receive_id: sessionKey.channelId,
+  msg_type: "text",
+  content: json_encode({ text: slice }),
+  uuid: sendId + ":" + hex4(sliceIndex)
+}
+```
+
+`sliceIndex` 从 0 开始；超过 `0xffff` 片时必须在发送第一片前以 `message_too_large` 拒绝。这样 uuid 固定为 37
+个 ASCII 字符，同一 `send()` 的重试复用同一键，同一 turn 的不同 `send()` 不会因共享 traceId 冲突。
+
+成功必须同时满足 exit code 0、stdout 是单个 JSON object、`ok=true`，且 `data.message_id` / `data.chat_id`
+为非空字符串；全部切片成功后，`MessageRef.messageIds` 按发送顺序列出所有 ID，`messageId` 指向最后一片。
+中途失败必须抛出包含已发送 ID 与总切片数的 partial-send error，不得重发已成功切片。失败按非零 exit code 与 stderr
+`{ok:false,error:{type,subtype,...}}` 分类；只允许按稳定 `type/subtype/retryable` 分支，禁止匹配 message 文案。
+未知字段向前兼容忽略。解析失败、缺字段或 exit/envelope 矛盾均按内部协议错误抛出。
+
+Lark 首版能力声明：
+
+```text
+CapabilitySet {
+    maxTextLength: 4000                 // adapter 首版单片保守预算
+    supportsEdit: false
+    supportsDelete: false
+    supportsReactions: false
+    supportsEmbeds: false
+    supportsButtons: false
+    supportsSelects: false
+    supportsModals: false
+    supportsThreads: false
+    supportsThreadCreation: false
+    supportsEphemeral: false
+    supportsAttachments: false
+    maxAttachmentsPerMessage: 0
+    supportsTypingIndicator: false
+    supportsSlashCommands: false
+}
+```
+
+`edit` / `delete` / `react` 返回 unsupported error；`setTyping` / `clearTyping` 为幂等 no-op。daemon 不得在 capability
+为 false 时调用这些 port。
+
+Lark P2P 普通文本仍进入 daemon 的通用 text-prefix 解析，所以启用对应配置时 `/new` 可用；首版不注册 native
+slash command，其余需要 command event 的控制入口不在本期范围。
+
+### Lark 合约测试
+
+1. 官方 1.0.68 event fixture 映射出稳定 `eventId` / `messageId` / P2P SessionKey / text。
+2. group、非 text、非法 JSON、缺 `event_id`、`sender_id=botOpenId` 分别丢弃且不泄露正文；fixture 钉住 `sender_id` 是 `open_id`。
+3. `start()` 按时限校验版本与 `identities.bot`，身份不符返回稳定错误码；等待 ready marker；ready 前失败 reject；意外退出按带 jitter 的退避重启并记录丢失窗口。
+4. `stop()` 按两个 5 秒窗口执行 stdin EOF → SIGTERM、从不 SIGKILL，停止期间不重启且重复调用共享结果。
+5. send argv 不含 message text / app credential；stdin body 含切片 text 与 `sendId:hex4(sliceIndex)`；同一调用重试复用 sendId，同一 traceId 的两次调用使用不同 sendId。
+6. 多切片顺序与 MessageRef 正确；中途失败保留已发送 ID 且不重发。
+7. success/error/malformed envelope 三类 fixture 分别返回 MessageRef、分类错误、协议错误。
+8. capability 与 unsupported/no-op 实现一致。
+9. fixture 必须由真实 `lark-cli` 1.0.68 运行输出脱敏生成，并记录 CLI version、上游 commit、命令与生成日期；禁止只按本 spec 手写同义 fixture。
+10. 子进程 env allowlist 不含 agent/API secrets；stdout/stderr 超限走有界协议错误，不泄露原文。
 
 ## 测试契约（合约测试）
 

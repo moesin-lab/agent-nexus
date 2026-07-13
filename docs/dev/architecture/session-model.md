@@ -240,8 +240,8 @@ cursor 的平台还可能在断线窗口丢失事件，幂等只能消除重复�
 ### platform 连接断开
 
 - Discord gateway 断开后使用 session resume；期间重放事件由幂等表过滤
-- Lark CLI event consumer 断开后按 adapter 退避重启，但上游没有 resume / replay cursor；记录可能丢失窗口，
-  不承诺补回窗口内事件
+- Lark SDK WSClient 断开后先按 SDK 服务端配置重连，terminal failed 后由 adapter 监督新 client generation；
+  上游没有 resume / replay cursor，记录可能丢失窗口，不承诺补回窗口内事件
 - session registry **不受影响**（是本地内存 + 持久化，不依赖 platform connection 状态）
 
 ### 进程重启

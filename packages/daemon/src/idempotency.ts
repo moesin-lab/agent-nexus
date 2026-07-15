@@ -12,43 +12,43 @@ export type IdempotencyDecision =
   | { kind: 'hit'; status: IdempotencyStatus };
 
 export interface IdempotencyStore {
-  checkAndSet(sessionKey: SessionKey, messageId: string): IdempotencyDecision;
-  markProcessed(sessionKey: SessionKey, messageId: string): void;
-  markFailed(sessionKey: SessionKey, messageId: string): void;
-  markCancelled(sessionKey: SessionKey, messageId: string): void;
-  forget(sessionKey: SessionKey, messageId: string): void;
+  checkAndSet(sessionKey: SessionKey, idempotencyKey: string): IdempotencyDecision;
+  markProcessed(sessionKey: SessionKey, idempotencyKey: string): void;
+  markFailed(sessionKey: SessionKey, idempotencyKey: string): void;
+  markCancelled(sessionKey: SessionKey, idempotencyKey: string): void;
+  forget(sessionKey: SessionKey, idempotencyKey: string): void;
   clearAll(): void;
 }
 
-function keyFor(sessionKey: SessionKey, messageId: string): string {
-  return `${serializeSessionKey(sessionKey)}:${messageId}`;
+function keyFor(sessionKey: SessionKey, idempotencyKey: string): string {
+  return `${serializeSessionKey(sessionKey)}:${idempotencyKey}`;
 }
 
 export class InMemoryIdempotencyStore implements IdempotencyStore {
   private readonly entries = new Map<string, IdempotencyStatus>();
 
-  checkAndSet(sessionKey: SessionKey, messageId: string): IdempotencyDecision {
-    const key = keyFor(sessionKey, messageId);
+  checkAndSet(sessionKey: SessionKey, idempotencyKey: string): IdempotencyDecision {
+    const key = keyFor(sessionKey, idempotencyKey);
     const existing = this.entries.get(key);
     if (existing) return { kind: 'hit', status: existing };
     this.entries.set(key, 'processing');
     return { kind: 'inserted' };
   }
 
-  markProcessed(sessionKey: SessionKey, messageId: string): void {
-    this.entries.set(keyFor(sessionKey, messageId), 'processed');
+  markProcessed(sessionKey: SessionKey, idempotencyKey: string): void {
+    this.entries.set(keyFor(sessionKey, idempotencyKey), 'processed');
   }
 
-  markFailed(sessionKey: SessionKey, messageId: string): void {
-    this.entries.set(keyFor(sessionKey, messageId), 'failed');
+  markFailed(sessionKey: SessionKey, idempotencyKey: string): void {
+    this.entries.set(keyFor(sessionKey, idempotencyKey), 'failed');
   }
 
-  markCancelled(sessionKey: SessionKey, messageId: string): void {
-    this.entries.set(keyFor(sessionKey, messageId), 'cancelled');
+  markCancelled(sessionKey: SessionKey, idempotencyKey: string): void {
+    this.entries.set(keyFor(sessionKey, idempotencyKey), 'cancelled');
   }
 
-  forget(sessionKey: SessionKey, messageId: string): void {
-    this.entries.delete(keyFor(sessionKey, messageId));
+  forget(sessionKey: SessionKey, idempotencyKey: string): void {
+    this.entries.delete(keyFor(sessionKey, idempotencyKey));
   }
 
   clearAll(): void {

@@ -45,6 +45,7 @@ interface NormalizedEventBase {
   platform: string;
   sessionKey: PlatformSessionKey;
   messageId?: string;
+  idempotencyKey?: string;
   traceId: string;
 
   replyTo?: MessageRef;

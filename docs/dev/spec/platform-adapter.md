@@ -123,6 +123,7 @@ platform instance 的稳定实例名由 [`config-routing.md`](config-routing.md)
 | `platform` | 是 | 平台类型，例如 `"discord"` / `"lark"` |
 | `sessionKey` | 是 | adapter 层 `PlatformSessionKey(platform, channelId, userId)`；daemon routing 层再注入 `platformName` |
 | `messageId` | 视事件 | 消息类事件必填（Discord message snowflake） |
+| `idempotencyKey` | 否 | 平台稳定精确重投键；缺省时 daemon 回退 `messageId`，adapter 不得据此自行丢弃事件 |
 | `type` | 是 | `message | command | reaction | ...` |
 | `text` | 视事件 | 消息正文（已去除 bot mention） |
 | `attachments` | 视事件 | 附件列表（URL + meta） |
@@ -664,6 +665,7 @@ SDK 1.70.0 的 `im.message.receive_v1` typed event 使用下列字段：
 |---|---|
 | `event_id` | `eventId`；缺失时丢弃，不用 message_id 伪造 |
 | `message.message_id` | `messageId` |
+| 稳定文本重投身份 | `idempotencyKey`；按下文公式派生，字段不足时缺省并回退 `messageId` |
 | `message.chat_id` | `sessionKey.channelId` |
 | `sender.sender_id.open_id` | `sessionKey.initiatorUserId`、`initiator.userId`；也是首版 displayName fallback |
 | `message.content` | JSON decode 后的 `text` |
@@ -673,6 +675,19 @@ SDK 1.70.0 的 `im.message.receive_v1` typed event 使用下列字段：
 固定字段：`platform="lark"`、`sessionKey.platform="lark"`、`type="message"`、
 `initiator.isBot=false`、`rawContentType="lark-node-sdk:im.message.receive_v1@1.70.0"`。
 `traceId` 由 adapter 生成，`receivedAt` 使用 callback 收到事件的本机时间。
+
+Lark 已有生产实现观察到同一逻辑文本重投时 `message_id` 可能变化，因此接受的文本事件在
+`sender.open_id`、`chat_id` 与合法非负整数 `create_time` 都存在时，必须设置：
+
+```text
+idempotencyKey = "lark-text-v1:" + sha256Hex(
+  utf8(JSON.stringify([sender.open_id, chat_id, create_time, message.content]))
+)
+```
+
+数组顺序、UTF-8 与小写 64 位 hex 固定；`message.content` 使用 SDK event 中的原始 string，不使用解码后再序列化的
+object。任一稳定字段缺失或非法时省略 `idempotencyKey`，daemon 回退原始 `messageId`。不得把 `event_id` 纳入该键，
+也不得把 tuple 原文写入日志、trace 或幂等表；原始 `messageId` 仍用于平台操作与观测。
 
 SDK callback object 可能在顶层或嵌套字段携带 `token`、`tenant_key` 与 `app_id`。完整 object 只允许存在于 callback
 调用栈内，adapter 不得捕获或直接赋给 `rawPayload`；调用 daemon handler 前必须构造脱敏副本，递归移除上述字段。
@@ -760,20 +775,22 @@ slash command，其余需要 command event 的控制入口不在本期范围。
 
 ### Lark 合约测试
 
-1. 真实 SDK 1.70.0 event fixture 映射稳定 eventId/messageId/P2P SessionKey/text；rawPayload 保留脱敏后的 SDK
+1. 真实 SDK 1.70.0 event fixture 映射稳定 eventId/messageId/idempotencyKey/P2P SessionKey/text；rawPayload 保留脱敏后的 SDK
    shape，并递归排除 `token` / `tenant_key` / `app_id`。
-2. group、非 text、非法 content JSON、缺 event_id、bot/app sender 分别丢弃且不泄露正文。
-3. start 不把 SDK `start()` 返回当 ready；onReady resolve；retryable onError/30 秒 timeout close 旧 generation、
+2. 同一 sender/chat/create_time/content 但不同 event_id/message_id 的 fixture 生成同一 `idempotencyKey`，
+   真实 Engine 只入队一次；不同 create_time 不得合并。
+3. group、非 text、非法 content JSON、缺 event_id、bot/app sender 分别丢弃且不泄露正文。
+4. start 不把 SDK `start()` 返回当 ready；onReady resolve；retryable onError/30 秒 timeout close 旧 generation、
    保持 promise pending 并进入外层 backoff，non-retryable probe 才 reject；迟到 onReady 强制关闭旧 client。
-4. SDK connected/reconnecting/failed callbacks 映射到 adapter 状态；运行期 terminal failed 保持 reconnecting 并创建新 generation，non-retryable probe 才进入 failed，旧 callback 失效。
-5. stop 在 starting/running/backoff 均取消 timer 并调用 close；重复调用幂等且不创建第二 client。
-6. EventDispatcher callback 在真实 Engine 已同步入队但 turn promise 永不 resolve 时仍于 2.5 秒内返回；同步 handoff 错误被记录并成功 ACK，不进入重推循环。
-7. bot probe 校验 app identity；secret 与 SDK logger 输出不进入日志、错误、SQLite 或 transcript。
-8. send request 使用 chat_id/text/JSON content/sendId:hex4；retryable slice 最多重试一次且 uuid 稳定，同 trace 的两次 sendId 不同。
-9. 多切片顺序与 MessageRef 正确；中途失败保留已发送 ID 且不重发。
-10. success/error/malformed SDK response 分别返回 MessageRef、分类错误、protocol error。
-11. production dependency 固定 1.70.0；fixture 记录 SDK version、上游 commit、生成路径与日期。
-12. production 路径不 spawn/exec `lark-cli`、不读取 CLI profile，也不使用 SDK Channel 模块。
+5. SDK connected/reconnecting/failed callbacks 映射到 adapter 状态；运行期 terminal failed 保持 reconnecting 并创建新 generation，non-retryable probe 才进入 failed，旧 callback 失效。
+6. stop 在 starting/running/backoff 均取消 timer 并调用 close；重复调用幂等且不创建第二 client。
+7. EventDispatcher callback 在真实 Engine 已同步入队但 turn promise 永不 resolve 时仍于 2.5 秒内返回；同步 handoff 错误被记录并成功 ACK，不进入重推循环。
+8. bot probe 校验 app identity；secret 与 SDK logger 输出不进入日志、错误、SQLite 或 transcript。
+9. send request 使用 chat_id/text/JSON content/sendId:hex4；retryable slice 最多重试一次且 uuid 稳定，同 trace 的两次 sendId 不同。
+10. 多切片顺序与 MessageRef 正确；中途失败保留已发送 ID 且不重发。
+11. success/error/malformed SDK response 分别返回 MessageRef、分类错误、protocol error。
+12. production dependency 固定 1.70.0；fixture 记录 SDK version、上游 commit、生成路径与日期。
+13. production 路径不 spawn/exec `lark-cli`、不读取 CLI profile，也不使用 SDK Channel 模块。
 
 ## 测试契约（合约测试）
 

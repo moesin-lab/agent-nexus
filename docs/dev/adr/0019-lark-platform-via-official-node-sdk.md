@@ -51,6 +51,12 @@ SDK 的 `start()` 在内部异步启动连接，并不等待 ready；adapter 必
 官方文档还要求长连接事件处理在 3 秒内完成，否则会触发重推；事件 callback 因而只能完成归一化和 daemon 投递，
 不能等待 agent turn 或出站回复。
 
+官方接收消息文档建议用 `message_id` 去重，但成熟生产实现曾记录同一 P2P 文本重投时 `message_id` 变化的案例
+（[openclaw#46778](https://github.com/openclaw/openclaw/issues/46778)），并最终采用稳定精确重投身份修复
+（[openclaw@9ed9d38](https://github.com/openclaw/openclaw/commit/9ed9d389e05dcdc9b164e9e8d548aa076b23d672)）。
+本决策因此保留原始平台 `messageId`，同时允许 adapter 派生独立 `idempotencyKey`；字段与存储契约由
+[`message-protocol.md`](../spec/message-protocol.md) 和 [`idempotency.md`](../spec/infra/idempotency.md) 单点定义。
+
 `larksuite/cli` 对 ready、running、reconnecting、stopping、failed 等状态和结构化错误做了可借鉴的产品化表达，
 但把 CLI 二进制、profile、stdout/stderr wire contract 引入运行时会增加安装、版本、子进程与第二套凭据边界。
 它只作为状态机、错误分类和测试视角参考，不是 dependency、transport 或 protocol boundary。

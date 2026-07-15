@@ -185,8 +185,8 @@ cursor 的平台还可能在断线窗口丢失事件，幂等只能消除重复�
 
 ### 在本 session 模型中的角色（要点）
 
-- 每条入站 `NormalizedEvent` 带平台消息 ID
-- **Adapter 只负责归一化与投递，不做去重**；由 daemon 在 dispatch 阶段（auth 检查之后、session 入队之前）执行 `checkAndSet(sessionKey, messageId)`
+- 每条 message `NormalizedEvent` 带平台消息 ID；平台重投可能更换消息 ID 时可额外带稳定 `idempotencyKey`
+- **Adapter 只负责归一化、稳定键派生与投递，不做去重决策**；由 daemon 在 dispatch 阶段（auth 检查之后、session 入队之前）执行 `checkAndSet(sessionKey, event.idempotencyKey ?? event.messageId)`
 - 去重键、TTL、存储和 GC 规则见 [`idempotency.md`](../spec/infra/idempotency.md)
 
 ## 顺序保证

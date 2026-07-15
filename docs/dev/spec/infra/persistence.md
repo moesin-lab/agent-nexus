@@ -103,15 +103,15 @@ contracts:
 | 列 | 类型 | 约束 |
 |---|---|---|
 | `session_key` | TEXT | 联合主键 |
-| `message_id` | TEXT | 联合主键 |
+| `idempotency_key` | TEXT | 联合主键；`NormalizedEvent.idempotencyKey ?? messageId` |
 | `first_seen_at` | TEXT NOT NULL | |
 | `status` | TEXT NOT NULL | `processing|processed|failed|cancelled` |
 | `result_json` | TEXT | 处理结果摘要 |
 | `expires_at` | TEXT NOT NULL | 用于 TTL 清理 |
 
-主键 `(session_key, message_id)`。索引 `idx_idempotency_expires`。
+主键 `(session_key, idempotency_key)`。索引 `idx_idempotency_expires`。
 
-状态语义由 [`idempotency.md`](idempotency.md) 拥有；本表只承载落盘枚举。`processed` / `failed` / `cancelled` 都是 terminal duplicate 状态，后续同 `(session_key, message_id)` 重放不重新入队。
+状态语义由 [`idempotency.md`](idempotency.md) 拥有；本表只承载落盘枚举。`processed` / `failed` / `cancelled` 都是 terminal duplicate 状态，后续同 `(session_key, idempotency_key)` 重放不重新入队。原始平台 `message_id` 仍只写入 `messages.message_id`，不得用内容 hash 覆盖。
 
 ### messages（可选，用于历史查询）
 
@@ -295,11 +295,11 @@ interface Store {
     listSessions(filter) -> Session[]
 
     // idempotency
-    checkAndSet(key, messageId) -> IdempotencyState
-    markProcessed(key, messageId, result) -> void
-    markFailed(key, messageId) -> void
-    markCancelled(key, messageId) -> void
-    forget(key, messageId) -> void              // 插入 processing 后未实际入队时回滚幂等占位
+    checkAndSet(key, idempotencyKey) -> IdempotencyState
+    markProcessed(key, idempotencyKey, result) -> void
+    markFailed(key, idempotencyKey) -> void
+    markCancelled(key, idempotencyKey) -> void
+    forget(key, idempotencyKey) -> void          // 插入 processing 后未实际入队时回滚幂等占位
     gc(now) -> int                           // 返回删除条数
 
     // messages（可选）

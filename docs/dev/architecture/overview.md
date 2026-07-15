@@ -81,7 +81,7 @@ platform/discord
 daemon.Engine.dispatch(RouteContext)
 - 根据 platform instance + binding 选择唯一 agent（见 spec/config-routing）
 - 权限/白名单检查（见 spec/security）
-- 幂等去重：daemon.idempotency.checkAndSet(sessionKey, messageId)（见 spec/idempotency）
+- 幂等去重：daemon.idempotency.checkAndSet(sessionKey, event.idempotencyKey ?? event.messageId)（见 spec/idempotency）
 - 限流/预算检查（见 spec/cost-and-limits）
 - 路由到对应 RoutingSession 的 FIFO 队列；agent command 则按 command registry 转发 envelope
         │

@@ -37,6 +37,7 @@ NormalizedEvent {
     platform: string                         // "discord" / "lark"
     sessionKey: PlatformSessionKey
     messageId: string?                       // 消息类事件必填
+    idempotencyKey: string?                  // 平台可提供稳定重投键；daemon 缺省回退 messageId
     traceId: string                          // adapter 生成或从上下文继承
 
     // 分类
@@ -78,6 +79,12 @@ enum EventType {
     control          // 控制类（session 结束、重启等）
 }
 ```
+
+`messageId` 始终保留平台消息 ID 语义，供 reply / reaction / queue 展示与审计使用，不得改写为内容 hash。
+`idempotencyKey` 是可选的精确重投身份：仅当平台在重投同一逻辑消息时可能更换 `messageId`，且 adapter 能从
+稳定 wire 字段确定性派生时设置。adapter 只负责派生字段，不查询状态、不决定是否丢弃；daemon 使用
+`event.idempotencyKey ?? event.messageId` 作为有效幂等键。该字段必须是非空、带版本前缀的不透明字符串，
+不得直接拼接消息正文或其它敏感原文。
 
 ## SessionKey
 
@@ -184,14 +191,14 @@ data、interaction token）留在 `rawPayload`，不得升入通用 payload。
 
 见独立 spec：[`idempotency.md`](infra/idempotency.md)。
 
-**要点**：`(sessionKey, messageId)` TTL 窗口内最多处理一次；**adapter 不做去重**，由 daemon 在 `routing → auth → idempotency → 限流 → 队列` 流程中执行 `checkAndSet`。本 spec 只定义 `NormalizedEvent` 与相关数据结构；幂等的规则、存储、流程、GC、合约测试全部集中在 `idempotency.md`。
+**要点**：`(sessionKey, event.idempotencyKey ?? event.messageId)` TTL 窗口内最多处理一次；**adapter 不做去重**，由 daemon 在 `routing → auth → idempotency → 限流 → 队列` 流程中执行 `checkAndSet`。本 spec 只定义 `NormalizedEvent` 与相关数据结构；幂等的规则、存储、流程、GC、合约测试全部集中在 `idempotency.md`。
 
 ## 顺序
 
 - 同 `sessionKey` 串行
 - 跨 `sessionKey` 并发
 - 单次连接内按 adapter 调用 handler 的先后顺序入队
-- `eventId` 只用于身份与幂等，不作为排序键；`platformTimestamp` 可用于展示，但不能重排已经接收的事件
+- `eventId` 只表示平台事件身份，不作为消息幂等键或排序键；`platformTimestamp` 可用于展示，但不能重排已经接收的事件
 - 断线重连后的跨连接全序不属于本协议保证；平台无 replay cursor 时还可能存在事件缺口
 
 ## OutboundMessage

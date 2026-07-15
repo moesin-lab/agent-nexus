@@ -10,6 +10,7 @@ related:
   - dev/adr/0015-multi-platform-agent-config
   - dev/spec/platform-adapter
   - dev/spec/config-routing
+  - dev/spec/infra/observability
   - dev/spec/security/secrets
 adr_status: Proposed
 adr_number: "0019"
@@ -102,25 +103,28 @@ queue、redaction 和 streaming 的唯一 owner 仍在 agent-nexus。`lark-cli` 
 
 - 飞书入站继续走出站 WebSocket，不改变 ADR-0003 的本机部署形态。
 - platform-lark 与现有 TypeScript packages 使用同一 runtime，不增加可执行文件和子进程监督边界。
-- adapter 直接接收 SDK typed event；`rawPayload` 保留 SDK event object，不再经过 CLI 扁平化。
+- adapter 直接接收 SDK typed event；事件归一化与敏感字段边界由
+  [`platform-adapter.md`](../spec/platform-adapter.md) 单点定义，不再经过 CLI 扁平化。
 - app secret 继续由 agent-nexus secrets owner 加载，不新增外部 profile provider。
-- lark-cli 的 ready/reconnect/stop/error 状态仍可用作状态机命名和测试用例来源。
+- lark-cli 的 ready/reconnect/stop/error 状态仍可作为状态机设计输入。
 
 ### 负向
 
-- platform-lark 增加精确依赖 `@larksuiteoapi/node-sdk@1.70.0`；升级前必须验证 lifecycle 与 wire fixture。
+- platform-lark 增加精确依赖 `@larksuiteoapi/node-sdk@1.70.0`，后续升级会增加 lifecycle 与 wire 兼容成本；
+  具体兼容契约由 [`platform-adapter.md`](../spec/platform-adapter.md) 定义。
 - app secret 会在 platform-lark 进程内存中提供给官方 SDK，必须遵守现有 redaction 与 secret 生命周期。
-- SDK `start()` 不等待 ready；adapter 必须实现显式 starting promise、30 秒 ready timeout 与 terminal error 分类。
-- SDK 内建 reconnect 可能按服务端配置耗尽；adapter 必须在 `failed` 后监督新 client generation，并在 stop 时取消。
-- EventDispatcher callback 必须快速返回 ACK；业务 turn 在 daemon queue 中异步继续，ACK 不代表 agent 已完成处理。
+- SDK `start()` 不等待 ready，adapter 必须额外包装启动与终态恢复；具体状态和超时由
+  [`platform-adapter.md`](../spec/platform-adapter.md) 定义。
+- SDK 内建 reconnect 可能按服务端配置耗尽，需要 agent-nexus 补充外层恢复边界。
+- EventDispatcher callback 受平台 ACK 窗口约束，不能同步等待业务 turn。
 - SDK 没有公开 replay cursor；重连窗口仍不承诺无损，重推重复由 daemon idempotency 过滤。
 
 ### 需要后续跟进的事
 
-- 配置使用 `appId`、`appSecretRef` 与 `botOpenId`；启动时通过 bot info API 校验 identity 漂移。
-- platform adapter spec 固定 SDK 版本、状态映射、快速 ACK、terminal restart、事件字段与发送响应契约。
-- fixture 必须来自真实 SDK 1.70.0 event / API response，并记录上游 commit；不能复制 CLI 扁平输出。
-- 自定义 SDK logger 必须进入 redaction 边界，禁止默认 logger 打 raw event、app secret 或 message content。
+- 配置字段与校验由 [`config-routing.md`](../spec/config-routing.md) 单点定义；adapter lifecycle、wire 与验证契约由
+  [`platform-adapter.md`](../spec/platform-adapter.md) 单点定义。
+- 凭据与日志边界分别见 [`secrets.md`](../spec/security/secrets.md) 和
+  [`observability.md`](../spec/infra/observability.md)。
 - 若 SDK low-level lifecycle API 被移除，再比较低层 SDK wrapper 与高层 Channel；不静默切换 owner。
 
 ## Out of scope

@@ -50,7 +50,7 @@ NormalizedEvent {
     interaction: InteractionPayload?         // type == "interaction" 时
     reaction: ReactionPayload?               // type == "reaction" 时
 
-    // adapter 外部协议边界收到的完整 wire payload（仅内存；不得写日志 / IM / 持久化）
+    // adapter handoff 前构造的脱敏 wire 摘要（仅内存；不得含 secret / token，也不得持久化）
     rawPayload: opaque
     rawContentType: string                   // "discord:message" / "lark-node-sdk:im.message.receive_v1@1.70.0" 等
 
@@ -289,7 +289,8 @@ daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `t
 
 归一化结构需要落盘或跨进程时用 JSON：
 
-- `rawPayload` 必须省略；它只允许存在于 adapter → daemon 的进程内 handoff，`rawContentType` 可以保留
+- `rawPayload` 必须省略；它只允许承载 adapter → daemon 进程内 handoff 所需的脱敏诊断字段，
+  `rawContentType` 可以保留
 
 - 字段名 `camelCase`
 - 可选字段：缺省即不写（不写 `null` 占位）
@@ -307,6 +308,7 @@ daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `t
 ## 反模式
 
 - 在 NormalizedEvent 里塞平台 SDK / CLI 特定类型（应留在 rawPayload）
+- 把 secret、token 或无需跨层消费的完整 wire object 塞进 rawPayload
 - 把 `text` 字段当生日礼物塞 mention / emoji 原文（都要归一化或剥离）
 - daemon 复制具体平台的长度、message id 聚合或 partial-send 语义（应由 adapter 负责）
 - 跨语言序列化用非 UTF-8 或 BOM

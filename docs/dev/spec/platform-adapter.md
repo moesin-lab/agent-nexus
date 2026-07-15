@@ -126,7 +126,7 @@ platform instance 的稳定实例名由 [`config-routing.md`](config-routing.md)
 | `type` | 是 | `message | command | reaction | ...` |
 | `text` | 视事件 | 消息正文（已去除 bot mention） |
 | `attachments` | 视事件 | 附件列表（URL + meta） |
-| `rawPayload` | 是 | adapter 外部协议边界收到的完整 wire payload；SDK adapter 通常是 callback object；不得外泄到日志或 IM |
+| `rawPayload` | 是 | adapter handoff 前构造的脱敏 opaque payload；不得包含 secret / token，也不得外泄到日志、IM 或持久化 |
 | `rawContentType` | 是 | 标识 wire payload 来源与版本，caller 不得据此解析平台业务字段 |
 | `receivedAt` | 是 | Adapter 收到时间 |
 | `guildId` | 否 | guild 消息所属 guild；DM 无该字段 |
@@ -577,9 +577,10 @@ idle → starting → running ↔ reconnecting
 idle / starting / running / reconnecting / failed → stopping → stopped
 ```
 
-`failed` 只表示 adapter 已停止自动恢复的 non-retryable 终态；SDK runtime terminal error、外层 backoff、bot
-probe retry 与新 generation 连接建立都保持在 `reconnecting`。只有初次启动失败，或 reconnecting 中 probe 判定
-non-retryable，才进入 `failed`。
+`failed` 只表示 adapter 已停止自动恢复的 non-retryable 终态。首次 ready 前的 retryable probe / ready failure、
+外层 backoff 与新 generation 连接建立都保持在 `starting`，`start(handler)` promise 继续 pending；首次 ready 后的
+SDK runtime terminal error、外层 backoff、probe retry 与新 generation 连接建立都保持在 `reconnecting`。只有
+`starting` / `reconnecting` 中出现 non-retryable failure，才进入 `failed`。
 
 SDK 状态映射：
 
@@ -590,7 +591,8 @@ SDK 状态映射：
 | `onReady` / `connected` | `running` | resolve start，开始正常投递 |
 | `onReconnecting` / `reconnecting` | `reconnecting` | 记录断线开始，不宣称无损 |
 | `onReconnected` / `connected` | `running` | 记录恢复与可能丢失窗口 |
-| 初次 `onError` 且 SDK `failed` | `failed` | reject start，不进入外层 restart |
+| 初次 probe / `onError` / ready timeout 且 retryable | `starting` | 关闭旧 generation，进入外层 backoff/restart；start promise 保持 pending |
+| 初次 probe 判定 non-retryable | `failed` | reject start，停止外层循环 |
 | 运行期 `onError` 且 SDK `failed` | `reconnecting` | 关闭旧 generation，进入外层 backoff/restart |
 | adapter `stop()` | `stopping → stopped` | 取消外层 timer，调用 `close()` |
 
@@ -602,15 +604,17 @@ SDK 状态映射：
 3. 构造 `WSClient`：`autoReconnect=true`、`handshakeTimeoutMs=15000`、`wsConfig.pingTimeout=10` 秒，
    注入 SDK lifecycle callbacks 与 redacting logger。
 4. 调用 SDK `start({ eventDispatcher })`。SDK start 本身不等待连接；adapter 只有在 30 秒内收到 `onReady`
-   后才 resolve。`onError` 或 ready timeout 必须 `close({force:false})` 并 reject。
+   后才 resolve。`onError` 或 ready timeout 必须 `close({force:false})`；retryable failure 保持 `starting` 并按外层
+   backoff 创建新 generation，non-retryable failure 才转 `failed` 并 reject。
 
 SDK 拥有单 client generation 内的服务端配置 reconnect；adapter 不重写其 reconnect interval/count。SDK 1.70.0
 的 `onError` 只在初次连接无法继续或 reconnect 次数耗尽时触发；callback 仍必须复核
-`getConnectionStatus().state="failed"`，不能把普通 socket error 当 terminal。运行期 terminal failed 后，adapter
-保持外部 `reconnecting`，关闭旧 client generation，并以 1 秒为基数、2 倍增长、30 秒封顶、full jitter 的
-外层退避创建新 generation。新 generation 连续稳定 60 秒后重置外层级数。每个 generation token 必须阻止旧
-callback 修改新状态。每次新 generation 都重跑 bot probe；retryable probe 失败继续 `reconnecting`，
-non-retryable 时转 `failed` 并停止外层循环，不能用无限重试掩盖已失效的凭据或身份漂移。
+`getConnectionStatus().state="failed"`，不能把普通 socket error 当 terminal。首次 ready 前的 retryable failure 与
+运行期 terminal failed 使用同一套外层退避：关闭旧 client generation，以 1 秒为基数、2 倍增长、30 秒封顶、
+full jitter 创建新 generation；前者保持 `starting`，后者保持 `reconnecting`。新 generation 连续稳定 60 秒后
+重置外层级数。每个 generation token 必须阻止旧 callback 修改新状态。每次新 generation 都重跑 bot probe；
+retryable probe 失败保持当前 `starting` / `reconnecting` 状态，non-retryable 时转 `failed` 并停止外层循环，不能用
+无限重试掩盖已失效的凭据或身份漂移。
 
 SDK 初次连接的异步任务不能由 `close()` 完整取消；ready timeout/stop 后若旧 generation 仍迟到触发 `onReady`，
 generation guard 除了忽略状态写入，还必须立即对该旧 client 调用 `close({force:true})`，避免遗留孤儿 socket。
@@ -620,10 +624,12 @@ SDK 没有公开 replay cursor。`reconnecting` 窗口可能重推，也可能�
 `platform_connection_ready/lost/retrying/restored/failed` 与 `platform_start_failed`，`transport` 固定为
 `lark-node-sdk-ws`。
 
-状态转移与日志一一对应：`starting→running` 发 `platform_connection_ready`；`running→reconnecting` 发
-`platform_connection_lost`；外层每次 generation 尝试发 `platform_connection_retrying`；
-`reconnecting→running` 发 `platform_connection_restored`；`starting→failed` 发 `platform_start_failed`；
-`reconnecting→failed` 发 `platform_connection_failed`。
+状态转移与重试日志一一对应：`starting` 中每次 retryable generation 失败发
+`platform_start_failed(retryable=true)` 并保持 pending；`starting→running` 发 `platform_connection_ready`；
+`starting→failed` 发 `platform_start_failed(retryable=false)`；`running→reconnecting` 发
+`platform_connection_lost`；`reconnecting` 中每次 generation 尝试发 `platform_connection_retrying`；
+`reconnecting→running` 发 `platform_connection_restored`；`reconnecting→failed` 发
+`platform_connection_failed`。
 
 `start()` 只允许从 `idle` 调用；重复调用 fail-closed，不能创建第二个 WSClient。同一 app 的多 client 是
 cluster 分发而非广播，因此 config 已禁止重复 `appId`。`stop()` 在 starting、running、reconnecting、failed
@@ -662,14 +668,16 @@ SDK 1.70.0 的 `im.message.receive_v1` typed event 使用下列字段：
 | `sender.sender_id.open_id` | `sessionKey.initiatorUserId`、`initiator.userId`；也是首版 displayName fallback |
 | `message.content` | JSON decode 后的 `text` |
 | `message.create_time` | 合法毫秒时间戳时映射到 `platformTimestamp` |
-| 完整 SDK event object | `rawPayload` |
+| 递归移除 `token` / `tenant_key` / `app_id` 后的 SDK event object | `rawPayload` |
 
 固定字段：`platform="lark"`、`sessionKey.platform="lark"`、`type="message"`、
 `initiator.isBot=false`、`rawContentType="lark-node-sdk:im.message.receive_v1@1.70.0"`。
 `traceId` 由 adapter 生成，`receivedAt` 使用 callback 收到事件的本机时间。
 
-SDK event 可能带 `token`、`tenant_key` 与 `app_id`；它们只留在进程内 `rawPayload`，不得持久化、进入 trace/logger
-或传给 agent。跨进程/落盘序列化必须按 [`message-protocol.md`](message-protocol.md#json-序列化约定) 省略 rawPayload。
+SDK callback object 可能在顶层或嵌套字段携带 `token`、`tenant_key` 与 `app_id`。完整 object 只允许存在于 callback
+调用栈内，adapter 不得捕获或直接赋给 `rawPayload`；调用 daemon handler 前必须构造脱敏副本，递归移除上述字段。
+脱敏后的 `rawPayload` 仍不得持久化、进入 trace/logger 或传给 agent；跨进程/落盘序列化必须按
+[`message-protocol.md`](message-protocol.md#json-序列化约定) 省略 rawPayload。
 
 只有 `message.chat_type="p2p"`、`message.message_type="text"`、`sender.sender_type="user"`、
 `sender.sender_id.open_id != botOpenId`，且 event/message/chat/sender/content 字段类型正确时才调用 handler。
@@ -752,9 +760,11 @@ slash command，其余需要 command event 的控制入口不在本期范围。
 
 ### Lark 合约测试
 
-1. 真实 SDK 1.70.0 event fixture 映射稳定 eventId/messageId/P2P SessionKey/text，rawPayload 保留原始 SDK shape。
+1. 真实 SDK 1.70.0 event fixture 映射稳定 eventId/messageId/P2P SessionKey/text；rawPayload 保留脱敏后的 SDK
+   shape，并递归排除 `token` / `tenant_key` / `app_id`。
 2. group、非 text、非法 content JSON、缺 event_id、bot/app sender 分别丢弃且不泄露正文。
-3. start 不把 SDK `start()` 返回当 ready；onReady resolve，onError/30 秒 timeout reject 并 close；迟到 onReady 强制关闭旧 client。
+3. start 不把 SDK `start()` 返回当 ready；onReady resolve；retryable onError/30 秒 timeout close 旧 generation、
+   保持 promise pending 并进入外层 backoff，non-retryable probe 才 reject；迟到 onReady 强制关闭旧 client。
 4. SDK connected/reconnecting/failed callbacks 映射到 adapter 状态；运行期 terminal failed 保持 reconnecting 并创建新 generation，non-retryable probe 才进入 failed，旧 callback 失效。
 5. stop 在 starting/running/backoff 均取消 timer 并调用 close；重复调用幂等且不创建第二 client。
 6. EventDispatcher callback 在真实 Engine 已同步入队但 turn promise 永不 resolve 时仍于 2.5 秒内返回；同步 handoff 错误被记录并成功 ACK，不进入重推循环。

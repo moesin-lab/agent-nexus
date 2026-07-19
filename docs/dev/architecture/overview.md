@@ -3,7 +3,7 @@ title: 架构总览
 type: architecture
 status: active
 summary: agent-nexus 的模块结构（cli / daemon / agent / platform 中枢辐射模型）、数据流、横切关注点与架构反模式
-tags: [architecture, hub-and-spoke, modules, session, discord, cc-cli]
+tags: [architecture, hub-and-spoke, modules, session, platform, agent-runtime]
 related:
   - dev/architecture/session-model
   - dev/architecture/dependencies
@@ -17,12 +17,12 @@ related:
 
 ## 定位
 
-agent-nexus 是一个**本机进程**，负责把 IM 平台（当前 Discord）的事件与本机 Claude Code CLI 的会话打通。它**不是**：
+agent-nexus 是一个**本机进程**，负责把已配置 IM 平台的事件与本机 agent backend 会话打通。它**不是**：
 
 - 不是云服务（见 ADR-0003 本机桌面）
-- 不是多 agent 编排器（一个 session 对一个 CC CLI 子进程）
+- 不是多 agent 编排器（一个 RoutingSession 只绑定一个 agent owner）
 - 不是 Codex / Claude Code 的上层 harness；agent command 语义归 agent package
-- 不是通用 IM 机器人框架（Discord 是第一且当前唯一平台）
+- 不是通用 IM 机器人框架；只开放 protocol 与 platform spec 声明的有界能力
 
 ## 模块结构
 
@@ -51,7 +51,7 @@ agent-nexus 是一个**本机进程**，负责把 IM 平台（当前 Discord）�
 
 - **`@agent-nexus/daemon`**（中枢）：control plane + routing runtime + 横切能力。是 hub，只依赖语言标准库与少量通用工具，不感知具体 agent / platform 实现，也不解释 agent command 业务语义。
 - **`@agent-nexus/agent-<name>`**（agent 适配器）：具体 agent 后端实现。当前实现有 `agent-claudecode` 与 `agent-codex`；命名 agent 配置与 binding 路由见 [`../spec/config-routing.md`](../spec/config-routing.md)。
-- **`@agent-nexus/platform-<name>`**（IM/transport 适配器）：具体 IM 平台或 transport 实现。当前只有 `platform-discord`，通过注册表接入 daemon。
+- **`@agent-nexus/platform-<name>`**（IM/transport 适配器）：具体 IM 平台或 transport 实现，通过注册表接入 daemon；实现与规划状态见 [`dependencies.md`](dependencies.md#附录当前-package-清单)。
 - **`@agent-nexus/cli`**（拼装入口）：可执行入口，加载配置，拼装 daemon + 启用的 platform adapters / agent runtimes / routing table。
 
 接口契约（`PlatformAdapter` / `AgentRuntime`）和归一化类型（`NormalizedEvent` / `AgentEvent` / `OutboundMessage` 等）住 `@agent-nexus/protocol` package（leaf 包，无依赖）。
@@ -67,11 +67,11 @@ agent-nexus 是一个**本机进程**，负责把 IM 平台（当前 Discord）�
 ### 入站（用户 → agent）
 
 ```
-Discord gateway event
+外部 IM event
         │
         ▼
-platform/discord
-  - 把 Discord 事件解析成 NormalizedEvent（见 spec/message-protocol）
+platform/<selected>
+  - 把平台事件解析成 NormalizedEvent（见 spec/message-protocol）
   - 打 traceId、sessionKey
   - 不做业务决策（不做幂等、不做权限、不做限流）
         │
@@ -107,11 +107,11 @@ agent/<selected>
 daemon.Engine 聚合
   - 记账（token、成本）
   - 应用脱敏规则（去除绝对路径、token）
-  - 按策略合并/切片（Discord 消息 2000 字符限制）
+  - 按策略合并/切片（平台限制见 spec/platform-adapter）
         │
         ▼
-platform/discord.Send(sessionKey, OutboundMessage)
-  - 调用 discord 发送消息
+platform/<selected>.Send(sessionKey, OutboundMessage)
+  - 调用平台发送消息
   - 记录 MessageRef 便于 edit/delete
 ```
 
@@ -133,8 +133,8 @@ platform/discord.Send(sessionKey, OutboundMessage)
 
 - 按 SessionKey 路由（字段定义见 [`../spec/message-protocol.md` §SessionKey](../spec/message-protocol.md#sessionkey)）
 - 同 SessionKey 的消息串行处理
-- messageId 幂等表由 daemon 统一维护
-- gateway 断连恢复策略由 daemon 驱动，platform 只负责重建连接
+- 有效幂等键由 daemon 统一维护
+- transport 恢复由 platform adapter 负责，RoutingSession 生命周期独立于连接状态
 
 ## 横切关注点
 
@@ -157,8 +157,8 @@ platform/discord.Send(sessionKey, OutboundMessage)
 ## 进程模型
 
 - 单进程：一个 agent-nexus 进程
-- 子进程：每个活跃 session 对应一个 CC CLI 子进程（或按策略共享，详见 `spec/agent-runtime.md`）
-- 长连接：Discord gateway 一条 WebSocket
+- agent runtime：每个活跃 session 的 backend handle 由对应 agent package 管理，详见 `spec/agent-runtime.md`
+- transport：每个启用的 platform instance 管理自己的连接与 lifecycle
 - 落盘：本地 SQLite（或等效） + JSONL 日志
 
 ## 反模式（架构）
@@ -166,7 +166,7 @@ platform/discord.Send(sessionKey, OutboundMessage)
 - 违反 [`dependencies.md` §禁止方向](dependencies.md#禁止方向硬性) 的任意 import 关系（具体 import 反例见 dependencies.md，本节不复述）
 - 在 adapter 里自己写日志、自己做重试、自己管 session（横切能力重复实现，与本文件 §强约束 2 矛盾）
 - 用全局变量共享状态（一律走 daemon 的 registry 与依赖注入）
-- 跨 adapter 复用 Discord 特定结构（必须先归一化到 NormalizedEvent）
+- 跨 adapter 复用平台特定结构（必须先归一化到 NormalizedEvent）
 
 ## 不做的事
 

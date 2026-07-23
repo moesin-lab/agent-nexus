@@ -142,7 +142,7 @@ Discord 上原生存在、但不是 `/nexus-new-thread` 创建或 registry 已�
 - `/resume` → Errored/Interrupted → Active（会尝试 spawn 新 agent）
 - 用户在新 channel 发消息 → 创建新 SessionKey 的 Created
 
-Agent-owned `/new`、`/stop`、`/steer` 等 command 不直接改写本状态机；daemon 只把它们按 command registry 路由给 agent package。若 agent command 结果要求更新 opaque agent conversation ref，daemon 只保存该 opaque ref，不解释 agent conversation 语义。Daemon-owned `/nexus-kill` 是 RoutingSession 级控制：清除当前 route 与 opaque ref，并释放当前 runtime handle。
+Agent-owned `/new`、`/stop`、`/steer` 等 command 不直接改写本状态机；daemon 只把它们按 command registry 路由给 agent package。若 agent command 结果要求更新 opaque agent conversation ref，daemon 只保存该 opaque ref，不解释 agent conversation 语义。Agent-owned `/new` 会解除当前 SessionKey 的活跃绑定，但保留旧 opaque ref 作为 `/nexus-sessions` 可恢复历史；下一条消息用同一 SessionKey 开新 generation。Daemon-owned `/nexus-kill` 是 RoutingSession 级控制：停止当前 runtime handle、取消 pending items，并让当前 RoutingSession 离开活跃对话区；旧 opaque ref 仍作为 `/nexus-sessions` 可恢复历史保留，直到内存容量淘汰。
 
 ### 可恢复 AgentConversation 绑定
 
@@ -160,11 +160,13 @@ Trajectory read model 不改变本状态机。它以 RoutingSession / sessionId 
 
 外部 session resume 的架构边界与本节一致：daemon 保存 opaque native ref 并交给 agent runtime resume；外部 transcript 内容不因导入而进入模型上下文。字段、状态和查询契约见 [`trajectory-observability.md`](../spec/infra/trajectory-observability.md)。
 
-当前实现还未落地本文件描述的 SQLite lifecycle registry。内存态 MVP 支持 daemon-owned `/nexus-sessions`：按当前 platform instance + platform + user 列出最近可恢复的 opaque agent conversation ref，下拉项用该 session 的第一条用户消息生成标题；通过 Discord select 选择后，把当前 SessionKey 绑定到所选 `agentSessionId`；下一条消息使用 `SessionConfig.resumeFromAgentSessionId` 恢复。rebind 迁移 opaque ref、标题与下一次 spawn override，不复制 thread registry 或其它 channel topology 元数据。`/nexus-new-thread` 创建的 thread 占位在 agent session 启动前不出现在该列表里。
+当前实现还未落地本文件描述的 SQLite lifecycle registry。内存态 MVP 支持 daemon-owned `/nexus-sessions`：按当前 platform instance + platform + user 列出最近可恢复、且与当前 agent owner 兼容的 opaque agent conversation ref，包括同一 SessionKey 下被 `/new`、`/nexus-kill`、agent binding 切换或 session rebind 挤出活跃区的历史项。下拉项用该 session 的第一条用户消息生成标题；通过 Discord select 选择后，把当前 SessionKey 绑定到所选 `agentSessionId`；下一条消息使用 `SessionConfig.resumeFromAgentSessionId` 恢复。rebind 迁移 opaque ref、agent owner、标题与下一次 spawn override，不复制 thread registry 或其它 channel topology 元数据；不兼容当前 agent owner 的历史不会显示，过期 interaction 也不能跨 backend 重绑。`/nexus-new-thread` 创建的 thread 占位在 agent session 启动前不出现在该列表里。
+
+内存态 MVP 的容量上限是软上限：当前进程通常最多保留 `100` 条 session 记录；超过上限时只淘汰非活跃历史中 `lastTurnAt` 最早的记录，不为凑上限中断仍活跃的 runtime handle。若活跃记录本身超过上限，记录数可暂时超出；某条记录转为非活跃历史时立即再次执行淘汰。进程重启仍会丢失这份内存态列表。
 
 workingDir 解析分三层：一次性 session override > channel workingDir default > agent config default。`/nexus-working-dir path:<absolute-path>` 默认设置当前 channel/thread 的 channel default；thread 若未设置自己的 default，则继承父 channel 的 default。`/nexus-working-dir ... scope:session` 才在当前原始 SessionKey（channel 或 thread + user）上保存一次性 `nextSession.workingDir`，仅在下一次真正 `startSession` 时消费。thread 继承父频道 binding 只影响 route/auth 与 channel default 读取，不会把 session override 写到父频道 key。workingDir 设置必须是非空绝对路径；不要求位于当前 binding 目标 agent 的默认 `workingDir` 之内。状态变更进入同 SessionKey 的 daemon queue：空闲时可立即完成；若当前 turn 正在运行，则先返回 queued ack，待排到队头后再写入并发送最终结果。由于 SessionKey 包含 platformName、platform、channelId 与 initiatorUserId，channel-scope workingDir 对同频道不同用户不提供全序保证。
 
-`/nexus-settings` 可设置当前 channel/thread 的 agent binding override。override 的路由契约由 [`config-routing.md`](../spec/config-routing.md#运行时-channel-agent-override) 拥有；本模型只依赖其组合结果：切换 agent owner 会清除触发者当前原始 SessionKey 上的 RoutingSession 映射与 opaque agent conversation ref，下一条消息按新 agent owner 启动或恢复。该列表、thread registry、channel default、agent binding override、一次性 override 与 daemon queue 都随进程重启丢失，不替代 Interrupted / Archived 的持久状态机。
+`/nexus-settings` 可设置当前 channel/thread 的 agent binding override。override 的路由契约由 [`config-routing.md`](../spec/config-routing.md#运行时-channel-agent-override) 拥有；本模型只依赖其组合结果：切换 agent owner 会解除触发者当前原始 SessionKey 上的活跃绑定，把旧 opaque agent conversation ref 留在 `/nexus-sessions` 历史中，并让下一条消息按新 agent owner 启动或恢复。该列表、thread registry、channel default、agent binding override、一次性 override 与 daemon queue 都随进程重启丢失，不替代 Interrupted / Archived 的持久状态机。
 
 ## 幂等
 
@@ -190,7 +192,7 @@ Discord gateway 会重发事件（at-least-once）。同一条用户消息可能
 - 队列覆盖 message、`dispatchMode: "queued"` 的 agent command，以及会影响 turn-visible state 的 daemon state command（当前为 workingDir mutation）
 - 队列头任务完成前，后续任务排队；用户在短时间内发多条消息 → 串行处理，前一条完成才处理下一条
 - `/nexus-queue` 管理当前 SessionKey 的 queue：面板展示 running / pending / recent 计数；用户可选择 pending item 后上移、下移、取消或编辑 message prompt，也可插入一条 next prompt；`next` 中断当前 running turn 并让下一条 pending item 继续执行；`clear` 取消所有 pending，不取消 running
-- `/nexus-kill` 不进入队列；它立即停止当前 runtime handle，取消当前 SessionKey 的 pending items，并删除当前 RoutingSession 映射
+- `/nexus-kill` 不进入队列；它立即停止当前 runtime handle，取消当前 SessionKey 的 pending items，并解除当前 RoutingSession 的活跃绑定；旧 opaque ref 仍可从 `/nexus-sessions` 恢复
 
 ### 跨 session
 

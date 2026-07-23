@@ -1151,7 +1151,12 @@ export class Engine {
       );
       return this.commandResponse(COMMAND_FAILED_TEXT, event.traceId);
     }
-    this.applyAgentCommandResult(routedSessionKey, sessionKeyStr, result);
+    this.applyAgentCommandResult(
+      routedSessionKey,
+      sessionKeyStr,
+      result,
+      agentSlot.agentOwner ?? agentSlot.agent.name(),
+    );
     if (result.status === 'rejected' || result.status === 'unsupported') {
       return this.commandResponse(
         result.message ?? COMMAND_FAILED_TEXT,
@@ -1167,12 +1172,13 @@ export class Engine {
     sessionKey: SessionKey,
     sessionKeyStr: string,
     result: AgentCommandResult,
+    agentOwner: string,
   ): void {
     if (!Object.prototype.hasOwnProperty.call(result, 'updatedAgentSessionId')) {
       return;
     }
     if (result.updatedAgentSessionId === null) {
-      this.sessionStore.delete(sessionKey);
+      this.sessionStore.archiveCurrent(sessionKey);
       const active = this.agentSessions.get(sessionKeyStr);
       if (!active) return;
       try {
@@ -1191,6 +1197,7 @@ export class Engine {
     if (typeof result.updatedAgentSessionId === 'string') {
       this.sessionStore.set(sessionKey, {
         agentSessionId: result.updatedAgentSessionId,
+        agentOwner,
         lastTurnAt: new Date(),
       });
     }
@@ -1249,7 +1256,7 @@ export class Engine {
       );
     }
     const hadStoredSession = this.sessionStore.get(routedSessionKey) !== undefined;
-    this.sessionStore.delete(routedSessionKey);
+    this.sessionStore.archiveCurrent(routedSessionKey);
     this.clearTypingBestEffort(routedSessionKey, event.traceId);
     await this.sendCommandAck(
       event,
@@ -1296,10 +1303,16 @@ export class Engine {
   }
 
   private handleSessionsCommand(event: NormalizedEvent): EventHandlerResult {
+    const route = this.route(event);
+    const agentSlot = route ? this.agents.get(route.agentName) : undefined;
+    if (!agentSlot) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
     const sessions = this.sessionStore.listForUser({
       platformName: this.platformName,
       platform: event.sessionKey.platform,
       initiatorUserId: event.initiator.userId,
+      agentOwner: agentSlot.agentOwner ?? agentSlot.agent.name(),
       limit: 25,
     });
     if (sessions.length === 0) {
@@ -1796,12 +1809,17 @@ export class Engine {
       ...(platformItems?.items ?? []),
       ...this.daemonSettingsSnapshotItems(event),
     ];
-    const sessions = this.sessionStore.listForUser({
-      platformName: this.platformName,
-      platform: event.sessionKey.platform,
-      initiatorUserId: event.initiator.userId,
-      limit: 25,
-    });
+    const route = this.route(event);
+    const agentSlot = route ? this.agents.get(route.agentName) : undefined;
+    const sessions = agentSlot
+      ? this.sessionStore.listForUser({
+          platformName: this.platformName,
+          platform: event.sessionKey.platform,
+          initiatorUserId: event.initiator.userId,
+          agentOwner: agentSlot.agentOwner ?? agentSlot.agent.name(),
+          limit: 25,
+        })
+      : [];
     const text = this.renderSettingsText(items, sessions.length, prefix);
     return {
       text,
@@ -3009,15 +3027,28 @@ export class Engine {
       event.sessionKey,
       this.platformName,
     );
+    const route = this.route(event);
+    const agentSlot = route ? this.agents.get(route.agentName) : undefined;
+    if (!agentSlot) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
     const sessionKeyStr = serializeSessionKey(routedSessionKey);
-    this.stopActiveSession(sessionKeyStr, event.traceId);
+    const activeSourceKey = this.sessionStore.activeKeyForSessionId(sessionId);
     const rebound = this.sessionStore.bindExistingToKey(
       routedSessionKey,
       sessionId,
       new Date(),
+      agentSlot.agentOwner ?? agentSlot.agent.name(),
     );
     if (!rebound) {
       return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    const activeKeysToStop = new Set([sessionKeyStr]);
+    if (activeSourceKey) {
+      activeKeysToStop.add(serializeSessionKey(activeSourceKey));
+    }
+    for (const activeKey of activeKeysToStop) {
+      this.stopActiveSession(activeKey, event.traceId);
     }
     return this.commandResponse(
       `会话已恢复: ${rebound.agentSessionId}\nsession resumed: ${rebound.agentSessionId}`,
@@ -3299,7 +3330,7 @@ export class Engine {
       this.platformName,
     );
     this.stopActiveSession(serializeSessionKey(routedSessionKey), event.traceId);
-    this.sessionStore.delete(routedSessionKey);
+    this.sessionStore.archiveCurrent(routedSessionKey);
     return this.commandResponse(`Agent 绑定: ${agentName}\nAgent binding: ${agentName}`, event.traceId);
   }
 
@@ -3902,7 +3933,7 @@ export class Engine {
         (trimmed === '/new' || trimmed.startsWith('/new '))
       ) {
         this.stopActiveSession(sessionKeyStr, event.traceId);
-        this.sessionStore.delete(event.sessionKey);
+        this.sessionStore.archiveCurrent(event.sessionKey);
         const remainder = trimmed === '/new' ? '' : trimmed.slice(5).trim();
         if (remainder.length === 0) {
           try {
@@ -4253,6 +4284,7 @@ export class Engine {
                 thread && !thread.renameOnFirstPrompt ? undefined : promptTitle;
               this.sessionStore.set(event.sessionKey, {
                 agentSessionId,
+                agentOwner: agentSlot.agentOwner ?? agentSlot.agent.name(),
                 lastTurnAt: new Date(),
                 title,
               });
@@ -4520,10 +4552,24 @@ export class Engine {
     sessionKeyStr: string,
     agentSlot: EngineAgent,
   ): ActiveAgentSession {
+    const agentOwner = agentSlot.agentOwner ?? agentSlot.agent.name();
+    const stored = this.sessionStore.get(event.sessionKey);
+    const incompatibleStoredRef =
+      stored?.agentSessionId !== undefined && stored.agentOwner !== agentOwner;
+    if (incompatibleStoredRef) {
+      this.sessionStore.archiveCurrent(event.sessionKey);
+    }
     const active = this.agentSessions.get(sessionKeyStr);
-    if (active && active.agentName === agentSlot.agentName) {
+    if (
+      active &&
+      active.agentName === agentSlot.agentName &&
+      !incompatibleStoredRef
+    ) {
       try {
-        if (active.agent.isAlive(active.session)) return active;
+        if (active.agent.isAlive(active.session)) {
+          this.sessionStore.touch(event.sessionKey, new Date());
+          return active;
+        }
       } catch (err) {
         this.logger.warn(
           { traceId: event.traceId, sessionKey: sessionKeyStr, err },
@@ -4551,9 +4597,10 @@ export class Engine {
       this.agentSessions.delete(sessionKeyStr);
     }
 
-    const prevAgentSessionId = this.sessionStore.get(
-      event.sessionKey,
-    )?.agentSessionId;
+    const prevAgentSessionId = incompatibleStoredRef
+      ? undefined
+      : this.sessionStore.get(event.sessionKey)?.agentSessionId;
+    this.sessionStore.touch(event.sessionKey, new Date());
     const workingDir = this.resolveWorkingDirForSession(
       event,
       agentSlot.defaultSessionConfig.workingDir,

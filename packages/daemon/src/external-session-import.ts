@@ -228,7 +228,7 @@ export class ExternalSessionImportService implements ExternalSessionImporter {
 
     const linkedAtDate = this.now();
     const linkedAt = linkedAtDate.toISOString();
-    const sessionId = this.sessionStore.ensureSessionId(input.sessionKey);
+    const sessionId = this.sessionStore.createSessionId();
     const binding = this.store.linkExternalSession({
       importId: input.importId,
       sessionId,
@@ -236,9 +236,10 @@ export class ExternalSessionImportService implements ExternalSessionImporter {
     });
     this.sessionStore.bindExternalResumeToKey(input.sessionKey, {
       agentSessionId: binding.nativeSessionRef,
+      agentOwner: input.agentOwner,
       lastTurnAt: linkedAtDate,
       title: titleFromMetadataJson(record.metadataJson) ?? record.sourceSessionId,
-    });
+    }, sessionId);
     return binding;
   }
 

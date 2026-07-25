@@ -572,6 +572,45 @@ function makeThrowingTrajectoryStore(): TrajectoryStore & {
 // ----- tests -----
 
 describe('Engine', () => {
+  it('入站日志只记录 metadata，不在任何 level 写入消息正文', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const logger = makeMockLogger();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger,
+      sessionStore: new SessionStore(),
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+    const privateBody = 'private lark body SECRET';
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent(privateBody));
+
+    const loggerMethods = [
+      logger.trace,
+      logger.debug,
+      logger.info,
+      logger.warn,
+      logger.error,
+      logger.fatal,
+    ];
+    const allLogCalls = loggerMethods.flatMap(
+      (method) => (method as ReturnType<typeof vi.fn>).mock.calls,
+    );
+    expect(JSON.stringify(allLogCalls)).not.toContain(privateBody);
+    expect(
+      (logger.info as ReturnType<typeof vi.fn>).mock.calls,
+    ).toContainEqual([
+      expect.objectContaining({ length: privateBody.length }),
+      'inbound',
+    ]);
+  });
+
   it('首轮：dispatch 触发 sessionStore 回写 + platform.send 收到 text_final 内容', async () => {
     const platform = makePlatform();
     const agent = makeAgent();

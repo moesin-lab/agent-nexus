@@ -9,6 +9,13 @@ import {
   DiscordConfigError,
 } from '@agent-nexus/platform-discord';
 import {
+  parseLarkBindingMatchConfig,
+  parseLarkPlatformConfig,
+  type LarkBindingMatchConfig,
+  type LarkPlatformConfig,
+  LarkConfigError,
+} from '@agent-nexus/platform-lark';
+import {
   parseClaudeCodeConfig,
   type ClaudeCodeConfig,
   ClaudeCodeConfigError,
@@ -37,6 +44,8 @@ export type {
   CodexConfig,
   DiscordPlatformConfig,
   DiscordBindingMatchConfig,
+  LarkPlatformConfig,
+  LarkBindingMatchConfig,
   PlatformAuthConfig,
 };
 
@@ -47,7 +56,10 @@ type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 export const DEFAULT_AGENT_TIMEOUT_MS = 300_000;
 const MAX_AGENT_TIMEOUT_MS = 2_147_483_647;
 
-export type PlatformConfig = DiscordPlatformConfig & {
+export type PlatformConfig = (
+  | DiscordPlatformConfig
+  | LarkPlatformConfig
+) & {
   auth: PlatformAuthConfig;
 };
 
@@ -76,14 +88,23 @@ export interface AgentNexusConfig {
   };
 }
 
-export interface BindingConfig {
-  name: string;
-  platformName: string;
-  agentName: string;
-  match: {
-    discord: DiscordBindingMatchConfig;
-  };
-}
+export type BindingConfig =
+  | {
+      name: string;
+      platformName: string;
+      agentName: string;
+      match: {
+        discord: DiscordBindingMatchConfig;
+      };
+    }
+  | {
+      name: string;
+      platformName: string;
+      agentName: string;
+      match: {
+        lark: LarkBindingMatchConfig;
+      };
+    };
 
 export interface ConfigFileEditInput {
   path: string;
@@ -127,7 +148,7 @@ export class SecretsPermissionError extends Error {
 
 const DEFAULT_LOG_LEVEL = 'info' as const;
 const BACKENDS = ['claudecode', 'codex'] as const;
-const PLATFORM_TYPES = ['discord'] as const;
+const PLATFORM_TYPES = ['discord', 'lark'] as const;
 const LEGACY_TOP_LEVEL_KEYS = ['discord', 'agent', 'claudeCode', 'codex'] as const;
 export const AGENT_NEXUS_HOME_ENV = 'AGENT_NEXUS_HOME' as const;
 
@@ -202,16 +223,24 @@ export function defaultDiscordStatePath(name: string): string {
   return join(configRoot(), 'state', `discord-${encodeURIComponent(name)}.json`);
 }
 
+const LARK_APP_CREATION_URL =
+  'https://open.feishu.cn/page/launcher?from=backend_oneclick';
+
 const CONFIG_HINT = (path: string) => `\
 agent-nexus 配置模板已创建：${path}
 请编辑其中的 platforms[].botUserId、platforms[].auth.allowlist、bindings[].match.discord.channelIds 和 agents[].workingDir，然后确认权限：
   chmod 600 ${path}
+
+中国版飞书 Quickstart：
+  创建机器人应用：${LARK_APP_CREATION_URL}
+  创建后把 App ID 写入 platforms[].appId，把 App Secret 写入 secrets/<appSecretRef>（不要写入 config.json）。
+  补齐 platforms[].botOpenId、platforms[].auth.allowlist.userIds 和 bindings[].match.lark.chatIds 后再次启动；agent-nexus 会验证应用凭证与机器人身份。
 `;
 
-const TOKEN_HINT = (path: string) => `\
+const SECRET_HINT = (path: string) => `\
 secret 文件已创建或缺失：${path}
-请写入 token（权限必须 0600）：
-  echo -n '<your-token>' > ${path}
+请写入 secret 值（权限必须 0600）：
+  printf '%s' '<your-secret>' > ${path}
   chmod 600 ${path}
 `;
 
@@ -805,7 +834,27 @@ function parseBinding(
     }
   }
 
-  throw new ConfigError(`字段 ${path}.platformName 引用了暂不支持的 platform type "${platform.type}"`);
+  assertNoUnknownKeys(raw['match'], ['lark'], `${path}.match`);
+  if (!('lark' in raw['match'])) {
+    throw new ConfigError(`缺字段 ${path}.match.lark`);
+  }
+  try {
+    return {
+      name,
+      platformName,
+      agentName,
+      match: {
+        lark: parseLarkBindingMatchConfig(raw['match']['lark'], {
+          path: `${path}.match.lark`,
+        }),
+      },
+    };
+  } catch (err) {
+    if (err instanceof LarkConfigError) {
+      throw new ConfigError(`${configPath()} ${err.message}`);
+    }
+    throw err;
+  }
 }
 
 function parsePlatform(raw: unknown, index: number): PlatformConfig {
@@ -814,7 +863,7 @@ function parsePlatform(raw: unknown, index: number): PlatformConfig {
     throw new ConfigError(`字段 ${path} 必须是对象`);
   }
   const typeRaw = raw['type'];
-  if (!PLATFORM_TYPES.includes(typeRaw as 'discord')) {
+  if (!PLATFORM_TYPES.includes(typeRaw as (typeof PLATFORM_TYPES)[number])) {
     throw new ConfigError(
       `字段 ${path}.type 必须是 ${PLATFORM_TYPES.map((v) => `"${v}"`).join(' / ')}`,
     );
@@ -831,14 +880,31 @@ function parsePlatform(raw: unknown, index: number): PlatformConfig {
     throw err;
   }
 
+  if (typeRaw === 'discord') {
+    try {
+      const platform = parseDiscordPlatformConfig(raw, {
+        path,
+        defaultStatePath: defaultDiscordStatePath(name),
+      });
+      return { ...platform, auth };
+    } catch (err) {
+      if (err instanceof DiscordConfigError) {
+        throw new ConfigError(`${configPath()} ${err.message}`);
+      }
+      throw err;
+    }
+  }
+
+  if (auth.allowlist.userIds.length === 0) {
+    throw new ConfigError(
+      `字段 ${path}.auth.allowlist.userIds 不能是空数组；飞书 P2P 必须显式授权 open_id`,
+    );
+  }
   try {
-    const platform = parseDiscordPlatformConfig(raw, {
-      path,
-      defaultStatePath: defaultDiscordStatePath(name),
-    });
+    const platform = parseLarkPlatformConfig(raw, { path });
     return { ...platform, auth };
   } catch (err) {
-    if (err instanceof DiscordConfigError) {
+    if (err instanceof LarkConfigError) {
       throw new ConfigError(`${configPath()} ${err.message}`);
     }
     throw err;
@@ -861,11 +927,41 @@ function assertAgentReferences(
 
 function assertUniquePlatformStatePaths(platforms: PlatformConfig[]): void {
   const duplicateStatePaths = duplicateNames(
-    platforms.map((platform) => platform.statePath),
+    platforms
+      .filter(
+        (platform): platform is DiscordPlatformConfig & {
+          auth: PlatformAuthConfig;
+        } => platform.type === 'discord',
+      )
+      .map((platform) => platform.statePath),
   );
   if (duplicateStatePaths.length > 0) {
     throw new ConfigError(
       `platforms[].statePath 重复：${duplicateStatePaths.join(', ')}`,
+    );
+  }
+}
+
+function assertUniqueLarkIdentities(platforms: PlatformConfig[]): void {
+  const larkPlatforms = platforms.filter(
+    (platform): platform is LarkPlatformConfig & {
+      auth: PlatformAuthConfig;
+    } => platform.type === 'lark',
+  );
+  const duplicateAppIds = duplicateNames(
+    larkPlatforms.map((platform) => platform.appId),
+  );
+  if (duplicateAppIds.length > 0) {
+    throw new ConfigError(
+      `platforms[].appId 重复：${duplicateAppIds.join(', ')}`,
+    );
+  }
+  const duplicateBotOpenIds = duplicateNames(
+    larkPlatforms.map((platform) => platform.botOpenId),
+  );
+  if (duplicateBotOpenIds.length > 0) {
+    throw new ConfigError(
+      `platforms[].botOpenId 重复：${duplicateBotOpenIds.join(', ')}`,
     );
   }
 }
@@ -917,6 +1013,7 @@ function parseConfigRecord(
     );
   }
   assertUniquePlatformStatePaths(platforms);
+  assertUniqueLarkIdentities(platforms);
   const platformsByName = new Map(
     platforms.map((platform) => [platform.name, platform]),
   );
@@ -1100,13 +1197,27 @@ export function buildRoutingTable(config: AgentNexusConfig): RoutingEntry[] {
         `binding "${binding.name}" 引用了不存在的 platform "${binding.platformName}"`,
       );
     }
-    return {
-      bindingName: binding.name,
-      platformName: binding.platformName,
-      platformType: platform.type,
-      agentName: binding.agentName,
-      match: binding.match,
-    };
+    if (platform.type === 'discord' && 'discord' in binding.match) {
+      return {
+        bindingName: binding.name,
+        platformName: binding.platformName,
+        platformType: 'discord',
+        agentName: binding.agentName,
+        match: { discord: binding.match.discord },
+      };
+    }
+    if (platform.type === 'lark' && 'lark' in binding.match) {
+      return {
+        bindingName: binding.name,
+        platformName: binding.platformName,
+        platformType: 'lark',
+        agentName: binding.agentName,
+        match: { lark: binding.match.lark },
+      };
+    }
+    throw new ConfigError(
+      `binding "${binding.name}" 的 match 与 platform type "${platform.type}" 不一致`,
+    );
   });
 }
 
@@ -1125,7 +1236,7 @@ export async function loadSecret(name: string): Promise<string> {
     throw new SecretsPermissionError(`初始化 secrets 文件失败：${(err as Error).message}`);
   }
   if (scaffold.tokenCreated && name === 'DISCORD_BOT_TOKEN') {
-    throw new SecretsPermissionError(TOKEN_HINT(secretPath(name)));
+    throw new SecretsPermissionError(SECRET_HINT(secretPath(name)));
   }
 
   const path = secretPath(name);
@@ -1134,7 +1245,7 @@ export async function loadSecret(name: string): Promise<string> {
     st = await stat(path);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new SecretsPermissionError(TOKEN_HINT(path));
+      throw new SecretsPermissionError(SECRET_HINT(path));
     }
     throw new SecretsPermissionError(`读取 ${path} 失败：${(err as Error).message}`);
   }

@@ -53,7 +53,12 @@ import type {
   ProviderCaptureRecorder,
 } from './provider-capture.js';
 import { BasicRedactor, type Redactor } from './redaction.js';
-import { RouteError, selectRoute, type RoutingEntry } from './router.js';
+import {
+  RouteError,
+  selectRoute,
+  type PlatformType,
+  type RoutingEntry,
+} from './router.js';
 import type { SessionStore } from './session-store.js';
 import type {
   TrajectorySegment,
@@ -168,7 +173,7 @@ export interface EngineRuntimeUpdate {
 export interface EngineDeps {
   platform: PlatformAdapter;
   platformName?: string;
-  platformType?: 'discord';
+  platformType?: PlatformType;
   agent?: AgentRuntime;
   agents?: readonly EngineAgent[];
   routingTable?: readonly RoutingEntry[];
@@ -423,7 +428,7 @@ function workingDirScope(value: string | undefined): 'channel' | 'session' {
 export class Engine {
   private readonly platform: PlatformAdapter;
   private readonly platformName: string;
-  private readonly platformType: 'discord';
+  private readonly platformType: PlatformType;
   // applyRuntimeUpdate 热替换的四个字段；其余 deps 启动后不可变
   private platformAuth?: PlatformAuthConfig;
   private routingTable?: readonly RoutingEntry[];
@@ -3881,14 +3886,6 @@ export class Engine {
           traceId: event.traceId,
           sessionKey: sessionKeyStr,
           length: (event.text ?? '').length,
-        },
-        'inbound',
-      );
-      this.logger.debug(
-        {
-          traceId: event.traceId,
-          sessionKey: sessionKeyStr,
-          text: event.text,
         },
         'inbound',
       );

@@ -561,7 +561,8 @@ adapter 接收配置中的 `appId`、`botOpenId`，以及 secrets loader 解析�
 
 platform-lark 在 package 内部定义最窄的 `LarkSdkFactory` test seam，用于构造 SDK `Client` / `WSClient`；
 该 factory 不进入 protocol 公共接口。production factory 必须固定使用 `@larksuiteoapi/node-sdk@1.70.0`。
-禁止 spawn/exec `lark-cli`，也禁止读取 CLI profile。
+`Client` 与 `WSClient` 必须显式使用 SDK `Domain.Feishu`，首版不接受可配置 domain，也不连接
+`open.larksuite.com`。禁止 spawn/exec `lark-cli`，也禁止读取 CLI profile。
 
 SDK logger 使用 `LoggerLevel.error` 和 agent-nexus 提供的 redacting logger。不得启用 SDK 默认 debug/info
 payload 日志；logger callback 只保留稳定 category 与过 redaction 的 cause，不转发 raw event、request body、
@@ -790,7 +791,7 @@ slash command，其余需要 command event 的控制入口不在本期范围。
 10. 多切片顺序与 MessageRef 正确；中途失败保留已发送 ID 且不重发。
 11. success/error/malformed SDK response 分别返回 MessageRef、分类错误、protocol error。
 12. production dependency 固定 1.70.0；fixture 记录 SDK version、上游 commit、生成路径与日期。
-13. production 路径不 spawn/exec `lark-cli`、不读取 CLI profile，也不使用 SDK Channel 模块。
+13. production 路径显式使用 `Domain.Feishu`，不 spawn/exec `lark-cli`、不读取 CLI profile，也不使用 SDK Channel 模块。
 
 ## 测试契约（合约测试）
 

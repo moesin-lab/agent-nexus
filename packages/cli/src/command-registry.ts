@@ -34,7 +34,7 @@ function commandScopeForPlatform(
   return {
     platformName: platform.name,
     platformType: platform.type,
-    nativeScope: platform.testGuildId
+    nativeScope: platform.type === 'discord' && platform.testGuildId
       ? { kind: 'guild', guildId: platform.testGuildId }
       : { kind: 'global' },
   };

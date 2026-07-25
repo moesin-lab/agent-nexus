@@ -621,7 +621,10 @@ wait_for_candidate_health() {
       return 1
     fi
     if new_log_contains "${STDOUT_LOG}" "${stdout_offset}" "engine_started" \
-      && new_log_contains "${STDOUT_LOG}" "${stdout_offset}" "discord_ready"; then
+      && {
+        new_log_contains "${STDOUT_LOG}" "${stdout_offset}" "discord_ready" \
+          || new_log_contains "${STDOUT_LOG}" "${stdout_offset}" "platform_connection_ready"
+      }; then
       log "auto_update_candidate_healthy hash=${hash}"
       return 0
     fi

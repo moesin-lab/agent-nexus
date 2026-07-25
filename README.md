@@ -2,8 +2,8 @@
 title: agent-nexus
 type: root
 status: active
-summary: 把本机编码 agent 接入 Discord 的本机桥，支持 Claude Code CLI 和 Codex CLI 后端
-tags: [project, discord, cc-cli, codex]
+summary: 把本机编码 agent 接入 Discord 或中国版飞书的本机桥，支持 Claude Code CLI 和 Codex CLI 后端
+tags: [project, discord, lark, feishu, cc-cli, codex]
 related:
   - root/AGENTS
   - product/README
@@ -14,17 +14,18 @@ related:
 
 # agent-nexus
 
-agent-nexus 是一个本机运行的 IM 桥接服务。它把 Discord 消息路由到你本机的编码 agent，让你可以在 Discord 里驱动 Claude Code CLI 或 Codex CLI 处理本机项目。
+agent-nexus 是一个本机运行的 IM 桥接服务。它把 Discord 或中国版飞书消息路由到你本机的编码 agent，让你可以在聊天里驱动 Claude Code CLI 或 Codex CLI 处理本机项目。
 
-当前状态：可用于本机 Discord MVP。Discord 是当前唯一平台，部署、密钥和 agent CLI 登录状态由本机用户维护。
+当前状态：Discord 支持完整交互能力；中国版飞书支持自建应用的 P2P 单聊纯文本。部署、密钥和 agent CLI 登录状态由本机用户维护。
 
 ## 特性
 
 - Discord `@mention` 与 slash command 路由到本机 agent。
+- 中国版飞书通过官方 Node SDK 长连接接收 P2P 纯文本，不需要公网 webhook。
 - 支持 Claude Code CLI 和 Codex CLI 后端。
 - 按 `(platformName, platform, channelId, userId)` 复用会话，并支持新建、停止、resume 与 route kill。
 - 支持 Discord thread 会话、session 列表、working directory override、settings 配置编辑与 queue 操作。
-- 流式回复、typing 指示、工具调用状态与原地 edit。
+- 平台能力允许时提供流式回复、typing 指示、工具调用状态与原地 edit。
 - 基于 allowlist 的访问控制；Claude Code 后端默认不启用 `Bash`。
 - 配置、密钥和运行状态默认放在 `~/.agent-nexus/`，也可用 `--home` 或 `AGENT_NEXUS_HOME` 跑多实例；本仓库 dev / stable 实例约定见 [`docs/ops/runbook.md`](docs/ops/runbook.md)。
 
@@ -35,10 +36,9 @@ agent-nexus 是一个本机运行的 IM 桥接服务。它把 Discord 消息路�
 - Node >= 20
 - pnpm >= 10（仓库锁定 `pnpm@10.33.2`）
 - 已安装并登录 Claude Code CLI 或 Codex CLI
-- 一个 Discord bot token、bot user id、你的 Discord user id
-- Discord bot 已加入目标 server，并开启 `MESSAGE CONTENT INTENT`
+- 一个已配置的平台入口：Discord bot，或中国版飞书自建应用
 
-Discord bot 创建、邀请和权限配置见 [`docs/product/platforms/discord.md`](docs/product/platforms/discord.md)。
+Discord bot 创建、邀请和权限配置见 [`docs/product/platforms/discord.md`](docs/product/platforms/discord.md)；中国版飞书见 [`docs/product/platforms/lark.md`](docs/product/platforms/lark.md)。
 
 ### 安装
 
@@ -80,7 +80,7 @@ token 文件权限不是 `0600` 时，agent-nexus 会拒绝启动。
 
 ### 最小配置
 
-编辑 `~/.agent-nexus/config.json`。下面示例使用 Claude Code CLI：
+编辑 `~/.agent-nexus/config.json`。下面是 Discord + Claude Code CLI 示例；飞书 platform / binding 配置见[中国版飞书使用手册](docs/product/platforms/lark.md#配置-agent-nexus)：
 
 ```json
 {
@@ -140,7 +140,7 @@ corepack pnpm --filter @agent-nexus/cli dev
 
 ## 使用
 
-启动成功后，在绑定的 Discord channel 里发送：
+Discord 启动成功后，在绑定的 channel 里发送：
 
 ```text
 @bot 帮我解释这个仓库的入口
@@ -165,6 +165,8 @@ corepack pnpm --filter @agent-nexus/cli dev
 
 默认只响应显式 `@bot` 的消息，且调用者必须命中 allowlist。Slash command 会按当前频道绑定的后端动态注册。
 
+中国版飞书首版在机器人单聊中直接发送纯文本；`/new` 与 `/new <prompt>` 可开启新会话。飞书不注册 slash command，完整边界见[中国版飞书使用手册](docs/product/platforms/lark.md)。
+
 ## 项目结构
 
 ```text
@@ -172,6 +174,7 @@ packages/
   cli/                # CLI 入口与配置加载
   daemon/             # 路由、会话与命令分发
   platform/discord/   # Discord adapter
+  platform/lark/      # 中国版飞书 adapter
   agent/              # Claude Code / Codex 后端
   protocol/           # 归一化消息协议
 docs/
@@ -184,6 +187,7 @@ docs/
 
 - 使用指南：[`docs/product/user-guide.md`](docs/product/user-guide.md)
 - Discord 配置：[`docs/product/platforms/discord.md`](docs/product/platforms/discord.md)
+- 中国版飞书配置：[`docs/product/platforms/lark.md`](docs/product/platforms/lark.md)
 - 运维手册：[`docs/ops/runbook.md`](docs/ops/runbook.md)
 - 开发者入口：[`AGENTS.md`](AGENTS.md) 与 [`docs/dev/README.md`](docs/dev/README.md)
 - 全部文档导航：[`docs/README.md`](docs/README.md)

@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   stat,
   writeFile,
@@ -20,6 +21,7 @@ import { homedir } from 'node:os';
 import {
   AGENT_NEXUS_HOME_ENV,
   applyConfigHomeArgv,
+  buildRoutingTable,
   ConfigError,
   SecretsPermissionError,
   configRoot,
@@ -50,6 +52,27 @@ const VALID_BINDING = {
   platformName: 'discord-main',
   agentName: 'codex-dev',
   match: { discord: { channelIds: ['C1'] } },
+};
+
+const VALID_LARK_PLATFORM = {
+  name: 'lark-main',
+  type: 'lark',
+  appId: 'cli_0123456789abcdef',
+  appSecretRef: 'LARK_APP_SECRET',
+  botOpenId: 'ou_bot_open_id',
+  auth: {
+    allowlist: {
+      userIds: ['ou_user_open_id'],
+      allowedChannelIds: ['oc_chat_1'],
+    },
+  },
+};
+
+const VALID_LARK_BINDING = {
+  name: 'lark-main-codex-dev',
+  platformName: 'lark-main',
+  agentName: 'codex-dev',
+  match: { lark: { chatIds: ['oc_chat_1'] } },
 };
 
 const VALID_CODEX_AGENT = {
@@ -124,9 +147,13 @@ describe('config loader', () => {
     expect(secrets.mode & 0o777).toBe(0o700);
     expect(config.mode & 0o777).toBe(0o600);
     expect(token.mode & 0o777).toBe(0o600);
+    expect(
+      await readdir(join(tmp, '.agent-nexus', 'secrets')),
+    ).toEqual(['DISCORD_BOT_TOKEN']);
     expect(configText).toMatch(/"platforms"/);
     expect(configText).toMatch(/"agents"/);
     expect(configText).toMatch(/"tokenRef": "DISCORD_BOT_TOKEN"/);
+    expect(configText).not.toMatch(/"type": "lark"/);
     expect(configText).toMatch(/"bindings"/);
     expect(configText).toMatch(/"platformName": "discord-main"/);
     expect(configText).toMatch(/"match"/);
@@ -143,6 +170,29 @@ describe('config loader', () => {
     expect(
       Object.prototype.hasOwnProperty.call(JSON.parse(configText), 'discord'),
     ).toBe(false);
+  });
+
+  it('首次运行提示中国版飞书官方 Quickstart 和安全的凭据后续步骤', async () => {
+    await rm(join(tmp, '.agent-nexus'), { recursive: true, force: true });
+
+    const error = await loadConfig().then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+
+    expect(error).toBeInstanceOf(ConfigError);
+    const message = (error as Error).message;
+    expect(message).toContain(
+      'https://open.feishu.cn/page/launcher?from=backend_oneclick',
+    );
+    expect(message).toContain('platforms[].appId');
+    expect(message).toContain('secrets/<appSecretRef>');
+    expect(message).toContain('不要写入 config.json');
+    expect(message).toContain('platforms[].botOpenId');
+    expect(message).toContain('platforms[].auth.allowlist.userIds');
+    expect(message).toContain('bindings[].match.lark.chatIds');
+    expect(message).toContain('再次启动');
+    expect(message).not.toContain('\u001B]8;;');
   });
 
   it('AGENT_NEXUS_HOME 会作为 config / secrets / state 的实例根目录', async () => {
@@ -774,6 +824,117 @@ describe('config loader', () => {
       join(tmp, '.agent-nexus', 'state', 'discord-discord-main.json'),
       join(tmp, '.agent-nexus', 'state', 'discord-discord-alt.json'),
     ]);
+  });
+
+  it('解析飞书 platform 与 binding 并构造 Lark routing entry', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          platforms: [VALID_LARK_PLATFORM],
+          bindings: [VALID_LARK_BINDING],
+        }),
+      ),
+    );
+
+    const cfg = await loadConfig();
+
+    expect(cfg.platforms[0]).toMatchObject(VALID_LARK_PLATFORM);
+    expect(buildRoutingTable(cfg)).toEqual([
+      {
+        bindingName: 'lark-main-codex-dev',
+        platformName: 'lark-main',
+        platformType: 'lark',
+        agentName: 'codex-dev',
+        match: { lark: { chatIds: ['oc_chat_1'] } },
+      },
+    ]);
+  });
+
+  it('飞书 P2P 配置要求 userIds 非空', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          platforms: [
+            {
+              ...VALID_LARK_PLATFORM,
+              auth: {
+                allowlist: {
+                  userIds: [],
+                  roleIds: ['R-admin'],
+                  allowedChannelIds: ['oc_chat_1'],
+                },
+              },
+            },
+          ],
+          bindings: [VALID_LARK_BINDING],
+        }),
+      ),
+    );
+
+    await expect(loadConfig()).rejects.toThrow(
+      /platforms\[0\]\.auth\.allowlist\.userIds/,
+    );
+  });
+
+  it('飞书 binding 拒绝 Discord match owner', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          platforms: [VALID_LARK_PLATFORM],
+          bindings: [
+            {
+              ...VALID_LARK_BINDING,
+              match: { discord: { channelIds: ['oc_chat_1'] } },
+            },
+          ],
+        }),
+      ),
+    );
+
+    await expect(loadConfig()).rejects.toThrow(/bindings\[0\]\.match\.discord/);
+  });
+
+  it('飞书 appId 或 botOpenId 重复时 fail-closed', async () => {
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          platforms: [
+            VALID_LARK_PLATFORM,
+            {
+              ...VALID_LARK_PLATFORM,
+              name: 'lark-alt',
+              botOpenId: 'ou_other_bot',
+            },
+          ],
+          bindings: [VALID_LARK_BINDING],
+        }),
+      ),
+    );
+    await expect(loadConfig()).rejects.toThrow(/platforms\[\]\.appId.*重复/);
+
+    await writeFile(
+      join(tmp, '.agent-nexus', 'config.json'),
+      JSON.stringify(
+        validConfig({
+          platforms: [
+            VALID_LARK_PLATFORM,
+            {
+              ...VALID_LARK_PLATFORM,
+              name: 'lark-alt',
+              appId: 'cli_fedcba9876543210',
+            },
+          ],
+          bindings: [VALID_LARK_BINDING],
+        }),
+      ),
+    );
+    await expect(loadConfig()).rejects.toThrow(
+      /platforms\[\]\.botOpenId.*重复/,
+    );
   });
 
   it('多个 platform 实例显式复用同一 statePath 时 fail-closed', async () => {

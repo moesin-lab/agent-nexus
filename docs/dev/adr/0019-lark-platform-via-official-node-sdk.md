@@ -12,7 +12,7 @@ related:
   - dev/spec/config-routing
   - dev/spec/infra/observability
   - dev/spec/security/secrets
-adr_status: Proposed
+adr_status: Accepted
 adr_number: "0019"
 decision_date: 2026-07-12
 supersedes: null
@@ -21,7 +21,7 @@ superseded_by: null
 
 # ADR-0019：飞书平台通过官方 Node SDK 接入
 
-- **状态**：Proposed
+- **状态**：Accepted
 - **日期**：2026-07-12
 - **决策者**：senticx@foxmail.com
 - **相关 ADR**：ADR-0001、ADR-0003、ADR-0015
@@ -30,6 +30,7 @@ superseded_by: null
 
 - 2026-07-10：Proposed，初稿评估 `larksuite/cli` 子进程方案
 - 2026-07-12：按设计反馈改选官方 Node SDK；`lark-cli` 降为非运行时参考
+- 2026-07-24：确认接入中国版飞书并接受本 ADR
 
 ## Context
 
@@ -98,7 +99,8 @@ SDK 的 `start()` 在内部异步启动连接，并不等待 ready；adapter 必
 
 ## Decision
 
-选 **Option A：直接使用官方 Node SDK 的低层 Client / WSClient**。
+选 **Option A：直接使用官方 Node SDK 的低层 Client / WSClient**，首版固定接入中国版飞书
+（SDK `Domain.Feishu`），不增加可配置的国际版 Lark domain。
 
 决定性理由：在不引入外部 CLI 运行时的前提下复用官方长连接、token 与消息 API，同时保持 auth、idempotency、
 queue、redaction 和 streaming 的唯一 owner 仍在 agent-nexus。`lark-cli` 的状态划分可作为设计输入，但不进入依赖图。

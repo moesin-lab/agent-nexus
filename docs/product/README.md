@@ -2,26 +2,27 @@
 title: 产品文档中心
 type: index
 status: active
-summary: 面向使用者的文档中心；覆盖本机安装、Discord 配置、启动与基础使用
+summary: 面向使用者的文档中心；覆盖本机安装、Discord / 中国版飞书配置、启动与基础使用
 tags: [product, navigation]
 related:
   - root/README
   - product/user-guide
   - product/platforms/discord
+  - product/platforms/lark
   - product/faq
 ---
 
 # 产品文档中心
 
-> **状态**：可用于本机 Discord MVP。高级部署、预算视图与多平台内容仍按实际需求补齐。
+> **状态**：可用于本机 Discord 与中国版飞书 P2P 纯文本场景。高级部署、预算视图与更多平台能力仍按实际需求补齐。
 
 ## 本中心的定位
 
 面向**使用者**（非开发者）。回答：
 
 - 怎么安装和启动？
-- 怎么配置 Discord bot？
-- 在 Discord 里怎么用？支持哪些命令？
+- 怎么配置 Discord bot 或中国版飞书机器人？
+- 在 IM 里怎么用？各平台支持哪些能力？
 - 出问题怎么查？
 
 ## 范围
@@ -42,13 +43,14 @@ related:
 
 - [`user-guide.md`](user-guide.md) — 安装、配置、启动与基础使用
 - [`platforms/discord.md`](platforms/discord.md) — Discord bot 申请、邀请、权限与验证
+- [`platforms/lark.md`](platforms/lark.md) — 中国版飞书自建应用、长连接、密钥与 ID 配置
 - [`faq.md`](faq.md) — 常见问题
 
 ## 继续补齐的触发条件
 
 下列内容出现稳定需求后再补：
 
-1. 多平台安装包或二进制分发
+1. 更多平台能力或二进制分发
 2. 长期运行方式从手动命令升级到 service / launch agent
 3. 预算与成本的用户可见界面
 4. 外部测试用户反馈出的高频问题

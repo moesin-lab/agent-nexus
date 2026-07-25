@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-import { mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import {
   ActiveCommandRegistry,
   Engine,
@@ -13,12 +12,7 @@ import {
   daemonCommandDescriptors,
   type RoutingEntry,
 } from '@agent-nexus/daemon';
-import {
-  DISCORD_CAPABILITIES,
-  createDiscordPlatform,
-} from '@agent-nexus/platform-discord';
 import { createAgentRegistry } from './agent.js';
-import { buildCliCommandRegistrationPlan } from './command-registry.js';
 import {
   createConfigEditor,
   createConfigFieldsProvider,
@@ -37,18 +31,22 @@ import {
   loadSecret,
   previewConfigFileEdit,
 } from './config.js';
+import { createCliPlatform } from './platform-factory.js';
+import { startEnginesWithSignalShutdown } from './startup.js';
 
 const PROVIDER_RETENTION_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 async function main(): Promise<void> {
   let config;
-  const tokensByRef = new Map<string, string>();
+  const secretsByRef = new Map<string, string>();
   try {
     applyConfigHomeArgv(process.argv.slice(2));
     config = await loadConfig();
     for (const platform of config.platforms) {
-      if (!tokensByRef.has(platform.tokenRef)) {
-        tokensByRef.set(platform.tokenRef, await loadSecret(platform.tokenRef));
+      const secretRef =
+        platform.type === 'discord' ? platform.tokenRef : platform.appSecretRef;
+      if (!secretsByRef.has(secretRef)) {
+        secretsByRef.set(secretRef, await loadSecret(secretRef));
       }
     }
   } catch (err) {
@@ -159,68 +157,30 @@ async function main(): Promise<void> {
   });
 
   for (const platformConfig of config.platforms) {
+    const secretRef =
+      platformConfig.type === 'discord'
+        ? platformConfig.tokenRef
+        : platformConfig.appSecretRef;
     logger.info(
       {
         platformName: platformConfig.name,
         source: 'file',
-        secret: platformConfig.tokenRef,
+        secret: secretRef,
       },
       'secret_loaded',
     );
-    logger.warn(
-      {
-        platformName: platformConfig.name,
-        authFieldsParsedOnly: [
-          'requireMentionOrSlash',
-        ],
-        publicChannelMode: platformConfig.publicChannelMode,
-        enforcedAtRuntime: [
-          'auth.allowlist.userIds',
-          'auth.allowlist.roleIds',
-          'auth.allowlist.allowedGuildIds',
-          'auth.allowlist.allowedChannelIds',
-          'auth.allowlist.allowDM',
-        ],
-      },
-      'platform_constraints_partially_enforced_until_auth_layer',
-    );
-
-    // state 目录与 secrets 目录同级，权限 0700 与 secrets 一致
-    // → spec/platform-adapter.md §"运行时状态持久化"
-    await mkdir(dirname(platformConfig.statePath), { recursive: true, mode: 0o700 });
-
-    const token = tokensByRef.get(platformConfig.tokenRef);
-    if (!token) {
-      throw new ConfigError(`secret ref "${platformConfig.tokenRef}" 未加载`);
+    const secret = secretsByRef.get(secretRef);
+    if (!secret) {
+      throw new ConfigError(`secret ref "${secretRef}" 未加载`);
     }
-    const commandPlan = buildCliCommandRegistrationPlan({
+
+    const { platform, updateAdapterAuth } = await createCliPlatform({
       config,
+      platformConfig,
+      secret,
       agents,
-      platformName: platformConfig.name,
-      capabilities: DISCORD_CAPABILITIES,
-      generation: `${platformConfig.name}:${Date.now()}`,
-    });
-    const commandRegistrationConfig = config.daemon.commandRegistry.registration;
-    const platform = createDiscordPlatform({
-      token,
-      botUserId: platformConfig.botUserId,
-      statePath: platformConfig.statePath,
-      allowedUserIds: platformConfig.auth.allowlist.userIds,
-      inboundAllowedUserIds: null,
-      testGuildId: platformConfig.testGuildId,
+      commandRegistry,
       logger,
-      commandRegistration: {
-        plan: commandPlan,
-        apply: (port, plan) =>
-          commandRegistry.applyRegistrationPlan(plan, {
-            port,
-            logger,
-            activatedAt: new Date(),
-            enabled: commandRegistrationConfig.enabled,
-            timeoutMs: commandRegistrationConfig.applyTimeoutMs,
-            retry: commandRegistrationConfig.retry,
-          }),
-      },
     });
 
     const engine = new Engine({
@@ -257,40 +217,32 @@ async function main(): Promise<void> {
     engines.push(engine);
     configReloadTargets.push({
       platformName: platformConfig.name,
+      platformType: platformConfig.type,
       applyRuntimeUpdate: (update) => {
         engine.applyRuntimeUpdate(update);
         // adapter 内部命令（/discord-reply-mode）授权跟随热替换；
         // chat 授权由 daemon platform auth 全维度判定（null = inbound guard 关闭，与启动语义一致）
-        platform.updateAuth({
-          allowedUserIds: update.platformAuth.allowlist.userIds,
-          inboundAllowedUserIds: null,
-        });
+        updateAdapterAuth?.(update.platformAuth.allowlist.userIds);
       },
     });
   }
 
-  await Promise.all(engines.map((engine) => engine.start()));
+  const started = await startEnginesWithSignalShutdown({
+    engines,
+    signals: process,
+    logger,
+    exit: (code) => process.exit(code),
+    shutdown: async () => {
+      try {
+        providerRetentionSweep?.stop();
+        await Promise.all(engines.map((engine) => engine.stop()));
+      } finally {
+        trajectoryStore?.close();
+      }
+    },
+  });
+  if (!started) return;
   logger.info({ engines: engines.length }, 'engine_started');
-
-  const shutdown = async (signal: string): Promise<void> => {
-    logger.info({ signal }, 'shutdown_signal');
-    try {
-      providerRetentionSweep?.stop();
-      await Promise.all(engines.map((engine) => engine.stop()));
-    } catch (err) {
-      logger.error({ err }, 'shutdown_error');
-    } finally {
-      trajectoryStore?.close();
-    }
-    process.exit(0);
-  };
-
-  process.on('SIGINT', () => {
-    void shutdown('SIGINT');
-  });
-  process.on('SIGTERM', () => {
-    void shutdown('SIGTERM');
-  });
 
   function applyProviderRetention(provider: ProviderCaptureService): void {
     try {

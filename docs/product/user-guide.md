@@ -2,25 +2,27 @@
 title: 用户指南
 type: product
 status: active
-summary: 本机安装、配置、启动、Discord 使用与常见操作的用户侧指南
+summary: 本机安装、配置、启动、Discord / 中国版飞书使用与常见操作的用户侧指南
 tags: [product, user-guide]
 related:
   - product/README
   - product/platforms/discord
+  - product/platforms/lark
   - product/faq
 ---
 
 # 用户指南
 
-本指南面向本机运行 agent-nexus 的使用者。Discord bot 的申请、邀请和 portal 权限见 [`platforms/discord.md`](platforms/discord.md)。
+本指南面向本机运行 agent-nexus 的使用者。Discord bot 的申请、邀请和 portal 权限见 [`platforms/discord.md`](platforms/discord.md)；中国版飞书自建应用、长连接和 ID 获取见 [`platforms/lark.md`](platforms/lark.md)。
 
 ## 前置条件
 
 - Node >= 20
 - pnpm >= 10（仓库 `packageManager` 锁定版本为 `pnpm@10.33.2`）
 - 本机已安装并登录 Claude Code CLI，`claude --version` 能运行
-- 一个 Discord bot token、bot user id、你的 Discord user id
-- bot 已加入测试 server，并开启 `MESSAGE CONTENT INTENT`
+- 一个已配置的平台入口：
+  - Discord bot token、bot user id、你的 Discord user id；bot 已加入测试 server 并开启 `MESSAGE CONTENT INTENT`
+  - 或中国版飞书自建应用的 App ID / App Secret / bot open_id；已启用机器人、长连接和 `im.message.receive_v1`
 
 ## 安装与构建
 
@@ -43,9 +45,13 @@ npm install -g packages/cli/agent-nexus-cli-*.tgz
 - `~/.agent-nexus/config.json` 模板，权限为 `0600`
 - `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` 空文件，权限为 `0600`
 
+终端的首次配置提示会同时给出中国版飞书官方创建入口，以及 App ID、App Secret 和 `botOpenId` 的后续配置位置。默认脚手架仍只包含 Discord，不会自动创建飞书应用或飞书 secret；选择飞书时按[中国版飞书使用手册](platforms/lark.md)替换 platform 和 binding 配置。
+
 默认实例根目录是 `~/.agent-nexus`。需要同时运行 stable / dev 等多个实例时，用 `agent-nexus --home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；配置、密钥与状态文件都会从该目录派生。项目 dev / stable 实例约定见 [`../ops/runbook.md`](../ops/runbook.md)。
 
 后续启动会自动把模板中新增但本地缺失的字段补回 `config.json`；已有配置值不会被覆盖。必填字段如果没有真实默认值，只会补占位值并继续提示你填写。
+
+下面是默认的 Discord 配置示例。中国版飞书改用 [`platforms/lark.md` §配置 agent-nexus](platforms/lark.md#配置-agent-nexus) 中的 `type: "lark"` platform 和 `match.lark.chatIds`，两种平台可以出现在同一个 `platforms[]` 中。
 
 编辑 `~/.agent-nexus/config.json`：
 
@@ -135,9 +141,12 @@ chmod 600 ~/.agent-nexus/config.json
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `platforms[].name` | 是 | platform bot 实例稳定名称；binding 用它引用该 bot |
-| `platforms[].type` | 是 | 当前支持 `discord` |
-| `platforms[].botUserId` | 是 | Discord bot user id |
-| `platforms[].tokenRef` | 是 | token secret 文件名；默认读取 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` |
+| `platforms[].type` | 是 | `discord` 或 `lark`；`lark` 固定表示中国版飞书 |
+| `platforms[].botUserId` | Discord 是 | Discord bot user id |
+| `platforms[].tokenRef` | Discord 是 | token secret 文件名；默认读取 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN` |
+| `platforms[].appId` | 飞书是 | 中国版飞书自建应用 App ID |
+| `platforms[].appSecretRef` | 飞书是 | App Secret 的 secret 文件名，不是明文 |
+| `platforms[].botOpenId` | 飞书是 | 预期的机器人 `open_id`；启动时与 bot info 自检 |
 | `platforms[].auth.allowlist.userIds` / `roleIds` | 是 | 允许使用 bot 的用户或角色；至少有一个 ID 维度非空 |
 | `platforms[].auth.allowlist.allowedGuildIds` | 否 | 限定可用 server/guild；`[]` 表示不按 guild 收窄 |
 | `platforms[].auth.allowlist.allowedChannelIds` | 否 | 限定可用 channel/thread；`[]` 表示不按 channel 收窄 |
@@ -158,7 +167,8 @@ chmod 600 ~/.agent-nexus/config.json
 | `agents[].codex.loadUserConfig` / `loadRules` | 否 | 默认 `false`，启动时传 `--ignore-user-config` / `--ignore-rules` |
 | `bindings[].platformName` | 是 | 引用 `platforms[].name` |
 | `bindings[].agentName` | 是 | 引用 `agents[].name` |
-| `bindings[].match.discord.channelIds` | 是 | 该 binding 匹配的 Discord channel/thread id 列表 |
+| `bindings[].match.discord.channelIds` | Discord 是 | 该 binding 匹配的 Discord channel/thread id 列表 |
+| `bindings[].match.lark.chatIds` | 飞书是 | 该 binding 匹配的飞书 P2P `chat_id` 列表 |
 | `daemon.commandRegistry.registration.enabled` | 否 | 默认 `true`；设为 `false` 时不 apply 远端 slash command 注册计划，本地 command dispatch 保持 fail-closed |
 | `daemon.commandRegistry.registration.applyTimeoutMs` | 否 | 默认 `30000`；注册计划 apply 超时毫秒数 |
 | `daemon.commandRegistry.registration.retry.maxAttempts` / `backoffMs` | 否 | 默认 `3` / `1000`；启动时注册计划 apply 的重试策略 |
@@ -263,7 +273,7 @@ Codex backend 固定使用非交互 `codex exec --json` / `resume`，并固定�
 
 启动时默认只跑快速 Codex compatibility probe：检查 `codex --version` 与 help 中的必需 flag，不发起真实模型 turn。这样 Discord bot 启动不会先等待多轮 `codex exec --json`。如果要做完整 Codex backend 验证，使用仓库里的 `scripts/verify-codex-agent.sh`。
 
-写 Discord token：
+按所选平台写 secret。Discord token：
 
 ```bash
 echo -n '<your-discord-bot-token>' > ~/.agent-nexus/secrets/DISCORD_BOT_TOKEN
@@ -271,6 +281,15 @@ chmod 600 ~/.agent-nexus/secrets/DISCORD_BOT_TOKEN
 ```
 
 token 文件权限不是 `0600` 时会拒绝启动。
+
+中国版飞书 App Secret：
+
+```bash
+printf '%s' '<your-feishu-app-secret>' > ~/.agent-nexus/secrets/FEISHU_APP_SECRET
+chmod 600 ~/.agent-nexus/secrets/FEISHU_APP_SECRET
+```
+
+飞书配置的 `appSecretRef` 应与文件名 `FEISHU_APP_SECRET` 一致。
 
 ## 启动
 
@@ -286,7 +305,7 @@ pnpm dev
 agent-nexus
 ```
 
-启动会先跑 Claude Code 兼容性 probe，包括版本、一次性 JSON 输出、长驻 `stream-json` 和工具权限检查。通过后会连接 Discord，日志里应出现 `discord_ready` 和 `engine_started`。
+启动会先跑 agent backend 兼容性 probe。Discord 连接成功时日志里应出现 `discord_ready`；飞书长连接成功时应出现 `platform_connection_ready` 且 `platform=lark`。所有 platform 都启动后会出现 `engine_started`。
 
 ## 在 Discord 里使用
 
@@ -357,6 +376,12 @@ running item 不能被 `/nexus-queue` 编辑或重排；要保留 pending 并尽
 
 `all` 模式只影响消息触发条件，不绕过 `allowedUserIds`。不在 allowlist 里的用户仍不能驱动 bot。
 
+## 在飞书里使用
+
+首版只处理机器人单聊中的纯文本，不需要 @机器人。直接发送问题即可复用同一个 `(platformName, lark, chatId, userId)` route；发送 `/new` 或 `/new <prompt>` 可以重置并开始新会话。
+
+飞书首版不注册 slash command，也不支持 Discord 专属的 reply mode、thread、交互面板或 queue 面板。agent 运行期间继续发送的普通文本仍会进入 daemon queue，但当前没有飞书原生的队列管理 UI。完整能力边界和 ID 获取步骤见 [`platforms/lark.md`](platforms/lark.md)。
+
 重载配置：
 
 ```text
@@ -376,6 +401,6 @@ running item 不能被 `/nexus-queue` 编辑或重排；要保留 pending 并尽
 
 会话内 agent command 用 `/stop`、`/codex-stop` 或 `/claudecode-stop`；要直接终止当前 Nexus route 用 `/nexus-kill`。
 
-前台运行时按 `Ctrl-C`。进程收到 `SIGINT` / `SIGTERM` 后会调用 engine stop 并断开 Discord。
+前台运行时按 `Ctrl-C`。进程收到 `SIGINT` / `SIGTERM` 后会调用 engine stop 并断开平台连接。
 
 长期运行、日志保留和排障步骤见 [`../ops/runbook.md`](../ops/runbook.md)。

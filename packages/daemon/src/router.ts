@@ -4,19 +4,35 @@ export interface DiscordRouteMatch {
   channelIds: string[];
 }
 
-export interface RoutingEntry {
-  bindingName: string;
-  platformName: string;
-  platformType: 'discord';
-  agentName: string;
-  match: {
-    discord: DiscordRouteMatch;
-  };
+export interface LarkRouteMatch {
+  chatIds: string[];
 }
+
+export type PlatformType = 'discord' | 'lark';
+
+export type RoutingEntry =
+  | {
+      bindingName: string;
+      platformName: string;
+      platformType: 'discord';
+      agentName: string;
+      match: {
+        discord: DiscordRouteMatch;
+      };
+    }
+  | {
+      bindingName: string;
+      platformName: string;
+      platformType: 'lark';
+      agentName: string;
+      match: {
+        lark: LarkRouteMatch;
+      };
+    };
 
 export interface RouteContext {
   platformName: string;
-  platformType: 'discord';
+  platformType: PlatformType;
   event: NormalizedEvent;
 }
 
@@ -45,12 +61,12 @@ export class RouteError extends Error {
 function matches(entry: RoutingEntry, context: RouteContext): boolean {
   if (entry.platformName !== context.platformName) return false;
   if (entry.platformType !== context.platformType) return false;
-  if (context.platformType === 'discord') {
+  if (entry.platformType === 'discord') {
     return entry.match.discord.channelIds.includes(
       context.event.sessionKey.channelId,
     );
   }
-  return false;
+  return entry.match.lark.chatIds.includes(context.event.sessionKey.channelId);
 }
 
 export function selectRoute(

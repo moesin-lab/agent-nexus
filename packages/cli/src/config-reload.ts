@@ -27,6 +27,7 @@ import {
 /** reload 时被热替换的 engine 目标；语义见 docs/dev/spec/config-routing.md §配置热重载 */
 export interface ConfigReloadTarget {
   platformName: string;
+  platformType: PlatformConfig['type'];
   applyRuntimeUpdate(update: EngineRuntimeUpdate): void;
 }
 
@@ -96,6 +97,7 @@ function riskForPath(path: string): DaemonConfigEditRisk {
     path.endsWith('.permissionLevel') ||
     path.endsWith('.bin') ||
     path.endsWith('.tokenRef') ||
+    path.endsWith('.appSecretRef') ||
     path.endsWith('.statePath') ||
     path.includes('.externalImport') ||
     path.includes('.providerCapture')
@@ -200,66 +202,105 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
   const base = `platforms[${index}]`;
   const category = `Platform ${platform.name}`;
   const allowlist = platform.auth.allowlist;
+  const ownerFields =
+    platform.type === 'discord'
+      ? [
+          field({
+            key: `${base}.botUserId`,
+            label: bilingualLabel(`${platform.name} bot 用户 ID`, `${platform.name} bot user ID`),
+            description:
+              `平台 ${platform.name} 的 Discord bot user ID。用于识别 bot 自身，填错会破坏消息过滤与自回环保护。 / Discord bot user ID for platform ${platform.name}. It identifies the bot itself; a wrong value breaks message filtering and loop protection.`,
+            category,
+            path: `${base}.botUserId`,
+            value: platform.botUserId,
+            valueKind: 'string' as const,
+          }),
+          field({
+            key: `${base}.tokenRef`,
+            label: bilingualLabel(`${platform.name} token 引用`, `${platform.name} token ref`),
+            description:
+              `平台 ${platform.name} 的 Discord token secret reference，不是 token 明文。修改后需要重启并重新登录平台。 / Discord token secret reference for platform ${platform.name}, not the raw token. Changing it requires restart and platform login.`,
+            category,
+            path: `${base}.tokenRef`,
+            value: platform.tokenRef,
+            valueKind: 'string' as const,
+          }),
+          field({
+            key: `${base}.statePath`,
+            label: bilingualLabel(`${platform.name} 状态文件路径`, `${platform.name} state path`),
+            description:
+              `平台 ${platform.name} 的 Discord state file 路径。多 bot 共用会造成 reply mode 状态串扰。 / Discord state-file path for platform ${platform.name}. Sharing it across bots can mix reply-mode state.`,
+            category,
+            path: `${base}.statePath`,
+            value: platform.statePath,
+            valueKind: 'string' as const,
+          }),
+          field({
+            key: `${base}.testGuildId`,
+            label: bilingualLabel(`${platform.name} 测试服务器`, `${platform.name} test guild`),
+            description:
+              `平台 ${platform.name} 的 Discord test guild ID；留空时使用全局 command registration。 / Discord test guild ID for platform ${platform.name}; empty uses global command registration.`,
+            category,
+            path: `${base}.testGuildId`,
+            value: platform.testGuildId ?? '',
+            valueKind: 'string' as const,
+          }),
+          field({
+            key: `${base}.publicChannelMode`,
+            label: bilingualLabel(
+              `${platform.name} 公开频道模式`,
+              `${platform.name} public channel mode`,
+            ),
+            description:
+              `Discord 平台 ${platform.name} 的公开频道处理模式，影响用户可见范围和权限边界。 / Public-channel mode for Discord platform ${platform.name}; it affects visibility and auth boundaries.`,
+            category,
+            path: `${base}.publicChannelMode`,
+            value: platform.publicChannelMode,
+            valueKind: 'enum' as const,
+            options: ['disabled', 'thread', 'public'],
+          }),
+        ]
+      : [
+          field({
+            key: `${base}.appId`,
+            label: bilingualLabel(`${platform.name} 应用 ID`, `${platform.name} app ID`),
+            description:
+              `中国版飞书自建应用 ${platform.name} 的 app ID。修改后需要重启，并确认没有其它进程使用同一应用。 / App ID of China Feishu self-built app ${platform.name}. Restart after changing it and ensure no other process uses the same app.`,
+            category,
+            path: `${base}.appId`,
+            value: platform.appId,
+            valueKind: 'string' as const,
+          }),
+          field({
+            key: `${base}.appSecretRef`,
+            label: bilingualLabel(`${platform.name} 密钥引用`, `${platform.name} app secret ref`),
+            description:
+              `飞书应用 ${platform.name} 的 app secret reference，不是密钥明文。修改后需要重启；不要把 app secret 直接写进配置。 / App-secret reference for Feishu app ${platform.name}, not the raw secret. Restart after changing it and never put the raw secret in config.`,
+            category,
+            path: `${base}.appSecretRef`,
+            value: platform.appSecretRef,
+            valueKind: 'string' as const,
+          }),
+          field({
+            key: `${base}.botOpenId`,
+            label: bilingualLabel(`${platform.name} 机器人 open_id`, `${platform.name} bot open_id`),
+            description:
+              `飞书应用 ${platform.name} 预期的 bot open_id。启动时会与应用实际身份核对，填错会拒绝启动以防身份漂移。 / Expected bot open_id for Feishu app ${platform.name}. Startup verifies it against the actual app identity and fails closed on mismatch.`,
+            category,
+            path: `${base}.botOpenId`,
+            value: platform.botOpenId,
+            valueKind: 'string' as const,
+          }),
+        ];
   return [
-    field({
-      key: `${base}.botUserId`,
-      label: bilingualLabel(`${platform.name} bot 用户 ID`, `${platform.name} bot user ID`),
-      description:
-        `平台 ${platform.name} 的 Discord bot user ID。用于识别 bot 自己的用户身份，避免把 bot 自己的消息当成用户输入，也用于 mention/slash 相关判断。填错会导致消息过滤、mention 判断或自消息保护异常。 / Discord bot user ID for platform ${platform.name}. It identifies the bot itself so self messages are ignored and mention/slash checks work correctly. Wrong values can break message filtering or self-message protection.`,
-      category,
-      path: `${base}.botUserId`,
-      value: platform.botUserId,
-      valueKind: 'string',
-    }),
-    field({
-      key: `${base}.tokenRef`,
-      label: bilingualLabel(`${platform.name} token 引用`, `${platform.name} token ref`),
-      description:
-        `平台 ${platform.name} 的 secret reference 名称，不是 token 明文。用于从 secret provider 或 secret 文件加载 Discord bot token；不要在这里填写明文 token。修改会影响平台登录，通常需要重启。 / Secret reference name for platform ${platform.name}, not the token value itself. It is used to load the Discord bot token from the secret provider or secret file. Do not put the raw token here. Changing it affects platform login and usually requires restart.`,
-      category,
-      path: `${base}.tokenRef`,
-      value: platform.tokenRef,
-      valueKind: 'string',
-    }),
-    field({
-      key: `${base}.statePath`,
-      label: bilingualLabel(`${platform.name} 状态文件路径`, `${platform.name} state path`),
-      description:
-        `平台 ${platform.name} 的 state file 路径。保存 Discord reply mode 等平台本地状态；多 bot 不应共用同一个 statePath，否则状态会串扰。修改后通常需要重启并确认旧状态是否迁移。 / State file path for platform ${platform.name}. It stores local platform state such as Discord reply mode. Multiple bots should not share the same statePath, or state can leak across instances. Changing it usually requires restart and state migration review.`,
-      category,
-      path: `${base}.statePath`,
-      value: platform.statePath,
-      valueKind: 'string',
-    }),
-    field({
-      key: `${base}.testGuildId`,
-      label: bilingualLabel(`${platform.name} 测试服务器`, `${platform.name} test guild`),
-      description:
-        `平台 ${platform.name} 的 Discord test guild ID。设置后 slash command registration 通常走 guild scope，便于快速测试；留空时可走全局注册，生效更慢且影响范围更大。 / Discord test guild ID for platform ${platform.name}. When set, slash command registration usually targets that guild for faster testing. When empty, global registration may be used, which propagates slower and has broader impact.`,
-      category,
-      path: `${base}.testGuildId`,
-      value: platform.testGuildId ?? '',
-      valueKind: 'string',
-    }),
-    field({
-      key: `${base}.publicChannelMode`,
-      label: bilingualLabel(
-        `${platform.name} 公开频道模式`,
-        `${platform.name} public channel mode`,
-      ),
-      description:
-        `Discord 平台 ${platform.name} 的 public-channel handling mode。disabled 禁止公开频道直接对话；thread 会把公开频道入口导向 thread；public 允许公开频道直接交互。该设置影响用户可见范围和权限边界。 / Public-channel handling mode for Discord platform ${platform.name}. disabled blocks direct public-channel conversations, thread routes public-channel entry into threads, and public allows direct interaction. This affects visibility and auth boundaries.`,
-      category,
-      path: `${base}.publicChannelMode`,
-      value: platform.publicChannelMode,
-      valueKind: 'enum',
-      options: ['disabled', 'thread', 'public'],
-    }),
+    ...ownerFields,
     field({
       key: `${base}.auth.allowlist.userIds`,
       label: bilingualLabel(`${platform.name} 允许用户`, `${platform.name} allowed users`),
       description:
-        `平台 ${platform.name} 允许通过鉴权的 Discord user IDs。只有列表中的用户可通过鉴权；空列表通常表示不按用户维度放行，需要结合 role/guild/channel/DM 规则理解。热重载后应与重启效果一致。 / Allowed Discord user IDs for platform ${platform.name}. Only listed users pass this auth dimension. An empty list usually means this dimension is not granting access by itself; interpret it with role/guild/channel/DM rules. Hot reload should match restart behavior.`,
+        platform.type === 'discord'
+          ? `平台 ${platform.name} 允许通过鉴权的 Discord user IDs。只有列表中的用户可通过鉴权；空列表通常表示不按用户维度放行，需要结合 role/guild/channel/DM 规则理解。热重载后应与重启效果一致。 / Allowed Discord user IDs for platform ${platform.name}. Only listed users pass this auth dimension. An empty list usually means this dimension is not granting access by itself; interpret it with role/guild/channel/DM rules. Hot reload should match restart behavior.`
+          : `飞书平台 ${platform.name} 允许通过鉴权的用户 open_id。中国版飞书 P2P 接入要求列表非空；只有显式列出的用户可进入 daemon。 / Feishu user open_id allowlist for platform ${platform.name}. China Feishu P2P requires a non-empty list, and only explicitly listed users can reach the daemon.`,
       category,
       path: `${base}.auth.allowlist.userIds`,
       value: allowlist.userIds,
@@ -292,7 +333,9 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
         `${platform.name} allowed channels`,
       ),
       description:
-        `平台 ${platform.name} 允许响应的 Discord channel IDs。限制 bot 只响应指定 channel/thread；公开频道和 thread 策略仍需结合 publicChannelMode 理解。 / Allowed Discord channel IDs for platform ${platform.name}. It restricts responses to selected channels or threads; interpret public channels and threads together with publicChannelMode.`,
+        platform.type === 'discord'
+          ? `平台 ${platform.name} 允许响应的 Discord channel IDs。限制 bot 只响应指定 channel/thread；公开频道和 thread 策略仍需结合 publicChannelMode 理解。 / Allowed Discord channel IDs for platform ${platform.name}. It restricts responses to selected channels or threads; interpret public channels and threads together with publicChannelMode.`
+          : `飞书平台 ${platform.name} 允许响应的会话 chat_id。非空时只响应这些 P2P 会话；空列表不额外限制 chat_id，用户 open_id allowlist 仍然生效。 / Feishu chat_id allowlist for platform ${platform.name}. A non-empty list restricts P2P responses to those chats; an empty list adds no chat restriction while the user open_id allowlist still applies.`,
       category,
       path: `${base}.auth.allowlist.allowedChannelIds`,
       value: allowlist.allowedChannelIds,
@@ -473,6 +516,28 @@ function bindingFields(
 ): DaemonConfigEditableField[] {
   const base = `bindings[${index}]`;
   const category = `Binding ${binding.name}`;
+  const matchField =
+    'discord' in binding.match
+      ? field({
+          key: `${base}.match.discord.channelIds`,
+          label: bilingualLabel(`${binding.name} 频道 ID`, `${binding.name} channel IDs`),
+          description:
+            `binding ${binding.name} 匹配的 Discord channel/thread IDs。只有这些 channel 或 thread 的事件会走该路由；修改后可热重载，但必须避免多个 binding 同时匹配同一事件。 / Discord channel or thread IDs matched by binding ${binding.name}. Only events from these channels or threads use this route. This can hot-reload, but avoid multiple bindings matching the same event.`,
+          category,
+          path: `${base}.match.discord.channelIds`,
+          value: binding.match.discord.channelIds,
+          valueKind: 'string-list',
+        })
+      : field({
+          key: `${base}.match.lark.chatIds`,
+          label: bilingualLabel(`${binding.name} 飞书会话 ID`, `${binding.name} Feishu chat IDs`),
+          description:
+            `binding ${binding.name} 匹配的飞书 chat_id。只有这些单聊会话的文本事件会走该路由；修改后可热重载，但必须避免多个 binding 同时匹配同一事件。 / Feishu chat_id values matched by binding ${binding.name}. Only text events from these P2P chats use this route. This can hot-reload, but avoid multiple bindings matching the same event.`,
+          category,
+          path: `${base}.match.lark.chatIds`,
+          value: binding.match.lark.chatIds,
+          valueKind: 'string-list',
+        });
   return [
     field({
       key: `${base}.name`,
@@ -506,16 +571,7 @@ function bindingFields(
       valueKind: 'enum',
       options: config.agents.map((agent) => agent.name),
     }),
-    field({
-      key: `${base}.match.discord.channelIds`,
-      label: bilingualLabel(`${binding.name} 频道 ID`, `${binding.name} channel IDs`),
-      description:
-        `binding ${binding.name} 匹配的 Discord channel/thread IDs。只有这些 channel 或 thread 的事件会走该路由；修改后可热重载，但必须避免多个 binding 同时匹配同一事件。 / Discord channel or thread IDs matched by binding ${binding.name}. Only events from these channels or threads use this route. This can hot-reload, but avoid multiple bindings matching the same event.`,
-      category,
-      path: `${base}.match.discord.channelIds`,
-      value: binding.match.discord.channelIds,
-      valueKind: 'string-list',
-    }),
+    matchField,
   ];
 }
 
@@ -1008,6 +1064,21 @@ export function createConfigReloader(
     if (missingPlatforms.length > 0) {
       return failed(
         `新配置缺少运行中的 platform：${missingPlatforms.join(', ')}（platforms[] 变更需重启生效）`,
+      );
+    }
+    const nextPlatformsByName = new Map(
+      next.platforms.map((platform) => [platform.name, platform]),
+    );
+    const typeChangedPlatforms = opts.targets
+      .filter(
+        (target) =>
+          nextPlatformsByName.get(target.platformName)?.type !==
+          target.platformType,
+      )
+      .map((target) => target.platformName);
+    if (typeChangedPlatforms.length > 0) {
+      return failed(
+        `运行中的 platform type 已改变：${typeChangedPlatforms.join(', ')}（platform type 变更需重启生效）`,
       );
     }
 

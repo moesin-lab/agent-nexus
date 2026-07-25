@@ -26,12 +26,15 @@ const entries: RoutingEntry[] = [
   },
 ];
 
-function makeEvent(channelId: string): NormalizedEvent {
+function makeEvent(
+  channelId: string,
+  platform: 'discord' | 'lark' = 'discord',
+): NormalizedEvent {
   return {
     eventId: 'e-1',
-    platform: 'discord',
+    platform,
     sessionKey: {
-      platform: 'discord',
+      platform,
       channelId,
       initiatorUserId: 'U1',
     },
@@ -72,6 +75,37 @@ describe('selectRoute', () => {
       bindingName: 'discord-side-codex',
       platformName: 'discord-side',
       agentName: 'codex-dev',
+    });
+  });
+
+  it('selects the unique agent by Lark platform instance and chat', () => {
+    const larkEntries: RoutingEntry[] = [
+      {
+        bindingName: 'lark-main-codex',
+        platformName: 'lark-main',
+        platformType: 'lark',
+        agentName: 'codex-dev',
+        match: { lark: { chatIds: ['oc_chat_1'] } },
+      },
+      {
+        bindingName: 'lark-main-claude',
+        platformName: 'lark-main',
+        platformType: 'lark',
+        agentName: 'claude-prod',
+        match: { lark: { chatIds: ['oc_chat_2'] } },
+      },
+    ];
+
+    expect(
+      selectRoute(larkEntries, {
+        platformName: 'lark-main',
+        platformType: 'lark',
+        event: makeEvent('oc_chat_2', 'lark'),
+      }),
+    ).toEqual({
+      bindingName: 'lark-main-claude',
+      platformName: 'lark-main',
+      agentName: 'claude-prod',
     });
   });
 

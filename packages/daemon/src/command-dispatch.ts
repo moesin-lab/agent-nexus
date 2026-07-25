@@ -10,6 +10,7 @@ import {
 import {
   RouteError,
   selectRoute,
+  type PlatformType,
   type RouteDecision,
   type RoutingEntry,
 } from './router.js';
@@ -76,7 +77,7 @@ export interface CommandDispatchInput {
   event: NormalizedEvent;
   registry: ActiveCommandRegistry;
   platformName: string;
-  platformType: 'discord';
+  platformType: PlatformType;
   routingTable: readonly RoutingEntry[];
   agentTargets: readonly CommandDispatchAgentTarget[];
   platformHandlerKeys: readonly string[];

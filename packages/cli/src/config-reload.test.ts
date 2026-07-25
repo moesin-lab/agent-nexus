@@ -76,11 +76,15 @@ function baseConfig(overrides: Partial<AgentNexusConfig> = {}): AgentNexusConfig
   };
 }
 
-function makeTarget(platformName: string): {
+function makeTarget(
+  platformName: string,
+  platformType: 'discord' | 'lark' = 'discord',
+): {
   platformName: string;
+  platformType: 'discord' | 'lark';
   applyRuntimeUpdate: ReturnType<typeof vi.fn>;
 } {
-  return { platformName, applyRuntimeUpdate: vi.fn() };
+  return { platformName, platformType, applyRuntimeUpdate: vi.fn() };
 }
 
 describe('createConfigReloader', () => {
@@ -146,6 +150,59 @@ describe('createConfigReloader', () => {
     expect(update.platformAuth.allowlist.userIds).toEqual(['U2']);
     expect(update.toolMessageMode).toBe('compact');
     expect(update.newSessionTextPrefix).toBe(false);
+  });
+
+  it('混合平台 reload 把各自 auth 应用到正确实例，并共享完整 routing table', async () => {
+    const larkPlatform = {
+      name: 'lark-main',
+      type: 'lark' as const,
+      appId: 'cli_0123456789abcdef',
+      appSecretRef: 'LARK_APP_SECRET',
+      botOpenId: 'ou_bot_open_id',
+      auth: {
+        allowlist: {
+          userIds: ['ou_user_1'],
+          roleIds: [],
+          allowedGuildIds: [],
+          allowedChannelIds: ['oc_chat_1'],
+          allowDM: true,
+          requireMentionOrSlash: true,
+        },
+      },
+    };
+    const larkBinding = {
+      name: 'lark-main-codex',
+      platformName: 'lark-main',
+      agentName: 'codex-dev',
+      match: { lark: { chatIds: ['oc_chat_1'] } },
+    } as const;
+    const initial = baseConfig({
+      platforms: [...baseConfig().platforms, larkPlatform],
+      bindings: [...baseConfig().bindings, larkBinding],
+    });
+    const next = structuredClone(initial);
+    next.platforms[0]!.auth.allowlist.userIds = ['U2'];
+    next.platforms[1]!.auth.allowlist.userIds = ['ou_user_2'];
+    const discordTarget = makeTarget('discord-main');
+    const larkTarget = makeTarget('lark-main', 'lark');
+    const reload = createConfigReloader({
+      initialConfig: initial,
+      load: async () => next,
+      targets: [discordTarget, larkTarget],
+      runningAgentNames: ['codex-dev'],
+      logger: SILENT_LOGGER,
+    });
+
+    await expect(reload()).resolves.toMatchObject({ status: 'reloaded' });
+
+    const discordUpdate = discordTarget.applyRuntimeUpdate.mock
+      .calls[0]![0] as EngineRuntimeUpdate;
+    const larkUpdate = larkTarget.applyRuntimeUpdate.mock
+      .calls[0]![0] as EngineRuntimeUpdate;
+    expect(discordUpdate.platformAuth.allowlist.userIds).toEqual(['U2']);
+    expect(larkUpdate.platformAuth.allowlist.userIds).toEqual(['ou_user_2']);
+    expect(discordUpdate.routingTable).toEqual(larkUpdate.routingTable);
+    expect(discordUpdate.routingTable).toHaveLength(2);
   });
 
   it('binding 引用未运行的 agent 时按失败处理且不应用', async () => {
@@ -225,6 +282,53 @@ describe('createConfigReloader', () => {
 
     expect(result.status).toBe('failed');
     expect(result.message).toContain('discord-main');
+    expect(target.applyRuntimeUpdate).not.toHaveBeenCalled();
+  });
+
+  it('同名 platform 改变 type 时按失败处理且不应用', async () => {
+    const target = makeTarget('discord-main');
+    const next = baseConfig({
+      platforms: [
+        {
+          name: 'discord-main',
+          type: 'lark',
+          appId: 'cli_0123456789abcdef',
+          appSecretRef: 'LARK_APP_SECRET',
+          botOpenId: 'ou_bot_open_id',
+          auth: {
+            allowlist: {
+              userIds: ['ou_user_1'],
+              roleIds: [],
+              allowedGuildIds: [],
+              allowedChannelIds: ['oc_chat_1'],
+              allowDM: true,
+              requireMentionOrSlash: true,
+            },
+          },
+        },
+      ],
+      bindings: [
+        {
+          name: 'discord-main-codex',
+          platformName: 'discord-main',
+          agentName: 'codex-dev',
+          match: { lark: { chatIds: ['oc_chat_1'] } },
+        },
+      ],
+    });
+    const reload = createConfigReloader({
+      initialConfig: baseConfig(),
+      load: async () => next,
+      targets: [target],
+      runningAgentNames: ['codex-dev'],
+      logger: SILENT_LOGGER,
+    });
+
+    const result = await reload();
+
+    expect(result.status).toBe('failed');
+    expect(result.message).toContain('platform type');
+    expect(result.message).toContain('重启');
     expect(target.applyRuntimeUpdate).not.toHaveBeenCalled();
   });
 
@@ -335,6 +439,77 @@ describe('createConfigFieldsProvider', () => {
       options: ['trace', 'debug', 'info', 'warn', 'error', 'fatal'],
       effect: 'restart',
     });
+  });
+
+  it('returns Lark owner and chat binding fields without Discord-only paths', async () => {
+    const config = baseConfig({
+      platforms: [
+        {
+          name: 'lark-main',
+          type: 'lark',
+          appId: 'cli_0123456789abcdef',
+          appSecretRef: 'LARK_APP_SECRET',
+          botOpenId: 'ou_bot_open_id',
+          auth: {
+            allowlist: {
+              userIds: ['ou_user_open_id'],
+              roleIds: [],
+              allowedGuildIds: [],
+              allowedChannelIds: ['oc_chat_1'],
+              allowDM: true,
+              requireMentionOrSlash: true,
+            },
+          },
+        },
+      ],
+      bindings: [
+        {
+          name: 'lark-main-codex',
+          platformName: 'lark-main',
+          agentName: 'codex-dev',
+          match: { lark: { chatIds: ['oc_chat_1'] } },
+        },
+      ],
+    });
+    const provider = createConfigFieldsProvider({
+      load: async () => config,
+    });
+
+    const result = await provider({
+      userId: 'ou_user_open_id',
+      channelId: 'oc_chat_1',
+      traceId: 't-1',
+    });
+    const byPath = new Map(result.fields.map((field) => [field.path, field]));
+
+    expect(byPath.get('platforms[0].appId')).toMatchObject({
+      category: 'Platform lark-main',
+      value: 'cli_0123456789abcdef',
+    });
+    expect(byPath.get('platforms[0].appSecretRef')).toMatchObject({
+      risk: 'high',
+      value: 'LARK_APP_SECRET',
+    });
+    expect(byPath.get('platforms[0].botOpenId')).toMatchObject({
+      value: 'ou_bot_open_id',
+    });
+    expect(byPath.get('platforms[0].auth.allowlist.userIds')).toMatchObject({
+      description: expect.stringContaining('Feishu user open_id'),
+    });
+    expect(
+      byPath.get('platforms[0].auth.allowlist.allowedChannelIds'),
+    ).toMatchObject({
+      description: expect.stringContaining('Feishu chat_id'),
+    });
+    expect(
+      byPath.get('platforms[0].auth.allowlist.allowedChannelIds')?.description,
+    ).not.toContain('publicChannelMode');
+    expect(byPath.get('bindings[0].match.lark.chatIds')).toMatchObject({
+      valueKind: 'string-list',
+      effect: 'conditional-hot',
+    });
+    expect(byPath.has('platforms[0].tokenRef')).toBe(false);
+    expect(byPath.has('bindings[0].match.discord.channelIds')).toBe(false);
   });
 });
 

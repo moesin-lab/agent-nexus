@@ -331,25 +331,13 @@ RoutingEntry {
     platformName: string
     platformType: string
     agentName: string
-    match: PlatformMatchSpec
-}
-
-PlatformMatchSpec {
-    // discriminated by platformType
-    discord?: DiscordMatchSpec
-    lark?: LarkMatchSpec
-}
-
-DiscordMatchSpec {
     channelIds: string[]
-}
-
-LarkMatchSpec {
-    chatIds: string[]
 }
 ```
 
-routing entry 不携带 backend 私有配置；它只引用已经构造好的 agent runtime。
+routing entry 是 daemon 消费的平台中立投影：CLI 负责把 `match.discord.channelIds`、
+`match.lark.chatIds` 等平台配置归一化为 `channelIds`。daemon 不解析平台私有 match schema，也不枚举
+具体 platform type。routing entry 不携带 backend 私有配置；它只引用已经构造好的 agent runtime。
 
 ## 路由匹配语义
 

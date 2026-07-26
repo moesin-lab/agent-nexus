@@ -144,7 +144,7 @@ describe('createConfigReloader', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C2'] } },
+        channelIds: ['C2'],
       },
     ]);
     expect(update.platformAuth.allowlist.userIds).toEqual(['U2']);

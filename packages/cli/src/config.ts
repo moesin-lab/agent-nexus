@@ -1203,7 +1203,7 @@ export function buildRoutingTable(config: AgentNexusConfig): RoutingEntry[] {
         platformName: binding.platformName,
         platformType: 'discord',
         agentName: binding.agentName,
-        match: { discord: binding.match.discord },
+        channelIds: [...binding.match.discord.channelIds],
       };
     }
     if (platform.type === 'lark' && 'lark' in binding.match) {
@@ -1212,7 +1212,7 @@ export function buildRoutingTable(config: AgentNexusConfig): RoutingEntry[] {
         platformName: binding.platformName,
         platformType: 'lark',
         agentName: binding.agentName,
-        match: { lark: binding.match.lark },
+        channelIds: [...binding.match.lark.chatIds],
       };
     }
     throw new ConfigError(

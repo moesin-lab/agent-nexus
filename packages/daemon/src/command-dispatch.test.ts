@@ -44,7 +44,7 @@ const routeToCodex: RoutingEntry = {
   platformName: 'discord-main',
   platformType: 'discord',
   agentName: 'codex-dev',
-  match: { discord: { channelIds: ['C1'] } },
+  channelIds: ['C1'],
 };
 
 const codexTarget: CommandDispatchAgentTarget = {

@@ -1046,6 +1046,7 @@ describe('Engine', () => {
     });
     const engine = new Engine({
       platform,
+      platformType: 'discord',
       agents: [
         {
           agentName: 'codex-dev',
@@ -1060,7 +1061,7 @@ describe('Engine', () => {
           platformName: 'mock-platform',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -1771,7 +1772,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -1820,14 +1821,14 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
       {
         bindingName: 'discord-main-codex-b',
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -1869,7 +1870,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
 
@@ -1893,6 +1894,37 @@ describe('Engine', () => {
     ).toThrow(/requires platformAuth/);
   });
 
+  it('routingTable 缺 platformType 时启动前失败，避免按 adapter name 猜平台类型', () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+
+    expect(
+      () =>
+        new Engine({
+          platform,
+          agents: [
+            {
+              agentName: 'codex-dev',
+              agent: codex.runtime,
+              defaultSessionConfig: DEFAULT_CFG,
+            },
+          ],
+          routingTable: [
+            {
+              bindingName: 'matrix-main-codex',
+              platformName: 'mock-platform',
+              platformType: 'matrix',
+              agentName: 'codex-dev',
+              channelIds: ['C1'],
+            },
+          ],
+          platformAuth: PLATFORM_AUTH_ALLOW_U1,
+          logger: SILENT_LOGGER,
+          sessionStore: new SessionStore(),
+        }),
+    ).toThrow(/requires platformType/);
+  });
+
   it('routing 命中后 user 不在 platform auth allowlist 时 auth_denied 且不调用 agent / 不创建 session', async () => {
     const platform = makePlatform({ supportsReactions: true });
     const codex = makeAgent();
@@ -1905,7 +1937,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -2017,7 +2049,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       logger: SILENT_LOGGER,
@@ -2124,7 +2156,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       logger: SILENT_LOGGER,
@@ -2207,7 +2239,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       logger,
@@ -2270,7 +2302,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       logger: SILENT_LOGGER,
@@ -2323,7 +2355,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -2382,7 +2414,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -2440,14 +2472,14 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
       {
         bindingName: 'discord-main-claude',
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'claude-prod',
-        match: { discord: { channelIds: ['C2'] } },
+        channelIds: ['C2'],
       },
     ];
     const engine = new Engine({
@@ -2517,7 +2549,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -2584,7 +2616,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -2648,7 +2680,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -2711,7 +2743,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -2803,7 +2835,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -2905,7 +2937,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -3030,7 +3062,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -3124,7 +3156,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -3200,7 +3232,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -3262,7 +3294,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -3313,7 +3345,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -3386,7 +3418,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: {
@@ -3438,7 +3470,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -3534,7 +3566,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1', 'C-old'] } },
+          channelIds: ['C1', 'C-old'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -3614,7 +3646,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1', 'C-old'] } },
+          channelIds: ['C1', 'C-old'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -3776,7 +3808,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -3876,7 +3908,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -3974,7 +4006,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1', 'C-old'] } },
+          channelIds: ['C1', 'C-old'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -4084,7 +4116,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1', 'C-secret'] } },
+          channelIds: ['C1', 'C-secret'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -4158,7 +4190,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -4237,7 +4269,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1', 'C-old'] } },
+          channelIds: ['C1', 'C-old'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -4293,7 +4325,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -4427,7 +4459,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -4656,7 +4688,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -4752,7 +4784,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -4848,7 +4880,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -4906,7 +4938,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -5002,7 +5034,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -5061,7 +5093,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -5110,7 +5142,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -5204,7 +5236,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -5260,7 +5292,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -5315,7 +5347,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: {
@@ -5423,7 +5455,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -5498,7 +5530,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: {
@@ -5591,7 +5623,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -5641,7 +5673,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -5689,7 +5721,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -5736,7 +5768,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -5781,7 +5813,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C1'] } },
+          channelIds: ['C1'],
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
@@ -5799,7 +5831,7 @@ describe('Engine', () => {
           platformName: 'discord-main',
           platformType: 'discord',
           agentName: 'codex-dev',
-          match: { discord: { channelIds: ['C2'] } },
+          channelIds: ['C2'],
         },
       ],
       platformAuth: {
@@ -5843,7 +5875,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -5912,7 +5944,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -5978,7 +6010,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -6033,7 +6065,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -6091,7 +6123,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -6147,7 +6179,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -6196,7 +6228,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -6246,7 +6278,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -6294,7 +6326,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -6369,7 +6401,7 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const engine = new Engine({
@@ -6445,14 +6477,14 @@ describe('Engine', () => {
         platformName: 'discord-main',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
       {
         bindingName: 'discord-side-codex',
         platformName: 'discord-side',
         platformType: 'discord',
         agentName: 'codex-dev',
-        match: { discord: { channelIds: ['C1'] } },
+        channelIds: ['C1'],
       },
     ];
     const agents = [

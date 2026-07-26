@@ -12,6 +12,7 @@ import {
   Engine,
   InMemoryIdempotencyStore,
   SessionStore,
+  SqliteTrajectoryStore,
   type Logger,
 } from '@agent-nexus/daemon';
 import type {
@@ -440,6 +441,7 @@ describe('LarkPlatformAdapter inbound', () => {
     ['invalid json', { message: { ...BASE_EVENT.message, content: '{' } }],
     ['missing event id', { event_id: undefined }],
     ['bot sender', { sender: { ...BASE_EVENT.sender, sender_type: 'bot' } }],
+    ['app sender', { sender: { ...BASE_EVENT.sender, sender_type: 'app' } }],
     [
       'self sender',
       {
@@ -461,6 +463,111 @@ describe('LarkPlatformAdapter inbound', () => {
     });
 
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('丢弃事件的日志不包含消息正文或原始 payload', async () => {
+    const factory = new FakeSdkFactory();
+    const logger = makeLogger();
+    const adapter = makeAdapter(factory, logger);
+    await adapter.start(vi.fn());
+    const privateBody = 'private rejected body SECRET_PAYLOAD';
+
+    factory.onMessage?.({
+      ...BASE_EVENT,
+      sender: { ...BASE_EVENT.sender, sender_type: 'app' },
+      message: {
+        ...BASE_EVENT.message,
+        content: JSON.stringify({ text: privateBody }),
+      },
+    });
+
+    const serializedLogs = JSON.stringify({
+      trace: vi.mocked(logger.trace).mock.calls,
+      debug: vi.mocked(logger.debug).mock.calls,
+      info: vi.mocked(logger.info).mock.calls,
+      warn: vi.mocked(logger.warn).mock.calls,
+      error: vi.mocked(logger.error).mock.calls,
+    });
+    expect(serializedLogs).not.toContain(privateBody);
+    expect(serializedLogs).not.toContain('SECRET_PAYLOAD');
+  });
+
+  it('真实 Engine 的 agent input 与 SQLite trajectory 不落 Lark 凭据或 wire secret', async () => {
+    const factory = new FakeSdkFactory();
+    const adapter = makeAdapter(factory);
+    const store = new SqliteTrajectoryStore();
+    const sendInput = vi.fn(async () => {});
+    const agentCapabilities: AgentCapabilitySet = {
+      supportsThinking: false,
+      supportsStreaming: false,
+      supportsToolCallEvents: false,
+      supportsInterrupt: false,
+      supportsStdinInterrupt: false,
+    };
+    const runtime: AgentRuntime = {
+      name: () => 'mock-agent',
+      capabilities: () => agentCapabilities,
+      startSession: (key: SessionKey): AgentSession => ({
+        key,
+        backend: 'mock',
+        state: 'Ready',
+        startedAt: new Date(0),
+      }),
+      stopSession: () => {},
+      isAlive: () => true,
+      sendInput,
+      handleCommand: async () => ({ status: 'handled' }),
+      onEvent: () => {},
+      interrupt: () => {},
+    };
+    const engine = new Engine({
+      platform: adapter,
+      platformName: 'lark-main',
+      platformType: 'lark',
+      agent: runtime,
+      defaultSessionConfig: {
+        workingDir: '/workspace/project',
+        timeoutMs: 30_000,
+      },
+      logger: makeLogger(),
+      sessionStore: new SessionStore(),
+      trajectory: { enabled: true, store },
+    });
+    await engine.start();
+
+    factory.onMessage?.(BASE_EVENT);
+    await vi.waitFor(() => {
+      expect(sendInput).toHaveBeenCalledTimes(1);
+    });
+
+    const segments = store.queryTrajectory({}).segments;
+    expect(segments).toEqual([
+      expect.objectContaining({
+        kind: 'user-message',
+        summary: '你好，飞书',
+      }),
+    ]);
+    expect(sendInput).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: 'user_message',
+        text: '你好，飞书',
+      }),
+    );
+    const persisted = JSON.stringify(segments);
+    const agentInput = JSON.stringify(sendInput.mock.calls);
+    for (const secret of [
+      'app-secret-value',
+      'verification-token',
+      'tenant-key',
+      'cli_0123456789abcdef',
+    ]) {
+      expect(persisted).not.toContain(secret);
+      expect(agentInput).not.toContain(secret);
+    }
+
+    await engine.stop();
+    store.close();
   });
 
   it('稳定 tuple 相同但 eventId/messageId 不同时派生相同 idempotencyKey', async () => {
@@ -589,6 +696,25 @@ describe('LarkPlatformAdapter lifecycle', () => {
     expect(factory.wsClients).toHaveLength(0);
   });
 
+  it('probe bot identity 不匹配时按 nonretryable 拒绝启动', async () => {
+    const factory = new FakeSdkFactory();
+    vi.mocked(factory.client.request).mockResolvedValue({
+      code: 0,
+      bot: { open_id: 'ou_another_bot' },
+    });
+    const adapter = makeAdapter(factory);
+
+    const start = adapter.start(vi.fn());
+    const rejection = expect(start).rejects.toMatchObject({
+      code: 'lark_bot_identity_mismatch',
+      retryable: false,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    await rejection;
+    expect(factory.wsClients).toHaveLength(0);
+  });
+
   it('生命周期日志记录真实 ready latency、连接时长与可能丢失窗口', async () => {
     const factory = new FakeSdkFactory();
     factory.autoReady = false;
@@ -640,6 +766,30 @@ describe('LarkPlatformAdapter lifecycle', () => {
     await expect(start).resolves.toBeUndefined();
   });
 
+  it('首次 retryable onError 关闭旧 generation、保持 start pending 并重建连接', async () => {
+    const factory = new FakeSdkFactory();
+    factory.autoReady = false;
+    const adapter = makeAdapter(factory);
+    let settled = false;
+    const start = adapter.start(vi.fn()).finally(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const firstWs = factory.wsClients[0] as LarkSdkWsClientPort & {
+      testState: 'connecting' | 'connected' | 'failed';
+    };
+    firstWs.testState = 'failed';
+
+    factory.callbacksByGeneration[0]!.onError(new Error('initial failed'));
+    expect(firstWs.close).toHaveBeenCalledWith({ force: false });
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(factory.callbacksByGeneration).toHaveLength(2);
+    factory.callbacksByGeneration[1]!.onReady();
+    await expect(start).resolves.toBeUndefined();
+  });
+
   it('旧 generation 迟到 onReady 时强制关闭孤儿 socket', async () => {
     const factory = new FakeSdkFactory();
     factory.autoReady = false;
@@ -671,6 +821,80 @@ describe('LarkPlatformAdapter lifecycle', () => {
 
     expect(firstWs.close).toHaveBeenCalledWith({ force: false });
     expect(factory.callbacksByGeneration).toHaveLength(2);
+  });
+
+  it('运行期恢复 generation 的 nonretryable probe 进入 failed，旧 callback 不得恢复状态', async () => {
+    const factory = new FakeSdkFactory();
+    const logger = makeLogger();
+    const adapter = makeAdapter(factory, logger);
+    await adapter.start(vi.fn());
+    vi.mocked(factory.client.request).mockResolvedValueOnce({
+      code: 99991663,
+    });
+    const firstWs = factory.wsClients[0] as LarkSdkWsClientPort & {
+      testState: 'connecting' | 'connected' | 'failed';
+    };
+    firstWs.testState = 'failed';
+
+    factory.callbacksByGeneration[0]!.onError(new Error('terminal'));
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(factory.client.request).toHaveBeenCalledTimes(2);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'lark_bot_probe_failed',
+        retryable: false,
+        stage: 'runtime',
+      }),
+      'platform_connection_failed',
+    );
+    await expect(
+      adapter.send(
+        {
+          platformName: 'lark-main',
+          platform: 'lark',
+          channelId: 'oc_chat_1',
+          initiatorUserId: 'ou_user_open_id',
+        },
+        {
+          text: 'must fail',
+          traceId: 'trace-failed',
+          sessionKey: {
+            platformName: 'lark-main',
+            platform: 'lark',
+            channelId: 'oc_chat_1',
+            initiatorUserId: 'ou_user_open_id',
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'lark_not_running' });
+
+    vi.mocked(logger.info).mockClear();
+    factory.callbacksByGeneration[0]!.onReconnected();
+    expect(logger.info).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'platform_connection_restored',
+    );
+    await expect(
+      adapter.send(
+        {
+          platformName: 'lark-main',
+          platform: 'lark',
+          channelId: 'oc_chat_1',
+          initiatorUserId: 'ou_user_open_id',
+        },
+        {
+          text: 'must still fail',
+          traceId: 'trace-stale-callback',
+          sessionKey: {
+            platformName: 'lark-main',
+            platform: 'lark',
+            channelId: 'oc_chat_1',
+            initiatorUserId: 'ou_user_open_id',
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'lark_not_running' });
   });
 
   it('SDK client 构造同步失败时拒绝 start，而不是留下 pending promise', async () => {
@@ -1228,5 +1452,27 @@ describe('LarkPlatformAdapter outbound', () => {
       code: 'lark_sdk_protocol_error',
       retryable: false,
     });
+  });
+
+  it('响应 code 非零时抛按 structured 字段分类的 send error', async () => {
+    const factory = new FakeSdkFactory();
+    vi.mocked(factory.client.createMessage).mockResolvedValue({
+      code: 230001,
+      retryable: false,
+    });
+    const adapter = makeAdapter(factory);
+    await adapter.start(vi.fn());
+
+    await expect(
+      adapter.send(sessionKey, {
+        text: 'hello',
+        traceId: 'trace-business-error',
+        sessionKey,
+      }),
+    ).rejects.toMatchObject<LarkPlatformError>({
+      code: 'lark_message_send_failed',
+      retryable: false,
+    });
+    expect(factory.client.createMessage).toHaveBeenCalledTimes(1);
   });
 });

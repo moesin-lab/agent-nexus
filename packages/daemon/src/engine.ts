@@ -500,7 +500,10 @@ export class Engine {
   constructor(deps: EngineDeps) {
     this.platform = deps.platform;
     this.platformName = deps.platformName ?? deps.platform.name();
-    this.platformType = deps.platformType ?? 'discord';
+    if (deps.routingTable && !deps.platformType) {
+      throw new Error('Engine with routingTable requires platformType');
+    }
+    this.platformType = deps.platformType ?? deps.platform.name();
     if (deps.routingTable && !deps.platformAuth) {
       throw new Error('Engine with routingTable requires platformAuth');
     }

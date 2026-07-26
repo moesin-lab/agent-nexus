@@ -846,7 +846,7 @@ describe('config loader', () => {
         platformName: 'lark-main',
         platformType: 'lark',
         agentName: 'codex-dev',
-        match: { lark: { chatIds: ['oc_chat_1'] } },
+        channelIds: ['oc_chat_1'],
       },
     ]);
   });

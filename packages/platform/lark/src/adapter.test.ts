@@ -58,8 +58,19 @@ const BASE_EVENT = JSON.parse(
     chat_type: string;
     message_type: string;
     content: string;
+    thread_id?: string;
   };
 };
+
+const THREAD_EVENT = JSON.parse(
+  readFileSync(
+    new URL(
+      '../../../../testdata/lark/events/im_message_receive_v1_text_group_thread.json',
+      import.meta.url,
+    ),
+    'utf8',
+  ),
+) as typeof BASE_EVENT;
 
 class FakeSdkFactory implements LarkSdkFactory {
   public onMessage?: (event: unknown) => void;
@@ -67,13 +78,15 @@ class FakeSdkFactory implements LarkSdkFactory {
   public readonly callbacksByGeneration: LarkWsCallbacks[] = [];
   public readonly wsClients: LarkSdkWsClientPort[] = [];
   public autoReady = true;
+  public readonly replyMessage = vi.fn();
   public readonly client: LarkSdkClientPort = {
     request: vi.fn(async () => ({
       code: 0,
       bot: { open_id: 'ou_bot_open_id' },
     })),
     createMessage: vi.fn(),
-  };
+    replyMessage: this.replyMessage,
+  } as LarkSdkClientPort;
 
   createClient(): LarkSdkClientPort {
     return this.client;
@@ -147,10 +160,12 @@ function makeAdapter(
 }
 
 describe('LarkPlatformAdapter inbound', () => {
-  it('声明首版纯文本能力', () => {
-    expect(makeAdapter(new FakeSdkFactory()).capabilities()).toEqual(
-      LARK_CAPABILITIES,
-    );
+  it('声明话题纯文本能力且不声明 native slash / thread creation', () => {
+    const capabilities = makeAdapter(new FakeSdkFactory()).capabilities();
+    expect(capabilities).toEqual(LARK_CAPABILITIES);
+    expect(capabilities.supportsThreads).toBe(true);
+    expect(capabilities.supportsThreadCreation).toBe(false);
+    expect(capabilities.supportsSlashCommands).toBe(false);
   });
 
   it('不支持的 edit/delete/react 返回稳定 unsupported error，typing 为幂等 no-op', async () => {
@@ -235,6 +250,82 @@ describe('LarkPlatformAdapter inbound', () => {
     expect(rawPayload).not.toContain('tenant-key');
     expect(rawPayload).not.toContain('cli_0123456789abcdef');
     expect(rawPayload).not.toMatch(/"token"|"tenant_key"|"app_id"/);
+  });
+
+  it('把话题群文本映射为独立 thread SessionKey、父群继承与 response target', async () => {
+    const factory = new FakeSdkFactory();
+    const adapter = makeAdapter(factory);
+    const events: NormalizedEvent[] = [];
+    await adapter.start((event) => {
+      events.push(event);
+    });
+
+    factory.onMessage?.(THREAD_EVENT);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      eventId: 'evt_thread_1',
+      platform: 'lark',
+      sessionKey: {
+        platform: 'lark',
+        channelId: 'omt_thread_1',
+        initiatorUserId: 'ou_user_open_id',
+      },
+      messageId: 'om_thread_message_1',
+      threadParentChannelId: 'oc_topic_group_1',
+      responseTarget: {
+        platform: 'lark',
+        channelId: 'omt_thread_1',
+        messageId: 'om_thread_message_1',
+        messageIds: ['om_thread_message_1'],
+        sentAt: new Date(1720000001123),
+      },
+      type: 'message',
+      text: '话题里的任务',
+    });
+  });
+
+  it('忽略不带 thread_id 的群主时间线消息', async () => {
+    const factory = new FakeSdkFactory();
+    const adapter = makeAdapter(factory);
+    const handler = vi.fn();
+    await adapter.start(handler);
+
+    factory.onMessage?.({
+      ...THREAD_EVENT,
+      message: {
+        ...THREAD_EVENT.message,
+        thread_id: undefined,
+      },
+    });
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('只移除 bot mention，保留话题文本中的其他用户 mention', async () => {
+    const factory = new FakeSdkFactory();
+    const adapter = makeAdapter(factory);
+    const handler = vi.fn();
+    await adapter.start(handler);
+
+    factory.onMessage?.({
+      ...THREAD_EVENT,
+      message: {
+        ...THREAD_EVENT.message,
+        content: '{"text":"@_user_2 请问一下"}',
+        mentions: [
+          {
+            key: '@_user_2',
+            id: { open_id: 'ou_other_user' },
+            name: 'Other User',
+          },
+        ],
+      },
+    });
+
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({ text: '@_user_2 请问一下' }),
+    );
   });
 
   it('不等待 daemon turn promise 即完成 EventDispatcher callback', async () => {
@@ -727,6 +818,222 @@ describe('LarkPlatformAdapter outbound', () => {
       messageIds: ['om_reply_1'],
       sentAt: new Date('2026-07-24T12:00:00.000Z'),
     });
+  });
+
+  it('带 replyTo 时用 reply_in_thread 回复原消息，不向 thread_id 调 create', async () => {
+    const factory = new FakeSdkFactory();
+    factory.replyMessage.mockResolvedValue({
+      code: 0,
+      data: {
+        message_id: 'om_thread_reply_1',
+        chat_id: 'oc_topic_group_1',
+      },
+    });
+    const adapter = makeAdapter(factory);
+    await adapter.start(vi.fn());
+    const threadSessionKey = {
+      ...sessionKey,
+      channelId: 'omt_thread_1',
+    };
+
+    const result = await adapter.send(threadSessionKey, {
+      text: '话题回复',
+      traceId: 'trace-thread-1',
+      sessionKey: threadSessionKey,
+      replyTo: {
+        platform: 'lark',
+        channelId: 'omt_thread_1',
+        messageId: 'om_thread_message_1',
+        messageIds: ['om_thread_message_1'],
+        sentAt: new Date(1720000001123),
+      },
+    });
+
+    expect(factory.client.createMessage).not.toHaveBeenCalled();
+    expect(factory.replyMessage).toHaveBeenCalledWith({
+      path: { message_id: 'om_thread_message_1' },
+      data: {
+        msg_type: 'text',
+        content: '{"text":"话题回复"}',
+        reply_in_thread: true,
+        uuid: '00112233445566778899aabbccddeeff:0000',
+      },
+    });
+    expect(result).toMatchObject({
+      channelId: 'omt_thread_1',
+      messageId: 'om_thread_reply_1',
+    });
+  });
+
+  it('话题 reply 按 4000 UTF-16 code unit 串行切片并聚合全部 message id', async () => {
+    const factory = new FakeSdkFactory();
+    factory.replyMessage
+      .mockResolvedValueOnce({
+        code: 0,
+        data: {
+          message_id: 'om_thread_reply_1',
+          chat_id: 'oc_topic_group_1',
+        },
+      })
+      .mockResolvedValueOnce({
+        code: 0,
+        data: {
+          message_id: 'om_thread_reply_2',
+          chat_id: 'oc_topic_group_1',
+        },
+      });
+    const adapter = makeAdapter(factory);
+    await adapter.start(vi.fn());
+    const threadSessionKey = {
+      ...sessionKey,
+      channelId: 'omt_thread_1',
+    };
+
+    const result = await adapter.send(threadSessionKey, {
+      text: 'a'.repeat(4001),
+      traceId: 'trace-thread-slices',
+      sessionKey: threadSessionKey,
+      replyTo: {
+        platform: 'lark',
+        channelId: 'omt_thread_1',
+        messageId: 'om_thread_message_1',
+        messageIds: ['om_thread_message_1'],
+        sentAt: new Date(0),
+      },
+    });
+
+    expect(factory.replyMessage).toHaveBeenCalledTimes(2);
+    expect(
+      factory.replyMessage.mock.calls.map(
+        ([input]) =>
+          (JSON.parse(input.data.content) as { text: string }).text.length,
+      ),
+    ).toEqual([4000, 1]);
+    expect(
+      factory.replyMessage.mock.calls.map(
+        ([input]) => input.path.message_id,
+      ),
+    ).toEqual(['om_thread_message_1', 'om_thread_message_1']);
+    expect(result.messageIds).toEqual([
+      'om_thread_reply_1',
+      'om_thread_reply_2',
+    ]);
+    expect(result.messageId).toBe('om_thread_reply_2');
+  });
+
+  it('话题 reply 多切片中途失败时保留已发送 id', async () => {
+    const factory = new FakeSdkFactory();
+    factory.replyMessage
+      .mockResolvedValueOnce({
+        code: 0,
+        data: {
+          message_id: 'om_thread_reply_1',
+          chat_id: 'oc_topic_group_1',
+        },
+      })
+      .mockRejectedValueOnce(
+        Object.assign(new Error('bad request'), {
+          response: { status: 400, headers: {} },
+        }),
+      );
+    const adapter = makeAdapter(factory);
+    await adapter.start(vi.fn());
+    const threadSessionKey = {
+      ...sessionKey,
+      channelId: 'omt_thread_1',
+    };
+
+    const error = await adapter
+      .send(threadSessionKey, {
+        text: 'a'.repeat(4001),
+        traceId: 'trace-thread-partial',
+        sessionKey: threadSessionKey,
+        replyTo: {
+          platform: 'lark',
+          channelId: 'omt_thread_1',
+          messageId: 'om_thread_message_1',
+          messageIds: ['om_thread_message_1'],
+          sentAt: new Date(0),
+        },
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(LarkPartialSendError);
+    expect(error).toMatchObject({
+      sentIds: ['om_thread_reply_1'],
+      totalSlices: 2,
+    });
+    expect(factory.replyMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('话题 reply 的 retry 复用同一 target 与 uuid', async () => {
+    const factory = new FakeSdkFactory();
+    const rateLimitError = Object.assign(new Error('rate limited'), {
+      response: {
+        status: 429,
+        headers: { 'retry-after': '0' },
+      },
+    });
+    factory.replyMessage
+      .mockRejectedValueOnce(rateLimitError)
+      .mockResolvedValueOnce({
+        code: 0,
+        data: {
+          message_id: 'om_thread_reply_retry',
+          chat_id: 'oc_topic_group_1',
+        },
+      });
+    const adapter = makeAdapter(factory);
+    await adapter.start(vi.fn());
+    const threadSessionKey = {
+      ...sessionKey,
+      channelId: 'omt_thread_1',
+    };
+    const replyTo = {
+      platform: 'lark',
+      channelId: 'omt_thread_1',
+      messageId: 'om_thread_message_1',
+      messageIds: ['om_thread_message_1'],
+      sentAt: new Date(0),
+    };
+
+    await adapter.send(threadSessionKey, {
+      text: 'retry thread reply',
+      traceId: 'trace-thread-retry',
+      sessionKey: threadSessionKey,
+      replyTo,
+    });
+
+    expect(factory.replyMessage).toHaveBeenCalledTimes(2);
+    const [first, second] = factory.replyMessage.mock.calls;
+    expect(first![0].path).toEqual(second![0].path);
+    expect(first![0].data.uuid).toBe(second![0].data.uuid);
+  });
+
+  it('replyTo 的 platform 或 channel 不匹配时在发送前拒绝', async () => {
+    const factory = new FakeSdkFactory();
+    const adapter = makeAdapter(factory);
+    await adapter.start(vi.fn());
+
+    await expect(
+      adapter.send(sessionKey, {
+        text: 'wrong target',
+        traceId: 'trace-thread-mismatch',
+        sessionKey,
+        replyTo: {
+          platform: 'lark',
+          channelId: 'omt_other_thread',
+          messageId: 'om_thread_message_1',
+          messageIds: ['om_thread_message_1'],
+          sentAt: new Date(0),
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'lark_reply_target_mismatch',
+      retryable: false,
+    });
+    expect(factory.client.createMessage).not.toHaveBeenCalled();
+    expect(factory.replyMessage).not.toHaveBeenCalled();
   });
 
   it('WebSocket 重连期间仍通过独立 REST client 发送已完成的回复', async () => {

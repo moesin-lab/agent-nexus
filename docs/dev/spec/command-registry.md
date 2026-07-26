@@ -390,6 +390,22 @@ Agent command envelope 语义见 [`agent-runtime.md`](agent-runtime.md#agent-com
 
 daemon 不得从 `codex-new` / `discord-reply-mode` 这类字符串中拆 owner 或 localName。
 
+### 无 native slash 平台的文本边界
+
+`CapabilitySet.supportsSlashCommands=false` 表示该平台没有本 spec 的 registration / command-event transport，
+不能构建或激活该平台的 reverse map。普通消息里的 `/...` 不因此自动变成 `type:"command"`。
+
+Daemon 可以拥有显式、独立的 text-prefix 功能；当前只有配置控制的 `/new` 与 `/new <prompt>`。处理顺序固定为：
+
+1. 若启用 `textPrefixes.newSession` 且首 token 精确为 `/new`，执行现有文本重置语义；
+2. 否则，若首 token 命中已启用 agent descriptors 的 local/stable name 或 daemon descriptors 的 stable name，
+   返回稳定 unavailable 文本，不进入 agent；
+3. 未知 `/foo` 保持普通 prompt，不能按字符串结构猜 owner 或 handler。
+
+该 guard 不是 registry dispatch，不读取 active reverse map，也不执行 descriptor handler。关闭
+`textPrefixes.newSession` 后 `/new` 按既有配置作为普通 prompt；其它已知命令仍稳定拒绝。支持更多命令时必须
+先定义独立 text command transport，不能绕过 remote-registration activation 契约。
+
 Agent command 的远端可见性是 registration scope 粒度，binding 是 channel 粒度。多 agent scope 中，用户可能看见某个 stable agent command 但在当前 channel route 到另一类 agent；这种情况必须以 `command_agent_owner_mismatch` fail-closed。
 
 ## Agent Session Commands
@@ -501,6 +517,7 @@ P3-P5 必须覆盖：
 - remote registration failure 或 partial apply 保留旧 active map。
 - stale generation result 不激活 active map。
 - active map missing、reverse map miss、agent owner mismatch fail-closed。
+- 无 native slash 平台的 `/new` 文本入口可用；其它已知控制命令稳定拒绝且不进入 agent；未知 `/foo` 仍可作为 prompt。
 - agent command descriptor 来自 agent package 内声明配置文件，并进入对应 package 构建产物。
 - `/stop` 在 single-agent scope 作为 agent alias 路由到当前 backend，并以 agent command envelope 转发；daemon 不校验 agent 私有 handler、不映射为 runtime interrupt。
 - `/nexus-kill` 作为 daemon command 终止当前 RoutingSession 并清除 opaque agent conversation ref。
@@ -513,6 +530,7 @@ P3-P5 必须覆盖：
 ## 反模式
 
 - 从平台 command name 字符串拆 owner 或 handler。
+- 把普通 `/...` 文本直接送进 native command reverse map，或在无 native transport 时执行 descriptor handler。
 - 在 agent package 中 import Discord SDK、platform package 或 platform naming policy。
 - 在 platform package 中定义 agent command name policy。
 - 让 CLI 生成 alias 或解释 handlerKey。

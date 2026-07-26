@@ -168,7 +168,7 @@ chmod 600 ~/.agent-nexus/config.json
 | `bindings[].platformName` | 是 | 引用 `platforms[].name` |
 | `bindings[].agentName` | 是 | 引用 `agents[].name` |
 | `bindings[].match.discord.channelIds` | Discord 是 | 该 binding 匹配的 Discord channel/thread id 列表 |
-| `bindings[].match.lark.chatIds` | 飞书是 | 该 binding 匹配的飞书 P2P `chat_id` 列表 |
+| `bindings[].match.lark.chatIds` | 飞书是 | 该 binding 匹配的飞书 P2P `chat_id` 或话题父群 `chat_id` 列表 |
 | `daemon.commandRegistry.registration.enabled` | 否 | 默认 `true`；设为 `false` 时不 apply 远端 slash command 注册计划，本地 command dispatch 保持 fail-closed |
 | `daemon.commandRegistry.registration.applyTimeoutMs` | 否 | 默认 `30000`；注册计划 apply 超时毫秒数 |
 | `daemon.commandRegistry.registration.retry.maxAttempts` / `backoffMs` | 否 | 默认 `3` / `1000`；启动时注册计划 apply 的重试策略 |
@@ -378,9 +378,14 @@ running item 不能被 `/nexus-queue` 编辑或重排；要保留 pending 并尽
 
 ## 在飞书里使用
 
-首版只处理机器人单聊中的纯文本，不需要 @机器人。直接发送问题即可复用同一个 `(platformName, lark, chatId, userId)` route；发送 `/new` 或 `/new <prompt>` 可以重置并开始新会话。
+机器人单聊中的纯文本继续使用 P2P `chat_id` 作为 session 容器，不需要 @机器人。私有话题群中，每个
+`thread_id` 是一个独立 session，父群 `chat_id` 负责匹配 binding 与 auth；群主时间线消息不会进入 agent。
+发送 `/new` 或 `/new <prompt>` 可以重置当前 P2P 或当前话题 session。
 
-飞书首版不注册 slash command，也不支持 Discord 专属的 reply mode、thread、交互面板或 queue 面板。agent 运行期间继续发送的普通文本仍会进入 daemon queue，但当前没有飞书原生的队列管理 UI。完整能力边界和 ID 获取步骤见 [`platforms/lark.md`](platforms/lark.md)。
+飞书不注册原生 slash command，也不支持 Discord 专属的 reply mode、交互面板或 queue 面板。`/new` 是普通
+文本前缀；其它已知但不可执行的控制命令会收到 unavailable 反馈，不会进入 agent。Agent 运行期间继续发送的
+普通文本仍会进入当前话题的 daemon queue，但当前没有飞书原生的队列管理 UI。完整能力边界、话题群设置和 ID
+获取步骤见 [`platforms/lark.md`](platforms/lark.md)。
 
 重载配置：
 

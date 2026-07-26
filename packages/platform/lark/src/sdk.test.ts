@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Logger } from '@agent-nexus/daemon';
+import type { LarkSdkClientPort } from './sdk-port.js';
 
 const sdkMocks = vi.hoisted(() => ({
   clientOptions: [] as unknown[],
@@ -8,6 +9,7 @@ const sdkMocks = vi.hoisted(() => ({
   registeredHandles: [] as unknown[],
   request: vi.fn(async () => ({ code: 0 })),
   createMessage: vi.fn(async () => ({ code: 0 })),
+  replyMessage: vi.fn(async () => ({ code: 0 })),
   wsStart: vi.fn(async () => {}),
   wsClose: vi.fn(),
 }));
@@ -18,6 +20,7 @@ vi.mock('@larksuiteoapi/node-sdk', () => {
       v1: {
         message: {
           create: sdkMocks.createMessage,
+          reply: sdkMocks.replyMessage,
         },
       },
     };
@@ -160,7 +163,7 @@ describe('ProductionLarkSdkFactory', () => {
     );
   });
 
-  it('Client port 把 bot probe 与 message.create 直接委托给 SDK', async () => {
+  it('Client port 把 bot probe、message.create 与 message.reply 直接委托给 SDK', async () => {
     const factory = new ProductionLarkSdkFactory(makeLogger());
     const client = factory.createClient({
       appId: 'cli_0123456789abcdef',
@@ -175,17 +178,32 @@ describe('ProductionLarkSdkFactory', () => {
         uuid: '00112233445566778899aabbccddeeff:0000',
       },
     };
+    const replyInput = {
+      path: { message_id: 'om_thread_message_1' },
+      data: {
+        msg_type: 'text' as const,
+        content: '{"text":"hello thread"}',
+        reply_in_thread: true as const,
+        uuid: '00112233445566778899aabbccddeeff:0000',
+      },
+    };
 
     await client.request({
       method: 'GET',
       url: '/open-apis/bot/v3/info',
     });
     await client.createMessage(messageInput);
+    await (
+      client as LarkSdkClientPort & {
+        replyMessage(input: typeof replyInput): Promise<unknown>;
+      }
+    ).replyMessage(replyInput);
 
     expect(sdkMocks.request).toHaveBeenCalledWith({
       method: 'GET',
       url: '/open-apis/bot/v3/info',
     });
     expect(sdkMocks.createMessage).toHaveBeenCalledWith(messageInput);
+    expect(sdkMocks.replyMessage).toHaveBeenCalledWith(replyInput);
   });
 });

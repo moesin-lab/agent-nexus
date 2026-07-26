@@ -5,6 +5,7 @@ status: active
 summary: 首次配置引导、platforms[] / agents[] / bindings 的配置 schema、owner 校验边界、路由匹配语义、热重载与迁移规则
 tags: [spec, config, routing, platform, agent]
 related:
+  - dev/adr/0020-lark-thread-as-session-container
   - dev/adr/0019-lark-platform-via-official-node-sdk
   - dev/adr/0015-multi-platform-agent-config
   - dev/spec/platform-adapter
@@ -263,7 +264,7 @@ DiscordMatchSpec {
 }
 
 LarkMatchSpec {
-    chatIds: string[]                 // 非空；命中 event.sessionKey.channelId
+    chatIds: string[]                 // 非空；命中 P2P chat_id 或话题父 chat_id
 }
 ```
 
@@ -275,13 +276,14 @@ LarkMatchSpec {
 | `platformName` | 必填；必须引用存在的 `platforms[].name` |
 | `agentName` | 必填；必须引用存在的 `agents[].name` |
 | `match.discord.channelIds` | Discord channel allow/bind 条件；非空字符串数组；命中 `event.sessionKey.channelId` |
-| `match.lark.chatIds` | 飞书 P2P chat bind 条件；非空字符串数组；命中 `event.sessionKey.channelId` |
+| `match.lark.chatIds` | 飞书 chat bind 条件；非空字符串数组；P2P 命中 `event.sessionKey.channelId`，话题命中 `event.threadParentChannelId` |
 
 Discord 当前最小 binding 条件只支持 `channelIds`。用户、角色、guild、DM、公开 channel 策略全部属于
 `PlatformAuthConfig` / `daemon.auth`，不属于 routing matcher。若配置了未知 binding 条件字段，loader 必须
 fail-closed，错误消息包含字段路径。
 
-Lark 首版只支持 P2P chat，binding 必须显式列出 `match.lark.chatIds`。`chatIds` 不是授权替代品；用户
+Lark 支持 P2P chat 与带 `thread_id` 的话题消息，binding 必须显式列出 `match.lark.chatIds`。P2P 直接使用
+`chat_id`；话题使用父群 `chat_id`，不得把逐个 `thread_id` 写进 binding。`chatIds` 不是授权替代品；用户
 `open_id` 仍由 `PlatformAuthConfig` 校验。同一 bot app 只建一个 platform instance；官方长连接对同 app 多 client
 采用 cluster 分发而非广播，需要路由到多个 agent 时增加 bindings，不得用重复 `appId` / `botOpenId` 启动多个 client。
 
@@ -371,7 +373,9 @@ RouteContext {
 
 1. 只考虑 `entry.platformName == context.platformName` 的 routing entries。
 2. 按 `platformType` 调用 platform owner 的 match 函数。
-3. Discord 的 `event.sessionKey.channelId` 必须在 `channelIds` 内；Lark 的必须在 `chatIds` 内。
+3. Discord 的 `event.sessionKey.channelId` 必须在 `channelIds` 内；Lark P2P 的
+   `event.sessionKey.channelId` 或话题的 `event.threadParentChannelId` 必须在 `chatIds` 内。话题仍以
+   `thread_id` 作为实际 SessionKey，不因 binding 匹配而折回父群 session。
 4. 匹配结果数量为 1 时，返回该 `agentName`。
 5. 匹配结果数量为 0 时，拒绝 dispatch，打结构化日志 `route_not_found`。
 6. 匹配结果数量大于 1 时，拒绝 dispatch，打结构化日志 `route_ambiguous`。
@@ -502,7 +506,7 @@ platformName + platform + channelId + initiatorUserId
 | binding 条件为空 | owner parser | `ConfigError`，含 binding 字段路径 |
 | binding 条件非法 | owner parser | `ConfigError`，含 binding 字段路径 |
 | Lark `appId` / `appSecretRef` / `botOpenId` 缺失、非法，或 app/bot ID 重复 | owner parser | `ConfigError`，含 platform 字段路径 |
-| Lark `auth.allowlist.userIds` 为空 | owner parser | `ConfigError`；P2P 首版不能靠 guild / role / chat ID 代替用户授权 |
+| Lark `auth.allowlist.userIds` 为空 | owner parser | `ConfigError`；P2P 与话题消息都不能靠 guild / role / chat ID 代替用户授权 |
 | route 未命中 | dispatch | `route_not_found` 日志；不调用 agent |
 | route 多重命中 | dispatch | `route_ambiguous` 日志；不调用 agent |
 
@@ -524,7 +528,7 @@ loader / router 合约测试必须覆盖：
 首次配置引导合约测试必须覆盖：
 
 1. 首次创建模板后的错误提示包含完整飞书创建 URL。
-2. 提示同时说明 App ID 配置路径、App Secret 文件边界、`botOpenId`、飞书用户 allowlist、P2P chat binding 和再次启动验证。
+2. 提示同时说明 App ID 配置路径、App Secret 文件边界、`botOpenId`、飞书用户 allowlist、chat binding 和再次启动验证。
 3. 默认 scaffold 保持单 Discord platform，`secrets/` 只创建 `DISCORD_BOT_TOKEN`。
 
 session 隔离合约测试必须覆盖：

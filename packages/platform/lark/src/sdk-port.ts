@@ -12,6 +12,15 @@ export interface LarkSdkClientPort {
       uuid: string;
     };
   }): Promise<unknown>;
+  replyMessage(input: {
+    path: { message_id: string };
+    data: {
+      msg_type: 'text';
+      content: string;
+      reply_in_thread: true;
+      uuid: string;
+    };
+  }): Promise<unknown>;
 }
 
 export interface LarkSdkDispatcherPort {

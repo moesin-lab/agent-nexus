@@ -59,6 +59,7 @@ export class ProductionLarkSdkFactory implements LarkSdkFactory {
     return {
       request: (request) => client.request(request),
       createMessage: (message) => client.im.v1.message.create(message),
+      replyMessage: (message) => client.im.v1.message.reply(message),
     };
   }
 

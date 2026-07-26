@@ -28,7 +28,7 @@ export const LARK_CAPABILITIES: CapabilitySet = {
   supportsButtons: false,
   supportsSelects: false,
   supportsModals: false,
-  supportsThreads: false,
+  supportsThreads: true,
   supportsThreadCreation: false,
   supportsEphemeral: false,
   supportsAttachments: false,
@@ -136,6 +136,28 @@ function parseTextContent(content: string): string | undefined {
   return parsed['text'];
 }
 
+function stripBotMentions(
+  text: string,
+  mentions: unknown,
+  botOpenId: string,
+): string {
+  if (!Array.isArray(mentions)) return text;
+  let normalized = text;
+  let removed = false;
+  for (const mention of mentions) {
+    if (!isRecord(mention) || typeof mention['key'] !== 'string') continue;
+    const mentionId = mention['id'];
+    if (
+      isRecord(mentionId) &&
+      mentionId['open_id'] === botOpenId
+    ) {
+      normalized = normalized.split(mention['key']).join('');
+      removed = true;
+    }
+  }
+  return removed ? normalized.trimStart() : text;
+}
+
 function normalizeLarkEvent(
   raw: unknown,
   botOpenId: string,
@@ -151,7 +173,6 @@ function normalizeLarkEvent(
     !isRecord(sender) ||
     !isRecord(message) ||
     sender['sender_type'] !== 'user' ||
-    message['chat_type'] !== 'p2p' ||
     message['message_type'] !== 'text'
   ) {
     return undefined;
@@ -161,6 +182,8 @@ function normalizeLarkEvent(
   const openId = isRecord(senderId) ? senderId['open_id'] : undefined;
   const messageId = message['message_id'];
   const chatId = message['chat_id'];
+  const chatType = message['chat_type'];
+  const threadId = message['thread_id'];
   const createTime = message['create_time'];
   const content = message['content'];
   if (
@@ -171,13 +194,24 @@ function normalizeLarkEvent(
     messageId.length === 0 ||
     typeof chatId !== 'string' ||
     chatId.length === 0 ||
+    (chatType !== 'p2p' &&
+      !(
+        chatType === 'group' &&
+        typeof threadId === 'string' &&
+        threadId.length > 0
+      )) ||
     typeof content !== 'string'
   ) {
     return undefined;
   }
 
-  const text = parseTextContent(content);
-  if (text === undefined) return undefined;
+  const parsedText = parseTextContent(content);
+  if (parsedText === undefined) return undefined;
+  const text = stripBotMentions(
+    parsedText,
+    message['mentions'],
+    botOpenId,
+  );
 
   const timestamp =
     typeof createTime === 'string'
@@ -193,13 +227,14 @@ function normalizeLarkEvent(
             'utf8',
           )
           .digest('hex');
+  const channelId = chatType === 'p2p' ? chatId : (threadId as string);
 
   return {
     eventId,
     platform: 'lark',
     sessionKey: {
       platform: 'lark',
-      channelId: chatId,
+      channelId,
       initiatorUserId: openId,
     },
     messageId,
@@ -213,6 +248,19 @@ function normalizeLarkEvent(
     ...(timestamp === undefined
       ? {}
       : { platformTimestamp: new Date(timestamp) }),
+    ...(chatType === 'group'
+      ? {
+          threadParentChannelId: chatId,
+          responseTarget: {
+            platform: 'lark',
+            channelId,
+            messageId,
+            messageIds: [messageId],
+            sentAt:
+              timestamp === undefined ? receivedAt : new Date(timestamp),
+          },
+        }
+      : {}),
     initiator: {
       userId: openId,
       displayName: openId,
@@ -766,6 +814,13 @@ export class LarkPlatformAdapter implements PlatformAdapter {
     ) {
       throw new LarkPlatformError('lark_not_running', false);
     }
+    if (
+      message.replyTo &&
+      (message.replyTo.platform !== 'lark' ||
+        message.replyTo.channelId !== sessionKey.channelId)
+    ) {
+      throw new LarkPlatformError('lark_reply_target_mismatch', false);
+    }
     const slices = buildSlices(message.text);
     if (slices.length > MAX_SLICE_COUNT) {
       throw new LarkPlatformError('message_too_large', false);
@@ -782,6 +837,7 @@ export class LarkPlatformAdapter implements PlatformAdapter {
           sessionKey.channelId,
           slice,
           uuid,
+          message.replyTo?.messageId,
         );
         sentIds.push(messageId);
       } catch (error) {
@@ -805,20 +861,31 @@ export class LarkPlatformAdapter implements PlatformAdapter {
     chatId: string,
     text: string,
     uuid: string,
+    replyToMessageId?: string,
   ): Promise<string> {
     const client = this.client!;
     let firstError: unknown;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const response = await client.createMessage({
-          params: { receive_id_type: 'chat_id' },
-          data: {
-            receive_id: chatId,
-            msg_type: 'text',
-            content: JSON.stringify({ text }),
-            uuid,
-          },
-        });
+        const response = replyToMessageId
+          ? await client.replyMessage({
+              path: { message_id: replyToMessageId },
+              data: {
+                msg_type: 'text',
+                content: JSON.stringify({ text }),
+                reply_in_thread: true,
+                uuid,
+              },
+            })
+          : await client.createMessage({
+              params: { receive_id_type: 'chat_id' },
+              data: {
+                receive_id: chatId,
+                msg_type: 'text',
+                content: JSON.stringify({ text }),
+                uuid,
+              },
+            });
         return parseMessageResponse(response);
       } catch (error) {
         const classified =

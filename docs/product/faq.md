@@ -81,7 +81,8 @@ Codex CLI 当前没有 Claude Code 那种执行前工具审批。它的边界来
 
 ## 支持 Slack / Feishu / Telegram 吗？
 
-支持 Discord 和中国版飞书。飞书首版只支持自建应用、P2P 单聊纯文本与长连接事件，不支持国际版 Lark、群聊、卡片、文件或 slash command。Slack 和 Telegram 当前不支持。
+支持 Discord 和中国版飞书。飞书支持自建应用、P2P 单聊与私有话题群纯文本长连接事件；每个话题是独立
+session。普通群时间线、国际版 Lark、卡片、文件与原生 slash command 暂不支持。Slack 和 Telegram 当前不支持。
 
 ## 长回复怎么显示？
 

@@ -300,7 +300,7 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
       description:
         platform.type === 'discord'
           ? `平台 ${platform.name} 允许通过鉴权的 Discord user IDs。只有列表中的用户可通过鉴权；空列表通常表示不按用户维度放行，需要结合 role/guild/channel/DM 规则理解。热重载后应与重启效果一致。 / Allowed Discord user IDs for platform ${platform.name}. Only listed users pass this auth dimension. An empty list usually means this dimension is not granting access by itself; interpret it with role/guild/channel/DM rules. Hot reload should match restart behavior.`
-          : `飞书平台 ${platform.name} 允许通过鉴权的用户 open_id。中国版飞书 P2P 接入要求列表非空；只有显式列出的用户可进入 daemon。 / Feishu user open_id allowlist for platform ${platform.name}. China Feishu P2P requires a non-empty list, and only explicitly listed users can reach the daemon.`,
+          : `飞书平台 ${platform.name} 允许通过鉴权的用户 open_id。中国版飞书 P2P 与话题接入要求列表非空；只有显式列出的用户可进入 daemon。 / Feishu user open_id allowlist for platform ${platform.name}. China Feishu P2P and topic access require a non-empty list, and only explicitly listed users can reach the daemon.`,
       category,
       path: `${base}.auth.allowlist.userIds`,
       value: allowlist.userIds,
@@ -335,7 +335,7 @@ function platformFields(platform: PlatformConfig, index: number): DaemonConfigEd
       description:
         platform.type === 'discord'
           ? `平台 ${platform.name} 允许响应的 Discord channel IDs。限制 bot 只响应指定 channel/thread；公开频道和 thread 策略仍需结合 publicChannelMode 理解。 / Allowed Discord channel IDs for platform ${platform.name}. It restricts responses to selected channels or threads; interpret public channels and threads together with publicChannelMode.`
-          : `飞书平台 ${platform.name} 允许响应的会话 chat_id。非空时只响应这些 P2P 会话；空列表不额外限制 chat_id，用户 open_id allowlist 仍然生效。 / Feishu chat_id allowlist for platform ${platform.name}. A non-empty list restricts P2P responses to those chats; an empty list adds no chat restriction while the user open_id allowlist still applies.`,
+          : `飞书平台 ${platform.name} 允许响应的 chat_id。非空时只响应这些 P2P 会话或父群中的话题；空列表不额外限制 chat_id，用户 open_id allowlist 仍然生效。 / Feishu chat_id allowlist for platform ${platform.name}. A non-empty list restricts responses to those P2P chats or topics under those parent chats; an empty list adds no chat restriction while the user open_id allowlist still applies.`,
       category,
       path: `${base}.auth.allowlist.allowedChannelIds`,
       value: allowlist.allowedChannelIds,
@@ -532,7 +532,7 @@ function bindingFields(
           key: `${base}.match.lark.chatIds`,
           label: bilingualLabel(`${binding.name} 飞书会话 ID`, `${binding.name} Feishu chat IDs`),
           description:
-            `binding ${binding.name} 匹配的飞书 chat_id。只有这些单聊会话的文本事件会走该路由；修改后可热重载，但必须避免多个 binding 同时匹配同一事件。 / Feishu chat_id values matched by binding ${binding.name}. Only text events from these P2P chats use this route. This can hot-reload, but avoid multiple bindings matching the same event.`,
+            `binding ${binding.name} 匹配的飞书 chat_id。只有这些 P2P 会话或这些父群下的话题文本事件会走该路由；修改后可热重载，但必须避免多个 binding 同时匹配同一事件。 / Feishu chat_id values matched by binding ${binding.name}. Only text events from these P2P chats or topics under these parent chats use this route. This can hot-reload, but avoid multiple bindings matching the same event.`,
           category,
           path: `${base}.match.lark.chatIds`,
           value: binding.match.lark.chatIds,

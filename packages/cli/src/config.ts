@@ -897,7 +897,7 @@ function parsePlatform(raw: unknown, index: number): PlatformConfig {
 
   if (auth.allowlist.userIds.length === 0) {
     throw new ConfigError(
-      `字段 ${path}.auth.allowlist.userIds 不能是空数组；飞书 P2P 必须显式授权 open_id`,
+      `字段 ${path}.auth.allowlist.userIds 不能是空数组；飞书 P2P 与话题消息必须显式授权 open_id`,
     );
   }
   try {

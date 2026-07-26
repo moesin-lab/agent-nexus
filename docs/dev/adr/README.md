@@ -77,6 +77,7 @@ Proposed ──(显式签字盖章)──> Accepted
 | [0017](0017-slash-command-registry.md) | Slash command registry 统一声明与注册 | Proposed |
 | [0018](0018-trajectory-observability-read-model.md) | Trajectory Observability 读模型与外部观测 | Proposed |
 | [0019](0019-lark-platform-via-official-node-sdk.md) | 飞书平台通过官方 Node SDK 接入 | Proposed |
+| [0020](0020-lark-thread-as-session-container.md) | 飞书话题作为独立 session 容器 | Proposed |
 
 ## 职责边界
 

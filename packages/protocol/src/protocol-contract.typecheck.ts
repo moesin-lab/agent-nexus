@@ -166,6 +166,9 @@ type _OutboundMessageSupportsComponents = Expect<
 type _OutboundMessageSupportsReplyTarget = Expect<
   HasKey<OutboundMessage, 'replyTo'>
 >;
+type _InboundMessageSupportsResponseTarget = Expect<
+  HasKey<MessageEventCase, 'responseTarget'>
+>;
 type _OutboundMessageSupportsEmbeds = Expect<HasKey<OutboundMessage, 'embeds'>>;
 
 type _CapabilitySetUsesNeutralSelectName = Expect<

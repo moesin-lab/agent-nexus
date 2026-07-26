@@ -16,12 +16,12 @@ related:
 
 agent-nexus 是一个本机运行的 IM 桥接服务。它把 Discord 或中国版飞书消息路由到你本机的编码 agent，让你可以在聊天里驱动 Claude Code CLI 或 Codex CLI 处理本机项目。
 
-当前状态：Discord 支持完整交互能力；中国版飞书支持自建应用的 P2P 单聊纯文本。部署、密钥和 agent CLI 登录状态由本机用户维护。
+当前状态：Discord 支持完整交互能力；中国版飞书支持自建应用的 P2P 单聊与话题群纯文本。部署、密钥和 agent CLI 登录状态由本机用户维护。
 
 ## 特性
 
 - Discord `@mention` 与 slash command 路由到本机 agent。
-- 中国版飞书通过官方 Node SDK 长连接接收 P2P 纯文本，不需要公网 webhook。
+- 中国版飞书通过官方 Node SDK 长连接接收 P2P 与话题群纯文本；每个话题承载独立 session，不需要公网 webhook。
 - 支持 Claude Code CLI 和 Codex CLI 后端。
 - 按 `(platformName, platform, channelId, userId)` 复用会话，并支持新建、停止、resume 与 route kill。
 - 支持 Discord thread 会话、session 列表、working directory override、settings 配置编辑与 queue 操作。
@@ -165,7 +165,8 @@ Discord 启动成功后，在绑定的 channel 里发送：
 
 默认只响应显式 `@bot` 的消息，且调用者必须命中 allowlist。Slash command 会按当前频道绑定的后端动态注册。
 
-中国版飞书首版在机器人单聊中直接发送纯文本；`/new` 与 `/new <prompt>` 可开启新会话。飞书不注册 slash command，完整边界见[中国版飞书使用手册](docs/product/platforms/lark.md)。
+中国版飞书支持机器人单聊与私有话题群纯文本；每个话题是独立 session，`/new` 与 `/new <prompt>` 可重置当前
+session。飞书不注册原生 slash command，完整边界见[中国版飞书使用手册](docs/product/platforms/lark.md)。
 
 ## 项目结构
 

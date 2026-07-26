@@ -651,6 +651,54 @@ describe('Engine', () => {
     expect(agent.stopSession).not.toHaveBeenCalled();
   });
 
+  it('agent 输出继承入站 responseTarget 为 OutboundMessage.replyTo', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const responseTarget: MessageRef = {
+      platform: 'lark',
+      channelId: 'omt_thread_1',
+      messageId: 'om_inbound_1',
+      messageIds: ['om_inbound_1'],
+      sentAt: new Date(0),
+    };
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+    agent.queueEvents([
+      ev('text_final', { text: 'thread answer' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(
+      makeEvent('thread prompt', {
+        platform: 'lark',
+        sessionKey: {
+          platform: 'lark',
+          channelId: 'omt_thread_1',
+          initiatorUserId: 'U1',
+        },
+        threadParentChannelId: 'C1',
+        responseTarget,
+      }),
+    );
+
+    expect(platform.send).toHaveBeenCalledWith(
+      expect.objectContaining({ channelId: 'omt_thread_1' }),
+      expect.objectContaining({
+        text: 'thread answer',
+        replyTo: responseTarget,
+      }),
+    );
+  });
+
   it('Discord message 通过 daemon 后先添加收到确认 reaction，再递交 agent', async () => {
     const platform = makePlatform({ supportsReactions: true });
     const agent = makeAgent();
@@ -815,9 +863,17 @@ describe('Engine', () => {
     }
     expect(platform.react).toHaveBeenCalledTimes(21);
 
+    const overflowResponseTarget: MessageRef = {
+      platform: 'lark',
+      channelId: 'C1',
+      messageId: 'm-queue-overflow',
+      messageIds: ['m-queue-overflow'],
+      sentAt: new Date(0),
+    };
     await dispatchHandler(makeEvent('overflow', {
       eventId: 'e-queue-overflow',
       messageId: 'm-queue-overflow',
+      responseTarget: overflowResponseTarget,
     }));
 
     expect(platform.react).toHaveBeenCalledTimes(21);
@@ -826,7 +882,10 @@ describe('Engine', () => {
     )).toBe(false);
     expect(platform.send).toHaveBeenCalledWith(
       expect.objectContaining({ channelId: 'C1' }),
-      expect.objectContaining({ text: 'Nexus queue is full. Try again after current tasks finish.' }),
+      expect.objectContaining({
+        text: 'Nexus queue is full. Try again after current tasks finish.',
+        replyTo: overflowResponseTarget,
+      }),
     );
 
     releaseFirstSendInput.resolve(undefined);
@@ -1193,7 +1252,13 @@ describe('Engine', () => {
     expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-456');
   });
 
-  it('/new 带后续文本：清 store + 用 trim 后的剩余作 prompt', async () => {
+  it.each([
+    ['/new what is X?', 'what is X?'],
+    ['/new\twhat is X?', 'what is X?'],
+    ['/new\nwhat is X?', 'what is X?'],
+  ])(
+    '/new 后接空白字符与文本：清 store + 用 trim 后的剩余作 prompt（%j）',
+    async (text, expectedPrompt) => {
     const platform = makePlatform();
     const agent = makeAgent();
     const store = new SessionStore();
@@ -1217,7 +1282,7 @@ describe('Engine', () => {
       ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
     ]);
 
-    await dispatchHandler(makeEvent('/new what is X?'));
+    await dispatchHandler(makeEvent(text));
 
     expect(agent.startSession).toHaveBeenCalledTimes(1);
     const cfg = agent.startSession.mock.calls[0]![1] as SessionConfig;
@@ -1225,11 +1290,12 @@ describe('Engine', () => {
 
     expect(agent.sendInput).toHaveBeenCalledTimes(1);
     const input = agent.sendInput.mock.calls[0]![1] as AgentInput;
-    expect(input.text).toBe('what is X?');
+    expect(input.text).toBe(expectedPrompt);
 
     // 新一轮 session_started 写回 sid-new；旧的 sid-123 已被清掉
     expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-new');
-  });
+    },
+  );
 
   it('/new 单独：发 [new session ready] 不调 agent', async () => {
     const platform = makePlatform();
@@ -1246,7 +1312,24 @@ describe('Engine', () => {
     await engine.start();
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
 
-    await dispatchHandler(makeEvent('/new'));
+    const responseTarget: MessageRef = {
+      platform: 'lark',
+      channelId: 'omt_thread_1',
+      messageId: 'om_new_1',
+      messageIds: ['om_new_1'],
+      sentAt: new Date(0),
+    };
+    await dispatchHandler(
+      makeEvent('/new', {
+        platform: 'lark',
+        sessionKey: {
+          platform: 'lark',
+          channelId: 'omt_thread_1',
+          initiatorUserId: 'U1',
+        },
+        responseTarget,
+      }),
+    );
 
     expect(agent.sendInput).not.toHaveBeenCalled();
     expect(agent.startSession).not.toHaveBeenCalled();
@@ -1254,6 +1337,57 @@ describe('Engine', () => {
     expect(platform.send).toHaveBeenCalledTimes(1);
     const out = platform.send.mock.calls[0]![1] as OutboundMessage;
     expect(out.text).toBe('[new session ready]');
+    expect(out.replyTo).toEqual(responseTarget);
+  });
+
+  it('无 native slash 能力时拒绝已知文本控制命令，但未知 /foo 仍进入 agent', async () => {
+    const platform = makePlatform({ supportsSlashCommands: false });
+    const agent = makeAgent();
+    const engine = new Engine({
+      platform,
+      platformName: 'lark-main',
+      platformType: 'lark',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          commandDescriptors: [CODEX_NEW_COMMAND, CODEX_STOP_COMMAND],
+          agent: agent.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+
+    await dispatchHandler(makeEvent('/stop now'));
+    await dispatchHandler(
+      makeEvent('/nexus-settings', {
+        eventId: 'known-daemon-command',
+        messageId: 'known-daemon-command',
+      }),
+    );
+    await dispatchHandler(
+      makeEvent('/foo is a path?', {
+        eventId: 'unknown-command',
+        messageId: 'unknown-command',
+      }),
+    );
+
+    expect(agent.sendInput).toHaveBeenCalledTimes(1);
+    expect((agent.sendInput.mock.calls[0]![1] as AgentInput).text).toBe(
+      '/foo is a path?',
+    );
+    expect(platform.send).toHaveBeenCalledTimes(2);
+    expect(platform.send.mock.calls.map(([, message]) => message.text)).toEqual([
+      'This control command is not available as text on this platform.',
+      'This control command is not available as text on this platform.',
+    ]);
   });
 
   it('textPrefixes.newSession=false 时 /new 文本按普通 prompt 转给 agent', async () => {

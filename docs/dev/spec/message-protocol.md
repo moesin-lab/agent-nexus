@@ -47,6 +47,7 @@ NormalizedEvent {
     text: string?                            // 去 mention 后的正文
     attachments: Attachment[]?
     replyTo: MessageRef?                     // 若本事件是对某消息的回复
+    responseTarget: MessageRef?              // 本事件产生的普通出站应回复到该消息
     command: CommandPayload?                 // type == "command" 时
     interaction: InteractionPayload?         // type == "interaction" 时
     reaction: ReactionPayload?               // type == "reaction" 时
@@ -86,6 +87,11 @@ enum EventType {
 `event.idempotencyKey ?? event.messageId` 作为有效幂等键。该字段必须是非空、带版本前缀的不透明字符串，
 不得直接拼接消息正文或其它敏感原文。
 
+`replyTo` 描述入站消息与历史消息的关系；`responseTarget` 描述本次处理产生的普通出站应该回复到哪里，两者不得
+互相代替。Daemon 必须把 `responseTarget` 透传为事件派生 `OutboundMessage.replyTo`，包括 queue-full、文本命令
+反馈和 agent 输出。Adapter 不得用进程内 `threadId -> latestMessageId` 缓存重建该意图。当前只有 Lark 话题消息
+设置 `responseTarget`；P2P 与没有原生 reply transport 的事件缺省。
+
 ## SessionKey
 
 Platform adapter 产出的入站事件只包含平台类型、频道和发起者；配置实例名由 daemon routing 层在
@@ -94,7 +100,7 @@ Platform adapter 产出的入站事件只包含平台类型、频道和发起者
 ```text
 PlatformSessionKey {
     platform: string                // IM 平台标识，例 "discord" / "lark"
-    channelId: string               // 会话容器 ID（Discord channel/thread ID 或 Lark chat_id）
+    channelId: string               // 会话容器 ID（Discord channel/thread、Lark P2P chat_id 或话题 thread_id）
     initiatorUserId: string         // 发起者 ID
 }
 
@@ -205,6 +211,9 @@ data、interaction token）留在 `rawPayload`，不得升入通用 payload。
 
 daemon → adapter 的出站消息。见 [`platform-adapter.md`](platform-adapter.md) 的定义。以下是**分片/合并**的协议。
 
+事件处理产生的 `OutboundMessage.replyTo` 必须继承 `NormalizedEvent.responseTarget`。同一次 event 的多次
+`send()` 可以指向同一个 target；adapter 自己负责把多片或多条回复映射到平台允许的 reply API。
+
 ### 文本切片
 
 Adapter 按 `CapabilitySet.maxTextLength` 执行平台单条消息预算。超过时：
@@ -308,6 +317,7 @@ daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `t
 ## 合约测试
 
 - 平台事件 fixture → NormalizedEvent 的 JSON 快照比对
+- 带 `responseTarget` 的事件 → queue-full、文本命令反馈与 agent 输出均携带相同 `OutboundMessage.replyTo`
 - 切片算法：构造 5000 字符文本，分片后拼接 == 原文
 - 幂等：同 fixture 两次投递，第二次被 idempotency 层拦下
 - 顺序：同 session 的事件即使乱序到达，也按 sequence 串行处理
@@ -316,6 +326,7 @@ daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `t
 
 - 在 NormalizedEvent 里塞平台 SDK / CLI 特定类型（应留在 rawPayload）
 - 把 secret、token 或无需跨层消费的完整 wire object 塞进 rawPayload
+- 用 adapter 隐式缓存猜测 response target，或把入站 `replyTo` 当成出站目标
 - 把 `text` 字段当生日礼物塞 mention / emoji 原文（都要归一化或剥离）
 - daemon 复制具体平台的长度、message id 聚合或 partial-send 语义（应由 adapter 负责）
 - 跨语言序列化用非 UTF-8 或 BOM

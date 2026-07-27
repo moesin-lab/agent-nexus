@@ -33,6 +33,11 @@ describe('release artifact validation', () => {
       'runner: [ubuntu-24.04, macos-15, macos-15-intel]',
     );
     expect(workflow).toContain('run: pnpm verify:pack:cli');
+    expect(workflow).toContain('source-checks:');
+    expect(workflow).toContain('needs: [source-checks, packed-cli]');
+    expect(workflow).toContain('SOURCE_CHECKS_RESULT');
+    expect(workflow).toContain('actions/setup-node@v6');
+    expect(workflow).not.toContain('actions/setup-node@v4');
     expect(workflow).not.toContain('export HOME=');
   });
 

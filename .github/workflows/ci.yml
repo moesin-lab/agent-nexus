@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 jobs:
-  check:
+  source-checks:
     name: Source checks (Node ${{ matrix.node-version }})
     runs-on: ubuntu-24.04
     permissions:
@@ -24,7 +24,7 @@ jobs:
         with:
           version: 10.33.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
@@ -58,7 +58,7 @@ jobs:
         with:
           version: 10.33.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
@@ -66,3 +66,18 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm verify:pack:cli
+
+  check:
+    needs: [source-checks, packed-cli]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      SOURCE_CHECKS_RESULT: ${{ needs.source-checks.result }}
+      PACKED_CLI_RESULT: ${{ needs.packed-cli.result }}
+    steps:
+      - name: Require every CI matrix to pass
+        run: |
+          test "$SOURCE_CHECKS_RESULT" = "success"
+          test "$PACKED_CLI_RESULT" = "success"

@@ -18,7 +18,7 @@ related:
 
 ## 启动前检查
 
-- `node --version` 为 20 或更高版本。
+- `node --version` 为 22.x 或 24.x。
 - `pnpm --version` 可运行。
 - `claude --version` 可运行。
 - 首次运行会自动创建 `~/.agent-nexus/config.json` 与 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN`；后续启动会把模板新增但本地缺失的配置字段补回 `config.json`。编辑后确认两者权限为 `0600`。

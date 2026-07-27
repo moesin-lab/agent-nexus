@@ -32,7 +32,7 @@ agent-nexus 是一个本机运行的 IM 桥接服务。它把 Discord 消息路�
 
 ### 前置条件
 
-- Node >= 20
+- Node.js 22 或 24
 - pnpm >= 10（仓库锁定 `pnpm@10.33.2`）
 - 已安装并登录 Claude Code CLI 或 Codex CLI
 - 一个 Discord bot token、bot user id、你的 Discord user id

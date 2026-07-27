@@ -16,7 +16,7 @@ related:
 
 ## 前置条件
 
-- Node >= 20
+- Node.js 22 或 24
 - pnpm >= 10（仓库 `packageManager` 锁定版本为 `pnpm@10.33.2`）
 - 本机已安装并登录 Claude Code CLI，`claude --version` 能运行
 - 一个 Discord bot token、bot user id、你的 Discord user id

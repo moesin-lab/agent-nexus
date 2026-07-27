@@ -32,7 +32,7 @@ spec 触发条件（什么改动需要 spec / 何时可跳过）见 [`../standar
 
 ### `infra/` — 横切基础设施
 
-- [`infra/idempotency.md`](infra/idempotency.md) — `(sessionKey, messageId)` 去重契约与 dispatch 流程
+- [`infra/idempotency.md`](infra/idempotency.md) — `(sessionKey, effectiveIdempotencyKey)` 去重契约与 dispatch 流程
 - [`infra/persistence.md`](infra/persistence.md) — 本地存储契约
 - [`infra/observability.md`](infra/observability.md) — 日志/trace/metric 字段契约
 - [`infra/trajectory-observability.md`](infra/trajectory-observability.md) — trajectory read model、外部 session 导入与 provider-call observation 契约

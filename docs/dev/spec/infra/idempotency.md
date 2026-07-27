@@ -2,7 +2,7 @@
 title: Spec：Idempotency（幂等去重）
 type: spec
 status: active
-summary: 同 (sessionKey, messageId) TTL 窗口内最多处理一次；adapter 不做去重；daemon 在 auth 之后 session 入队之前执行 checkAndSet；后台 GC
+summary: 同 (sessionKey, effectiveIdempotencyKey) TTL 窗口内最多处理一次；adapter 只派生稳定键、不做去重；daemon 在 auth 之后 session 入队之前执行 checkAndSet；后台 GC
 tags: [spec, idempotency, session]
 related:
   - dev/spec/message-protocol
@@ -16,22 +16,24 @@ contracts:
 
 # Spec：Idempotency（幂等去重）
 
-定义"同一条 IM 事件只处理一次"的契约。Discord gateway **at-least-once** 语义下，同一 user message 可能被 adapter 收到多次——不能让 CC CLI 被触发多次。
+定义"同一条 IM 事件只处理一次"的契约。IM transport 可能重放同一 user message，不能让 agent runtime 被重复触发。
 
 对应模块：`daemon.idempotency`。
 
 ## 规则
 
-同一 `(sessionKey, messageId)` 在 TTL 窗口内**最多处理一次**。
+同一 `(sessionKey, effectiveIdempotencyKey)` 在 TTL 窗口内**最多处理一次**。
 
 - `sessionKey`：见 [`../../architecture/session-model.md`](../../architecture/session-model.md) §SessionKey
-- `messageId`：平台给的消息 ID（Discord snowflake）
+- `messageId`：平台给的消息 ID（Discord snowflake / Lark message_id）
+- `effectiveIdempotencyKey = event.idempotencyKey ?? event.messageId`
+- `idempotencyKey`：adapter 可选派生的稳定精确重投键；不得直接包含消息正文或敏感原文
 - TTL：默认 24 小时（配置项在下文）
 
 ## 职责划分
 
-- **Adapter** 只负责归一化与投递，**不做去重**
-- **Daemon** 在 `Engine.dispatch` 流程中执行 `checkAndSet(sessionKey, messageId)`
+- **Adapter** 只负责归一化、稳定键派生与投递，**不查询状态、不做去重决策**
+- **Daemon** 在 `Engine.dispatch` 流程中执行 `checkAndSet(sessionKey, effectiveIdempotencyKey)`
 - 顺序：**auth → idempotency → 限流/预算 → session 队列**
   - 顺序的安全依据见 [`../security/auth.md` §权限检查位置](../security/auth.md#权限检查位置)（`auth_denied` 不进 idempotency 表，避免上游伪造 messageId 刷表）
   - 数据流见 [`../../architecture/overview.md`](../../architecture/overview.md) §入站数据流
@@ -45,7 +47,8 @@ adapter 归一化 NormalizedEvent
            │
            ├─ daemon.auth 权限检查（先；拒绝直接返回，不插入幂等表）
            │
-           ├─ daemon.idempotency.checkAndSet(sessionKey, messageId)
+           ├─ effectiveIdempotencyKey = event.idempotencyKey ?? event.messageId
+           ├─ daemon.idempotency.checkAndSet(sessionKey, effectiveIdempotencyKey)
            │     ├─ 命中 "processed" → 丢弃事件（已经处理过）
            │     ├─ 命中 "processing" → 跳过（上一次还在进行中）
            │     ├─ 命中 "failed" → 丢弃事件（失败终态已记录）
@@ -80,7 +83,7 @@ adapter 归一化 NormalizedEvent
 ## 存储
 
 - 表：`idempotency`（见 [`persistence.md`](persistence.md) §idempotency）
-- 主键：`(session_key, message_id)`
+- 主键：`(session_key, idempotency_key)`
 - 字段：`firstSeenAt`, `status: "processing" | "processed" | "failed" | "cancelled"`, `result?`, `expires_at`
 - TTL 写入 `expires_at`，后台 GC 清理
 - 内存 LRU 缓存热数据加速
@@ -88,9 +91,9 @@ adapter 归一化 NormalizedEvent
 状态语义：
 
 - `processing`：事件已通过 auth 和幂等插入，正在等待或执行
-- `processed`：处理成功；后续同 `(sessionKey, messageId)` 重放作为 terminal duplicate 丢弃
-- `failed`：本次已进入队列但处理失败；后续同 `(sessionKey, messageId)` 重放作为 terminal duplicate 丢弃，用户重试必须产生新的平台 `messageId`
-- `cancelled`：pending `message` item 被用户取消；后续同 `(sessionKey, messageId)` 重放作为 terminal duplicate 丢弃
+- `processed`：处理成功；后续同 `(sessionKey, effectiveIdempotencyKey)` 重放作为 terminal duplicate 丢弃
+- `failed`：本次已进入队列但处理失败；后续同 `(sessionKey, effectiveIdempotencyKey)` 重放作为 terminal duplicate 丢弃，用户重试必须产生新的平台消息
+- `cancelled`：pending `message` item 被用户取消；后续同 `(sessionKey, effectiveIdempotencyKey)` 重放作为 terminal duplicate 丢弃
 
 如果 daemon 在插入 `processing` 后、事件被 queue 接受前遇到 transient 拒绝（例如限流/预算拒绝或队列满），必须删除该幂等占位；后续同一平台重放仍可重新尝试入队。事件一旦进入 queue，后续只能转为 `processed` / `failed` / `cancelled` 之一。
 
@@ -98,24 +101,24 @@ adapter 归一化 NormalizedEvent
 
 `/nexus-queue` 对幂等的影响：
 
-- 编辑 pending `message` item 只修改队列内即将投递给 agent 的 prompt，不改变原平台 `messageId` 或幂等键
-- 取消 pending `message` item 时，原 `(sessionKey, messageId)` 标为 `cancelled`，后续重放命中 terminal duplicate
+- 编辑 pending `message` item 只修改队列内即将投递给 agent 的 prompt，不改变原平台 `messageId` 或有效幂等键
+- 取消 pending `message` item 时，原 `(sessionKey, effectiveIdempotencyKey)` 标为 `cancelled`，后续重放命中 terminal duplicate
 - `Insert next` 创建 synthetic `message` item，不对应平台 `messageId`，因此不写 idempotency store；它只受当前内存 queue 管理
 
 ## 接口语义
 
 | 方法 | 语义 |
 |---|---|
-| `checkAndSet(sessionKey, messageId)` | 未命中时插入 `processing`；命中时返回现有 status |
-| `markProcessed(sessionKey, messageId)` | 处理完成后标 `processed` |
-| `markFailed(sessionKey, messageId)` | 处理失败后标 `failed` |
-| `markCancelled(sessionKey, messageId)` | pending item 被取消、且尚未开始运行时标 `cancelled` |
-| `forget(sessionKey, messageId)` | 删除单条幂等记录；用于插入 `processing` 后、queue 接受前的 transient 拒绝回滚，以及测试隔离 |
+| `checkAndSet(sessionKey, idempotencyKey)` | 未命中时插入 `processing`；命中时返回现有 status |
+| `markProcessed(sessionKey, idempotencyKey)` | 处理完成后标 `processed` |
+| `markFailed(sessionKey, idempotencyKey)` | 处理失败后标 `failed` |
+| `markCancelled(sessionKey, idempotencyKey)` | pending item 被取消、且尚未开始运行时标 `cancelled` |
+| `forget(sessionKey, idempotencyKey)` | 删除单条幂等记录；用于插入 `processing` 后、queue 接受前的 transient 拒绝回滚，以及测试隔离 |
 | `clearAll()` | 清空内存态；用于进程内测试或重载场景，不对应持久化 GC |
 
 ## 实现分层
 
-`InMemoryIdempotencyStore` 是进程内 baseline：只保存当前进程的 `(sessionKey, messageId) -> status`，提供 `checkAndSet`、状态标记、`forget` 与 `clearAll`。它不实现 TTL、后台 GC、`failed` 可重试窗口，也不跨进程保留状态。
+`InMemoryIdempotencyStore` 是进程内 baseline：只保存当前进程的 `(sessionKey, idempotencyKey) -> status`，提供 `checkAndSet`、状态标记、`forget` 与 `clearAll`。它不实现 TTL、后台 GC、`failed` 可重试窗口，也不跨进程保留状态。
 
 持久化 Store 必须实现本 spec 的 TTL 与 GC；SQLite 字段见 [`persistence.md`](persistence.md) §idempotency。
 
@@ -137,13 +140,14 @@ gcBatchSize = 10000
 
 ## 合约测试
 
-- **首次投递**：全新 (sessionKey, messageId) → 插入 `processing`；业务正常处理后标 `processed`
+- **首次投递**：全新 `(sessionKey, effectiveIdempotencyKey)` → 插入 `processing`；业务正常处理后标 `processed`
 - **重复投递**：同一 fixture 连发两次 → 第二次返回 "hit"，不转发给 session 队列；CC CLI 只被触发一次
+- **稳定键重投**：同一 Lark 文本的稳定字段相同、但 `event_id` / `message_id` 不同 → `idempotencyKey` 相同，只触发一次 agent；`create_time` 不同时不得合并
 - **auth 拒绝不入表**：`auth_denied` 的事件 → idempotency 表**无该 messageId 记录**（防刷表）
 - **入队前拒绝回滚**：限流/预算拒绝或队列满发生在插入 `processing` 之后、queue 接受之前 → 调用 `forget` 删除占位；同 messageId 重放可重新插入 `processing` 并尝试入队
 - **pending 取消**：`/nexus-queue clear` 取消 pending item → 标 `cancelled`；同 messageId 重放命中 terminal duplicate，不重新入队
 - **失败终态**：第一次处理标 `failed` → 同 messageId 重放命中 terminal duplicate，不重新入队
-- **单条 forget**：删除一条 `(sessionKey, messageId)` 记录 → 同 session 其他 messageId 不受影响
+- **单条 forget**：删除一条 `(sessionKey, idempotencyKey)` 记录 → 同 session 其它幂等键不受影响
 - **GC 基线**：插入 10000 条过期条目 → 一轮 GC 清空（在 `gcBatchSize` 之内）
 - **GC 失败降级**：mock SQLite 写入错误 → GC 跳过本轮 + 打 warn；业务不中断
 
@@ -157,7 +161,7 @@ gcBatchSize = 10000
 
 ## 反模式
 
-- Adapter 自己做去重（重复实现，增加平台间不一致）
+- Adapter 自己查询 dedupe store 或丢弃事件（重复实现，增加平台间不一致）
 - auth 后幂等前插入额外检查把 messageId 作为缓存键（扩大攻击面）
 - 去重成功但不落持久化（重启丢失）
 - 用 `messageId` 单字段做主键（跨 session 可能冲突；必须联合 sessionKey）
@@ -165,6 +169,5 @@ gcBatchSize = 10000
 
 ## Out of spec
 
-- 跨平台幂等（未来多平台时发 ADR）
-- 基于内容 hash 的语义去重（仅按平台 messageId，简单可靠）
+- 基于相似度、模糊时间窗或模型判断的通用语义去重；只允许 owner 明确定义的精确平台重投键
 - 分布式场景下的锁协调（本机桌面形态不需要）

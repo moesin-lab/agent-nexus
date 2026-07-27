@@ -1484,6 +1484,40 @@ describe('Engine', () => {
     );
   });
 
+  it('优先使用稳定 idempotencyKey 去重不同 messageId 的同一平台重投', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+      idempotencyStore: new InMemoryIdempotencyStore(),
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    agent.queueEvents([
+      ev('text_final', { text: 'first' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('same logical message', {
+      eventId: 'e-redelivery-1',
+      messageId: 'm-redelivery-1',
+      idempotencyKey: 'lark-text-v1:stable-retry-key',
+    }));
+    await dispatchHandler(makeEvent('same logical message', {
+      eventId: 'e-redelivery-2',
+      messageId: 'm-redelivery-2',
+      idempotencyKey: 'lark-text-v1:stable-retry-key',
+    }));
+
+    expect(agent.sendInput).toHaveBeenCalledTimes(1);
+    expect(platform.send).toHaveBeenCalledTimes(1);
+  });
+
   it('auth_denied 不占用幂等键，后续同 messageId 授权事件仍可处理', async () => {
     const platform = makePlatform();
     const agent = makeAgent();

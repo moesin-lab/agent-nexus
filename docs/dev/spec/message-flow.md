@@ -32,7 +32,7 @@ contracts:
 ## 入站链路（外部 IM → agent 后端）
 
 ```
-[外部 IM 服务，如 Discord gateway]
+[外部 IM 服务，如 Discord gateway / Lark WebSocket]
         │
         │  (1) IM 协议事件
         ▼
@@ -51,7 +51,7 @@ contracts:
   ├─ daemon.auth          权限/白名单检查      (权威源：security/auth.md §权限检查位置)
   │     拒绝 → 不插入幂等表（直接返回）→ 流程终止
   │     通过 ↓
-  ├─ daemon.idempotency.checkAndSet(sessionKey, messageId)
+  ├─ daemon.idempotency.checkAndSet(sessionKey, event.idempotencyKey ?? event.messageId)
   │                                              (权威源：infra/idempotency.md §流程)
   │     命中 "processed" / "failed" / "cancelled" → 丢弃事件
   │     命中 "processing" → 跳过
@@ -109,13 +109,14 @@ contracts:
   │                       AgentEvent{type:usage} → llm_call_finished 结构化日志（字段一一对应）
   ├─ daemon.redact       脱敏（绝对路径/token/secrets）
   │                                              (权威源：security/redaction.md)
-  └─ daemon.sessions     按 sessionKey 切片合并   (权威源：message-protocol.md §切片 +
-                                                  architecture/session-model.md)
+  └─ daemon.sessions     按 sessionKey 聚合流式输出 (权威源：message-protocol.md §流式语义 +
+                                                    architecture/session-model.md)
         │
         │  (3) OutboundMessage（字段权威源：platform-adapter.md §OutboundMessage）
         ▼
 @agent-nexus/platform-<name>.send(sessionKey, OutboundMessage)
   - 把 OutboundMessage 反译为 IM 协议
+  - 按平台预算切片并处理 partial-send
   - 记录 MessageRef（platform-adapter.md §MessageRef）
         │
         │  (4) IM 协议消息
@@ -156,10 +157,10 @@ Claude Code runtime 执行前 permission control
 | 出口位置 | 触发条件 | 行为 | 权威源 |
 |---|---|---|---|
 | auth 拒绝 | 身份不在 allowlist / 公开 channel 转私域失败 | 不插入幂等表，直接返回；打 `auth_denied` 日志 | [`security/auth.md`](security/auth.md) |
-| 幂等命中 "processed" / "failed" / "cancelled" | 重放已有终态的 messageId | 静默丢弃事件 | [`infra/idempotency.md`](infra/idempotency.md) |
+| 幂等命中 "processed" / "failed" / "cancelled" | 重放已有终态的有效幂等键 | 静默丢弃事件 | [`infra/idempotency.md`](infra/idempotency.md) |
 | 幂等命中 "processing" | 上一次还在进行中 | 跳过 | [`infra/idempotency.md`](infra/idempotency.md) |
 | 限流/预算拒绝 | 触发 turn / tool / wallclock / token 硬限或 $ 预算上限 | 流程终止；按策略产生用户提示 | [`infra/cost-and-limits.md`](infra/cost-and-limits.md) |
-| session queue 已满 | 当前 SessionKey pending queue 达到上限 | 拒绝入队并给用户可见提示；该 messageId 的幂等占位回滚 | [`infra/cost-and-limits.md`](infra/cost-and-limits.md) |
+| session queue 已满 | 当前 SessionKey pending queue 达到上限 | 拒绝入队并给用户可见提示；该有效幂等键的占位回滚 | [`infra/cost-and-limits.md`](infra/cost-and-limits.md) |
 | 工具白名单外 | agent 调用未授权工具 | adapter 不转发；产出 `AgentEvent{type: error}` | [`security/tool-boundary.md`](security/tool-boundary.md) §合约测试 |
 | `tool_limit` 命中 | maxToolCallsPerTurn 命中 | daemon 注入 `turn_finished{reason: "tool_limit"}` | [`agent-runtime.md`](agent-runtime.md) §TurnEndReason |
 | `wallclock_timeout` | perInputTimeoutMs 命中 | daemon 注入 `turn_finished{reason: "wallclock_timeout"}` | [`agent-runtime.md`](agent-runtime.md) §TurnEndReason |
@@ -174,7 +175,7 @@ Claude Code runtime 执行前 permission control
 
 入站（权威源：infra/idempotency.md §流程）：
 
-1. **auth 永远先于 idempotency**——拒绝事件不进入幂等表（避免攻击者用 messageId 占位）
+1. **auth 永远先于 idempotency**——拒绝事件不进入幂等表（避免攻击者用平台消息或派生键占位）
 2. **idempotency 先于 限流/预算**——重放事件不应消耗限流配额
 3. **限流/预算 先于 session FIFO 入队**——避免被拒绝的事件排队等待
 4. **同 sessionKey 串行**——见 [`architecture/session-model.md`](../architecture/session-model.md)

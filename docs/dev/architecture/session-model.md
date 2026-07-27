@@ -6,6 +6,7 @@ summary: 说明 SessionKey、状态机、幂等、顺序保证、断线/重启�
 tags: [session, session-model, lifecycle, idempotency, ordering, concurrency]
 related:
   - dev/architecture/overview
+  - dev/spec/platform-adapter
   - dev/spec/message-protocol
   - dev/spec/infra/idempotency
   - dev/spec/infra/persistence
@@ -21,7 +22,7 @@ related:
 
 | 名称 | Owner | 含义 |
 |---|---|---|
-| `TransportSession` | platform adapter | 平台原生会话/interaction/reply context，例如 Discord channel/thread/interaction token |
+| `TransportSession` | platform adapter | 平台原生连接、会话容器与 reply context |
 | `RoutingSession` | daemon | IM 入口到 agent owner 与 opaque agent conversation ref 的路由状态 |
 | `AgentSession` | agent runtime | 当前运行的 agent 后端进程/SDK 句柄 |
 | `AgentConversation` | agent package | agent 原生对话上下文，例如 Codex thread、Claude session |
@@ -51,16 +52,13 @@ RoutingSession 有两层标识：**路由 key**（SessionKey）和**持久化主
 
 SessionKey 维度上的查询索引与唯一约束见 [`persistence.md`](../spec/infra/persistence.md#sessions)。
 
-### Discord thread 的映射
+### 平台会话容器
 
-- **常规 channel 消息**：`channelId = channel.id`
-- **thread 消息**：`channelId = thread.id`（thread 被视为独立容器）
+平台原生字段到 `PlatformSessionKey` 的映射由 [`platform-adapter.md`](../spec/platform-adapter.md) 统一定义。本模型只依赖两个组合不变量：adapter 把平台会话容器映射为稳定的 `channelId`，并把消息发起者映射为稳定的 `initiatorUserId`。
 
-该映射让 thread 作为独立会话容器参与同一套路由、队列与持久化组合。
+支持原生子会话容器的平台把子容器作为独立 SessionKey 参与路由、队列与持久化；父子拓扑只用于 route、auth 与 channel default 继承，不改变 SessionKey 身份。Daemon-owned `/nexus-new-thread` 通过 adapter capability 创建子容器，并把 managed topology metadata 与 RoutingSession 分开保存：rebind 不复制拓扑，首条用户消息才启动 agent，`session_started` 后才写入 opaque agent conversation ref。
 
-Daemon-owned `/nexus-new-thread` 是当前内存态 MVP：daemon 在当前 Discord channel 下创建 private thread，默认把调用者加入 thread，并在独立的内存 thread registry 里记录 `threadId -> parentChannelId / ownerUserId / renameOnFirstPrompt`。这份 registry 是 channel topology 元数据，不随 `/new`、`/nexus-kill` 或 `/nexus-sessions` rebind 复制到其它 SessionKey。用户在该 thread 中发送第一条消息时才启动 agent；`session_started` 后再写入 opaque agent conversation ref。只有创建时未传标题、仍使用默认占位标题的 managed thread，才会 best-effort 把 Discord thread 名称改为第一条用户消息生成的标题；已有标题不会被覆盖。已注册的 managed thread 内消息只允许创建者继续，并用父 channel 执行 binding route 与 channel allowlist 判定。
-
-Discord 上原生存在、但不是 `/nexus-new-thread` 创建或 registry 已丢失的 thread，只通过 `threadParentChannelId` 继承父 channel 的 route/auth；daemon 不会把首个发言者提升为 owner，也不会自动把该 thread 改名。进程重启会丢失内存 thread registry，因此 managed thread 会降级为 native thread fallback：仍可继承父频道 route/auth，但不再保留 owner-only 约束、自动改名能力或 session switcher 列表。
+managed topology metadata 在当前内存态 MVP 中不会跨进程恢复。丢失后，子容器只能依赖 adapter 提供的父容器 context 做 fallback；daemon 不再保留 owner-only、自动命名或 session switcher 占位等 managed 行为。
 
 ### 不在 SessionKey 里的东西
 
@@ -136,11 +134,11 @@ Discord 上原生存在、但不是 `/nexus-new-thread` 创建或 registry 已�
 
 ### 显式结束 / 恢复命令
 
-用户可通过 slash command（命令名在 `platform-adapter.md` 定义）控制状态：
+用户可通过当前平台可用的命令控制状态；命令 owner 与注册规则见 [`command-registry.md`](../spec/command-registry.md)：
 
 - `/end` → Active/Idle/Errored/Interrupted → Archived
 - `/resume` → Errored/Interrupted → Active（会尝试 spawn 新 agent）
-- 用户在新 channel 发消息 → 创建新 SessionKey 的 Created
+- 用户在新的平台会话容器发消息 → 创建新 SessionKey 的 Created
 
 Agent-owned `/new`、`/stop`、`/steer` 等 command 不直接改写本状态机；daemon 只把它们按 command registry 路由给 agent package。若 agent command 结果要求更新 opaque agent conversation ref，daemon 只保存该 opaque ref，不解释 agent conversation 语义。Agent-owned `/new` 会解除当前 SessionKey 的活跃绑定，但保留旧 opaque ref 作为 `/nexus-sessions` 可恢复历史；下一条消息用同一 SessionKey 开新 generation。Daemon-owned `/nexus-kill` 是 RoutingSession 级控制：停止当前 runtime handle、取消 pending items，并让当前 RoutingSession 离开活跃对话区；旧 opaque ref 仍作为 `/nexus-sessions` 可恢复历史保留，直到内存容量淘汰。
 
@@ -152,7 +150,7 @@ RoutingSession 持有的 opaque agent conversation ref 与 live `AgentSession` h
 
 当同一 SessionKey 没有可复用的 live handle 但仍有 opaque ref 时，daemon 启动新的 `AgentSession`，并把该 ref 放进 `SessionConfig.resumeFromAgentSessionId`。
 
-用户把已有 resumable session 绑定到新的 SessionKey 时，daemon 迁移 opaque ref 和下一次 spawn 所需的一次性 override；平台 thread 拓扑仍归原 channel，不随 rebind 复制。
+用户把已有 resumable session 绑定到新的 SessionKey 时，daemon 迁移 opaque ref 和下一次 spawn 所需的一次性 override；平台原生会话拓扑仍归原容器，不随 rebind 复制。
 
 ### Trajectory read model
 
@@ -160,26 +158,27 @@ Trajectory read model 不改变本状态机。它以 RoutingSession / sessionId 
 
 外部 session resume 的架构边界与本节一致：daemon 保存 opaque native ref 并交给 agent runtime resume；外部 transcript 内容不因导入而进入模型上下文。字段、状态和查询契约见 [`trajectory-observability.md`](../spec/infra/trajectory-observability.md)。
 
-当前实现还未落地本文件描述的 SQLite lifecycle registry。内存态 MVP 支持 daemon-owned `/nexus-sessions`：按当前 platform instance + platform + user 列出最近可恢复、且与当前 agent owner 兼容的 opaque agent conversation ref，包括同一 SessionKey 下被 `/new`、`/nexus-kill`、agent binding 切换或 session rebind 挤出活跃区的历史项。下拉项用该 session 的第一条用户消息生成标题；通过 Discord select 选择后，把当前 SessionKey 绑定到所选 `agentSessionId`；下一条消息使用 `SessionConfig.resumeFromAgentSessionId` 恢复。rebind 迁移 opaque ref、agent owner、标题与下一次 spawn override，不复制 thread registry 或其它 channel topology 元数据；不兼容当前 agent owner 的历史不会显示，过期 interaction 也不能跨 backend 重绑。`/nexus-new-thread` 创建的 thread 占位在 agent session 启动前不出现在该列表里。
+当前实现还未落地本文件描述的 SQLite lifecycle registry。内存态 MVP 支持 daemon-owned `/nexus-sessions`：按当前 platform instance + platform + user 及更新时间倒序列出最近可恢复、且与当前 agent owner 兼容的 opaque agent conversation ref，包括同一 SessionKey 下被 `/new`、`/nexus-kill`、agent binding 切换或 session rebind 挤出活跃区的历史项。展示标题取自该 session 的第一条用户消息；用户通过平台支持的交互组件选择后，把当前 SessionKey 绑定到所选 `agentSessionId`，下一条消息使用 `SessionConfig.resumeFromAgentSessionId` 恢复。rebind 迁移 opaque ref、agent owner、标题与下一次 spawn override，不复制平台原生会话拓扑元数据；不兼容当前 agent owner 的历史不会显示，过期 interaction 也不能跨 backend 重绑。daemon-created 容器占位在 agent session 启动前不进入可恢复列表。
 
 内存态 MVP 的容量上限是软上限：当前进程通常最多保留 `100` 条 session 记录；超过上限时只淘汰非活跃历史中 `lastTurnAt` 最早的记录，不为凑上限中断仍活跃的 runtime handle。若活跃记录本身超过上限，记录数可暂时超出；某条记录转为非活跃历史时立即再次执行淘汰。进程重启仍会丢失这份内存态列表。
 
 workingDir 解析分三层：一次性 session override > channel workingDir default > agent config default。`/nexus-working-dir path:<absolute-path>` 默认设置当前 channel/thread 的 channel default；thread 若未设置自己的 default，则继承父 channel 的 default。`/nexus-working-dir ... scope:session` 才在当前原始 SessionKey（channel 或 thread + user）上保存一次性 `nextSession.workingDir`，仅在下一次真正 `startSession` 时消费。thread 继承父频道 binding 只影响 route/auth 与 channel default 读取，不会把 session override 写到父频道 key。workingDir 设置必须是非空绝对路径；不要求位于当前 binding 目标 agent 的默认 `workingDir` 之内。状态变更进入同 SessionKey 的 daemon queue：空闲时可立即完成；若当前 turn 正在运行，则先返回 queued ack，待排到队头后再写入并发送最终结果。由于 SessionKey 包含 platformName、platform、channelId 与 initiatorUserId，channel-scope workingDir 对同频道不同用户不提供全序保证。
 
-`/nexus-settings` 可设置当前 channel/thread 的 agent binding override。override 的路由契约由 [`config-routing.md`](../spec/config-routing.md#运行时-channel-agent-override) 拥有；本模型只依赖其组合结果：切换 agent owner 会解除触发者当前原始 SessionKey 上的活跃绑定，把旧 opaque agent conversation ref 留在 `/nexus-sessions` 历史中，并让下一条消息按新 agent owner 启动或恢复。该列表、thread registry、channel default、agent binding override、一次性 override 与 daemon queue 都随进程重启丢失，不替代 Interrupted / Archived 的持久状态机。
+`/nexus-settings` 可设置当前 channel/thread 的 agent binding override。override 的路由契约由 [`config-routing.md`](../spec/config-routing.md#运行时-channel-agent-override) 拥有；本模型只依赖其组合结果：切换 agent owner 会解除触发者当前原始 SessionKey 上的活跃绑定，把旧 opaque agent conversation ref 留在 `/nexus-sessions` 历史中，并让下一条消息按新 agent owner 启动或恢复。该列表、managed topology registry、channel default、agent binding override、一次性 override 与 daemon queue 都随进程重启丢失，不替代 Interrupted / Archived 的持久状态机。
 
 ## 幂等
 
 ### 为什么需要
 
-Discord gateway 会重发事件（at-least-once）。同一条用户消息可能被 adapter 收到多次；去重能力由 daemon 在入队前提供。
+平台连接可能重发事件。同一条用户消息可能被 adapter 收到多次；去重能力由 daemon 在入队前提供。没有 replay
+cursor 的平台还可能在断线窗口丢失事件，幂等只能消除重复，不能补回缺失。
 
 详细规则、存储、流程与合约测试见独立 spec：[`idempotency.md`](../spec/infra/idempotency.md)。
 
 ### 在本 session 模型中的角色（要点）
 
-- 每条入站 `NormalizedEvent` 带平台消息 ID
-- **Adapter 只负责归一化与投递，不做去重**；由 daemon 在 dispatch 阶段（auth 检查之后、session 入队之前）执行 `checkAndSet(sessionKey, messageId)`
+- 每条 message `NormalizedEvent` 带平台消息 ID；平台重投可能更换消息 ID 时可额外带稳定 `idempotencyKey`
+- **Adapter 只负责归一化、稳定键派生与投递，不做去重决策**；由 daemon 在 dispatch 阶段（auth 检查之后、session 入队之前）执行 `checkAndSet(sessionKey, event.idempotencyKey ?? event.messageId)`
 - 去重键、TTL、存储和 GC 规则见 [`idempotency.md`](../spec/infra/idempotency.md)
 
 ## 顺序保证
@@ -219,7 +218,7 @@ Discord gateway 会重发事件（at-least-once）。同一条用户消息可能
 - `status`：返回当前 key 的 running、pending、recent 计数，并附带 pending item select
 - `clear`：取消当前 key 的全部 pending item；message item 的幂等状态进入 `cancelled`
 - `select`：选择一个 pending item 后显示 `Up` / `Down` / `Edit` / `Cancel`
-- `Edit`：只对 `message` item 开放，修改即将传给 agent 的 prompt；不改变原 Discord message
+- `Edit`：只对 `message` item 开放，修改即将传给 agent 的 prompt；不改变原平台消息
 - `Insert next`：通过 modal 新增一个 synthetic `message` item，插到当前 running 之后、已有 pending 之前；该 item 没有平台 `messageId`，因此不参与入站 messageId 幂等
 - `next`：daemon-owned queue 控制；对当前 active `AgentSession` 调用 `interrupt()`，不删除 RoutingSession 映射，不清空 pending items；当前 running item 收到 terminal 后由 queue 调度下一条 pending
 
@@ -230,12 +229,11 @@ Discord gateway 会重发事件（at-least-once）。同一条用户消息可能
 
 ## 断线与重启恢复
 
-### gateway 断连
+### platform 连接断开
 
-- Discord gateway WebSocket 断开
-- adapter 重连（带 session resume）
-- 期间产生的事件 gateway 会重放 → 幂等表过滤重复
-- session registry **不受影响**（是本地内存 + 持久化，不依赖 gateway 状态）
+- transport 的重连、resume、replay cursor 与可能丢失窗口由 [`platform-adapter.md`](../spec/platform-adapter.md) 的平台专属契约定义
+- daemon 只对 adapter 重新投递的事件执行幂等，不从连接状态推断消息是否已交付
+- session registry **不受影响**（是本地内存 + 持久化，不依赖 platform connection 状态）
 
 ### 进程重启
 
@@ -261,7 +259,7 @@ session 元数据字段、状态枚举、索引、不变量与落盘规则见 [`
 **原子单元**：一次"用户消息 → agent 回复完成"的完整往返。
 
 - 中途 agent 子进程崩溃 → 整体失败，用户收到错误通知
-- 中途 Discord 发送失败 → 已生成的回复仍记入 transcript，可重发
+- 中途平台发送失败 → 已生成的回复仍记入 transcript，可重发
 - 中途用户发新消息（同 session）→ 排队
 
 ## 反模式
@@ -270,6 +268,6 @@ session 元数据字段、状态枚举、索引、不变量与落盘规则见 [`
 - 用 SessionKey 作为持久化主键（Archived 后同 key 新实例会覆盖/冲突；必须用 sessionId）
 - 把 `Interrupted` 当 transient 状态不落盘（重启丢失）
 - 允许同 session 并发处理（会破坏 CC 状态）
-- 不做幂等（gateway 重放会坑你）
-- 依赖 gateway 连接状态判断 session 是否 alive（分开管理）
+- 不做幂等（平台重投会导致重复处理）
+- 依赖 transport 连接状态判断 session 是否 alive（分开管理）
 - 把预算/限流放在 session 外部全局管（必须归因到 session）

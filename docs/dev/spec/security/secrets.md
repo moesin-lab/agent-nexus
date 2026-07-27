@@ -32,9 +32,10 @@ related:
 
 ## 命名与约定
 
-- 所有密钥名带明确前缀：`ANTHROPIC_API_KEY`、`DISCORD_BOT_TOKEN`
+- 所有密钥名带明确前缀：`ANTHROPIC_API_KEY`、`DISCORD_BOT_TOKEN`、`LARK_APP_SECRET`
 - 启动时加载，内存保留最短必要时间
 - 密钥变量在内存中应包装为 secret string 类型（避免 accidentally log）
+- Lark config 只保存 `appSecretRef`；loader 解析后把 secret 直接注入官方 SDK constructor，不回写 config / SQLite
 
 ## 禁止写入清单
 
@@ -45,20 +46,20 @@ related:
 | SQLite（任何表、任何字段） | 本地文件虽 `0600`，但与业务数据不隔离 |
 | 任何日志文件 | 跨日期轮转难彻底清理 |
 | Transcript 文件 | 长期保留、用户可能导出 |
-| IM 消息（发给用户） | Discord 侧立刻公开 |
+| IM 消息（发给用户） | Discord / Lark 侧会立刻对收件人可见 |
 | 错误栈 / trace | 栈里出现时拦截并替换为 `<redacted>`（由 [`redaction.md`](redaction.md) 实现） |
 | `.data/` / `cache/` 任何子目录 | 同 SQLite 理由 |
 
 ## 轮换
 
-- Bot token 轮换：重启进程即生效
-- 旧 token 应被用户在平台侧作废，本程序不主动做
+- Bot token / app secret 轮换：重启进程即生效
+- 旧 credential 应被用户在平台侧作废，本程序不主动做
 - 未来如支持热重载密钥，需独立 ADR
 
 ## 启动自检
 
 - 所有必需密钥能加载（否则退出并提示**来源层级**，不提示值）
-- 加载来源层级必须一致（禁止 Anthropic 走 env、Discord 走 file 这种混合；避免忘配项）
+- 同一 secret 集合的加载来源层级必须一致（禁止 Anthropic 走 env、Discord/Lark 走 file 这种混合；避免忘配项）
 
 ## 合约测试
 
@@ -67,6 +68,7 @@ related:
 - **file 回退**：前两层 miss → 读 file；文件权限不是 `0600` 时启动失败
 - **日志无泄露**：构造含密钥的错误栈 → 日志里无原文（redactor 配合）
 - **SQLite 无密钥**：启动后 dump 所有表，断言无密钥模式匹配
+- **Lark secret ref**：config 只含 `appSecretRef`；SDK fake 收到 secret 值但日志、错误、SQLite 与 transcript 均无原文
 
 ## 反模式
 

@@ -40,7 +40,7 @@ describe('InMemoryIdempotencyStore', () => {
     });
   });
 
-  it('keys records by the routed session key and messageId pair', () => {
+  it('keys records by the routed session key and idempotency key pair', () => {
     const store = new InMemoryIdempotencyStore();
     const otherSessionKey = withPlatformName(
       {

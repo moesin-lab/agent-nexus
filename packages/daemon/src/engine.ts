@@ -658,18 +658,18 @@ export class Engine {
       );
       return Promise.resolve();
     }
-    const idempotencyMessageId = event.messageId;
-    if (this.idempotencyStore && idempotencyMessageId) {
+    const idempotencyKey = event.idempotencyKey?.trim() || event.messageId;
+    if (this.idempotencyStore && idempotencyKey) {
       const decision = this.idempotencyStore.checkAndSet(
         routedSessionKey,
-        idempotencyMessageId,
+        idempotencyKey,
       );
       if (decision.kind === 'hit') {
         this.logger.info(
           {
             traceId: event.traceId,
             sessionKey: serializeSessionKey(routedSessionKey),
-            messageId: idempotencyMessageId,
+            messageId: event.messageId,
             status: decision.status,
           },
           'idempotency_hit',
@@ -680,7 +680,7 @@ export class Engine {
         {
           traceId: event.traceId,
           sessionKey: serializeSessionKey(routedSessionKey),
-          messageId: idempotencyMessageId,
+          messageId: event.messageId,
         },
         'idempotency_insert',
       );
@@ -695,16 +695,16 @@ export class Engine {
         kind: 'message',
         traceId: event.traceId,
         label: this.queueLabelForEvent(event),
-        ...(idempotencyMessageId ? { eventId: idempotencyMessageId } : {}),
+        ...(event.messageId ? { eventId: event.messageId } : {}),
         ...(event.text ? { editableText: event.text } : {}),
         onEdit: (text) => {
           queuedMessage.text = text;
         },
         onCancel: () => {
-          if (this.idempotencyStore && idempotencyMessageId) {
+          if (this.idempotencyStore && idempotencyKey) {
             this.idempotencyStore.markCancelled(
               routedSessionKey,
-              idempotencyMessageId,
+              idempotencyKey,
             );
           }
         },
@@ -716,17 +716,17 @@ export class Engine {
               this.withQueuedText(routedEvent, queuedMessage.text),
               agentSlot,
             );
-            if (this.idempotencyStore && idempotencyMessageId) {
+            if (this.idempotencyStore && idempotencyKey) {
               this.idempotencyStore.markProcessed(
                 routedSessionKey,
-                idempotencyMessageId,
+                idempotencyKey,
               );
             }
           } catch (err) {
-            if (this.idempotencyStore && idempotencyMessageId) {
+            if (this.idempotencyStore && idempotencyKey) {
               this.idempotencyStore.markFailed(
                 routedSessionKey,
-                idempotencyMessageId,
+                idempotencyKey,
               );
             }
             throw err;
@@ -737,8 +737,8 @@ export class Engine {
       inboundAck = this.acknowledgeInboundMessage(routedEvent, keyStr);
     } catch (err) {
       if (err instanceof QueueFullError) {
-        if (this.idempotencyStore && idempotencyMessageId) {
-          this.idempotencyStore.forget(routedSessionKey, idempotencyMessageId);
+        if (this.idempotencyStore && idempotencyKey) {
+          this.idempotencyStore.forget(routedSessionKey, idempotencyKey);
         }
         this.logger.warn(
           {
@@ -758,7 +758,7 @@ export class Engine {
           {
             traceId: event.traceId,
             sessionKey: keyStr,
-            messageId: idempotencyMessageId,
+            messageId: event.messageId,
           },
           'message_queue_cancelled',
         );

@@ -5,6 +5,7 @@ status: active
 summary: platforms[] / agents[] / bindings 的配置 schema、owner 校验边界、路由匹配语义、热重载与迁移规则
 tags: [spec, config, routing, platform, agent]
 related:
+  - dev/adr/0019-lark-platform-via-official-node-sdk
   - dev/adr/0015-multi-platform-agent-config
   - dev/spec/platform-adapter
   - dev/spec/agent-runtime
@@ -128,17 +129,28 @@ label/path/value 后让用户猜字段含义。
 ## PlatformConfig
 
 ```text
-PlatformConfig {
-    name: string                      // 全局唯一，稳定实例名
-    type: "discord"                   // 当前支持的首个类型
-    auth: PlatformAuthConfig          // 必填；由 daemon.auth owner parser 校验
+PlatformConfig = DiscordPlatformConfig | LarkPlatformConfig
 
-    // type="discord" owner 字段，由 platform-discord parser 校验
+PlatformConfigBase {
+    name: string                      // 全局唯一，稳定实例名
+    type: "discord" | "lark"
+    auth: PlatformAuthConfig          // 必填；由 daemon.auth owner parser 校验
+}
+
+DiscordPlatformConfig extends PlatformConfigBase {
+    type: "discord"
     botUserId: string
     tokenRef: string                  // secret ref 名称，不是 token 值
     statePath?: path
     testGuildId?: string
     publicChannelMode?: "disabled" | "thread" | "public"
+}
+
+LarkPlatformConfig extends PlatformConfigBase {
+    type: "lark"
+    appId: string                     // 飞书自建应用 ID；不是 secret
+    appSecretRef: string              // secret ref 名称，不是 app secret 值
+    botOpenId: string                 // 期望的 bot open_id，用于启动时阻止应用身份漂移
 }
 ```
 
@@ -147,11 +159,14 @@ PlatformConfig {
 | 字段 | 规则 |
 |---|---|
 | `name` | 非空字符串；在 `platforms[]` 内唯一；用于日志、routing table 与 session key partition |
-| `type` | 当前只允许 `"discord"`；未知 type 启动失败 |
+| `type` | 允许 `"discord"` / `"lark"`；未知 type 启动失败 |
 | `auth` | 实例级授权配置；必填；字段语义见 §PlatformAuthConfig |
-| `tokenRef` | secret ref 名称；loader 只能用它定位 secret 文件 / secret provider，不得接受明文 token |
-| `statePath` | 可选；缺省由 CLI 以 `<home>` 与 platform `name` 派生，默认路径与编码规则见 [`persistence.md`](infra/persistence.md#目录结构)，避免多 bot 共用同一 state 文件；显式路径在 `platforms[]` 内重复时 fail-closed |
+| `tokenRef` | Discord owner 字段；secret ref 名称，loader 只能用它定位 secret provider，不得接受明文 token |
+| `statePath` | Discord owner 字段；缺省由 CLI 以 `<home>` 与 platform `name` 派生，显式路径在 Discord 实例间重复时 fail-closed |
 | `publicChannelMode` | Discord 公开 channel 策略；缺省 `thread`；字段语义见 [`security/auth.md`](security/auth.md) |
+| `appId` | Lark owner 字段；固定 SDK 1.70.0 的 `WSClient.start()` 硬校验 `^cli_[0-9a-fA-F]{16}$`；不是 secret；Lark 实例间不得重复 |
+| `appSecretRef` | Lark owner 字段；secret ref 名称，loader 只能用它定位 secret provider，不得接受明文 app secret |
+| `botOpenId` | Lark owner 字段；必须是 `ou_` 开头的 bot open_id；启动自检必须与 app 实际 identity 一致；Lark 实例间不得重复 |
 
 ## PlatformAuthConfig
 
@@ -213,11 +228,18 @@ PlatformBinding {
 
 PlatformMatchSpec {
     // platformName 指向 type="discord" 时必填，由 platform-discord parser 校验
-    discord: DiscordMatchSpec
+    discord?: DiscordMatchSpec
+
+    // platformName 指向 type="lark" 时必填，由 platform-lark parser 校验
+    lark?: LarkMatchSpec
 }
 
 DiscordMatchSpec {
     channelIds: string[]              // 非空；命中 event.sessionKey.channelId
+}
+
+LarkMatchSpec {
+    chatIds: string[]                 // 非空；命中 event.sessionKey.channelId
 }
 ```
 
@@ -229,14 +251,21 @@ DiscordMatchSpec {
 | `platformName` | 必填；必须引用存在的 `platforms[].name` |
 | `agentName` | 必填；必须引用存在的 `agents[].name` |
 | `match.discord.channelIds` | Discord channel allow/bind 条件；非空字符串数组；命中 `event.sessionKey.channelId` |
+| `match.lark.chatIds` | 飞书 P2P chat bind 条件；非空字符串数组；命中 `event.sessionKey.channelId` |
 
 Discord 当前最小 binding 条件只支持 `channelIds`。用户、角色、guild、DM、公开 channel 策略全部属于
 `PlatformAuthConfig` / `daemon.auth`，不属于 routing matcher。若配置了未知 binding 条件字段，loader 必须
 fail-closed，错误消息包含字段路径。
 
+Lark 首版只支持 P2P chat，binding 必须显式列出 `match.lark.chatIds`。`chatIds` 不是授权替代品；用户
+`open_id` 仍由 `PlatformAuthConfig` 校验。同一 bot app 只建一个 platform instance；官方长连接对同 app 多 client
+采用 cluster 分发而非广播，需要路由到多个 agent 时增加 bindings，不得用重复 `appId` / `botOpenId` 启动多个 client。
+
 ### 空条件禁止
 
-每条 Discord binding 必须显式列出至少一个 `match.discord.channelIds`。禁止用"无条件 catch-all binding"伪装默认 agent；需要全频道开放时必须显式列出 channel 或由后续 ADR/spec 定义可审计的 allow-all 语法。
+每条 binding 必须按 platform type 显式列出至少一个 Discord `channelIds` 或 Lark `chatIds`。禁止用
+"无条件 catch-all binding"伪装默认 agent；需要全频道开放时必须显式列出 channel/chat，或由后续
+ADR/spec 定义可审计的 allow-all 语法。
 
 ### 暂不支持的条件
 
@@ -282,10 +311,15 @@ RoutingEntry {
 PlatformMatchSpec {
     // discriminated by platformType
     discord?: DiscordMatchSpec
+    lark?: LarkMatchSpec
 }
 
 DiscordMatchSpec {
     channelIds: string[]
+}
+
+LarkMatchSpec {
+    chatIds: string[]
 }
 ```
 
@@ -313,7 +347,7 @@ RouteContext {
 
 1. 只考虑 `entry.platformName == context.platformName` 的 routing entries。
 2. 按 `platformType` 调用 platform owner 的 match 函数。
-3. `event.sessionKey.channelId` 必须在 `channelIds` 内。
+3. Discord 的 `event.sessionKey.channelId` 必须在 `channelIds` 内；Lark 的必须在 `chatIds` 内。
 4. 匹配结果数量为 1 时，返回该 `agentName`。
 5. 匹配结果数量为 0 时，拒绝 dispatch，打结构化日志 `route_not_found`。
 6. 匹配结果数量大于 1 时，拒绝 dispatch，打结构化日志 `route_ambiguous`。
@@ -421,10 +455,11 @@ platformName + platform + channelId + initiatorUserId
 
 ## Secret 规则
 
-- platform 配置只接受 `tokenRef`，不接受 token 明文。
-- 示例配置不得包含真实 token 值。
+- Discord platform 配置只接受 `tokenRef`，不接受 token 明文。
+- Lark platform 配置保存非 secret 的 `appId` / `botOpenId` 与 `appSecretRef`；app secret 仍由 agent-nexus secret provider 加载，边界见 [`security/secrets.md`](security/secrets.md)。
+- 示例配置不得包含真实 token / app secret 值。
 - secret ref 的解析与文件权限继续遵守 [`security/secrets.md`](security/secrets.md)。
-- 多个 platform 实例可引用不同 tokenRef；引用同一 tokenRef 允许，但日志只打印 ref 名称，不打印 token 内容。
+- 多个 Discord platform 实例可引用不同 tokenRef；引用同一 tokenRef 允许，但日志只打印 ref 名称，不打印 token 内容。
 
 ## 错误分类
 
@@ -441,6 +476,8 @@ platformName + platform + channelId + initiatorUserId
 | binding 引用不存在 platform / agent | loadConfig | `ConfigError`，含 binding 字段路径 |
 | binding 条件为空 | owner parser | `ConfigError`，含 binding 字段路径 |
 | binding 条件非法 | owner parser | `ConfigError`，含 binding 字段路径 |
+| Lark `appId` / `appSecretRef` / `botOpenId` 缺失、非法，或 app/bot ID 重复 | owner parser | `ConfigError`，含 platform 字段路径 |
+| Lark `auth.allowlist.userIds` 为空 | owner parser | `ConfigError`；P2P 首版不能靠 guild / role / chat ID 代替用户授权 |
 | route 未命中 | dispatch | `route_not_found` 日志；不调用 agent |
 | route 多重命中 | dispatch | `route_ambiguous` 日志；不调用 agent |
 
@@ -452,15 +489,16 @@ loader / router 合约测试必须覆盖：
 2. `platforms[].auth.allowlist` 缺失、ID 列表全空、非法字段走 `ConfigError`，且字段路径清楚。
 3. binding 引用不存在 platform / agent。
 4. agent owner 字段缺失、inactive backend 块存在。
-5. Discord binding `match.discord.channelIds` 非空字符串数组校验。
+5. Discord binding `match.discord.channelIds` 与 Lark binding `match.lark.chatIds` 非空字符串数组校验；平台类型与 match owner 不一致时 fail-closed。
 6. legacy config 被清晰拒绝。
 7. routing 0 命中、1 命中、多命中三分支；未授权用户走 `auth_denied` 而不是 `route_not_found`。
-8. 两个同 type platform 实例在 session 隔离迁移完成后可被解析；statePath 由 platform name 派生，互不复用；显式重复 statePath 按 `ConfigError` fail-closed。
-9. secret 示例与日志不包含 token 明文。
+8. 两个同 type platform 实例在 session 隔离迁移完成后可被解析；Discord statePath 由 platform name 派生且显式重复时 fail-closed；Lark 实例用不同 `appId` / `botOpenId` 选择 app，任一重复时 fail-closed。
+9. secret 示例与日志不包含 token / app secret 明文。
+10. Lark `auth.allowlist.userIds` 必须非空；只配置 role / guild / chat ID 时 fail-closed。
 
 session 隔离合约测试必须覆盖：
 
-1. 两个 Discord platform 实例的同 channel/user 不共享 session key。
+1. 两个 Discord 或两个 Lark platform 实例的同 channel/chat + user 不共享 session key。
 2. route decision 后续 auth、idempotency、session 队列与出站发送沿用同一个 `platformName`。
 
 配置热重载合约测试必须覆盖：

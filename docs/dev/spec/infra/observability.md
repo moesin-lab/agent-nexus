@@ -74,6 +74,12 @@ MVP 阶段不引入独立的 metric/tracing backend。所有观测从结构化�
 | `gateway_connected` | Discord gateway 建立 | `latencyMs` |
 | `gateway_disconnected` | 断连 | `reason`, `durationMs` |
 | `gateway_reconnecting` | 重连尝试 | `attempt` |
+| `platform_connection_ready` | 非 gateway transport 已 ready | `platform`, `platformName`, `transport`, `latencyMs` |
+| `platform_connection_lost` | 非 gateway transport 意外断开 | `platform`, `platformName`, `transport`, `reason`, `durationMs` |
+| `platform_connection_retrying` | 非 gateway transport 退避重连 | `platform`, `platformName`, `transport`, `attempt`, `backoffMs` |
+| `platform_connection_restored` | 非 gateway transport 恢复 | `platform`, `platformName`, `transport`, `outageDurationMs`, `possibleLossWindowMs?` |
+| `platform_connection_failed` | 非 gateway transport 自动恢复终止 | `platform`, `platformName`, `transport`, `code`, `retryable` |
+| `platform_start_failed` | adapter 启动自检/ready 失败 | `platform`, `platformName`, `stage`, `code`, `retryable` |
 | `inbound_received` | 收到 IM 事件 | `rawContentType`, `sizeBytes` |
 | `inbound_normalized` | 归一化完成 | `type` |
 | `idempotency_hit` | 幂等命中 | `status` |
@@ -114,6 +120,10 @@ MVP 阶段不引入独立的 metric/tracing backend。所有观测从结构化�
 | `circuit_opened` | 熔断触发 | `sessionKey`, `reason`, `consecutiveFailures` |
 | `circuit_reset` | 熔断恢复 | `sessionKey`, `cooldownMs` |
 | `error_reported` | 通用错误 | `errorKind`, `code`, `cause` |
+
+Lark SDK adapter 的 `transport="lark-node-sdk-ws"`。这些 platform lifecycle 事件不得携带 SDK raw event、
+request/response body、app secret、token 或消息正文；错误详情只使用 platform-adapter spec 登记的稳定 code 与
+脱敏 cause。
 
 ¹ `status` 直接透传 [`agent-runtime.md`](../agent-runtime.md) §AgentEvent 定义的工具调用终态字符串值（字段值 1:1 一致、不做格式转换、不另定义值域）；所有取值及其语义按该 owner 解释，日志侧仅记录。
 

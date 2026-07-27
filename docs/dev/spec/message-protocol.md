@@ -216,28 +216,15 @@ daemon → adapter 的出站消息。见 [`platform-adapter.md`](platform-adapte
 
 ### 文本切片
 
-Adapter 按 `CapabilitySet.maxTextLength` 执行平台单条消息预算。超过时：
+Adapter 按 `CapabilitySet.maxTextLength` 执行平台单条消息预算。切片必须满足：
 
-1. 按段落（`\n\n`）分割
-2. 每段不超过 `CapabilitySet.maxTextLength - 50`（预留标记）
-3. 仍超长的段按 `\n` 分；还不行按字符
-4. 每段首行加 `[续 N/M]` 标记（可选；在 spec/observability 里的实验开关控制）
-5. 各段保持代码块（```) 的边界（不在代码块中间切）
+- 每片不超过平台声明的 UTF-16 code unit 预算
+- 按发送顺序拼接所有 slice 后等于原文，不截断、不添加续传标记
+- 正常平台预算下不在 surrogate pair 中间切分；grapheme cluster 是否保持完整由平台专属契约定义
 
-切片由 adapter 在平台发送边界执行并聚合 `MessageRef.messageIds`；daemon 只传完整 `OutboundMessage`，
-不得复制平台长度与 partial-send 语义。可复用的纯切片算法可以下沉公共 helper，但 message id 聚合与中途失败
-仍由具体 adapter 负责。
-
-### 代码块
-
-- CC CLI 输出的代码块用 ``` 包围
-- 切片不得破坏代码块：要切就切在 ``` 外
-- 代码块超长单独发附件（`.txt`）而非截断
-
-### 附件
-
-- 由 adapter 决定走内联（<8MB）还是 CDN（>8MB）
-- daemon 产出 `OutboundAttachment { content, filename, contentType }`
+切片由 adapter 在平台发送边界执行并按顺序聚合 `MessageRef.messageIds`；daemon 只传完整
+`OutboundMessage`，不得复制平台长度、message id 聚合或 partial-send 语义。段落、代码块、附件 fallback 与
+中途失败重试若存在，必须由具体 adapter 专属段定义，不能从本通用协议推断。
 
 ## 流式语义
 
@@ -318,9 +305,9 @@ daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `t
 
 - 平台事件 fixture → NormalizedEvent 的 JSON 快照比对
 - 带 `responseTarget` 的事件 → queue-full、文本命令反馈与 agent 输出均携带相同 `OutboundMessage.replyTo`
-- 切片算法：构造 5000 字符文本，分片后拼接 == 原文
+- 切片算法：构造超过平台预算的文本，每片不超预算且按顺序拼接后等于原文
 - 幂等：同 fixture 两次投递，第二次被 idempotency 层拦下
-- 顺序：同 session 的事件即使乱序到达，也按 sequence 串行处理
+- 顺序：同 session 按 adapter 调用 handler 的到达顺序串行处理，不按 eventId 或平台时间戳重排
 
 ## 反模式
 

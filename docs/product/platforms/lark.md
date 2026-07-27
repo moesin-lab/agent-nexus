@@ -22,6 +22,7 @@ related:
 - 一个飞书话题对应一个独立 session；话题群主时间线消息不会进入 agent
 - 只发送纯文本消息，长回复按 4000 个 UTF-16 code unit 切片
 - 支持把纯文本 `/new` 或 `/new <prompt>` 作为新会话入口
+- 话题仍保留在飞书 UI；当前 agent conversation ref 只在 daemon 内存中，进程重启后下一条消息从新会话开始
 - 不支持图片/文件、卡片、富文本、消息编辑、删除、reaction、typing indicator 或飞书原生 slash command
 
 ## 创建飞书自建应用

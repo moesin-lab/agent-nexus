@@ -47,6 +47,7 @@ related:
 | 判一个测试写法是否合格 | `docs/dev/standards/testing.md` |
 | 改 / 跑 eval（对话质量回归） | `docs/dev/testing/eval.md` |
 | 写 / 维护 fixture | `docs/dev/testing/fixtures.md` |
+| 改 slash command 声明、注册或文本降级 | `docs/dev/spec/command-registry.md` |
 | 开 PR / review 触发 | `docs/dev/process/code-review.md` |
 | commit 流程编排（合并策略 / stacked PR） | `docs/dev/process/commit-and-branch.md` |
 | 写 commit message / PR title / 给分支命名 | `docs/dev/standards/commit-style.md` |

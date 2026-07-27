@@ -11,8 +11,10 @@
 ## 先看哪里
 
 - 决策：[`../../../docs/dev/adr/0019-lark-platform-via-official-node-sdk.md`](../../../docs/dev/adr/0019-lark-platform-via-official-node-sdk.md)
+- 话题 session 决策：[`../../../docs/dev/adr/0020-lark-thread-as-session-container.md`](../../../docs/dev/adr/0020-lark-thread-as-session-container.md)
 - Platform adapter 契约：[`../../../docs/dev/spec/platform-adapter.md`](../../../docs/dev/spec/platform-adapter.md)
 - 归一化消息协议：[`../../../docs/dev/spec/message-protocol.md`](../../../docs/dev/spec/message-protocol.md)
+- command 注册与文本降级：[`../../../docs/dev/spec/command-registry.md`](../../../docs/dev/spec/command-registry.md)
 - 配置与路由契约：[`../../../docs/dev/spec/config-routing.md`](../../../docs/dev/spec/config-routing.md)
 - 身份与 allowlist：[`../../../docs/dev/spec/security/auth.md`](../../../docs/dev/spec/security/auth.md)
 - import 方向：[`../../../docs/dev/architecture/dependencies.md`](../../../docs/dev/architecture/dependencies.md)

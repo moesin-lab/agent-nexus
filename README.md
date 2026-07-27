@@ -151,10 +151,10 @@ Discord 启动成功后，在绑定的 channel 里发送：
 | 命令 | 用途 |
 |---|---|
 | `@bot <prompt>` | 向当前绑定的 agent 发送一轮对话 |
-| `@bot /new` | 清空当前 route 的会话 |
+| `@bot /new` | 开启新会话，旧会话退出活跃区 |
 | `/claudecode-new` / `/codex-new` | 为对应后端开启新会话 |
 | `/claudecode-stop` / `/codex-stop` | 停止对应后端当前任务 |
-| `/nexus-kill` | 终止当前 Nexus route 并清除 resume 记录 |
+| `/nexus-kill` | 终止当前 Nexus route，旧会话保留在可恢复历史 |
 | `/nexus-sessions` | 查看并切换可恢复 session |
 | `/nexus-new-thread` | 创建 Discord private thread 作为新会话容器 |
 | `/nexus-working-dir` | 设置 channel 或下一次 session 的 working directory |

@@ -174,7 +174,7 @@ chmod 600 ~/.agent-nexus/config.json
 | `daemon.commandRegistry.registration.retry.maxAttempts` / `backoffMs` | 否 | 默认 `3` / `1000`；启动时注册计划 apply 的重试策略 |
 | `daemon.commandRegistry.aliases.singleAgent.enabled` | 否 | 默认 `true`；控制裸 `/new` / `/stop` single-agent slash alias，不影响 `/codex-new` / `/codex-stop` / `/claudecode-new` / `/claudecode-stop` |
 | `daemon.commandRegistry.aliases.legacy.replyMode` | 否 | 默认 `true`；控制 legacy `/reply-mode` 是否注册，不影响 `/discord-reply-mode` |
-| `daemon.commandRegistry.textPrefixes.newSession` | 否 | 默认 `true`；控制 `@bot /new` 文本前缀，不影响 slash command |
+| `daemon.commandRegistry.textPrefixes.newSession` | 否 | 默认 `true`；控制普通消息中的 `/new` 文本前缀，不影响 slash command |
 | `daemon.trajectory.externalImport.enabled` | 否 | 默认 `false`；关闭时 `/nexus-external-sessions` 不扫描任何 root |
 | `daemon.trajectory.externalImport.sources` | 否 | 默认 `[]`；配置显式 JSONL root 和 `projectPathAllowlist`，不会自动扫描整个 home |
 | `ui.toolMessages` | 否 | 默认 `append`；工具调用追加为独立消息并在结果到达时编辑该工具消息。设为 `compact` 可回到旧式紧凑显示 |

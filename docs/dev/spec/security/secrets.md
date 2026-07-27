@@ -2,7 +2,7 @@
 title: Spec：Secrets（密钥管理）
 type: spec
 status: active
-summary: OS keychain / env / 文件三层存储；命名前缀；禁止写入清单；轮换策略
+summary: 实例 home 下 0600 secret 文件的加载、引用命名、禁止写入清单与轮换策略
 tags: [spec, security, secrets]
 related:
   - dev/spec/security/README
@@ -15,26 +15,24 @@ related:
 
 定义密钥的获取与约束。配套 [`redaction.md`](redaction.md)（出口过滤）、[`persistence.md`](../infra/persistence.md)（禁止落盘项）、[`observability.md`](../infra/observability.md)（禁止打印字段）共同构成"防泄露"体系。
 
-对应模块：`daemon.secrets`。
+对应实现：CLI 组装层的 secret loader；platform config 只持有 secret ref。
 
-## 存储层级（优先顺序）
+## 存储与加载
 
-启动时按顺序查找，前一级命中即停：
+当前只支持文件 provider：
 
-1. **OS keychain**（推荐）
-   - macOS：Keychain
-   - Linux：`libsecret` / `secret-service`
-   - Windows：Credential Manager
-2. **环境变量**
-3. **文件**：实例根路径下的 `secrets/<name>`，权限 `0600`；实例根路径见 [`persistence.md`](../infra/persistence.md#存储根路径)
+- 路径：实例根路径下的 `secrets/<name>`；实例根路径见 [`persistence.md`](../infra/persistence.md#存储根路径)
+- secret ref 只能是名称，不能包含路径分隔符或目录跳转
+- secret 文件权限必须精确为 `0600`；缺失、空文件或权限不符时启动失败
+- 启动日志记录 `source=file` 与 platform instance 名，不记录 secret 值
+- 不读取同名环境变量，也不访问 OS keychain
 
-启动时在日志里记录**来源**（来源本身，例 "keychain"、"env"、"file"；**不含值**）。
+新增其它 provider 或优先级前，必须先扩展本契约与合约测试，不能静默改变同名 ref 的解析来源。
 
 ## 命名与约定
 
-- 所有密钥名带明确前缀：`ANTHROPIC_API_KEY`、`DISCORD_BOT_TOKEN`、`LARK_APP_SECRET`
+- 建议使用平台可识别前缀，例如 `DISCORD_BOT_TOKEN`、`FEISHU_APP_SECRET`；ref 语法只强制安全文件名规则
 - 启动时加载，内存保留最短必要时间
-- 密钥变量在内存中应包装为 secret string 类型（避免 accidentally log）
 - Lark config 只保存 `appSecretRef`；loader 解析后把 secret 直接注入官方 SDK constructor，不回写 config / SQLite
 
 ## 禁止写入清单
@@ -58,14 +56,13 @@ related:
 
 ## 启动自检
 
-- 所有必需密钥能加载（否则退出并提示**来源层级**，不提示值）
-- 同一 secret 集合的加载来源层级必须一致（禁止 Anthropic 走 env、Discord/Lark 走 file 这种混合；避免忘配项）
+- 所有 platform 引用的 secret 文件都能加载，否则退出并提示 ref 对应路径，不提示值
+- 多个 platform 可以引用同一文件；同一进程内相同 ref 只需加载一次
 
 ## 合约测试
 
-- **keychain 命中**：fixture keychain 中有 key → 不读 env / 不读 file
-- **env 回退**：keychain miss → 读 env；日志记 `source=env`
-- **file 回退**：前两层 miss → 读 file；文件权限不是 `0600` 时启动失败
+- **文件加载**：合法 ref 只读取 `<home>/secrets/<name>`；日志记 `source=file`
+- **fail-closed**：文件缺失、为空、权限不是 `0600` 或 ref 含路径分隔符时启动失败
 - **日志无泄露**：构造含密钥的错误栈 → 日志里无原文（redactor 配合）
 - **SQLite 无密钥**：启动后 dump 所有表，断言无密钥模式匹配
 - **Lark secret ref**：config 只含 `appSecretRef`；SDK fake 收到 secret 值但日志、错误、SQLite 与 transcript 均无原文
@@ -79,6 +76,7 @@ related:
 
 ## Out of spec
 
+- OS keychain、环境变量与远程 secret manager provider
 - 加密存储 SQLite 文件（本机 `0600` 权限够用）
 - 多因素认证（与本机桌面形态不匹配，见 ADR-0003）
 - HSM / KMS 集成（MVP 未考虑）

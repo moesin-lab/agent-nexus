@@ -14,7 +14,7 @@ related:
 
 ## 关机后 bot 还会响应吗？
 
-不会。agent-nexus 是本机进程，不是云服务。电脑关机、进程退出或网络断开后，Discord bot 不会继续处理消息。
+不会。agent-nexus 是本机进程，不是云服务。电脑关机、进程退出或网络断开后，Discord / 飞书 bot 都不会继续处理消息。
 
 ## 为什么 bot 不响应我的消息？
 
@@ -30,15 +30,17 @@ Discord 按顺序检查：
 
 1. 应用是否启用机器人、使用长连接订阅 `im.message.receive_v1`，并已发布到当前用户可用范围。
 2. 日志是否出现 `platform_connection_ready`、`platform=lark` 和 `engine_started`。
-3. 消息是否为机器人单聊中的纯文本。
-4. `bindings[].match.lark.chatIds` 是否包含当前 `chat_id`。
+3. 消息是否为机器人单聊纯文本，或带非空 `thread_id` 的话题群纯文本。
+4. `bindings[].match.lark.chatIds` 是否包含当前 P2P `chat_id` 或话题父群 `chat_id`。
 5. `platforms[].auth.allowlist.userIds` 是否包含发送者 `open_id`。
 
 ## 多个用户能共用一个 bot 吗？
 
-可以把多个 Discord user id 写进 `platforms[].auth.allowlist.userIds`，也可以用 `roleIds` 授权一组用户。daemon RoutingSession 按 `(platformName, platform, channelId, userId)` 隔离，不同用户不会共享同一个 route；agent conversation 的内部复用由绑定的 agent package 处理。
+可以把多个 Discord user id 或飞书用户 `open_id` 写进 `platforms[].auth.allowlist.userIds`；Discord 还可以用
+`roleIds` 授权一组用户。daemon RoutingSession 按 `(platformName, platform, channelId, userId)` 隔离，不同用户
+不会共享同一个 route；agent conversation 的内部复用由绑定的 agent package 处理。
 
-## 为什么 `allowedUserIds` 必填？
+## 为什么用户 allowlist 必填？
 
 agent-nexus 能驱动本机 Claude Code 读写文件。漏配用户白名单时直接拒绝启动，比“默认所有人都能用”安全。
 
@@ -48,7 +50,9 @@ agent-nexus 能驱动本机 Claude Code 读写文件。漏配用户白名单时�
 
 ## 支持 Codex CLI 吗？
 
-支持。要启用 Codex，在 `agents[]` 里新增或修改一个 `backend: "codex"` 的 agent，并填写 `agents[].codex.workingDir`；再用 `bindings[]` 把 Discord channel 绑定到这个 agent。Codex backend 使用 `codex exec --json` / `codex exec resume`。启动时默认只跑快速 compatibility probe：检查 `codex --version` 与 help 里是否有必需 flag，不发起真实模型 turn；本机未安装 Codex CLI 或 CLI 形态不匹配时会拒绝启动。
+支持。要启用 Codex，在 `agents[]` 里新增或修改一个 `backend: "codex"` 的 agent，并填写 `agents[].codex.workingDir`；再用 `bindings[]` 把目标平台 channel/chat 绑定到这个 agent。Codex backend 使用 `codex exec --json` / `codex exec resume`。启动时默认只跑快速 compatibility probe：检查 `codex --version` 与 help 里是否有必需 flag，不发起真实模型 turn；本机未安装 Codex CLI 或 CLI 形态不匹配时会拒绝启动。
+
+`exec resume` 只恢复模型对话上下文；每个 user turn 仍启动新的 Codex CLI 进程，因此当前不能跨 turn 继续控制同一个 PTY 或长运行工具进程。完整边界见 [`codex-cli.md` §多轮语义与长运行工具进程](../dev/spec/agent-backends/codex-cli.md#多轮语义与长运行工具进程)。
 
 Codex CLI 当前没有 Claude Code 那种执行前工具审批。它的边界来自 `codex.sandbox`、`codex.addDirs`、`--ask-for-approval never`、工作目录和默认不加载用户全局 config / rules。显式 `sandbox: "danger-full-access"` 是 YOLO 模式，不再提供文件系统 sandbox 边界。
 

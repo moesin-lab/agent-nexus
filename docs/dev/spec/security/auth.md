@@ -73,7 +73,8 @@ runtime 执行的 allowlist 维度：
 
 ## 会话绑定
 
-一个 session 绑定 **一个** initiator user。其他用户发到同 channel 的消息 → **一律丢弃**，不进入 agent context、不记入 session transcript、不触发任何动作。
+一个 RoutingSession 绑定 **一个** initiator user。同一原生 channel/chat 中的其他 allowlisted 用户按各自
+`initiatorUserId` 形成独立 SessionKey，不进入彼此的 agent context 或 transcript；未授权用户的消息一律丢弃。
 
 MVP 不提供 `shared_channel_mode`。安全依据见 [`README.md` §威胁模型](README.md#威胁模型)（非发起者文本是 prompt injection 入口）；如果未来确有需要，必须：
 
@@ -98,6 +99,7 @@ MVP 不提供 `shared_channel_mode`。安全依据见 [`README.md` §威胁模�
 - **Allowlist 拒绝**：不在四元组白名单内的事件 → `auth_denied`，不进入 idempotency 表
 - **四元组组合**：分别构造 userId 缺失、guildId 不在 allow、channelId 不在 allow、DM 但 allowDM=false 等场景 → 均拒绝
 - **publicChannelMode=thread**：公开 channel 触发 → 创建 thread 后在 thread 内继续；原 channel 仅 ephemeral ACK
+- **多用户隔离**：同一 channel/chat 的两个 allowlisted user → 形成不同 SessionKey，不共享 agent context
 - **`shared_channel_mode` 不存在**：配置里出现该字段 → 启动失败
 
 ## 反模式

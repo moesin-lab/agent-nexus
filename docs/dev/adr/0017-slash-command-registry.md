@@ -114,7 +114,11 @@ daemon 拥有的是 Nexus control plane：auth、audit/logging、command registr
 
 platform-native ack/defer/followup/update/rate-limit 编排归 platform adapter。daemon 不持有 Discord interaction token、Slack ack deadline 或 Telegram callback query 等平台私有状态。
 
-`/nexus-kill` 保持 daemon command，因为它终止 Nexus routing session / 清理 opaque ref。`/discord-reply-mode` 保持 platform command，因为它依赖 Discord adapter 状态。
+`/nexus-kill` 保持 daemon command，因为它终止 Nexus routing session 并管理 opaque ref 的活跃绑定。`/discord-reply-mode` 保持 platform command，因为它依赖 Discord adapter 状态。
+
+### 2026-07-26：保留可恢复历史
+
+RoutingSession control-plane cleanup 解除当前活跃绑定，不销毁可恢复历史；command owner 决策不变。
 
 ## 参考
 

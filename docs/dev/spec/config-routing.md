@@ -119,7 +119,7 @@ DaemonCommandRegistryConfig {
 | `daemon.commandRegistry.registration.retry.maxAttempts` / `backoffMs` | daemon 启动时 apply plan 的重试策略；只有 generation 匹配的成功结果能激活 active map |
 | `daemon.commandRegistry.aliases.singleAgent.enabled` | 控制 single-agent bare alias（如 `/new` / `/stop`）是否进入 plan；stable `/codex-new` / `/codex-stop` / `/claudecode-new` / `/claudecode-stop` 不受影响 |
 | `daemon.commandRegistry.aliases.legacy.replyMode` | 控制 legacy `/reply-mode` 是否进入 plan；`reply-mode` 仍保留为 historical reserved bare name |
-| `daemon.commandRegistry.textPrefixes.newSession` | 控制文本前缀 `@bot /new` / `@bot /new <prompt>`；不影响 slash command stable names |
+| `daemon.commandRegistry.textPrefixes.newSession` | 控制普通消息中的 `/new` / `/new <prompt>` 文本前缀；不影响 native slash command |
 | `daemon.trajectory` | daemon-owned trajectory read model、外部 session 导入与 provider-call observation 配置；字段权威源见 [`trajectory-observability.md`](infra/trajectory-observability.md#配置) |
 
 ## Settings config editor 字段说明
@@ -360,11 +360,10 @@ RouteContext {
 匹配步骤：
 
 1. 只考虑 `entry.platformName == context.platformName` 的 routing entries。
-2. 按 `platformType` 调用 platform owner 的 match 函数。
-3. Discord 的 `event.sessionKey.channelId` 必须在 `channelIds` 内；Lark P2P 的
-   `event.sessionKey.channelId` 或话题的 `event.threadParentChannelId` 必须在 `chatIds` 内。话题仍以
-   `thread_id` 作为实际 SessionKey，不因 binding 匹配而折回父群 session。
-4. 匹配结果数量为 1 时，返回该 `agentName`。
+2. 要求 `entry.platformType == context.platformType`。
+3. 要求 `context.event.sessionKey.channelId` 命中 `entry.channelIds`。原生子容器继承父容器 binding 时，
+   Engine 先把用于路由的 event 投影到 `threadParentChannelId`；原始 SessionKey 保持子容器 ID，不因匹配而改写。
+4. 匹配结果数量为 1 时，返回对应 `bindingName`、`platformName` 与 `agentName`。
 5. 匹配结果数量为 0 时，拒绝 dispatch，打结构化日志 `route_not_found`。
 6. 匹配结果数量大于 1 时，拒绝 dispatch，打结构化日志 `route_ambiguous`。
 
@@ -376,9 +375,9 @@ RouteContext {
 
 ```text
 RouteDecision {
+    bindingName: string
     platformName: string
     agentName: string
-    event: NormalizedEvent
 }
 ```
 
@@ -389,9 +388,9 @@ platform adapter 实例。
 
 `/nexus-settings` 的 agent binding select 是 daemon-owned runtime override，不修改 `bindings[]`，不写回 `config.json`。override 只能选择当前进程已构造的 `agents[].name`，并按 route 使用的 channel key 生效：普通 channel 使用当前 `channelId`；thread 继承父 channel route 时使用父 channel id。
 
-路由时先查该 override；命中且 agent 仍存在时返回该 `agentName`，否则继续按 `RoutingTable` 匹配。设置 override 时，daemon 必须停止触发者当前 SessionKey 的活跃 runtime handle，并删除该 key 上保存的 opaque agent conversation ref，避免触发者后续消息用旧 agent conversation resume 到新 agent owner。
+路由时先查该 override；命中且 agent 仍存在时返回该 `agentName`，否则继续按 `RoutingTable` 匹配。设置 override 时，daemon 必须停止触发者当前 SessionKey 的活跃 runtime handle，并解除该 key 与当前 opaque agent conversation ref 的活跃绑定；旧 ref 连同 agent owner 保留在可恢复历史中。下一条消息按新 agent owner 启动或恢复，不得把旧 owner 的 ref 交给新 backend。
 
-v1 的 override 是 channel 级路由覆盖，但清理动作只覆盖触发者 SessionKey。由于当前内存 session store 没有 channel-wide owner 索引，daemon 不承诺迁移或清理同 channel 其它用户已有的 opaque agent conversation ref；多用户频道里切换 agent owner 前，应让相关用户先结束自己的 RoutingSession。否则这些用户下一条消息的恢复结果不在 v1 合约内，需要由用户用 `/nexus-kill` 或 agent new command 重开。override 是内存态，进程重启后丢失。
+v1 的 override 是 channel 级路由覆盖，但设置动作只主动停止触发者 SessionKey 的 runtime handle。同 channel 其他用户的当前 ref 不会被批量停止；其下一条消息若路由到不同 agent owner，daemon 必须先把不兼容 ref 移出活跃区，再启动新 backend。旧历史只在路由重新命中兼容 owner 时进入可恢复列表。override 是内存态，进程重启后丢失。
 
 ### Settings config editor
 

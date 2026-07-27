@@ -50,7 +50,7 @@ contracts:
 ├── logs/
 │   └── <date>.jsonl        # 结构化日志
 ├── secrets/                # 敏感文件（mode 0700）
-│   └── .gitkeep            # 说明：用 OS keychain 优先，此目录作为 fallback
+│   └── <secret-ref>        # secret 文件（mode 0600）
 └── cache/
     └── attachments/        # 附件缓存（可清空）
 ```
@@ -94,7 +94,9 @@ contracts:
 字段更新语义：
 
 - `agent_conversation_ref` 对 daemon 是 opaque token，来源与 runtime 契约见 [`agent-runtime.md` §Agent command envelope](../agent-runtime.md#agent-command-envelope) / [`agent-runtime.md` §事件 payload 字段](../agent-runtime.md#事件-payload-字段)。
-  普通 metadata upsert 不携带该字段表示保留旧值；只有 runtime 给出新 ref 时覆盖，显式清除时置 NULL。
+  普通 metadata upsert 不携带该字段表示保留旧值；只有 runtime 给出新 ref 时覆盖。runtime 返回
+  `updatedAgentSessionId: null` 时归档当前 generation 并保留其 ref 作为可恢复历史；下一 generation 才从无活跃 ref 开始，详见
+  [`session-model.md` §可恢复 AgentConversation 绑定](../../architecture/session-model.md#可恢复-agentconversation-绑定)。
 - `next_session_json` 表示下一次 spawn 前的一次性 override，例如 pending `workingDir`。
   普通 metadata upsert 不携带该字段表示保留旧值；消费后置 NULL；将现有 resumable session 绑定到新 SessionKey 时，它随 `agent_conversation_ref` 一起迁移。
 
@@ -268,13 +270,8 @@ payload 文件只能写入 `<home>/trajectory/provider-calls/`。provider-call �
 
 ## 秘密 / 密钥
 
-### 优先顺序
-
-1. **OS keychain**：macOS `Keychain`、Linux `secret-service`、Windows `Credential Manager`
-2. **环境变量**：例 `DISCORD_BOT_TOKEN`、`ANTHROPIC_API_KEY`
-3. **文件 fallback**：`<home>/secrets/<name>`，mode `0600`
-
-前一级可用则不读下一级。启动时在日志里记录**来源**（来源本身，不含值）。
+当前 secret provider、ref 解析与权限契约由 [`secrets.md`](../security/secrets.md) 单点定义。本文件只规定
+`<home>/secrets/` 属于实例根路径，目录 mode 为 `0700`，其中 secret 文件 mode 为 `0600`。
 
 ### 禁止
 

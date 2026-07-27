@@ -113,6 +113,14 @@ codex \
 - runtime 每个 user turn spawn 一个 Codex 子进程；同一个 `AgentSession` 通过保存 `thread_id` 维持多轮语义。
 - `AgentSession.pid` 表示当前 in-flight turn 的 Codex 子进程 pid；turn 空闲时可以为空。
 
+### 多轮语义与长运行工具进程
+
+`codex exec resume <thread_id>` 只恢复模型对话上下文，不恢复上一 user turn 的 Codex CLI 进程、PTY 或工具进程
+控制句柄。当前 backend 不承诺跨 turn 查询输出、写 stdin 或终止同一个长运行工具进程；单 turn 内的执行仍受
+当前 `codex exec` 生命周期与 `timeoutMs` 限制。持久 execution owner 的协议选择与验收由
+[#186](https://github.com/moesin-lab/agent-nexus/issues/186) 跟踪，不能把 conversation resume 等同于
+process-session resume。
+
 ## JSONL 事件格式
 
 已验证 stdout 为每行一个 JSON object：

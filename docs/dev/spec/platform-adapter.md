@@ -35,7 +35,7 @@ contracts:
 
 # Spec：Platform Adapter 接口
 
-定义 IM 平台适配层的接口契约。Discord 已实现；ADR-0019 规划的 Lark adapter 也必须实现此接口并注册到 daemon。
+定义 IM 平台适配层的接口契约。Discord 与 Lark adapter 都实现此接口并由组装层注册到 daemon。
 
 > **package 归属**：`PlatformAdapter` 接口与相关类型（`OutboundMessage` / `MessageRef` / `CapabilitySet`）定义在 `@agent-nexus/protocol` package；**具体平台实现** 住在 `@agent-nexus/platform-<name>` 独立 package（如 `@agent-nexus/platform-discord`）。详见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7。
 
@@ -57,37 +57,32 @@ interface PlatformAdapter {
     capabilities() -> CapabilitySet
 
     // 生命周期
-    start(handler: EventHandler) -> void
-    stop() -> void
+    start(handler: EventHandler) -> Promise<void>
+    stop() -> Promise<void>
 
     // 发送
-    send(sessionKey, OutboundMessage) -> MessageRef
-    edit(messageRef: MessageRef, OutboundMessage) -> void
-    delete(messageRef: MessageRef) -> void
+    send(sessionKey: SessionKey, message: OutboundMessage) -> Promise<MessageRef>
+    edit(messageRef: MessageRef, message: OutboundMessage) -> Promise<void>
+    delete(messageRef: MessageRef) -> Promise<void>
+    react(messageRef: MessageRef, emoji: string) -> Promise<void>
 
     // 可选：创建平台原生 thread；仅 supportsThreadCreation=true 时由 daemon 调用
-    createThread(input: CreateThreadInput) -> CreateThreadResult
-    updateThread(input: UpdateThreadInput) -> void
+    createThread?(input: CreateThreadInput) -> Promise<CreateThreadResult>
+    updateThread?(input: UpdateThreadInput) -> Promise<void>
 
     // 输入指示（仅 supportsTypingIndicator=true 时由 daemon 调用）
-    setTyping(sessionKey) -> void       // 开始/续期 typing 指示
-    clearTyping(sessionKey) -> void     // 显式清除（turn 结束/interrupt/错误）
+    setTyping(sessionKey: SessionKey) -> Promise<void>
+    clearTyping(sessionKey: SessionKey) -> Promise<void>
 
     // 可选：platform-owned settings 的只读快照与 owner action
-    settingsSnapshot(input: PlatformSettingsSnapshotInput) -> PlatformSettingsSnapshot
-    applySettingsAction(input: PlatformSettingsActionInput) -> PlatformSettingsActionResult
-
-    // 可选：反应/表情
-    react(messageRef: MessageRef, emoji: string) -> void
-
-    // 可选：thread 与 settings 控制面
-    createThread(input: CreateThreadInput) -> CreateThreadResult
-    updateThread(input: UpdateThreadInput) -> void
-    settingsSnapshot(input: PlatformSettingsSnapshotInput) -> PlatformSettingsSnapshot
-    applySettingsAction(input: PlatformSettingsActionInput) -> PlatformSettingsActionResult
+    settingsSnapshot?(input: PlatformSettingsSnapshotInput)
+        -> PlatformSettingsSnapshot | Promise<PlatformSettingsSnapshot>
+    applySettingsAction?(input: PlatformSettingsActionInput)
+        -> PlatformSettingsActionResult | Promise<PlatformSettingsActionResult>
 }
 
-type EventHandler = fn(NormalizedEvent) -> void
+type EventHandler = fn(NormalizedEvent)
+    -> void | EventHandlerResult | Promise<void | EventHandlerResult>
 ```
 
 `PlatformAdapter.name()` 表示 platform type（例如 `discord` / `lark`），不是配置里的 platform instance name。多 bot / 多
@@ -642,13 +637,12 @@ cluster 分发而非广播，因此 config 已禁止重复 `appId`。`stop()` �
 
 config 的 appId 唯一性只能保护单进程。dev/stable 或其它并行 agent-nexus 进程也必须使用不同 Lark app；同 app
 跨进程运行会把事件随机分给不同 client，典型症状是每个实例都显示 connected，但各自只收到部分用户消息。
-实现 PR 必须把该约束写入 Lark 产品配置文档与运维排障说明。
+Lark 产品配置文档与运维排障说明必须写明该约束。
 
 稳定启动/lifecycle 错误码：
 
 | 条件 | code | retryable |
 |---|---|---|
-| app secret 加载失败 | `lark_secret_unavailable` | false |
 | bot info API 超时/失败/响应非法 | `lark_bot_probe_failed` | 按 SDK/HTTP structured code |
 | bot open_id 与配置不一致 | `lark_bot_identity_mismatch` | false |
 | 30 秒内未 ready | `lark_ws_ready_timeout` | true |
@@ -861,7 +855,7 @@ Adapter 必须有下列合约测试：
 下列问题不在本 spec 范围：
 
 - 具体的 Discord 凭据管理（见 [`security.md`](security/README.md)）
-- 发送失败时的重试策略（见 [`cost-and-limits.md`](infra/cost-and-limits.md)）
+- 通用发送 budget / limit（见 [`cost-and-limits.md`](infra/cost-and-limits.md)）；平台 API 错误分类与重试由各 adapter 专属段拥有
 - 具体的平台 native embed / component 映射细节（由各 adapter 实现拥有）
 - 产品层面的用户命令集（见 `docs/product/`）
 

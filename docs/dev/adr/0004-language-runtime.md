@@ -5,6 +5,7 @@ status: active
 summary: 选定 TypeScript / Node + pnpm workspaces monorepo；TS SDK 生态累积优势 + 跨端类型共享超过 Go 单二进制优势
 tags: [adr, decision, language-runtime]
 related:
+  - dev/adr/0020-publish-single-npm-cli-package
   - dev/spec/platform-adapter
   - dev/spec/agent-runtime
   - dev/spec/message-protocol
@@ -44,7 +45,7 @@ superseded_by: null
 
 ### Option A：TypeScript / Node ✅ Accepted
 
-- **是什么**：Node LTS 20.x + TypeScript（strict 模式）+ pnpm workspaces monorepo；MVP 走 npm 全局安装路径分发
+- **是什么**：Node 22/24 LTS + TypeScript（strict 模式）+ pnpm workspaces monorepo；MVP 走 npm 全局安装路径分发
 - **优点**：
   - discord.js 是 Discord SDK 事实标准，文档密度 / 样例量 / 新特性跟进速度均领先
   - Anthropic / OpenAI / Gemini / Mistral 官方 SDK 全部 TS 一等公民
@@ -61,7 +62,7 @@ superseded_by: null
   - pty / 子进程 / 信号 idiom 比 Go 标准库繁一档（用 `execa` + `node-pty` 压住）
   - 三个 native 依赖（`node-pty` / `better-sqlite3` / `keytar`），跨平台 prebuilt 是 ongoing 维护成本
   - 类型系统不如 Go 严格——靠 strict 模式 + 边界处显式契约压住
-- **主要风险**：Node 主版本切换（N-API ABI 变化）时三个 native 依赖的 prebuilt 跟进可能延迟——锁 LTS 主版本可缓解
+- **主要风险**：Node 主版本切换（N-API ABI 变化）时三个 native 依赖的 prebuilt 跟进可能延迟——按受支持 LTS 矩阵验证可缓解
 
 ### Option B：Go
 
@@ -256,8 +257,8 @@ Go 相对优势权重明显下降；TS（SDK 累积 + 跨端共享 + 类型表�
 ## Consequences
 
 - daemon 进程实现里的子进程 / pty / 信号 / 长连接重连 / FIFO 队列要用成熟库压住心智：`execa` + `node-pty` + `p-queue` + discord.js 自带 ws 重连
-- 三个 native 依赖（`node-pty` / `better-sqlite3` / `keytar`）需明确锁定 Node LTS 主版本（建议 20.x），走 `node-gyp-build` prebuilt fallback；CI 验证多平台 prebuilt 可用
-- monorepo 切分锁定（见 §"采纳后的执行补丁清单" TS-P7）：`@agent-nexus/protocol`（类型 + 接口契约权威源）/ `@agent-nexus/daemon`（核心引擎 + 横切，不含 transfer 实现）/ `@agent-nexus/platform-<name>`（IM/transport 协议转换层，如 `platform-discord`）/ `@agent-nexus/agent-<name>`（agent 后端，如 `agent-claudecode`）/ `@agent-nexus/vscode`（extension）/ `@agent-nexus/web`（web frontend）/ `@agent-nexus/cli`（拼装入口）
+- 三个 native 依赖（`node-pty` / `better-sqlite3` / `keytar`）需在受支持 Node LTS 主版本上验证 prebuilt / build fallback；首发矩阵见 [ADR-0020](0020-publish-single-npm-cli-package.md)
+- monorepo 切分锁定（见 §"采纳后的执行补丁清单" TS-P7）：`@agent-nexus/protocol`（类型 + 接口契约权威源）/ `@agent-nexus/daemon`（核心引擎 + 横切，不含 transfer 实现）/ `@agent-nexus/platform-<name>`（IM/transport 协议转换层，如 `platform-discord`）/ `@agent-nexus/agent-<name>`（agent 后端，如 `agent-claudecode`）/ `@agent-nexus/vscode`（extension）/ `@agent-nexus/web`（web frontend）/ 公共 CLI（npm 身份见 [ADR-0020](0020-publish-single-npm-cli-package.md)）
 - MVP 选 npm 全局安装路径分发（用户机器已有 Node）；单二进制打包延后到 ops/ 阶段评审（`@yao-pkg/pkg` / `bun build --compile`）
 - core 横切能力（auth / 幂等 / 限流 / 记账 / 预算 / redact）正确性需要细致测试覆盖（vitest + 合约测试）
 - TS strict 模式 + 边界处显式契约（NormalizedEvent / AgentEvent / OutboundMessage 在 `@agent-nexus/protocol` 定义）作为类型严格性补偿
@@ -268,7 +269,7 @@ Go 相对优势权重明显下降；TS（SDK 累积 + 跨端共享 + 类型表�
 
 | 补丁 | 内容 |
 |---|---|
-| **TS-P1** | 锁定 Node LTS 主版本（建议 20.x）；`package.json#engines` 显式声明 `"node": ">=20 <21"` |
+| **TS-P1** | `package.json#engines` 显式声明受支持的 Node LTS 主版本；首发支持 Node 22/24，见 [ADR-0020](0020-publish-single-npm-cli-package.md) |
 | **TS-P2** | Native 依赖明确策略：`node-pty` + `better-sqlite3` + `keytar` 全部走 `node-gyp-build` prebuilt fallback；明确 N-API 版本兼容矩阵；CI 验证多平台 prebuilt 可用 |
 | **TS-P3** | 分发形态：MVP 走 npm 全局安装路径（用户机器已有 Node）；单二进制打包延后到 ops/ 阶段评审 |
 | **TS-P4** | 并发模型在 spec 里明确：长连接由 `discord.js` 内置 ws；session 串行队列用 `p-queue`（每个 sessionKey 一个队列）；子进程管理用 `execa` + `node-pty` |
@@ -286,7 +287,7 @@ packages/
 │   └── claudecode/            # Claude Code CLI 后端（实现 @agent-nexus/protocol 的 AgentRuntime 接口）
 ├── vscode/                    # VSCode extension（独立 vsix；import @agent-nexus/protocol，通过 stdio 跟 daemon 通信）
 ├── web/                       # web frontend（独立 build；import @agent-nexus/protocol，通过 WebSocket 跟 daemon 通信）
-└── cli/                       # 拼装入口（选择启用哪些 platform-* / agent-*，启动 daemon）
+└── cli/                       # 拼装入口（npm 发布身份见 ADR-0020）
 ```
 
 **transfer 命名约定**：
@@ -354,7 +355,7 @@ ops/ 阶段评审单二进制分发 / runtime 替代时，以下事实点与触�
 
 - **不决定**具体框架版本（discord.js / vitest / TypeScript 等的具体版本号在实现首 PR 内敲定）
 - **不决定**打包方式细节（等 ops/ 阶段；MVP 走 npm 全局安装）
-- **不决定**最低 runtime 版本号（建议 Node 20.x LTS，首 PR 内敲定）
+- **不决定**最低 runtime 版本号（首发支持矩阵由 [ADR-0020](0020-publish-single-npm-cli-package.md) 决定）
 - **不决定**monorepo 工具具体选型（pnpm workspaces 是当前推荐；Turborepo / Nx 等增强工具按实际需要再评估）
 
 ## 评审条件（已满足）
@@ -368,6 +369,7 @@ ops/ 阶段评审单二进制分发 / runtime 替代时，以下事实点与触�
 
 ## Amendments
 
+- 2026-07-26：首发分发边界——Node 20 EOL 后改按仍受官方支持的 LTS 矩阵发布，最低版本与公共 CLI npm 身份下沉到 ADR-0020
 - 2026-04-25：package 命名澄清——daemon 进程整体的 package 名应反映"进程整体"语义，避免借用最小子模块名造成范围误读（非决策反转）
 - 2026-04-25：废止架构语境下 "三层结构 / layered architecture" 措辞——agent-nexus 实际拓扑是 hub-and-spoke，沿用 LSP / DAP / MCP / Continue.dev 等权威对标的角色名
 - 2026-04-25：packages 结构重构——契合 Continue.dev 的 core+binary+extensions+adapters 拆分模式，让第三方 transfer adapter 可独立 publish，并让 daemon 守住"核心引擎 + 横切"的单一职责

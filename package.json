@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20.10"
+    "node": "^22.0.0 || ^24.0.0"
   },
   "packageManager": "pnpm@10.33.2",
   "pnpm": {
@@ -13,9 +13,10 @@
     ]
   },
   "scripts": {
-    "dev": "corepack pnpm --filter @agent-nexus/cli dev",
-    "build": "tsc --build && corepack pnpm --filter @agent-nexus/cli bundle",
+    "dev": "corepack pnpm --filter @moesin-lab/agent-nexus dev",
+    "build": "tsc --build && corepack pnpm --filter @moesin-lab/agent-nexus bundle",
     "pack:cli": "corepack pnpm --dir packages/cli pack",
+    "verify:pack:cli": "node scripts/verify-packed-cli.mjs",
     "typecheck": "tsc --build",
     "test": "vitest run",
     "test:e2e:discord": "node scripts/discord-e2e-runner.mjs",

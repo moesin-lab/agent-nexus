@@ -11,7 +11,7 @@
 ## 先看哪里
 
 - 决策：[`../../../docs/dev/adr/0019-lark-platform-via-official-node-sdk.md`](../../../docs/dev/adr/0019-lark-platform-via-official-node-sdk.md)
-- 话题 session 决策：[`../../../docs/dev/adr/0020-lark-thread-as-session-container.md`](../../../docs/dev/adr/0020-lark-thread-as-session-container.md)
+- 话题 session 决策：[`../../../docs/dev/adr/0021-lark-thread-as-session-container.md`](../../../docs/dev/adr/0021-lark-thread-as-session-container.md)
 - Platform adapter 契约：[`../../../docs/dev/spec/platform-adapter.md`](../../../docs/dev/spec/platform-adapter.md)
 - 归一化消息协议：[`../../../docs/dev/spec/message-protocol.md`](../../../docs/dev/spec/message-protocol.md)
 - command 注册与文本降级：[`../../../docs/dev/spec/command-registry.md`](../../../docs/dev/spec/command-registry.md)

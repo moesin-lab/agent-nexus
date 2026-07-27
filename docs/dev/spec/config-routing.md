@@ -5,7 +5,7 @@ status: active
 summary: 首次配置引导、platforms[] / agents[] / bindings 的配置 schema、owner 校验边界、路由匹配语义、热重载与迁移规则
 tags: [spec, config, routing, platform, agent]
 related:
-  - dev/adr/0020-lark-thread-as-session-container
+  - dev/adr/0021-lark-thread-as-session-container
   - dev/adr/0019-lark-platform-via-official-node-sdk
   - dev/adr/0015-multi-platform-agent-config
   - dev/spec/platform-adapter

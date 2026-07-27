@@ -124,6 +124,17 @@ Agent backend CLI 是黑盒，输出格式可能变。维护两种 mock：
 - **关键路径必须接近 100%**：消息流、脱敏、权限检查、预算、熔断
 - 新增代码无测试覆盖：reviewer 追问
 
+## 发布制品验证
+
+CLI 发布验证针对 npm tarball，而不是仓库源码目录。CI 必须先打出一个 tarball，再把这个完全相同的文件安装到临时前缀中，并验证：
+
+- 包内只有 `dist/index.js`、`package.json`、`README.md` 与 `LICENSE`，可执行位仍为 `0755`；
+- 已安装 manifest 不暴露库入口，也不含内部 `@agent-nexus/*` 运行时依赖；
+- 从已安装包解析并实际打开 `better-sqlite3` 内存数据库，防止默认 trajectory 静默降级；
+- 用独立 `AGENT_NEXUS_HOME` 首次启动已安装的 `agent-nexus`，验证配置脚手架和权限。
+
+这组证据在 Ubuntu 24.04 x64、macOS 15 arm64 与 macOS 15 x64 上分别使用 Node.js 22、24 执行。具体命令由 `scripts/verify-packed-cli.mjs` 统一承载，发布流程必须复用同一验证器。
+
 ## 测试工具链
 
 （等 ADR-0004 语言定后补独立文件 `testing-tooling.md`）

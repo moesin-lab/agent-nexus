@@ -8,7 +8,7 @@ related:
   - dev/adr/0001-im-platform-discord
   - dev/adr/0003-deployment-local-desktop
   - dev/adr/0015-multi-platform-agent-config
-  - dev/adr/0020-lark-thread-as-session-container
+  - dev/adr/0021-lark-thread-as-session-container
   - dev/spec/platform-adapter
   - dev/spec/config-routing
   - dev/spec/infra/observability
@@ -64,7 +64,7 @@ SDK 的 `start()` 在内部异步启动连接，并不等待 ready；adapter 必
 它只作为状态机、错误分类和测试视角参考，不是 dependency、transport 或 protocol boundary。
 
 本 ADR 的 walking skeleton 只决定单用户、飞书 P2P、纯文本闭环。群聊、卡片、附件与飞书工作资源会扩大授权和
-数据外泄面，不与第二个平台 walking skeleton 一起决定；后续话题群扩展由 ADR-0020 单独裁决。
+数据外泄面，不与第二个平台 walking skeleton 一起决定；后续话题群扩展由 ADR-0021 单独裁决。
 
 ## Options
 
@@ -140,14 +140,14 @@ queue、redaction 和 streaming 的唯一 owner 仍在 agent-nexus。`lark-cli` 
 
 - 不引入 `lark-cli` binary、profile、stdio protocol 或自动安装流程。
 - 不采用 SDK Channel 模块拥有 auth、idempotency、streaming 或 redaction。
-- 本 ADR 不决定飞书群聊、卡片、附件、reaction、typing、thread 或 native command 注册；话题群扩展见 ADR-0020。
+- 本 ADR 不决定飞书群聊、卡片、附件、reaction、typing、thread 或 native command 注册；话题群扩展见 ADR-0021。
 - 不让 agent 调用飞书文档、日历、任务等工作 API。
 - 不自动创建飞书应用或自动申请 scope。
 - 不取代 ADR-0001；Discord 继续是已有完整能力平台。
 
 ## Amendments
 
-- 2026-07-26：ADR-0020 在 P2P walking skeleton 之外增加私有话题群能力；官方 Node SDK、WebSocket transport 与平台边界决策不变。
+- 2026-07-26：ADR-0021 在 P2P walking skeleton 之外增加私有话题群能力；官方 Node SDK、WebSocket transport 与平台边界决策不变。
 
 ## 参考
 

@@ -19,12 +19,18 @@ related:
 
 ### Added
 
+- 新增中国版飞书自建应用的 P2P 纯文本长连接接入；首次配置提示提供飞书官方应用创建链接和安全的 App ID / App Secret 后续步骤。
+
+## [0.1.0] - 2026-07-26
+
+### Added
+
 - 项目初始化，建立开发文档体系骨架（架构 / ADR / spec / 流程 / 测试 / 规范）。
 - 所有文档添加 YAML frontmatter 元信息（支持 agent 渐进式读取）；schema 规范见 `docs/dev/standards/metadata.md`。
 - ADR-0005：订阅计费为一等用户路径（已被 ADR-0006 取代）。
 - ADR-0006：Limits 分层——失控保护为一等，配额控制按用户路径可选。重新表述 0005 的决策精神；一等公民是"机制类别（防御失控 / 使用量观测）"而非"用户类型"；`$ 预算`与`订阅配额跟踪`并列为二等可选机制。
 - `/nexus-settings` 新增 `config.json` 编辑入口，支持用 dot / bracket 路径修改任意通过 loader 校验的配置字段，并在保存后触发一次配置 reload。
-- 新增中国版飞书自建应用的 P2P 纯文本长连接接入；首次配置提示提供飞书官方应用创建链接和安全的 App ID / App Secret 后续步骤。
+- 新增 `spec/claude-code-cli-contract.md`：锁定 CC CLI 版本、启动命令模板、stream-json 协议、stdout 事件到 `AgentEvent` 的映射表、stop_reason 映射、`UsageCompleteness` 三档、中断/超时/崩溃处理链、兼容性自检（probe）、合约测试清单、兼容矩阵占位。`spec/README.md` 索引新增一类"Agent 后端专属契约"；`spec/agent-runtime.md` §CC CLI 专属说明瘦身为引用。
 
 ### Changed
 
@@ -37,16 +43,6 @@ related:
   - **Allowlist 四元组**：`spec/security.md` 从"仅 userIds/roleIds"扩为 `(guildId, channelId, userId, roleIds)`；新增 `allowedGuildIds / allowedChannelIds / allowDM / requireMentionOrSlash`，fail-closed
   - **砍 shared_channel_mode**：`spec/security.md` MVP 移除（prompt injection 入口）；未来引入需新 ADR + untrusted 标注
   - **Discord 账号盗升格为核心威胁**：`spec/security.md` §威胁模型重写置顶；新增 `publicChannelMode` 默认 `thread`（公开 channel 自动转私有 thread）
-
-### Fixed
-
-- `/new`、`/nexus-kill`、agent binding 切换和 session rebind 不再丢弃旧 agent conversation；旧会话保留在 `/nexus-sessions` 可恢复列表，并受通常 100 条的内存软上限约束（活跃记录不为凑上限而淘汰）。
-
-### Added
-
-- 新增 `spec/claude-code-cli-contract.md`：锁定 CC CLI 版本、启动命令模板、stream-json 协议、stdout 事件到 `AgentEvent` 的映射表、stop_reason 映射、`UsageCompleteness` 三档、中断/超时/崩溃处理链、兼容性自检（probe）、合约测试清单、兼容矩阵占位。`spec/README.md` 索引新增一类"Agent 后端专属契约"；`spec/agent-runtime.md` §CC CLI 专属说明瘦身为引用。
-
-### Refactored
 
 - 按职责单一原则（SRP）拆分 spec（由自审 + Codex review 驱动）：
   - **Security 分区**：`spec/security.md` 瘦身为"威胁模型 + 跨分区索引"，原聚合内容按独立职责拆出 `spec/auth.md`（身份 allowlist / 会话绑定 / publicChannelMode）、`spec/tool-boundary.md`（工具白名单 / 工作目录）、`spec/secrets.md`（密钥层级 / 禁写清单 / 轮换）、`spec/redaction.md`（Redactor 必过滤项 / 合约测试）。
@@ -73,8 +69,6 @@ related:
   - `AGENTS.md` 文件定位速查表新增 limits / persistence 行，并对齐路径
   - 0 broken link（校验通过）
 
-### Tooling
-
 - 新增 stable 运维脚本源 `scripts/ops/agent-nexus-stable/`：watchdog 支持定时检查 `origin/main`、构建 hash release、idle 后切换并重启、记录最近稳定 hash、跳过已知 bad hash、失败自动回退到 last-good release；runbook 补充 stable 自动更新与回退操作说明。
 - 新增 `scripts/docs-read`（bash，零外部依赖）：按 YAML frontmatter 状态控制性读取项目文档，防止 agent 读取过时文档后正文污染上下文。三种模式：默认（active 全文，过时只 frontmatter + 告警）/ `--head`（仅 frontmatter，泛读用）/ `--force`（强制全文，过时告警）。
 - `AGENTS.md` 追加"读文档的防污染规则"作为核心原则第 8 条，强制所有 `docs/` 与规则文档通过脚本读取。
@@ -92,3 +86,10 @@ related:
   - **四轮修订**（响应 round-3 codex review P1 闭环补齐）：`scripts/docs-read --force` 对两类场景对称发 stderr 告警——原先只对"frontmatter 过时"告警，对路径型外部导向（README/CONTRIBUTING）是静默 cat，导致"拦截理由只存在于 hook stderr 一次、读取阶段丢失"。补齐后：`--force` 读到 README/CONTRIBUTING 时 stderr 输出"按 --force 读取外部导向文档"告警；读到 frontmatter 过时文档时 stderr 输出原有"过时文档"告警。`CONTRIBUTING.md` 顶部增补边界声明，明确"本文档只做摘要与外部流程说明；内部规则以 AGENTS.md / docs/dev/** 为准"——预防未来演化时长成独占事实源。`AGENTS.md` §docs-read 三种模式 表格里 `--force` 场景描述从"读归档文档"改为"读被 hook 拦截的文档（归档 / 外部导向）"。
 - 新增 `CLAUDE.md` 符号链接指向 `AGENTS.md`，方便 Claude Code 自动识别项目规则；规范化入口仍是 `AGENTS.md`。
 - `.gitignore` 调整：不假定协作者使用哪种 agent，`.claude/` / `.codex/` / `.gemini/` / `.continue/` / `.cursor/` 全部忽略（不再把 settings.json / hooks 入库）；新增 `eval-runs/`、`HANDOFF.md`、`HANDOFF-*.md`、`*.scratch.*` 条目。
+
+### Fixed
+
+- `/new`、`/nexus-kill`、agent binding 切换和 session rebind 不再丢弃旧 agent conversation；旧会话保留在 `/nexus-sessions` 可恢复列表，并受通常 100 条的内存软上限约束（活跃记录不为凑上限而淘汰）。
+
+[Unreleased]: https://github.com/moesin-lab/agent-nexus/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/moesin-lab/agent-nexus/tree/v0.1.0

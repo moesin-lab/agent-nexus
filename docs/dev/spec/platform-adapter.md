@@ -6,7 +6,7 @@ summary: IM 平台适配层接口契约；事件归一化、发送能力、能�
 tags: [spec, platform-adapter, discord, lark, normalized-event, gateway]
 related:
   - dev/adr/0019-lark-platform-via-official-node-sdk
-  - dev/adr/0020-lark-thread-as-session-container
+  - dev/adr/0021-lark-thread-as-session-container
   - dev/spec/message-protocol
   - dev/spec/command-registry
   - dev/spec/config-routing

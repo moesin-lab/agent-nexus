@@ -1,5 +1,5 @@
 ---
-title: ADR-0020：飞书话题作为独立 session 容器
+title: ADR-0021：飞书话题作为独立 session 容器
 type: adr
 status: active
 summary: 选择飞书话题群的 thread 作为独立 SessionKey，私聊保留为兼容与 onboarding 入口
@@ -10,13 +10,13 @@ related:
   - dev/spec/platform-adapter
   - dev/spec/message-protocol
 adr_status: Proposed
-adr_number: "0020"
+adr_number: "0021"
 decision_date: 2026-07-26
 supersedes: null
 superseded_by: null
 ---
 
-# ADR-0020：飞书话题作为独立 session 容器
+# ADR-0021：飞书话题作为独立 session 容器
 
 - **状态**：Proposed
 - **日期**：2026-07-26

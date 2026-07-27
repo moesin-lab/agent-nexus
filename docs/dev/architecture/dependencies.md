@@ -15,7 +15,7 @@ related:
 
 本文件定义仓库内模块间**允许**与**禁止**的 import 关系。违反即拒绝合并。
 
-> **本文按 package 维度讨论 import 关系**——`protocol` / `daemon` / `agent/<name>` / `platform/<name>` / `cli` / `vscode` / `web` 都是 npm package 名（前缀 `@agent-nexus/`，详见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7）。模块结构与职责划分见 [`overview.md`](overview.md) §模块结构。
+> **本文按 package 维度讨论 import 关系**——内部 package 使用 `@agent-nexus/` 前缀；公开 CLI 使用 `@moesin-lab/agent-nexus`，详见 [`adr/0020-publish-single-npm-cli-package.md`](../adr/0020-publish-single-npm-cli-package.md)。模块结构与职责划分见 [`overview.md`](overview.md) §模块结构。
 >
 > 带点的 namespace prefix（`daemon.logger` / `daemon.idempotency`）= `@agent-nexus/daemon` 的 import path 内的横切能力子模块；类型契约（`NormalizedEvent` / `AgentEvent` 等）住 `@agent-nexus/protocol`，import 时直接用类型名（不带 prefix）。
 >
@@ -89,6 +89,6 @@ cli 里可以写一些 glue 代码，但禁止写业务逻辑。
 | agent-codex | `packages/agent/codex/` | `@agent-nexus/agent-codex` | 已实现；通过 CLI `agents[].backend="codex"` 显式启用 |
 | vscode | `packages/vscode/` | `@agent-nexus/vscode` | 规划中 |
 | web | `packages/web/` | `@agent-nexus/web` | 规划中 |
-| cli | `packages/cli/` | `@agent-nexus/cli` | 已实现 |
+| cli | `packages/cli/` | `@moesin-lab/agent-nexus` | 已实现；唯一公开 npm 包 |
 
 （package 切分来源见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7。）

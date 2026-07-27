@@ -50,6 +50,9 @@ importers:
       '@larksuiteoapi/node-sdk':
         specifier: 1.70.0
         version: 1.70.0
+      better-sqlite3:
+        specifier: ^12.11.1
+        version: 12.11.1
       discord.js:
         specifier: ^14.16.0
         version: 14.26.3

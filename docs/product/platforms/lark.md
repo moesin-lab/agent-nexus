@@ -7,7 +7,7 @@ tags: [product, lark, feishu, user-guide]
 related:
   - product/user-guide
   - dev/adr/0019-lark-platform-via-official-node-sdk
-  - dev/adr/0020-lark-thread-as-session-container
+  - dev/adr/0021-lark-thread-as-session-container
   - dev/spec/platform-adapter
   - dev/spec/security/secrets
 ---

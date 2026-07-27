@@ -1,0 +1,63 @@
+name: Publish npm CLI
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm-version:
+        description: Type the package version selected by the release tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-production
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    environment: npm-production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Use a trusted-publishing-compatible npm CLI
+        run: npm install --global npm@12.0.1
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - run: pnpm test
+
+      - run: pnpm pack:cli
+
+      - name: Resolve and validate release artifact
+        id: artifact
+        env:
+          RELEASE_CONFIRM_VERSION: ${{ inputs.confirm-version }}
+        run: node scripts/prepare-npm-release.mjs
+
+      - name: Verify exact packed artifact
+        run: node scripts/verify-packed-cli.mjs "${{ steps.artifact.outputs.tarball }}"
+
+      - name: Publish exact verified artifact
+        run: >-
+          npm publish "${{ steps.artifact.outputs.tarball }}"
+          --access public
+          --tag latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

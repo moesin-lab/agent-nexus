@@ -30,7 +30,7 @@ related:
 pnpm install
 pnpm build
 pnpm pack:cli
-npm install -g packages/cli/agent-nexus-cli-*.tgz
+npm install -g packages/cli/moesin-lab-agent-nexus-*.tgz
 ```
 
 开发时也可以直接用 `pnpm dev` 跑源码。

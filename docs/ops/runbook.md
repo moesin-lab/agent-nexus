@@ -90,7 +90,7 @@ pnpm install
 pnpm build
 pnpm test
 pnpm pack:cli
-npm install -g packages/cli/agent-nexus-cli-*.tgz
+npm install -g packages/cli/moesin-lab-agent-nexus-*.tgz
 ```
 
 升级后重启进程。若升级涉及配置字段，按 `README.md` 与 [`../product/user-guide.md`](../product/user-guide.md) 更新 `~/.agent-nexus/config.json`。

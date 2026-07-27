@@ -4,8 +4,16 @@ import { describe, expect, it } from 'vitest';
 const ROOT_MANIFEST_URL = new URL('../../../package.json', import.meta.url);
 const NODE_VERSION_URL = new URL('../../../.nvmrc', import.meta.url);
 const CI_WORKFLOW_URL = new URL('../../../.github/workflows/ci.yml', import.meta.url);
+const PUBLISH_WORKFLOW_URL = new URL(
+  '../../../.github/workflows/publish-npm.yml',
+  import.meta.url,
+);
 const PACK_VERIFIER_URL = new URL(
   '../../../scripts/verify-packed-cli.mjs',
+  import.meta.url,
+);
+const RELEASE_PREPARER_URL = new URL(
+  '../../../scripts/prepare-npm-release.mjs',
   import.meta.url,
 );
 const TESTING_STRATEGY_URL = new URL(
@@ -56,5 +64,26 @@ describe('release artifact validation', () => {
 
     expect(strategy).toContain('## 发布制品验证');
     expect(strategy).toContain('better-sqlite3');
+  });
+
+  it('publishes only a confirmed tagged artifact through the protected environment', async () => {
+    const [workflow, preparer] = await Promise.all([
+      readFile(PUBLISH_WORKFLOW_URL, 'utf8'),
+      readFile(RELEASE_PREPARER_URL, 'utf8'),
+    ]);
+
+    expect(workflow).toContain('workflow_dispatch:');
+    expect(workflow).toContain('environment: npm-production');
+    expect(workflow).toContain('NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}');
+    expect(workflow).toContain('npm publish "${{ steps.artifact.outputs.tarball }}"');
+    expect(workflow).toContain('--tag latest');
+    expect(workflow).toContain(
+      'node scripts/verify-packed-cli.mjs "${{ steps.artifact.outputs.tarball }}"',
+    );
+    expect(workflow).not.toContain('id-token: write');
+    expect(preparer).toContain("process.env.GITHUB_REF_TYPE");
+    expect(preparer).toContain('`v${manifest.version}`');
+    expect(preparer).toContain('CHANGELOG.md');
+    expect(preparer).toContain('GITHUB_OUTPUT');
   });
 });

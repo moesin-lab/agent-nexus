@@ -13,8 +13,8 @@
     ]
   },
   "scripts": {
-    "dev": "corepack pnpm --filter @agent-nexus/cli dev",
-    "build": "tsc --build && corepack pnpm --filter @agent-nexus/cli bundle",
+    "dev": "corepack pnpm --filter @moesin-lab/agent-nexus dev",
+    "build": "tsc --build && corepack pnpm --filter @moesin-lab/agent-nexus bundle",
     "pack:cli": "corepack pnpm --dir packages/cli pack",
     "typecheck": "tsc --build",
     "test": "vitest run",

@@ -4,7 +4,7 @@
 
 ## 本包职责
 
-- 实现 `@agent-nexus/cli` 与 `agent-nexus` 可执行入口。
+- 实现公开 npm 包 `@moesin-lab/agent-nexus` 与 `agent-nexus` 可执行入口。
 - 入口在 `src/index.ts`；agent 选择与配置解析看 `src/agent.ts`、`src/config.ts` 及对应测试。
 - CLI 是拼装层：读取配置、创建 daemon、注册启用的 platform / agent，并处理进程入口行为。
 
@@ -18,10 +18,10 @@
 
 ## 本地命令
 
-- `corepack pnpm --filter @agent-nexus/cli test`
-- `corepack pnpm --filter @agent-nexus/cli typecheck`
-- `corepack pnpm --filter @agent-nexus/cli build`
-- `corepack pnpm --filter @agent-nexus/cli dev`
+- `corepack pnpm --filter @moesin-lab/agent-nexus test`
+- `corepack pnpm --filter @moesin-lab/agent-nexus typecheck`
+- `corepack pnpm --filter @moesin-lab/agent-nexus build`
+- `corepack pnpm --filter @moesin-lab/agent-nexus dev`
 
 ## 修改约束
 

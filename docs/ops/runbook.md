@@ -31,7 +31,7 @@ related:
 
 ```bash
 pnpm dev
-corepack pnpm --filter @agent-nexus/cli dev
+corepack pnpm --filter @moesin-lab/agent-nexus dev
 ```
 
 构建并安装本地 npm bin 后运行：
@@ -39,7 +39,7 @@ corepack pnpm --filter @agent-nexus/cli dev
 ```bash
 pnpm build
 pnpm pack:cli
-npm install -g packages/cli/agent-nexus-cli-*.tgz
+npm install -g packages/cli/moesin-lab-agent-nexus-*.tgz
 agent-nexus
 agent-nexus --home ~/.agent-nexus-stable
 ```

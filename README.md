@@ -58,7 +58,7 @@ pnpm dev
 
 ```bash
 pnpm pack:cli
-npm install -g packages/cli/agent-nexus-cli-*.tgz
+npm install -g packages/cli/moesin-lab-agent-nexus-*.tgz
 agent-nexus
 ```
 
@@ -135,7 +135,7 @@ agent-nexus
 
 ```bash
 pnpm dev
-corepack pnpm --filter @agent-nexus/cli dev
+corepack pnpm --filter @moesin-lab/agent-nexus dev
 ```
 
 ## 使用

@@ -84,7 +84,9 @@ describe('release artifact validation', () => {
     expect(workflow).toContain('environment: npm-production');
     expect(workflow).toContain('needs: build');
     expect(workflow).toContain('NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}');
-    expect(workflow).toContain('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02');
+    expect(workflow).toContain(
+      'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+    );
     expect(workflow).toContain(
       'actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53',
     );

@@ -76,7 +76,7 @@ git diff --check
 - environment：`npm-production`
 - allowed action：`npm publish`
 
-然后在发布工作流顶层增加 `id-token: write`，移除 publish step 的 `NODE_AUTH_TOKEN`，并确保 Node.js 不低于 22.14、npm CLI 不低于 11.5.1。合并并验证 OIDC 发布后，不再恢复长期 npm token。
+然后只在受 `npm-production` environment 保护的 `publish` job 中增加 `permissions: { contents: read, id-token: write }`，顶层与无 secret 的 build job 继续保持 `contents: read`；同时移除 publish step 的 `NODE_AUTH_TOKEN`，并确保 Node.js 不低于 22.14、npm CLI 不低于 11.5.1。合并并验证 OIDC 发布后，不再恢复长期 npm token。
 
 ## 不在本流程内
 

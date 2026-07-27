@@ -26,6 +26,36 @@ describe('SessionStore', () => {
     expect(store.size).toBe(1);
   });
 
+  it('does not expose mutable current session state from get', () => {
+    const store = new SessionStore();
+    const key = makeKey();
+    store.set(key, {
+      agentSessionId: 'sid-1',
+      lastTurnAt: new Date(1),
+      nextSession: { workingDir: '/workspace/original' },
+    });
+
+    const current = store.get(key)!;
+    current.agentSessionId = 'sid-mutated';
+    current.nextSession!.workingDir = '/workspace/mutated';
+
+    expect(store.get(key)).toMatchObject({
+      agentSessionId: 'sid-1',
+      nextSession: { workingDir: '/workspace/original' },
+    });
+    expect(
+      store.listForUser({
+        platformName: 'discord-main',
+        platform: 'discord',
+        initiatorUserId: 'U1',
+        limit: 10,
+      })[0],
+    ).toMatchObject({
+      agentSessionId: 'sid-1',
+      nextSession: { workingDir: '/workspace/original' },
+    });
+  });
+
   it('ensureSessionId reuses a key-bound Nexus sessionId until delete', () => {
     const store = new SessionStore();
     const key = makeKey();
@@ -155,6 +185,36 @@ describe('SessionStore', () => {
     expect(sessions[0]).not.toHaveProperty('initiatorUserId');
   });
 
+  it('filters resumable sessions by compatible agent owner', () => {
+    const store = new SessionStore();
+    store.set(makeKey({ channelId: 'C-codex' }), {
+      agentSessionId: 'sid-codex',
+      agentOwner: 'codex',
+      lastTurnAt: new Date(1),
+    });
+    store.set(makeKey({ channelId: 'C-claude' }), {
+      agentSessionId: 'sid-claude',
+      agentOwner: 'claudecode',
+      lastTurnAt: new Date(2),
+    });
+    store.set(makeKey({ channelId: 'C-unknown' }), {
+      agentSessionId: 'sid-unknown',
+      lastTurnAt: new Date(3),
+    });
+
+    expect(
+      store
+        .listForUser({
+          platformName: 'discord-main',
+          platform: 'discord',
+          initiatorUserId: 'U1',
+          agentOwner: 'codex',
+          limit: 10,
+        })
+        .map((session) => session.agentSessionId),
+    ).toEqual(['sid-codex']);
+  });
+
   it('does not list thread placeholders before an agent session exists', () => {
     const store = new SessionStore();
     const key = makeKey({ channelId: 'T1' });
@@ -214,6 +274,214 @@ describe('SessionStore', () => {
       lastTurnAt: new Date(2),
       title: 'Original prompt',
     });
+  });
+
+  it('archiveCurrent removes the active binding but keeps the session resumable', () => {
+    const store = new SessionStore();
+    const key = makeKey();
+    store.set(key, {
+      agentSessionId: 'sid-1',
+      lastTurnAt: new Date(1),
+      title: 'First prompt',
+    });
+    const firstSessionId = store.ensureSessionId(key);
+
+    expect(store.archiveCurrent(key)).toBe(true);
+    expect(store.get(key)).toBeUndefined();
+    expect(store.ensureSessionId(key)).not.toBe(firstSessionId);
+    store.set(key, {
+      agentSessionId: 'sid-2',
+      lastTurnAt: new Date(2),
+      title: 'Second prompt',
+    });
+
+    expect(
+      store
+        .listForUser({
+          platformName: 'discord-main',
+          platform: 'discord',
+          initiatorUserId: 'U1',
+          limit: 10,
+        })
+        .map((session) => session.agentSessionId),
+    ).toEqual(['sid-2', 'sid-1']);
+  });
+
+  it('archiveCurrent releases an empty generation before a session entry exists', () => {
+    const store = new SessionStore();
+    const key = makeKey();
+    const firstSessionId = store.ensureSessionId(key);
+
+    expect(store.archiveCurrent(key)).toBe(false);
+    expect(store.ensureSessionId(key)).not.toBe(firstSessionId);
+  });
+
+  it('archiveCurrent discards a placeholder without an agent conversation ref', () => {
+    const store = new SessionStore({ maxEntries: 2 });
+    const realHistory = makeKey({ channelId: 'C-real' });
+    const placeholder = makeKey({ channelId: 'C-placeholder' });
+    const active = makeKey({ channelId: 'C-active' });
+    store.set(realHistory, {
+      agentSessionId: 'sid-real',
+      lastTurnAt: new Date(1),
+    });
+    store.archiveCurrent(realHistory);
+    store.setNextWorkingDir(placeholder, '/workspace/next', new Date(2));
+
+    expect(store.archiveCurrent(placeholder)).toBe(true);
+    store.set(active, {
+      agentSessionId: 'sid-active',
+      lastTurnAt: new Date(3),
+    });
+
+    expect(
+      store
+        .listForUser({
+          platformName: 'discord-main',
+          platform: 'discord',
+          initiatorUserId: 'U1',
+          limit: 10,
+        })
+        .map((session) => session.agentSessionId),
+    ).toEqual(['sid-active', 'sid-real']);
+  });
+
+  it('evicts the oldest archived session when history exceeds capacity', () => {
+    const store = new SessionStore({ maxEntries: 2 });
+    const first = makeKey({ channelId: 'C1' });
+    const second = makeKey({ channelId: 'C2' });
+    const third = makeKey({ channelId: 'C3' });
+    store.set(first, {
+      agentSessionId: 'sid-1',
+      lastTurnAt: new Date(1),
+    });
+    store.archiveCurrent(first);
+    store.set(second, {
+      agentSessionId: 'sid-2',
+      lastTurnAt: new Date(2),
+    });
+    store.archiveCurrent(second);
+
+    store.set(third, {
+      agentSessionId: 'sid-3',
+      lastTurnAt: new Date(3),
+    });
+
+    expect(
+      store
+        .listForUser({
+          platformName: 'discord-main',
+          platform: 'discord',
+          initiatorUserId: 'U1',
+          limit: 10,
+        })
+        .map((session) => session.agentSessionId),
+    ).toEqual(['sid-3', 'sid-2']);
+  });
+
+  it('evicts inactive history before active sessions when capacity is exceeded', () => {
+    const store = new SessionStore({ maxEntries: 2 });
+    const active = makeKey({ channelId: 'C-active' });
+    const oldHistory = makeKey({ channelId: 'C-old' });
+    const newHistory = makeKey({ channelId: 'C-new' });
+    store.set(active, {
+      agentSessionId: 'sid-active',
+      lastTurnAt: new Date(1),
+    });
+    store.set(oldHistory, {
+      agentSessionId: 'sid-old',
+      lastTurnAt: new Date(2),
+    });
+    store.archiveCurrent(oldHistory);
+
+    store.set(newHistory, {
+      agentSessionId: 'sid-new',
+      lastTurnAt: new Date(3),
+    });
+    store.archiveCurrent(newHistory);
+
+    expect(store.get(active)?.agentSessionId).toBe('sid-active');
+    expect(
+      store
+        .listForUser({
+          platformName: 'discord-main',
+          platform: 'discord',
+          initiatorUserId: 'U1',
+          limit: 10,
+        })
+        .map((session) => session.agentSessionId),
+    ).toEqual(['sid-new', 'sid-active']);
+  });
+
+  it('keeps active sessions when they alone exceed capacity', () => {
+    const store = new SessionStore({ maxEntries: 1 });
+    const first = makeKey({ channelId: 'C1' });
+    const second = makeKey({ channelId: 'C2' });
+    store.set(first, {
+      agentSessionId: 'sid-1',
+      lastTurnAt: new Date(1),
+    });
+    const firstSessionId = store.ensureSessionId(first);
+    expect(store.nextTrajectorySequence(firstSessionId)).toBe(1);
+
+    store.set(second, {
+      agentSessionId: 'sid-2',
+      lastTurnAt: new Date(2),
+    });
+
+    expect(store.get(first)?.agentSessionId).toBe('sid-1');
+    expect(store.get(second)?.agentSessionId).toBe('sid-2');
+    expect(store.nextTrajectorySequence(firstSessionId)).toBe(2);
+  });
+
+  it('evicts overflow as soon as an active session becomes history', () => {
+    const store = new SessionStore({ maxEntries: 1 });
+    const first = makeKey({ channelId: 'C1' });
+    const second = makeKey({ channelId: 'C2' });
+    store.set(first, {
+      agentSessionId: 'sid-1',
+      lastTurnAt: new Date(1),
+    });
+    store.set(second, {
+      agentSessionId: 'sid-2',
+      lastTurnAt: new Date(2),
+    });
+
+    store.archiveCurrent(first);
+
+    expect(
+      store
+        .listForUser({
+          platformName: 'discord-main',
+          platform: 'discord',
+          initiatorUserId: 'U1',
+          limit: 10,
+        })
+        .map((session) => session.agentSessionId),
+    ).toEqual(['sid-2']);
+  });
+
+  it('touch refreshes current and listed session recency', () => {
+    const store = new SessionStore();
+    const key = makeKey();
+    store.set(key, {
+      agentSessionId: 'sid-1',
+      lastTurnAt: new Date(1),
+    });
+
+    expect(store.touch(key, new Date(2))).toBe(true);
+    expect(store.get(key)?.lastTurnAt).toEqual(new Date(2));
+    expect(
+      store.listForUser({
+        platformName: 'discord-main',
+        platform: 'discord',
+        initiatorUserId: 'U1',
+        limit: 10,
+      })[0]?.lastTurnAt,
+    ).toEqual(new Date(2));
+    expect(store.touch(makeKey({ channelId: 'missing' }), new Date(3))).toBe(
+      false,
+    );
   });
 
   it('bindExternalResumeToKey writes an imported native ref onto the existing routing session', () => {
@@ -344,6 +612,28 @@ describe('SessionStore', () => {
     });
   });
 
+  it('does not restore a consumed next workingDir when rebinding history', () => {
+    const store = new SessionStore();
+    const key = makeKey();
+    store.setNextWorkingDir(key, '/workspace/next', new Date(1));
+    store.set(key, {
+      agentSessionId: 'sid-1',
+      lastTurnAt: new Date(2),
+    });
+    const [session] = store.listForUser({
+      platformName: 'discord-main',
+      platform: 'discord',
+      initiatorUserId: 'U1',
+      limit: 10,
+    });
+
+    expect(store.consumeNextWorkingDir(key)).toBe('/workspace/next');
+    store.archiveCurrent(key);
+
+    expect(store.bindExistingToKey(key, session!.sessionId, new Date(3)))
+      .not.toHaveProperty('nextSession');
+  });
+
   it('does not expose mutable nextSession state from listed sessions', () => {
     const store = new SessionStore();
     const key = makeKey();
@@ -413,6 +703,53 @@ describe('SessionStore', () => {
     expect(store.get(sourceKey)).toBeUndefined();
   });
 
+  it('rejects rebinding a session owned by another agent backend', () => {
+    const store = new SessionStore();
+    const key = makeKey();
+    store.set(key, {
+      agentSessionId: 'sid-codex',
+      agentOwner: 'codex',
+      lastTurnAt: new Date(1),
+    });
+    const [session] = store.listForUser({
+      platformName: 'discord-main',
+      platform: 'discord',
+      initiatorUserId: 'U1',
+      limit: 10,
+    });
+    store.archiveCurrent(key);
+
+    expect(
+      store.bindExistingToKey(
+        key,
+        session!.sessionId,
+        new Date(2),
+        'claudecode',
+      ),
+    ).toBeUndefined();
+    expect(store.get(key)).toBeUndefined();
+  });
+
+  it('rejects rebinding a session without an explicit agent owner', () => {
+    const store = new SessionStore();
+    const key = makeKey();
+    store.set(key, {
+      agentSessionId: 'sid-unknown',
+      lastTurnAt: new Date(1),
+    });
+    const [session] = store.listForUser({
+      platformName: 'discord-main',
+      platform: 'discord',
+      initiatorUserId: 'U1',
+      limit: 10,
+    });
+    store.archiveCurrent(key);
+
+    expect(
+      store.bindExistingToKey(key, session!.sessionId, new Date(2), 'codex'),
+    ).toBeUndefined();
+  });
+
   it('moves pending next workingDir when rebinding a resumable session', () => {
     const store = new SessionStore();
     const sourceKey = makeKey({ channelId: 'C-old' });
@@ -479,6 +816,48 @@ describe('SessionStore', () => {
     });
     expect(store.get(targetKey)?.nextSession).toBeUndefined();
     expect(store.get(sourceKey)).toBeUndefined();
+  });
+
+  it('rebinding an archived same-key session preserves the displaced current session as resumable', () => {
+    const store = new SessionStore();
+    const key = makeKey();
+    store.set(key, {
+      agentSessionId: 'sid-old',
+      lastTurnAt: new Date(1),
+      title: 'Old prompt',
+    });
+    const [oldSession] = store.listForUser({
+      platformName: 'discord-main',
+      platform: 'discord',
+      initiatorUserId: 'U1',
+      limit: 10,
+    });
+    store.archiveCurrent(key);
+    store.set(key, {
+      agentSessionId: 'sid-current',
+      lastTurnAt: new Date(2),
+      title: 'Current prompt',
+    });
+
+    const rebound = store.bindExistingToKey(key, oldSession!.sessionId, new Date(3));
+
+    expect(rebound).toMatchObject({
+      agentSessionId: 'sid-old',
+      title: 'Old prompt',
+    });
+    expect(store.get(key)).toMatchObject({
+      agentSessionId: 'sid-old',
+    });
+    expect(
+      store
+        .listForUser({
+          platformName: 'discord-main',
+          platform: 'discord',
+          initiatorUserId: 'U1',
+          limit: 10,
+        })
+        .map((session) => session.agentSessionId),
+    ).toEqual(['sid-old', 'sid-current']);
   });
 
   it('does not copy thread topology metadata when rebinding a resumable session', () => {

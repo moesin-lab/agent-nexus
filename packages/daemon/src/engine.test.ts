@@ -1201,6 +1201,7 @@ describe('Engine', () => {
     expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-123');
 
     const firstSession = agent.sendInput.mock.calls[0]![0] as AgentSession;
+    const touchSession = vi.spyOn(store, 'touch');
 
     // 第二轮：活跃 session 仍 alive，直接复用同一 AgentSession
     agent.queueEvents([
@@ -1213,6 +1214,10 @@ describe('Engine', () => {
     expect(agent.onEvent).toHaveBeenCalledTimes(1);
     expect(agent.sendInput.mock.calls[1]![0]).toBe(firstSession);
     expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-123');
+    expect(touchSession).toHaveBeenCalledWith(
+      ROUTED_SESSION_KEY,
+      expect.any(Date),
+    );
     expect(agent.stopSession).not.toHaveBeenCalled();
   });
 
@@ -1258,7 +1263,7 @@ describe('Engine', () => {
     ['/new\twhat is X?', 'what is X?'],
     ['/new\nwhat is X?', 'what is X?'],
   ])(
-    '/new 后接空白字符与文本：清 store + 用 trim 后的剩余作 prompt（%j）',
+    '/new 后接空白字符与文本：归档当前会话 + 用 trim 后的剩余作 prompt（%j）',
     async (text, expectedPrompt) => {
     const platform = makePlatform();
     const agent = makeAgent();
@@ -1293,8 +1298,18 @@ describe('Engine', () => {
     const input = agent.sendInput.mock.calls[0]![1] as AgentInput;
     expect(input.text).toBe(expectedPrompt);
 
-    // 新一轮 session_started 写回 sid-new；旧的 sid-123 已被清掉
+    // 新一轮 session_started 写回 sid-new；旧的 sid-123 保留在可恢复历史
     expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-new');
+    expect(
+      store
+        .listForUser({
+          platformName: 'mock-platform',
+          platform: 'discord',
+          initiatorUserId: 'U1',
+          limit: 10,
+        })
+        .map((session) => session.agentSessionId),
+    ).toEqual(['sid-new', 'sid-123']);
     },
   );
 
@@ -2859,6 +2874,7 @@ describe('Engine', () => {
     });
     store.set(withPlatformName(SESSION_KEY, 'discord-main'), {
       agentSessionId: 'sid-existing',
+      agentOwner: 'codex',
       lastTurnAt: new Date(0),
     });
 
@@ -3265,6 +3281,15 @@ describe('Engine', () => {
     await dispatchHandler(makeEvent('hello'));
 
     await dispatchHandler(makeCommandEvent('new'));
+    expect(store.get(withPlatformName(SESSION_KEY, 'discord-main'))).toBeUndefined();
+    expect(store.listForUser({
+      platformName: 'discord-main',
+      platform: 'discord',
+      initiatorUserId: 'U1',
+      limit: 10,
+    }).map((session) => session.agentSessionId)).toEqual([
+      'sid-before-new',
+    ]);
 
     codex.queueEvents([
       ev('session_started', { agentSessionId: 'sid-after-new' }),
@@ -3282,6 +3307,75 @@ describe('Engine', () => {
         initiatorUserId: 'U1',
       })?.agentSessionId,
     ).toBe('sid-after-new');
+    const slashListedSessions = store.listForUser({
+      platformName: 'discord-main',
+      platform: 'discord',
+      initiatorUserId: 'U1',
+      limit: 10,
+    }).map((session) => session.agentSessionId);
+    expect(slashListedSessions).toHaveLength(2);
+    expect(slashListedSessions).toEqual(expect.arrayContaining([
+      'sid-after-new',
+      'sid-before-new',
+    ]));
+  });
+
+  it('text /new prefix starts the next turn fresh while keeping the old session resumable', async () => {
+    const platform = makePlatform();
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: codex.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-before-text-new' }),
+      ev('text_final', { text: 'first' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('hello'));
+
+    await dispatchHandler(makeEvent('/new'));
+
+    expect(store.get(ROUTED_SESSION_KEY)).toBeUndefined();
+    expect(store.listForUser({
+      platformName: 'mock-platform',
+      platform: 'discord',
+      initiatorUserId: 'U1',
+      limit: 10,
+    }).map((session) => session.agentSessionId)).toEqual([
+      'sid-before-text-new',
+    ]);
+
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-after-text-new' }),
+      ev('text_final', { text: 'second' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('again'));
+
+    expect(codex.startSession).toHaveBeenCalledTimes(2);
+    expect(codex.startSession.mock.calls[1]![1]).toMatchObject({
+      resumeFromAgentSessionId: undefined,
+    });
+    const textListedSessions = store.listForUser({
+      platformName: 'mock-platform',
+      platform: 'discord',
+      initiatorUserId: 'U1',
+      limit: 10,
+    }).map((session) => session.agentSessionId);
+    expect(textListedSessions).toHaveLength(2);
+    expect(textListedSessions).toEqual(expect.arrayContaining([
+      'sid-after-text-new',
+      'sid-before-text-new',
+    ]));
   });
 
   it('immediate agent command without active session does not create a phantom AgentSession', async () => {
@@ -3460,7 +3554,7 @@ describe('Engine', () => {
     );
   });
 
-  it('daemon /nexus-kill 停止活跃 session 并清除 resume store', async () => {
+  it('daemon /nexus-kill 停止活跃 session 并归档当前绑定', async () => {
     const platform = makePlatform({ supportsSlashCommands: true });
     const codex = makeAgent();
     const store = new SessionStore();
@@ -3512,6 +3606,16 @@ describe('Engine', () => {
       channelId: 'C1',
       initiatorUserId: 'U1',
     })).toBeUndefined();
+    expect(
+      store
+        .listForUser({
+          platformName: 'discord-main',
+          platform: 'discord',
+          initiatorUserId: 'U1',
+          limit: 10,
+        })
+        .map((session) => session.agentSessionId),
+    ).toEqual(['sid-123']);
     expect(platform.send).toHaveBeenCalledWith(
       expect.objectContaining({ platformName: 'discord-main' }),
       expect.objectContaining({ text: '[session killed]' }),
@@ -3535,6 +3639,7 @@ describe('Engine', () => {
       },
       {
         agentSessionId: 'sid-old',
+        agentOwner: 'codex',
         lastTurnAt: new Date(10),
         title: 'Investigate failing tests',
       },
@@ -3608,26 +3713,6 @@ describe('Engine', () => {
     const codex = makeAgent();
     const claude = makeAgent();
     const store = new SessionStore();
-    store.set(
-      {
-        platformName: 'discord-main',
-        platform: 'discord',
-        channelId: 'C-old',
-        initiatorUserId: 'U1',
-      },
-      {
-        agentSessionId: 'sid-old',
-        lastTurnAt: new Date(10),
-        title: 'Continue deployment work',
-      },
-    );
-    const [oldSession] = store.listForUser({
-      platformName: 'discord-main',
-      platform: 'discord',
-      initiatorUserId: 'U1',
-      limit: 10,
-    });
-    expect(oldSession).toBeDefined();
     const engine = new Engine({
       platform,
       platformName: 'discord-main',
@@ -3658,6 +3743,27 @@ describe('Engine', () => {
 
     await engine.start();
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-old' }),
+      ev('text_final', { text: 'initial reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('Continue deployment work', {
+      sessionKey: {
+        platform: 'discord',
+        channelId: 'C-old',
+        initiatorUserId: 'U1',
+      },
+    }));
+    const [oldSession] = store.listForUser({
+      platformName: 'discord-main',
+      platform: 'discord',
+      initiatorUserId: 'U1',
+      agentOwner: 'codex',
+      limit: 10,
+    });
+    expect(oldSession).toBeDefined();
+
     const result = await dispatchHandler(
       makeComponentEvent('nexus:sessions:resume', [oldSession!.sessionId]),
     );
@@ -3677,6 +3783,7 @@ describe('Engine', () => {
       agentSessionId: 'sid-old',
       title: 'Continue deployment work',
     });
+    expect(codex.stopSession).toHaveBeenCalledTimes(1);
 
     codex.queueEvents([
       ev('session_started', { agentSessionId: 'sid-resumed' }),
@@ -3685,9 +3792,167 @@ describe('Engine', () => {
     ]);
     await dispatchHandler(makeEvent('continue'));
 
-    expect(codex.startSession).toHaveBeenCalledTimes(1);
-    expect(codex.startSession.mock.calls[0]![1]).toMatchObject({
+    expect(codex.startSession).toHaveBeenCalledTimes(2);
+    expect(codex.startSession.mock.calls[1]![1]).toMatchObject({
       resumeFromAgentSessionId: 'sid-old',
+    });
+  });
+
+  it('resuming archived history does not stop a newer live generation on the old key', async () => {
+    const platform = makePlatform({ supportsSlashCommands: true });
+    const codex = makeAgent();
+    const store = new SessionStore();
+    const oldKey: PlatformSessionKey = {
+      platform: 'discord',
+      channelId: 'C-old',
+      initiatorUserId: 'U1',
+    };
+    const targetKey: PlatformSessionKey = {
+      platform: 'discord',
+      channelId: 'C-new',
+      initiatorUserId: 'U1',
+    };
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: codex.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          channelIds: ['C-old', 'C-new'],
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry([DAEMON_SESSIONS_COMMAND]),
+      daemonCommandHandlerKeys: ['kill', 'sessions'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as EventHandler;
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-old' }),
+      ev('text_final', { text: 'old reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('old prompt', { sessionKey: oldKey }));
+    await dispatchHandler(makeCommandEvent('new', { sessionKey: oldKey }));
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-current' }),
+      ev('text_final', { text: 'current reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('current prompt', { sessionKey: oldKey }));
+    const oldSession = store
+      .listForUser({
+        platformName: 'discord-main',
+        platform: 'discord',
+        initiatorUserId: 'U1',
+        agentOwner: 'codex',
+        limit: 10,
+      })
+      .find((session) => session.agentSessionId === 'sid-old');
+    expect(oldSession).toBeDefined();
+    expect(codex.stopSession).not.toHaveBeenCalled();
+
+    await dispatchHandler(
+      makeComponentEvent(
+        'nexus:sessions:resume',
+        [oldSession!.sessionId],
+        { sessionKey: targetKey },
+      ),
+    );
+    expect(codex.stopSession).not.toHaveBeenCalled();
+
+    codex.queueEvents([
+      ev('text_final', { text: 'still current' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 2 }),
+    ]);
+    await dispatchHandler(makeEvent('continue current', { sessionKey: oldKey }));
+    expect(codex.startSession).toHaveBeenCalledTimes(2);
+    expect(codex.stopSession).not.toHaveBeenCalled();
+  });
+
+  it('does not pass an incompatible stored ref to a newly routed backend', async () => {
+    const platform = makePlatform();
+    const claude = makeAgent();
+    const store = new SessionStore();
+    store.set(withPlatformName(SESSION_KEY, 'discord-main'), {
+      agentSessionId: 'sid-codex',
+      agentOwner: 'codex',
+      lastTurnAt: new Date(1),
+      title: 'Codex conversation',
+    });
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'claude-prod',
+          agentOwner: 'claudecode',
+          agent: claude.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-claude',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'claude-prod',
+          channelIds: ['C1'],
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: makeActiveRegistry(),
+      daemonCommandHandlerKeys: ['kill'],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as EventHandler;
+    claude.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-claude' }),
+      ev('text_final', { text: 'fresh reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await dispatchHandler(makeEvent('continue'));
+
+    expect(claude.startSession).toHaveBeenCalledTimes(1);
+    expect(
+      claude.startSession.mock.calls[0]![1].resumeFromAgentSessionId,
+    ).toBeUndefined();
+    expect(
+      store
+        .listForUser({
+          platformName: 'discord-main',
+          platform: 'discord',
+          initiatorUserId: 'U1',
+          agentOwner: 'codex',
+          limit: 10,
+        })
+        .map((session) => session.agentSessionId),
+    ).toEqual(['sid-codex']);
+    expect(store.get(withPlatformName(SESSION_KEY, 'discord-main'))).toMatchObject({
+      agentSessionId: 'sid-claude',
+      agentOwner: 'claudecode',
     });
   });
 
@@ -3776,6 +4041,7 @@ describe('Engine', () => {
         });
         store.bindExternalResumeToKey(input.sessionKey, {
           agentSessionId: 'codex-thread-imported',
+          agentOwner: input.agentOwner,
           lastTurnAt: new Date(10),
           title: 'Imported Codex',
         });
@@ -3970,6 +4236,7 @@ describe('Engine', () => {
       },
       {
         agentSessionId: 'sid-old',
+        agentOwner: 'codex',
         lastTurnAt: new Date(10),
         title: 'Investigate settings',
       },
@@ -4086,6 +4353,7 @@ describe('Engine', () => {
       },
       {
         agentSessionId: 'sk-ant-agent-secret',
+        agentOwner: 'codex',
         lastTurnAt: new Date(10),
         title: 'Inspect /home/node/private sk-ant-title-secret',
       },
@@ -4241,6 +4509,7 @@ describe('Engine', () => {
       },
       {
         agentSessionId: 'sid-old',
+        agentOwner: 'codex',
         lastTurnAt: new Date(10),
         title: 'Resume from settings',
       },
@@ -4856,6 +5125,7 @@ describe('Engine', () => {
     });
     const codex = makeAgent();
     const claude = makeAgent();
+    const store = new SessionStore();
     const engine = new Engine({
       platform,
       platformName: 'discord-main',
@@ -4884,14 +5154,32 @@ describe('Engine', () => {
         },
       ],
       platformAuth: PLATFORM_AUTH_ALLOW_U1,
-      commandRegistry: makeActiveRegistry([DAEMON_SETTINGS_COMMAND]),
-      daemonCommandHandlerKeys: ['kill', 'settings'],
+      commandRegistry: makeActiveRegistry([
+        DAEMON_SETTINGS_COMMAND,
+        DAEMON_SESSIONS_COMMAND,
+      ]),
+      daemonCommandHandlerKeys: ['kill', 'settings', 'sessions'],
       logger: SILENT_LOGGER,
-      sessionStore: new SessionStore(),
+      sessionStore: store,
     });
 
     await engine.start();
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    codex.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-codex' }),
+      ev('text_final', { text: 'codex reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('hello before binding'));
+    const codexSessionId = store
+      .listForUser({
+        platformName: 'discord-main',
+        platform: 'discord',
+        initiatorUserId: 'U1',
+        agentOwner: 'codex',
+        limit: 10,
+      })[0]!.sessionId;
+
     const result = await dispatchHandler(
       makeComponentEvent('nexus:settings:agent', ['claude-prod']),
     );
@@ -4900,6 +5188,16 @@ describe('Engine', () => {
     expect(result?.commandResponse?.text).toContain('Result: Agent binding: claude-prod');
     expect(result?.commandResponse?.text).toContain('Agent: `claude-prod` · channel 覆盖 · 内存态');
     expect(result?.commandResponse?.text).toContain('Agent: `claude-prod` · channel override · in-memory');
+    expect(result?.commandResponse?.text).toContain('可恢复会话: `0`');
+    expect(result?.commandResponse?.text).toContain('Resumable sessions: `0`');
+    expect(
+      await dispatchHandler(makeCommandEvent('nexus-sessions')),
+    ).toEqual({
+      commandResponse: {
+        text: '[no resumable sessions]',
+        ephemeral: true,
+      },
+    });
 
     claude.queueEvents([
       ev('session_started', { agentSessionId: 'sid-claude' }),
@@ -4908,8 +5206,42 @@ describe('Engine', () => {
     ]);
     await dispatchHandler(makeEvent('hello after binding'));
 
-    expect(codex.startSession).not.toHaveBeenCalled();
+    expect(codex.startSession).toHaveBeenCalledTimes(1);
     expect(claude.startSession).toHaveBeenCalledTimes(1);
+    expect(
+      await dispatchHandler(
+        makeComponentEvent('nexus:sessions:resume', [codexSessionId]),
+      ),
+    ).toEqual({
+      commandResponse: {
+        text: 'This command is not available in this channel.',
+        ephemeral: true,
+      },
+    });
+    expect(claude.stopSession).not.toHaveBeenCalled();
+    expect(
+      store.get(withPlatformName(SESSION_KEY, 'discord-main'))?.agentSessionId,
+    ).toBe('sid-claude');
+    expect(
+      (await dispatchHandler(makeCommandEvent('nexus-sessions')))
+        ?.commandResponse?.components?.[0],
+    ).toMatchObject({
+      type: 'select',
+      options: [
+        expect.objectContaining({ description: 'C1 · sid-claude' }),
+      ],
+    });
+    expect(
+      store
+        .listForUser({
+          platformName: 'discord-main',
+          platform: 'discord',
+          initiatorUserId: 'U1',
+          limit: 10,
+        })
+        .map((session) => session.agentSessionId)
+        .sort(),
+    ).toEqual(['sid-claude', 'sid-codex']);
   });
 
   it('daemon /nexus-new-thread creates a private thread placeholder without starting an agent', async () => {

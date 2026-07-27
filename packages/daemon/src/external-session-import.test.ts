@@ -363,6 +363,13 @@ describe('ExternalSessionImportService', () => {
       metadataJson: '{"title":"Imported Future"}',
       discoveredAt: '2026-06-23T09:00:00.000Z',
     });
+    sessionStore.set(routedKey(), {
+      agentSessionId: 'codex-thread-current',
+      agentOwner: 'codex',
+      lastTurnAt: new Date('2026-06-23T09:30:00.000Z'),
+      title: 'Current Codex',
+    });
+    const displacedSessionId = sessionStore.ensureSessionId(routedKey());
 
     const binding = service.bindToRoutingSession({
       importId: 'imp-codex',
@@ -373,12 +380,34 @@ describe('ExternalSessionImportService', () => {
     expect(binding.nativeSessionRef).toBe('codex-thread-3');
     expect(sessionStore.get(routedKey())).toMatchObject({
       agentSessionId: 'codex-thread-3',
+      agentOwner: 'codex',
       title: 'Imported Codex',
     });
+    expect(binding.sessionId).not.toBe(displacedSessionId);
+    expect(binding.sessionId).toBe(sessionStore.ensureSessionId(routedKey()));
+    expect(
+      sessionStore
+        .listForUser({
+          platformName: 'discord-main',
+          platform: 'discord',
+          initiatorUserId: 'U1',
+          agentOwner: 'codex',
+          limit: 10,
+        })
+        .map((session) => session.agentSessionId),
+    ).toEqual(['codex-thread-3', 'codex-thread-current']);
     expect(trajectoryStore.getExternalSessionImport('imp-codex')).toMatchObject({
       state: 'linked',
-      linkedSessionId: sessionStore.ensureSessionId(routedKey()),
+      linkedSessionId: binding.sessionId,
     });
+    expect(() =>
+      service.bindToRoutingSession({
+        importId: 'imp-codex',
+        sessionKey: routedKey(),
+        agentOwner: 'codex',
+      }),
+    ).toThrow();
+    expect(sessionStore.get(routedKey())?.agentSessionId).toBe('codex-thread-3');
 
     expect(() =>
       service.bindToRoutingSession({

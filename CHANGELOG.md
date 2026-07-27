@@ -38,6 +38,10 @@ related:
   - **砍 shared_channel_mode**：`spec/security.md` MVP 移除（prompt injection 入口）；未来引入需新 ADR + untrusted 标注
   - **Discord 账号盗升格为核心威胁**：`spec/security.md` §威胁模型重写置顶；新增 `publicChannelMode` 默认 `thread`（公开 channel 自动转私有 thread）
 
+### Fixed
+
+- `/new`、`/nexus-kill`、agent binding 切换和 session rebind 不再丢弃旧 agent conversation；旧会话保留在 `/nexus-sessions` 可恢复列表，并受通常 100 条的内存软上限约束（活跃记录不为凑上限而淘汰）。
+
 ### Added
 
 - 新增 `spec/claude-code-cli-contract.md`：锁定 CC CLI 版本、启动命令模板、stream-json 协议、stdout 事件到 `AgentEvent` 的映射表、stop_reason 映射、`UsageCompleteness` 三档、中断/超时/崩溃处理链、兼容性自检（probe）、合约测试清单、兼容矩阵占位。`spec/README.md` 索引新增一类"Agent 后端专属契约"；`spec/agent-runtime.md` §CC CLI 专属说明瘦身为引用。

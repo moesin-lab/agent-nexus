@@ -35,13 +35,14 @@ git diff --check
 
 ## 首发前一次性配置
 
-1. npm 组织管理员确认当前账号控制 `moesin-lab`，并确认 `@moesin-lab/agent-nexus` 可由该组织创建。未登录查询得到 404 不能作为控制权证据。
-2. 创建短有效期、最小发布范围的 npm granular access token；首发结束后立即撤销。
+1. npm 组织管理员确认当前账号控制 `moesin-lab`，并确认执行首发的用户具有该 scope 的 package publish 权限。仅有 organization 管理权限不自动授予 package publish 权限；未登录查询得到 404 也不能作为控制权证据。
+2. 为该用户创建一天有效、只允许 `@moesin-lab` scope read/write 的 npm granular access token，并显式启用 bypass 2FA。npm 的非交互 publish 要求这个选项；token 仅放入受保护的部署 environment，首发结束后立即撤销。细节见 [npm access token](https://docs.npmjs.com/about-access-tokens/) 与 [2FA publish 要求](https://docs.npmjs.com/requiring-2fa-for-package-publishing-and-settings-modification/)。
 3. 在 GitHub 创建 `npm-production` environment：
    - 配置 required reviewers；
    - deployment branch/tag policy 只允许受保护的 `v*` tag；
    - 添加 environment secret `NPM_TOKEN`。
-4. 确认默认分支已包含 `.github/workflows/publish-npm.yml`，且所有分支保护和 CI 通过。
+4. 为 `refs/tags/v*` 配置 repository ruleset：限制创建权限，并禁止更新和删除。environment 的 tag filter 只控制部署，不替代 tag 不可变保护。
+5. 确认默认分支已包含 `.github/workflows/publish-npm.yml`，且所有分支保护和 CI 通过；发布 workflow 的第三方 Actions 必须继续固定到完整 commit SHA。
 
 ## 发布 0.1.0
 
@@ -49,7 +50,7 @@ git diff --check
 2. 从已通过保护的 `main` commit 创建 annotated tag `v0.1.0` 并推送；tag 不指向未合入的发布分支。
 3. 在 GitHub Actions 选择 **Publish npm CLI**，从 `v0.1.0` tag 手动触发，并在输入框填写 `0.1.0`。
 4. environment reviewer 核对 tag、commit、CI 与 npm scope 后批准。
-5. 工作流重新 build/test，生成 tarball，用统一验证器复验同一文件，再执行：
+5. 无 secret 的 build job 重新 build/test，生成 tarball，用统一验证器复验同一文件，并上传带 SHA-256 的短期 artifact。受保护的 publish job 下载该 artifact、核对 build job 输出的 digest，再执行：
 
    ```bash
    npm publish packages/cli/moesin-lab-agent-nexus-0.1.0.tgz \
@@ -73,6 +74,7 @@ git diff --check
 - repository：`agent-nexus`
 - workflow filename：`publish-npm.yml`
 - environment：`npm-production`
+- allowed action：`npm publish`
 
 然后在发布工作流顶层增加 `id-token: write`，移除 publish step 的 `NODE_AUTH_TOKEN`，并确保 Node.js 不低于 22.14、npm CLI 不低于 11.5.1。合并并验证 OIDC 发布后，不再恢复长期 npm token。
 

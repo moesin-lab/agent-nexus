@@ -33,7 +33,7 @@ agent-nexus 是一个本机运行的 IM 桥接服务。它把 Discord 消息路�
 ### 前置条件
 
 - Node.js 22 或 24
-- pnpm >= 10（仓库锁定 `pnpm@10.33.2`）
+- 从源码构建时需要 pnpm >= 10（仓库锁定 `pnpm@10.33.2`）
 - 已安装并登录 Claude Code CLI 或 Codex CLI
 - 一个 Discord bot token、bot user id、你的 Discord user id
 - Discord bot 已加入目标 server，并开启 `MESSAGE CONTENT INTENT`
@@ -41,6 +41,15 @@ agent-nexus 是一个本机运行的 IM 桥接服务。它把 Discord 消息路�
 Discord bot 创建、邀请和权限配置见 [`docs/product/platforms/discord.md`](docs/product/platforms/discord.md)。
 
 ### 安装
+
+从 npm 安装发布版本：
+
+```bash
+npm install -g @moesin-lab/agent-nexus
+agent-nexus
+```
+
+从源码开发：
 
 ```bash
 pnpm install
@@ -54,7 +63,7 @@ pnpm test
 pnpm dev
 ```
 
-构建并安装本地 CLI：
+构建并安装本地 tarball：
 
 ```bash
 pnpm pack:cli

@@ -17,12 +17,20 @@ related:
 ## 前置条件
 
 - Node.js 22 或 24
-- pnpm >= 10（仓库 `packageManager` 锁定版本为 `pnpm@10.33.2`）
+- 从源码构建时需要 pnpm >= 10（仓库 `packageManager` 锁定版本为 `pnpm@10.33.2`）
 - 本机已安装并登录 Claude Code CLI，`claude --version` 能运行
 - 一个 Discord bot token、bot user id、你的 Discord user id
 - bot 已加入测试 server，并开启 `MESSAGE CONTENT INTENT`
 
-## 安装与构建
+## 安装
+
+安装发布版本：
+
+```bash
+npm install -g @moesin-lab/agent-nexus
+```
+
+从源码构建并安装本地 tarball：
 
 在仓库根目录执行：
 

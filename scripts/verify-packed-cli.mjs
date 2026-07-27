@@ -21,6 +21,9 @@ const EXPECTED_FILES = [
   'package/dist/index.js',
   'package/package.json',
 ];
+const SOURCE_MANIFEST = JSON.parse(
+  await readFile(join(ROOT, 'packages', 'cli', 'package.json'), 'utf8'),
+);
 
 function run(command, args, options = {}) {
   return new Promise((resolveRun, reject) => {
@@ -117,11 +120,14 @@ async function verifyTarball(tarballPath, tempRoot) {
   const manifest = JSON.parse(
     await readFile(join(packageRoot, 'package.json'), 'utf8'),
   );
-  assert.equal(manifest.name, '@moesin-lab/agent-nexus');
-  assert.equal(manifest.version, '0.1.0');
+  assert.equal(manifest.name, SOURCE_MANIFEST.name);
+  assert.equal(manifest.version, SOURCE_MANIFEST.version);
   assert.equal(manifest.main, undefined);
-  assert.deepEqual(manifest.bin, { 'agent-nexus': './dist/index.js' });
-  assert.equal(manifest.dependencies['better-sqlite3'], '^12.11.1');
+  assert.deepEqual(manifest.bin, SOURCE_MANIFEST.bin);
+  assert.equal(
+    manifest.dependencies['better-sqlite3'],
+    SOURCE_MANIFEST.dependencies['better-sqlite3'],
+  );
   assert.equal(
     Object.keys(manifest.dependencies).some((name) =>
       name.startsWith('@agent-nexus/'),

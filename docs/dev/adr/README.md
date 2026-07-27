@@ -61,7 +61,7 @@ Proposed ──(显式签字盖章)──> Accepted
 | [0001](0001-im-platform-discord.md) | MVP IM 平台选型：Discord | Accepted |
 | [0002](0002-agent-backend-claude-code-cli.md) | Agent 后端选型：Claude Code CLI | Accepted |
 | [0003](0003-deployment-local-desktop.md) | 部署形态：本机桌面 | Accepted |
-| [0004](0004-language-runtime.md) | 实现语言与运行时选型 | Proposed |
+| [0004](0004-language-runtime.md) | 实现语言与运行时选型 | Accepted |
 | [0005](deprecated/0005-subscription-as-first-class-path.md) | 订阅计费为一等用户路径 | Superseded by 0006 |
 | [0006](0006-limits-layering-defense-first.md) | Limits 分层——失控保护为一等，配额控制按用户路径可选 | Accepted |
 | [0007](0007-collaborative-skill-promotion.md) | 协作性 skill 入库与挂接 | Proposed |
@@ -77,6 +77,7 @@ Proposed ──(显式签字盖章)──> Accepted
 | [0017](0017-slash-command-registry.md) | Slash command registry 统一声明与注册 | Proposed |
 | [0018](0018-trajectory-observability-read-model.md) | Trajectory Observability 读模型与外部观测 | Proposed |
 | [0019](0019-lark-platform-via-official-node-sdk.md) | 飞书平台通过官方 Node SDK 接入 | Proposed |
+| [0020](0020-publish-single-npm-cli-package.md) | 首发只发布单一 npm CLI 包 | Proposed |
 
 ## 职责边界
 

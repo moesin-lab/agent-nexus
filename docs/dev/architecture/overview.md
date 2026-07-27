@@ -26,7 +26,7 @@ agent-nexus 是一个**本机进程**，负责把已配置 IM 平台的事件与
 
 ## 模块结构
 
-> **命名约定**：本文用的 `daemon` / `agent/<name>` / `platform/<name>` / `cli` / `protocol` 都是 ADR-0004 的 monorepo package 名（前缀 `@agent-nexus/`，详见 [`dependencies.md`](dependencies.md) §"附录：当前 package 清单"）。文档里带点的 namespace prefix（`daemon.logger` / `daemon.idempotency` 等）= `@agent-nexus/daemon` 的 import path。
+> **命名约定**：本文用的 `daemon` / `agent/<name>` / `platform/<name>` / `cli` / `protocol` 都是 monorepo package 名；内部 package 使用 `@agent-nexus/` 前缀，公开 CLI 使用 `@moesin-lab/agent-nexus`，详见 [`dependencies.md`](dependencies.md) §"附录：当前 package 清单"。文档里带点的 namespace prefix（`daemon.logger` / `daemon.idempotency` 等）= `@agent-nexus/daemon` 的 import path。
 >
 > **本项目不使用 "三层结构 / layered architecture" 措辞**——layered architecture 暗示线性堆叠 + 自上而下依赖，与 agent-nexus 实际的中枢辐射依赖关系不符（旧版措辞已归档到 [`docs/_deprecated/architecture/three-layer-vocabulary.md`](../../_deprecated/architecture/three-layer-vocabulary.md)）。本项目采用 **hub-and-spoke（中枢辐射）模块模型**，与权威开源对标（LSP / DAP / MCP / Continue.dev）使用 client/server/adapter/extension/binary 等角色名一致。
 
@@ -52,7 +52,7 @@ agent-nexus 是一个**本机进程**，负责把已配置 IM 平台的事件与
 - **`@agent-nexus/daemon`**（中枢）：control plane + routing runtime + 横切能力。是 hub，只依赖语言标准库与少量通用工具，不感知具体 agent / platform 实现，也不解释 agent command 业务语义。
 - **`@agent-nexus/agent-<name>`**（agent 适配器）：具体 agent 后端实现。当前实现有 `agent-claudecode` 与 `agent-codex`；命名 agent 配置与 binding 路由见 [`../spec/config-routing.md`](../spec/config-routing.md)。
 - **`@agent-nexus/platform-<name>`**（IM/transport 适配器）：具体 IM 平台或 transport 实现，通过注册表接入 daemon；实现与规划状态见 [`dependencies.md`](dependencies.md#附录当前-package-清单)。
-- **`@agent-nexus/cli`**（拼装入口）：可执行入口，加载配置，拼装 daemon + 启用的 platform adapters / agent runtimes / routing table。
+- **`@moesin-lab/agent-nexus`**（拼装入口）：公开 CLI 包与可执行入口，加载配置，拼装 daemon + 启用的 platform adapters / agent runtimes / routing table。
 
 接口契约（`PlatformAdapter` / `AgentRuntime`）和归一化类型（`NormalizedEvent` / `AgentEvent` / `OutboundMessage` 等）住 `@agent-nexus/protocol` package（leaf 包，无依赖）。
 

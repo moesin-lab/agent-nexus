@@ -6,10 +6,15 @@ on:
     branches: [main]
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
+  source-checks:
+    name: Source checks (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -19,9 +24,9 @@ jobs:
         with:
           version: 10.33.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
           cache: pnpm
 
       - run: node scripts/validate-pr-metadata.mjs --self-test
@@ -34,22 +39,45 @@ jobs:
 
       - run: pnpm test
 
-      - run: pnpm pack:cli
+  packed-cli:
+    name: Packed CLI (${{ matrix.runner }}, Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15, macos-15-intel]
+        node-version: [22, 24]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
 
-      - name: Smoke test packed CLI
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm verify:pack:cli
+
+  check:
+    needs: [source-checks, packed-cli]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      SOURCE_CHECKS_RESULT: ${{ needs.source-checks.result }}
+      PACKED_CLI_RESULT: ${{ needs.packed-cli.result }}
+    steps:
+      - name: Require every CI matrix to pass
         run: |
-          tmp="$(mktemp -d)"
-          export HOME="$tmp/home"
-          npm install --prefix "$tmp/install" packages/cli/agent-nexus-cli-*.tgz
-
-          set +e
-          "$tmp/install/node_modules/.bin/agent-nexus" >"$tmp/agent-nexus.out" 2>&1
-          code=$?
-          set -e
-
-          test "$code" -eq 1
-          grep -q "agent-nexus 配置模板已创建" "$tmp/agent-nexus.out"
-          test "$(stat -c '%a' "$HOME/.agent-nexus")" = "700"
-          test "$(stat -c '%a' "$HOME/.agent-nexus/secrets")" = "700"
-          test "$(stat -c '%a' "$HOME/.agent-nexus/config.json")" = "600"
-          test "$(stat -c '%a' "$HOME/.agent-nexus/secrets/DISCORD_BOT_TOKEN")" = "600"
+          test "$SOURCE_CHECKS_RESULT" = "success"
+          test "$PACKED_CLI_RESULT" = "success"

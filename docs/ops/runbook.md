@@ -18,7 +18,7 @@ related:
 
 ## 启动前检查
 
-- `node --version` 为 20 或更高版本。
+- `node --version` 为 22.x 或 24.x。
 - `pnpm --version` 可运行。
 - `claude --version` 可运行。
 - 首次运行会自动创建 `~/.agent-nexus/config.json` 与 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN`；后续启动会把模板新增但本地缺失的配置字段补回 `config.json`。编辑后确认两者权限为 `0600`。
@@ -31,7 +31,7 @@ related:
 
 ```bash
 pnpm dev
-corepack pnpm --filter @agent-nexus/cli dev
+corepack pnpm --filter @moesin-lab/agent-nexus dev
 ```
 
 构建并安装本地 npm bin 后运行：
@@ -39,7 +39,7 @@ corepack pnpm --filter @agent-nexus/cli dev
 ```bash
 pnpm build
 pnpm pack:cli
-npm install -g packages/cli/agent-nexus-cli-*.tgz
+npm install -g packages/cli/moesin-lab-agent-nexus-*.tgz
 agent-nexus
 agent-nexus --home ~/.agent-nexus-stable
 ```
@@ -90,7 +90,7 @@ pnpm install
 pnpm build
 pnpm test
 pnpm pack:cli
-npm install -g packages/cli/agent-nexus-cli-*.tgz
+npm install -g packages/cli/moesin-lab-agent-nexus-*.tgz
 ```
 
 升级后重启进程。若升级涉及配置字段，按 `README.md` 与 [`../product/user-guide.md`](../product/user-guide.md) 更新 `~/.agent-nexus/config.json`。

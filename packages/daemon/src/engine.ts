@@ -61,6 +61,11 @@ import {
   type RoutingEntry,
 } from './router.js';
 import type { SessionStore } from './session-store.js';
+import {
+  executeShellCommand,
+  type ShellCommandExecutor,
+  type ShellCommandResult,
+} from './shell-command.js';
 import type {
   TrajectorySegment,
   TrajectorySegmentKind,
@@ -205,6 +210,10 @@ export interface EngineDeps {
   textPrefixes?: {
     newSession?: boolean;
   };
+  shellCommands?: {
+    enabled?: boolean;
+    execute?: ShellCommandExecutor;
+  };
   trajectory?: {
     enabled?: boolean;
     store?: TrajectoryStore;
@@ -279,6 +288,7 @@ interface ActiveAgentSession {
   agentName: string;
   session: AgentSession;
   sessionId: string;
+  workingDir: string;
   currentTurn?: {
     eventId: string;
     traceId: string;
@@ -480,6 +490,8 @@ export class Engine {
   private readonly providerCapture?: ProviderCaptureRecorder;
   private readonly streamEditThrottleMs: number;
   private readonly typingRefreshMs: number;
+  private readonly shellCommandsEnabled: boolean;
+  private readonly shellCommandExecutor: ShellCommandExecutor;
   private readonly agentSessions = new Map<string, ActiveAgentSession>();
   private readonly agentOverridesByChannel = new Map<string, string>();
   private readonly pendingConfigEdits = new Map<string, PendingConfigEdit>();
@@ -546,6 +558,9 @@ export class Engine {
       deps.streaming?.typingRefreshMs ?? DEFAULT_TYPING_REFRESH_MS;
     this.toolMessageMode = deps.toolMessages?.mode ?? 'append';
     this.newSessionTextPrefixEnabled = deps.textPrefixes?.newSession ?? true;
+    this.shellCommandsEnabled = deps.shellCommands?.enabled ?? false;
+    this.shellCommandExecutor =
+      deps.shellCommands?.execute ?? executeShellCommand;
   }
 
   async start(): Promise<void> {
@@ -3521,6 +3536,13 @@ export class Engine {
       event.sessionKey,
     );
     if (nextWorkingDir) return nextWorkingDir;
+    return this.resolveCurrentWorkingDir(event, defaultWorkingDir);
+  }
+
+  private resolveCurrentWorkingDir(
+    event: NormalizedEvent & { sessionKey: SessionKey },
+    defaultWorkingDir: string,
+  ): string {
     const currentChannelWorkingDir = this.sessionStore.getChannelWorkingDir({
       platformName: this.platformName,
       platform: event.sessionKey.platform,
@@ -3542,6 +3564,97 @@ export class Engine {
       if (parentChannelWorkingDir) return parentChannelWorkingDir;
     }
     return defaultWorkingDir;
+  }
+
+  private async dispatchShellCommand(
+    event: NormalizedEvent & { sessionKey: SessionKey },
+    agentSlot: EngineAgent,
+    command: string,
+    sessionKeyStr: string,
+  ): Promise<void> {
+    const active = this.agentSessions.get(sessionKeyStr);
+    const cwd =
+      active?.agentName === agentSlot.agentName
+        ? active.workingDir
+        : this.resolveCurrentWorkingDir(
+            event,
+            agentSlot.defaultSessionConfig.workingDir,
+          );
+    let result: ShellCommandResult;
+    try {
+      result = await this.shellCommandExecutor({
+        command,
+        cwd,
+        timeoutMs: 30000,
+        maxOutputBytes: 32768,
+      });
+    } catch (err) {
+      this.logger.warn(
+        {
+          traceId: event.traceId,
+          sessionKey: sessionKeyStr,
+          errorName: err instanceof Error ? err.name : 'unknown',
+        },
+        'shell_command_execution_failed',
+      );
+      result = {
+        output: '',
+        exitCode: null,
+        signal: null,
+        timedOut: false,
+        truncated: false,
+        spawnError: 'execution failed',
+      };
+    }
+    try {
+      await this.platform.send(
+        event.sessionKey,
+        this.redactOutboundMessage(
+          {
+            text: this.renderShellCommandResult(result),
+            traceId: event.traceId,
+            sessionKey: event.sessionKey,
+            ...(event.responseTarget
+              ? { replyTo: event.responseTarget }
+              : {}),
+          },
+          event.traceId,
+        ),
+      );
+    } catch (err) {
+      this.logger.error(
+        { traceId: event.traceId, sessionKey: sessionKeyStr, err },
+        'platform_send_failed',
+      );
+    }
+    this.logger.info(
+      {
+        traceId: event.traceId,
+        sessionKey: sessionKeyStr,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        timedOut: result.timedOut,
+        truncated: result.truncated,
+        outputBytes: Buffer.byteLength(result.output),
+      },
+      'shell_command_finished',
+    );
+  }
+
+  private renderShellCommandResult(result: ShellCommandResult): string {
+    let status: string;
+    if (result.timedOut) {
+      status = 'timed out after 30s';
+    } else if (result.truncated) {
+      status = 'output truncated at 32 KiB';
+    } else if (result.spawnError) {
+      status = 'failed to start';
+    } else if (result.signal) {
+      status = `terminated by ${result.signal}`;
+    } else {
+      status = `exit ${result.exitCode ?? 'unknown'}`;
+    }
+    return `[shell: ${status}]\n${result.output || '(no output)'}`;
   }
 
   private redactForOutbound(text: string, traceId: string): string {
@@ -3964,6 +4077,19 @@ export class Engine {
       // /new 触发：归档当前会话，并把 /new 后剩余文本作为 prompt（空则只发 ack）
       const rawText = event.text ?? '';
       const trimmed = rawText.trim();
+      if (
+        this.shellCommandsEnabled &&
+        rawText.startsWith('!') &&
+        rawText.slice(1).trim().length > 0
+      ) {
+        await this.dispatchShellCommand(
+          event,
+          agentSlot,
+          rawText.slice(1).trim(),
+          sessionKeyStr,
+        );
+        return;
+      }
       let prompt: string;
       if (
         this.newSessionTextPrefixEnabled &&
@@ -4688,6 +4814,7 @@ export class Engine {
       agentName: agentSlot.agentName,
       session,
       sessionId: config.sessionId,
+      workingDir: config.workingDir,
     };
     this.agentSessions.set(sessionKeyStr, activeSession);
     agentSlot.agent.onEvent(session, async (agentEvent) => {

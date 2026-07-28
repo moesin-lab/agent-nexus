@@ -79,6 +79,7 @@ Proposed ──(显式签字盖章)──> Accepted
 | [0019](0019-lark-platform-via-official-node-sdk.md) | 飞书平台通过官方 Node SDK 接入 | Accepted |
 | [0020](0020-publish-single-npm-cli-package.md) | 首发只发布单一 npm CLI 包 | Proposed |
 | [0021](0021-lark-thread-as-session-container.md) | 飞书话题作为独立 session 容器 | Proposed |
+| [0022](0022-config-gated-bang-shell-command.md) | 用显式配置开放感叹号 Shell 指令 | Proposed |
 
 ## 职责边界
 

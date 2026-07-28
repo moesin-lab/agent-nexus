@@ -46,6 +46,26 @@ contracts:
 
 - 启动日志里打 `warn` 提醒（与 §核心威胁关联 "启用 Edit/Write 应触发 per-session 警告"对齐）
 
+## 直接感叹号 Shell 指令
+
+`daemon.shellCommands.enabled` 控制 daemon-owned 的 `!<command>` 直接执行入口，默认必须为 `false`。该入口不是
+agent tool：它不经过 Claude Code `allowedTools` / permission control，也不经过 Codex sandbox。
+
+启用后的固定契约：
+
+| 维度 | 契约 |
+|---|---|
+| 身份 | 仅处理已通过命中 platform instance 的 `platforms[].auth.allowlist` 的消息；不增加独立 Shell allowlist |
+| 触发 | 只匹配首字符为 `!` 且后续命令 trim 后非空的普通消息；关闭时整条消息原样进入 agent |
+| 执行 | daemon 在当前 session workingDir 使用 `/bin/sh -lc <command>`；不接受 stdin、TTY 或后台 job 管理 |
+| 顺序 | `routing → auth → idempotency → session queue → shell`；同 SessionKey 与 agent turn 串行 |
+| 限制 | 单次 30 秒；stdout/stderr 按到达顺序合计最多 32 KiB，超限终止并标记截断 |
+| 输出 | 显示退出状态和合并输出；空输出仍返回退出状态；发送前走统一 redactor 与 platform 回复目标 |
+| 失败 | spawn、超时、非零退出都形成用户可见 Shell 结果，不启动或污染 agent session |
+
+开启时启动日志必须发出 `shell_commands_enabled` warn，明确这是远程等价本机执行。超时或输出超限时必须终止
+Shell 进程组；限制只控制本次前台进程，不构成 OS sandbox，也不保证命令未留下独立后台进程。
+
 ## 工作目录
 
 - `SessionConfig.workingDir` 限定 CC 的默认工作目录
@@ -80,8 +100,13 @@ Discord 账号被盗 → 远程等价本机操作（见 `security.md` §"核心�
 - **只读工具集**（`Read / Grep / Glob`）可作比 §规则 默认集（含 `Edit / Write`）更保守的起点；启用 `Edit / Write` 应触发 per-session 警告
 - 写操作二次确认（per-session / per-tool）仍为 future 项（MVP 未实现）
 - `Bash` 与 MCP shell 类启用时**强制**显示在欢迎消息
+- `daemon.shellCommands.enabled=true` 时视为比 agent `Bash` 更强的直接主机能力，任何文案不得把它描述为受
+  agent permission control 或 sandbox 保护
 
 ## 合约测试
+
+- **直接 Shell 默认关闭**：缺省或 `false` 时 `!<command>` 原样进入 agent；显式 `true` 时仅在 auth、幂等和
+  session queue 之后执行，使用当前 workingDir，30 秒/32 KiB 限制生效，且不调用 agent runtime
 
 - **白名单外拒绝（执行前）**：CC 尝试调用未在 `claudeCode.allowedTools` 的工具 → `can_use_tool` control 强制点在工具**执行前** deny；**最低断言 = 工具副作用未发生（执行前被拦）**。具体可观测信号（stdout 格式 / denial 汇总结构）由 [`claude-code-cli.md`](../agent-backends/claude-code-cli.md) 拥有。测试不得只断言有 denial 文本，必须同时验证副作用未发生。若实现切到 PreToolUse hook fallback，同一最低断言仍成立
 - **强制点缺失 fail-closed**：control 主强制点缺失 / 加载失败 → 启动失败或切到已验证 hook fallback；control 与 hook fallback 均不可用 → **禁止落地**工具隔离实现，**不**退化放行

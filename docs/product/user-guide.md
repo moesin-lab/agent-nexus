@@ -129,6 +129,9 @@ npm install -g packages/cli/moesin-lab-agent-nexus-*.tgz
       "textPrefixes": {
         "newSession": true
       }
+    },
+    "shellCommands": {
+      "enabled": false
     }
   },
   "ui": {
@@ -183,6 +186,7 @@ chmod 600 ~/.agent-nexus/config.json
 | `daemon.commandRegistry.aliases.singleAgent.enabled` | 否 | 默认 `true`；控制裸 `/new` / `/stop` single-agent slash alias，不影响 `/codex-new` / `/codex-stop` / `/claudecode-new` / `/claudecode-stop` |
 | `daemon.commandRegistry.aliases.legacy.replyMode` | 否 | 默认 `true`；控制 legacy `/reply-mode` 是否注册，不影响 `/discord-reply-mode` |
 | `daemon.commandRegistry.textPrefixes.newSession` | 否 | 默认 `true`；控制普通消息中的 `/new` 文本前缀，不影响 slash command |
+| `daemon.shellCommands.enabled` | 否 | 默认 `false`；开启后允许已通过 platform allowlist 的用户用 `!<command>` 在 daemon 主机执行 `/bin/sh -lc`，30 秒超时、合并输出上限 32 KiB；修改后需重启 |
 | `daemon.trajectory.externalImport.enabled` | 否 | 默认 `false`；关闭时 `/nexus-external-sessions` 不扫描任何 root |
 | `daemon.trajectory.externalImport.sources` | 否 | 默认 `[]`；配置显式 JSONL root 和 `projectPathAllowlist`，不会自动扫描整个 home |
 | `ui.toolMessages` | 否 | 默认 `append`；工具调用追加为独立消息并在结果到达时编辑该工具消息。设为 `compact` 可回到旧式紧凑显示 |
@@ -193,6 +197,18 @@ chmod 600 ~/.agent-nexus/config.json
 默认保持 `permissionLevel: "default"`。agent-nexus 会显式传 `--permission-mode default`，并通过 `--permission-prompt-tool stdio` 自检工具执行前审批通道。
 
 如果你确实需要远程等价本机操作，可以把 `permissionLevel` 设为 `bypassPermissions`。这是 Claude Code backend 的 YOLO 模式：agent-nexus 会跳过工具权限控制 probe，并在启动日志打 warn；不要把这个模式暴露给不可信 Discord 账号或公共频道。其他非 `default` 模式也会跳过该 probe，不提供工具隔离强安全承诺。
+
+### 感叹号 Shell 指令
+
+手动编辑 `config.json` 并设置 `daemon.shellCommands.enabled=true` 后，以 `!` 开头且后面存在非空内容的普通消息会直接在当前 session 的 working directory 执行，不交给 agent。例如：
+
+```shell
+!git status --short
+```
+
+该入口支持管道与重定向，沿用 platform allowlist，不提供独立 shell allowlist、agent sandbox 或命令过滤。所有已授权用户都获得 daemon 进程权限下的本机执行能力，也可以通过命令修改 `config.json`。只应在参与者和频道均可信的私有部署中开启。
+
+执行固定使用 `/bin/sh -lc`，30 秒后终止，stdout 与 stderr 按到达顺序合并，最多返回 32 KiB。关闭时，`!` 消息保持普通 prompt。该字段不提供专用聊天或 settings 开关，配置修改仅在重启后生效；启用时 daemon 会写入 `shell_commands_enabled` warn 日志。
 
 ### Codex backend 配置细节
 

@@ -572,6 +572,104 @@ function makeThrowingTrajectoryStore(): TrajectoryStore & {
 // ----- tests -----
 
 describe('Engine', () => {
+  it('默认关闭感叹号 shell 指令并将原文交给 agent', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+    agent.queueEvents([
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('!printf hello'));
+
+    expect(agent.sendInput).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ text: '!printf hello' }),
+    );
+  });
+
+  it('shell executor 异常时返回可见失败且不交给 agent', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const execute = vi.fn(async () => {
+      throw new Error('spawn failed');
+    });
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+      defaultSessionConfig: DEFAULT_CFG,
+      shellCommands: { enabled: true, execute },
+    });
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(makeEvent('!broken-command'));
+
+    expect(agent.sendInput).not.toHaveBeenCalled();
+    expect(platform.send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        text: expect.stringContaining('[shell: failed to start]'),
+      }),
+    );
+  });
+
+  it('显式开启后执行感叹号 shell 指令，不启动 agent session', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const execute = vi.fn(async () => ({
+      output: 'hello\n',
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      truncated: false,
+    }));
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+      defaultSessionConfig: DEFAULT_CFG,
+      shellCommands: { enabled: true, execute },
+    });
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    const event = makeEvent('!printf hello');
+    await dispatchHandler(event);
+    await dispatchHandler(event);
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith({
+      command: 'printf hello',
+      cwd: '/tmp',
+      timeoutMs: 30000,
+      maxOutputBytes: 32768,
+    });
+    expect(agent.startSession).not.toHaveBeenCalled();
+    expect(agent.sendInput).not.toHaveBeenCalled();
+    expect(platform.send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ text: expect.stringContaining('hello') }),
+    );
+  });
+
   it('入站日志只记录 metadata，不在任何 level 写入消息正文', async () => {
     const platform = makePlatform();
     const agent = makeAgent();
@@ -1946,6 +2044,7 @@ describe('Engine', () => {
     const claude = makeAgent();
     const store = new SessionStore();
     const mockLogger = makeMockLogger();
+    const execute = vi.fn();
     const routingTable: RoutingEntry[] = [
       {
         bindingName: 'discord-main-codex',
@@ -1977,13 +2076,14 @@ describe('Engine', () => {
         },
       ],
       routingTable,
+      shellCommands: { enabled: true, execute },
       logger: mockLogger,
       sessionStore: store,
     });
 
     await engine.start();
     const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
-    await dispatchHandler(makeEvent('hello', {
+    await dispatchHandler(makeEvent('!printf denied', {
       initiator: { userId: 'U-denied', displayName: 'denied', isBot: false },
       sessionKey: {
         platform: 'discord',
@@ -1994,6 +2094,7 @@ describe('Engine', () => {
 
     expect(codex.startSession).not.toHaveBeenCalled();
     expect(codex.sendInput).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
     expect(platform.react).not.toHaveBeenCalled();
     expect(store.size).toBe(0);
     const infoCalls = (mockLogger.info as ReturnType<typeof vi.fn>).mock.calls;

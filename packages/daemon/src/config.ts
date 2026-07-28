@@ -79,6 +79,9 @@ export interface TrajectoryObservabilityConfig {
 
 export interface DaemonRuntimeConfig {
   commandRegistry: DaemonCommandRegistryConfig;
+  shellCommands: {
+    enabled: boolean;
+  };
   trajectory: TrajectoryObservabilityConfig;
 }
 
@@ -103,6 +106,9 @@ export const DEFAULT_DAEMON_RUNTIME_CONFIG: DaemonRuntimeConfig = {
     textPrefixes: {
       newSession: true,
     },
+  },
+  shellCommands: {
+    enabled: false,
   },
   trajectory: {
     enabled: true,
@@ -573,7 +579,23 @@ export function parseDaemonRuntimeConfig(raw: unknown): DaemonRuntimeConfig {
     throw new DaemonConfigError(`字段 ${path} 必须是对象`);
   }
   const daemon = (raw ?? {}) as Record<string, unknown>;
-  assertNoUnknownKeys(daemon, ['commandRegistry', 'trajectory'], path);
+  assertNoUnknownKeys(
+    daemon,
+    ['commandRegistry', 'shellCommands', 'trajectory'],
+    path,
+  );
+
+  const shellCommandsPath = `${path}.shellCommands`;
+  const shellCommands = isRecord(daemon['shellCommands'])
+    ? daemon['shellCommands']
+    : {};
+  if (
+    daemon['shellCommands'] !== undefined &&
+    !isRecord(daemon['shellCommands'])
+  ) {
+    throw new DaemonConfigError(`字段 ${shellCommandsPath} 必须是对象`);
+  }
+  assertNoUnknownKeys(shellCommands, ['enabled'], shellCommandsPath);
 
   const commandRegistryPath = `${path}.commandRegistry`;
   const commandRegistry = isRecord(daemon['commandRegistry'])
@@ -710,6 +732,14 @@ export function parseDaemonRuntimeConfig(raw: unknown): DaemonRuntimeConfig {
           DEFAULT_DAEMON_RUNTIME_CONFIG.commandRegistry.textPrefixes.newSession,
         ),
       },
+    },
+    shellCommands: {
+      enabled: parseBoolean(
+        shellCommands,
+        'enabled',
+        shellCommandsPath,
+        DEFAULT_DAEMON_RUNTIME_CONFIG.shellCommands.enabled,
+      ),
     },
     trajectory: parseTrajectoryObservabilityConfig(daemon['trajectory']),
   };

@@ -38,6 +38,12 @@ export {
 } from './message-queue.js';
 export { BasicRedactor, redactText, type Redactor } from './redaction.js';
 export {
+  executeShellCommand,
+  type ShellCommandExecutor,
+  type ShellCommandInput,
+  type ShellCommandResult,
+} from './shell-command.js';
+export {
   RouteError,
   selectRoute,
   type PlatformType,

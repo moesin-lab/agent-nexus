@@ -62,6 +62,10 @@ contracts:
   ├─ 投递到 sessionKey 的 FIFO 队列              (权威源：architecture/session-model.md)
                                                  处理完成后更新 status 为 "processed" / "failed"；
                                                  管理命令 clear pending 时更新为 "cancelled"
+  │     ├─ `daemon.shellCommands.enabled && text startsWith("!")`
+  │     │    → 按 security/tool-boundary.md 执行 Shell
+  │     │    → 结果经 redactor + PlatformAdapter.send 返回，不创建 AgentSession
+  │     └─ 其他消息 → AgentInput
   └─ 入站收到确认 reaction（如 Discord `👀`）    (权威源：platform-adapter.md §Discord Trigger 策略)
         触发条件、排除条件与失败语义见权威源
         │
@@ -79,7 +83,7 @@ contracts:
 
 **入站顺序硬约束**（权威源：config-routing.md §路由匹配语义 + security/auth.md §权限检查位置 + infra/idempotency.md §流程）：
 
-`routing → auth → idempotency → 限流/预算 → session 队列`
+`routing → auth → idempotency → 限流/预算 → session 队列 → shell/agent 分流`
 
 `RouteContext.platformName` 由 CLI / daemon 在注册每个 configured platform instance 时注入；
 `PlatformAdapter` 仍只产出 `NormalizedEvent`。

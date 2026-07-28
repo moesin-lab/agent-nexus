@@ -33,6 +33,7 @@ import {
   isCommandDispatchFailure,
 } from './command-dispatch.js';
 import type { CommandDispatchDecision } from './command-dispatch.js';
+import { daemonCommandDescriptors } from './command-descriptors.js';
 import type { PlatformAuthConfig, ToolMessageMode } from './config.js';
 import {
   ExternalSessionImportServiceError,
@@ -53,7 +54,12 @@ import type {
   ProviderCaptureRecorder,
 } from './provider-capture.js';
 import { BasicRedactor, type Redactor } from './redaction.js';
-import { RouteError, selectRoute, type RoutingEntry } from './router.js';
+import {
+  RouteError,
+  selectRoute,
+  type PlatformType,
+  type RoutingEntry,
+} from './router.js';
 import type { SessionStore } from './session-store.js';
 import type {
   TrajectorySegment,
@@ -168,7 +174,7 @@ export interface EngineRuntimeUpdate {
 export interface EngineDeps {
   platform: PlatformAdapter;
   platformName?: string;
-  platformType?: 'discord';
+  platformType?: PlatformType;
   agent?: AgentRuntime;
   agents?: readonly EngineAgent[];
   routingTable?: readonly RoutingEntry[];
@@ -213,6 +219,8 @@ const COMMAND_NOT_ALLOWED_TEXT = 'You are not allowed to use this command.';
 const COMMAND_NOT_READY_TEXT = 'Slash commands are not ready yet. Try again later.';
 const COMMAND_UNAVAILABLE_TEXT = 'This command is not available in this channel.';
 const COMMAND_FAILED_TEXT = 'Command failed.';
+const TEXT_COMMAND_UNAVAILABLE =
+  'This control command is not available as text on this platform.';
 const SESSION_RESUME_COMPONENT_ID = 'nexus:sessions:resume';
 const EXTERNAL_SESSIONS_COMPONENT_PREFIX = 'nexus:external-sessions:';
 const EXTERNAL_SESSIONS_RESUME_COMPONENT_ID = `${EXTERNAL_SESSIONS_COMPONENT_PREFIX}resume`;
@@ -409,6 +417,30 @@ function workingDirScope(value: string | undefined): 'channel' | 'session' {
   return value === 'session' ? 'session' : 'channel';
 }
 
+function textCommandName(text: string): string | undefined {
+  const match = /^\/([a-z0-9]+(?:-[a-z0-9]+)*)(?:\s|$)/.exec(text.trim());
+  return match?.[1];
+}
+
+function collectUnsupportedTextCommandNames(
+  agents: ReadonlyMap<string, EngineAgent>,
+): ReadonlySet<string> {
+  const names = new Set<string>();
+  for (const descriptor of daemonCommandDescriptors) {
+    names.add(`nexus-${descriptor.localName}`);
+  }
+  for (const agent of agents.values()) {
+    for (const descriptor of agent.commandDescriptors ?? []) {
+      if (descriptor.owner.type !== 'agent') continue;
+      names.add(`${descriptor.owner.agentOwner}-${descriptor.localName}`);
+      if (descriptor.localName !== 'new') {
+        names.add(descriptor.localName);
+      }
+    }
+  }
+  return names;
+}
+
 /**
  * Engine：把 platform 入站事件路由到 agent，并把 agent 输出回送 platform。
  *
@@ -423,7 +455,7 @@ function workingDirScope(value: string | undefined): 'channel' | 'session' {
 export class Engine {
   private readonly platform: PlatformAdapter;
   private readonly platformName: string;
-  private readonly platformType: 'discord';
+  private readonly platformType: PlatformType;
   // applyRuntimeUpdate 热替换的四个字段；其余 deps 启动后不可变
   private platformAuth?: PlatformAuthConfig;
   private routingTable?: readonly RoutingEntry[];
@@ -439,6 +471,7 @@ export class Engine {
   private readonly idempotencyStore?: IdempotencyStore;
   private readonly redactor: Redactor;
   private readonly agents: Map<string, EngineAgent>;
+  private readonly unsupportedTextCommandNames: ReadonlySet<string>;
   private readonly logger: Logger;
   private readonly sessionStore: SessionStore;
   private readonly trajectoryEnabled: boolean;
@@ -467,7 +500,10 @@ export class Engine {
   constructor(deps: EngineDeps) {
     this.platform = deps.platform;
     this.platformName = deps.platformName ?? deps.platform.name();
-    this.platformType = deps.platformType ?? 'discord';
+    if (deps.routingTable && !deps.platformType) {
+      throw new Error('Engine with routingTable requires platformType');
+    }
+    this.platformType = deps.platformType ?? deps.platform.name();
     if (deps.routingTable && !deps.platformAuth) {
       throw new Error('Engine with routingTable requires platformAuth');
     }
@@ -496,6 +532,8 @@ export class Engine {
     } else {
       throw new Error('Engine requires either agents[] or legacy agent/defaultSessionConfig');
     }
+    this.unsupportedTextCommandNames =
+      collectUnsupportedTextCommandNames(this.agents);
     this.logger = deps.logger;
     this.sessionStore = deps.sessionStore;
     this.trajectoryEnabled = deps.trajectory?.enabled ?? true;
@@ -748,7 +786,11 @@ export class Engine {
           },
           'message_queue_full',
         );
-        return this.sendQueueFullNotice(routedSessionKey, event.traceId);
+        return this.sendQueueFullNotice(
+          routedSessionKey,
+          event.traceId,
+          event.responseTarget,
+        );
       }
       throw err;
     }
@@ -887,12 +929,14 @@ export class Engine {
   private async sendQueueFullNotice(
     sessionKey: SessionKey,
     traceId: string,
+    responseTarget?: MessageRef,
   ): Promise<void> {
     try {
       await this.platform.send(sessionKey, {
         text: QUEUE_FULL_TEXT,
         traceId,
         sessionKey,
+        ...(responseTarget ? { replyTo: responseTarget } : {}),
       });
     } catch (err) {
       this.logger.error(
@@ -1021,6 +1065,7 @@ export class Engine {
         text: outboundText,
         traceId: event.traceId,
         sessionKey,
+        ...(event.responseTarget ? { replyTo: event.responseTarget } : {}),
       });
     } catch (err) {
       this.logger.error(
@@ -3915,26 +3960,18 @@ export class Engine {
         },
         'inbound',
       );
-      this.logger.debug(
-        {
-          traceId: event.traceId,
-          sessionKey: sessionKeyStr,
-          text: event.text,
-        },
-        'inbound',
-      );
 
-      // /new 触发：清 store，并把 /new 后剩余文本作为 prompt（空则只发 ack）
+      // /new 触发：归档当前会话，并把 /new 后剩余文本作为 prompt（空则只发 ack）
       const rawText = event.text ?? '';
       const trimmed = rawText.trim();
       let prompt: string;
       if (
         this.newSessionTextPrefixEnabled &&
-        (trimmed === '/new' || trimmed.startsWith('/new '))
+        (trimmed === '/new' || /^\/new\s/.test(trimmed))
       ) {
         this.stopActiveSession(sessionKeyStr, event.traceId);
         this.sessionStore.archiveCurrent(event.sessionKey);
-        const remainder = trimmed === '/new' ? '' : trimmed.slice(5).trim();
+        const remainder = trimmed.slice('/new'.length).trim();
         if (remainder.length === 0) {
           try {
             const outboundText = this.redactForOutbound(
@@ -3945,6 +3982,9 @@ export class Engine {
               text: outboundText,
               traceId: event.traceId,
               sessionKey: event.sessionKey,
+              ...(event.responseTarget
+                ? { replyTo: event.responseTarget }
+                : {}),
             });
           } catch (sendErr) {
             this.logger.error(
@@ -3955,6 +3995,34 @@ export class Engine {
           return;
         }
         prompt = remainder;
+      } else if (
+        !this.platform.capabilities().supportsSlashCommands &&
+        this.unsupportedTextCommandNames.has(textCommandName(trimmed) ?? '')
+      ) {
+        try {
+          const outboundText = this.redactForOutbound(
+            TEXT_COMMAND_UNAVAILABLE,
+            event.traceId,
+          );
+          await this.platform.send(event.sessionKey, {
+            text: outboundText,
+            traceId: event.traceId,
+            sessionKey: event.sessionKey,
+            ...(event.responseTarget
+              ? { replyTo: event.responseTarget }
+              : {}),
+          });
+        } catch (sendErr) {
+          this.logger.error(
+            {
+              traceId: event.traceId,
+              sessionKey: sessionKeyStr,
+              err: sendErr,
+            },
+            'platform_send_failed',
+          );
+        }
+        return;
       } else {
         prompt = rawText;
       }
@@ -3990,6 +4058,9 @@ export class Engine {
             ...payload,
             traceId: event.traceId,
             sessionKey: event.sessionKey,
+            ...(event.responseTarget
+              ? { replyTo: event.responseTarget }
+              : {}),
           }, event.traceId);
           return await this.platform.send(event.sessionKey, outbound);
         } catch (sendErr) {

@@ -2,9 +2,10 @@
 title: Spec：配置与路由契约
 type: spec
 status: active
-summary: platforms[] / agents[] / bindings 的配置 schema、owner 校验边界、路由匹配语义、热重载与迁移规则
+summary: 首次配置引导、platforms[] / agents[] / bindings 的配置 schema、owner 校验边界、路由匹配语义、热重载与迁移规则
 tags: [spec, config, routing, platform, agent]
 related:
+  - dev/adr/0021-lark-thread-as-session-container
   - dev/adr/0019-lark-platform-via-official-node-sdk
   - dev/adr/0015-multi-platform-agent-config
   - dev/spec/platform-adapter
@@ -14,6 +15,7 @@ related:
   - dev/spec/security/auth
   - dev/spec/security/secrets
 contracts:
+  - InitialConfigHint
   - AgentNexusConfig
   - DaemonRuntimeConfig
   - PlatformConfig
@@ -29,11 +31,34 @@ contracts:
 
 ## 目标
 
+- 首次创建配置模板时给出不依赖额外工具的 platform Quickstart 入口。
 - 顶层 `platforms[]` 表达一个或多个平台 bot 实例。
 - 顶层 `agents[]` 表达一套或多套 agent 配置。
 - 顶层 `bindings[]` 表达 platform 到 agent 的显式路由关系。
 - 路由按 platform instance identity 与平台侧条件匹配；未匹配和多重匹配都 fail-closed。
 - 现有单实例配置不静默半兼容，必须清晰迁移或报错。
+
+## 首次配置引导
+
+```text
+InitialConfigHint {
+    configPath: path
+    larkAppCreationUrl: URL
+}
+```
+
+CLI 首次运行创建默认配置模板后必须停止启动，并在现有配置提示中同时给出 Discord 配置字段和中国版飞书 Quickstart。飞书 Quickstart 只提供官方创建入口，不创建应用、不调用飞书开发者后台的未公开接口，也不把飞书平台静默写入默认 Discord 模板。
+
+输出契约：
+
+| 内容 | 要求 |
+|---|---|
+| 创建入口 | 输出完整原始 URL `https://open.feishu.cn/page/launcher?from=backend_oneclick` |
+| App ID | 指向 `platforms[].appId` |
+| App Secret | 指向 `secrets/<appSecretRef>`，并明确不得写入 `config.json` |
+| 后续配置与验证 | 提示补齐 `platforms[].botOpenId`、`platforms[].auth.allowlist.userIds` 和 `bindings[].match.lark.chatIds` 后再次启动；凭证和机器人身份由 Lark adapter 启动 probe 验证 |
+
+创建链接不得携带 App ID、App Secret、tenant token、cookie 或其它凭据。CLI 不输出 OSC 8 控制序列；完整 URL 由终端自行识别，以兼容非 TTY、SSH、CI 和日志重定向。创建后的配置、secret 权限和连接验证继续遵守 §Secret 规则及 platform adapter 启动契约。
 
 ## 顶层 schema
 
@@ -94,7 +119,7 @@ DaemonCommandRegistryConfig {
 | `daemon.commandRegistry.registration.retry.maxAttempts` / `backoffMs` | daemon 启动时 apply plan 的重试策略；只有 generation 匹配的成功结果能激活 active map |
 | `daemon.commandRegistry.aliases.singleAgent.enabled` | 控制 single-agent bare alias（如 `/new` / `/stop`）是否进入 plan；stable `/codex-new` / `/codex-stop` / `/claudecode-new` / `/claudecode-stop` 不受影响 |
 | `daemon.commandRegistry.aliases.legacy.replyMode` | 控制 legacy `/reply-mode` 是否进入 plan；`reply-mode` 仍保留为 historical reserved bare name |
-| `daemon.commandRegistry.textPrefixes.newSession` | 控制文本前缀 `@bot /new` / `@bot /new <prompt>`；不影响 slash command stable names |
+| `daemon.commandRegistry.textPrefixes.newSession` | 控制普通消息中的 `/new` / `/new <prompt>` 文本前缀；不影响 native slash command |
 | `daemon.trajectory` | daemon-owned trajectory read model、外部 session 导入与 provider-call observation 配置；字段权威源见 [`trajectory-observability.md`](infra/trajectory-observability.md#配置) |
 
 ## Settings config editor 字段说明
@@ -239,7 +264,7 @@ DiscordMatchSpec {
 }
 
 LarkMatchSpec {
-    chatIds: string[]                 // 非空；命中 event.sessionKey.channelId
+    chatIds: string[]                 // 非空；命中 P2P chat_id 或话题父 chat_id
 }
 ```
 
@@ -251,13 +276,14 @@ LarkMatchSpec {
 | `platformName` | 必填；必须引用存在的 `platforms[].name` |
 | `agentName` | 必填；必须引用存在的 `agents[].name` |
 | `match.discord.channelIds` | Discord channel allow/bind 条件；非空字符串数组；命中 `event.sessionKey.channelId` |
-| `match.lark.chatIds` | 飞书 P2P chat bind 条件；非空字符串数组；命中 `event.sessionKey.channelId` |
+| `match.lark.chatIds` | 飞书 chat bind 条件；非空字符串数组；P2P 命中 `event.sessionKey.channelId`，话题命中 `event.threadParentChannelId` |
 
 Discord 当前最小 binding 条件只支持 `channelIds`。用户、角色、guild、DM、公开 channel 策略全部属于
 `PlatformAuthConfig` / `daemon.auth`，不属于 routing matcher。若配置了未知 binding 条件字段，loader 必须
 fail-closed，错误消息包含字段路径。
 
-Lark 首版只支持 P2P chat，binding 必须显式列出 `match.lark.chatIds`。`chatIds` 不是授权替代品；用户
+Lark 支持 P2P chat 与带 `thread_id` 的话题消息，binding 必须显式列出 `match.lark.chatIds`。P2P 直接使用
+`chat_id`；话题使用父群 `chat_id`，不得把逐个 `thread_id` 写进 binding。`chatIds` 不是授权替代品；用户
 `open_id` 仍由 `PlatformAuthConfig` 校验。同一 bot app 只建一个 platform instance；官方长连接对同 app 多 client
 采用 cluster 分发而非广播，需要路由到多个 agent 时增加 bindings，不得用重复 `appId` / `botOpenId` 启动多个 client。
 
@@ -305,25 +331,13 @@ RoutingEntry {
     platformName: string
     platformType: string
     agentName: string
-    match: PlatformMatchSpec
-}
-
-PlatformMatchSpec {
-    // discriminated by platformType
-    discord?: DiscordMatchSpec
-    lark?: LarkMatchSpec
-}
-
-DiscordMatchSpec {
     channelIds: string[]
-}
-
-LarkMatchSpec {
-    chatIds: string[]
 }
 ```
 
-routing entry 不携带 backend 私有配置；它只引用已经构造好的 agent runtime。
+routing entry 是 daemon 消费的平台中立投影：CLI 负责把 `match.discord.channelIds`、
+`match.lark.chatIds` 等平台配置归一化为 `channelIds`。daemon 不解析平台私有 match schema，也不枚举
+具体 platform type。routing entry 不携带 backend 私有配置；它只引用已经构造好的 agent runtime。
 
 ## 路由匹配语义
 
@@ -346,9 +360,10 @@ RouteContext {
 匹配步骤：
 
 1. 只考虑 `entry.platformName == context.platformName` 的 routing entries。
-2. 按 `platformType` 调用 platform owner 的 match 函数。
-3. Discord 的 `event.sessionKey.channelId` 必须在 `channelIds` 内；Lark 的必须在 `chatIds` 内。
-4. 匹配结果数量为 1 时，返回该 `agentName`。
+2. 要求 `entry.platformType == context.platformType`。
+3. 要求 `context.event.sessionKey.channelId` 命中 `entry.channelIds`。原生子容器继承父容器 binding 时，
+   Engine 先把用于路由的 event 投影到 `threadParentChannelId`；原始 SessionKey 保持子容器 ID，不因匹配而改写。
+4. 匹配结果数量为 1 时，返回对应 `bindingName`、`platformName` 与 `agentName`。
 5. 匹配结果数量为 0 时，拒绝 dispatch，打结构化日志 `route_not_found`。
 6. 匹配结果数量大于 1 时，拒绝 dispatch，打结构化日志 `route_ambiguous`。
 
@@ -360,9 +375,9 @@ RouteContext {
 
 ```text
 RouteDecision {
+    bindingName: string
     platformName: string
     agentName: string
-    event: NormalizedEvent
 }
 ```
 
@@ -373,9 +388,9 @@ platform adapter 实例。
 
 `/nexus-settings` 的 agent binding select 是 daemon-owned runtime override，不修改 `bindings[]`，不写回 `config.json`。override 只能选择当前进程已构造的 `agents[].name`，并按 route 使用的 channel key 生效：普通 channel 使用当前 `channelId`；thread 继承父 channel route 时使用父 channel id。
 
-路由时先查该 override；命中且 agent 仍存在时返回该 `agentName`，否则继续按 `RoutingTable` 匹配。设置 override 时，daemon 必须停止触发者当前 SessionKey 的活跃 runtime handle，并删除该 key 上保存的 opaque agent conversation ref，避免触发者后续消息用旧 agent conversation resume 到新 agent owner。
+路由时先查该 override；命中且 agent 仍存在时返回该 `agentName`，否则继续按 `RoutingTable` 匹配。设置 override 时，daemon 必须停止触发者当前 SessionKey 的活跃 runtime handle，并解除该 key 与当前 opaque agent conversation ref 的活跃绑定；旧 ref 连同 agent owner 保留在可恢复历史中。下一条消息按新 agent owner 启动或恢复，不得把旧 owner 的 ref 交给新 backend。
 
-v1 的 override 是 channel 级路由覆盖，但清理动作只覆盖触发者 SessionKey。由于当前内存 session store 没有 channel-wide owner 索引，daemon 不承诺迁移或清理同 channel 其它用户已有的 opaque agent conversation ref；多用户频道里切换 agent owner 前，应让相关用户先结束自己的 RoutingSession。否则这些用户下一条消息的恢复结果不在 v1 合约内，需要由用户用 `/nexus-kill` 或 agent new command 重开。override 是内存态，进程重启后丢失。
+v1 的 override 是 channel 级路由覆盖，但设置动作只主动停止触发者 SessionKey 的 runtime handle。同 channel 其他用户的当前 ref 不会被批量停止；其下一条消息若路由到不同 agent owner，daemon 必须先把不兼容 ref 移出活跃区，再启动新 backend。旧历史只在路由重新命中兼容 owner 时进入可恢复列表。override 是内存态，进程重启后丢失。
 
 ### Settings config editor
 
@@ -428,10 +443,11 @@ platformName + platform + channelId + initiatorUserId
 
 `/nexus-reload-config` daemon command 触发对 `config.json` 的全量重新加载（descriptor 与 dispatch 契约见 [`command-registry.md` §Agent Session Commands](command-registry.md#agent-session-commands)）。reload 由组装层注入 daemon 的 config reloader 执行；daemon 不读取配置文件。
 
-加载与校验语义与启动时 loader 完全一致。在此之上 reloader 增加三条运行态约束，违反任一条按失败处理：
+加载与校验语义与启动时 loader 完全一致。在此之上 reloader 增加四条运行态约束，违反任一条按失败处理：
 
 - `bindings[].agentName` 必须命中当前进程内运行中的 agent 实例 name。
 - 每个运行中 engine 的 `platformName` 必须仍存在于新配置 `platforms[]`。
+- 每个运行中 engine 的 platform type 必须与新配置中同名 platform 的 `type` 一致；同名从 `discord` 切到 `lark` 或反向切换必须重启，不能把新类型的 routing/auth 热应用到旧 adapter。
 - 每个运行中 platform 由 `bindings[]` 派生的 agent owner 集合不得变化——slash command 注册集是启动时按 owner 集合生成的（见 [`command-registry.md` §Registration Plan](command-registry.md#registration-plan)），不在 reload 事务内；owner 集合变化会让已注册命令与路由失配。
 
 失败语义（rollback）：
@@ -477,7 +493,7 @@ platformName + platform + channelId + initiatorUserId
 | binding 条件为空 | owner parser | `ConfigError`，含 binding 字段路径 |
 | binding 条件非法 | owner parser | `ConfigError`，含 binding 字段路径 |
 | Lark `appId` / `appSecretRef` / `botOpenId` 缺失、非法，或 app/bot ID 重复 | owner parser | `ConfigError`，含 platform 字段路径 |
-| Lark `auth.allowlist.userIds` 为空 | owner parser | `ConfigError`；P2P 首版不能靠 guild / role / chat ID 代替用户授权 |
+| Lark `auth.allowlist.userIds` 为空 | owner parser | `ConfigError`；P2P 与话题消息都不能靠 guild / role / chat ID 代替用户授权 |
 | route 未命中 | dispatch | `route_not_found` 日志；不调用 agent |
 | route 多重命中 | dispatch | `route_ambiguous` 日志；不调用 agent |
 
@@ -496,6 +512,12 @@ loader / router 合约测试必须覆盖：
 9. secret 示例与日志不包含 token / app secret 明文。
 10. Lark `auth.allowlist.userIds` 必须非空；只配置 role / guild / chat ID 时 fail-closed。
 
+首次配置引导合约测试必须覆盖：
+
+1. 首次创建模板后的错误提示包含完整飞书创建 URL。
+2. 提示同时说明 App ID 配置路径、App Secret 文件边界、`botOpenId`、飞书用户 allowlist、chat binding 和再次启动验证。
+3. 默认 scaffold 保持单 Discord platform，`secrets/` 只创建 `DISCORD_BOT_TOKEN`。
+
 session 隔离合约测试必须覆盖：
 
 1. 两个 Discord 或两个 Lark platform 实例的同 channel/chat + user 不共享 session key。
@@ -506,11 +528,12 @@ session 隔离合约测试必须覆盖：
 1. 配置 parse / 校验失败时不应用任何改动，错误信息进入 command response。
 2. 成功 reload 后 routing table、auth、ui、textPrefixes 替换生效。
 3. binding 引用未运行的 agent、或新配置缺失运行中 engine 的 platform 时按失败处理。
-4. bindings 变更改变运行中 platform 的 agent owner 集合时按失败处理。
-5. auth 热替换后 platform adapter 内部命令（reply-mode）按新 `userIds` allowlist 判定（其余维度见上文已知限制）。
-6. reload 切到 role-only allowlist 后，chat 按 role 维度在 daemon 判定（adapter 不做 userIds 预筛）。
-7. turn 进行中切换 `ui.toolMessages` 不影响该 turn 的渲染模式。
-8. 仅重启生效 section 有变化时，成功响应包含重启提示。
+4. 同名 platform 的 `type` 变化时按失败处理，不向任何运行中 target 应用更新。
+5. bindings 变更改变运行中 platform 的 agent owner 集合时按失败处理。
+6. auth 热替换后 platform adapter 内部命令（reply-mode）按新 `userIds` allowlist 判定（其余维度见上文已知限制）。
+7. reload 切到 role-only allowlist 后，chat 按 role 维度在 daemon 判定（adapter 不做 userIds 预筛）。
+8. turn 进行中切换 `ui.toolMessages` 不影响该 turn 的渲染模式。
+9. 仅重启生效 section 有变化时，成功响应包含重启提示。
 
 ## 反模式
 

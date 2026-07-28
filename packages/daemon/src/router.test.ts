@@ -8,30 +8,33 @@ const entries: RoutingEntry[] = [
     platformName: 'discord-main',
     platformType: 'discord',
     agentName: 'codex-dev',
-    match: { discord: { channelIds: ['C1'] } },
+    channelIds: ['C1'],
   },
   {
     bindingName: 'discord-main-claude',
     platformName: 'discord-main',
     platformType: 'discord',
     agentName: 'claude-prod',
-    match: { discord: { channelIds: ['C2'] } },
+    channelIds: ['C2'],
   },
   {
     bindingName: 'discord-side-codex',
     platformName: 'discord-side',
     platformType: 'discord',
     agentName: 'codex-dev',
-    match: { discord: { channelIds: ['C1'] } },
+    channelIds: ['C1'],
   },
 ];
 
-function makeEvent(channelId: string): NormalizedEvent {
+function makeEvent(
+  channelId: string,
+  platform: string = 'discord',
+): NormalizedEvent {
   return {
     eventId: 'e-1',
-    platform: 'discord',
+    platform,
     sessionKey: {
-      platform: 'discord',
+      platform,
       channelId,
       initiatorUserId: 'U1',
     },
@@ -75,6 +78,61 @@ describe('selectRoute', () => {
     });
   });
 
+  it('selects the unique agent by Lark platform instance and chat', () => {
+    const larkEntries: RoutingEntry[] = [
+      {
+        bindingName: 'lark-main-codex',
+        platformName: 'lark-main',
+        platformType: 'lark',
+        agentName: 'codex-dev',
+        channelIds: ['oc_chat_1'],
+      },
+      {
+        bindingName: 'lark-main-claude',
+        platformName: 'lark-main',
+        platformType: 'lark',
+        agentName: 'claude-prod',
+        channelIds: ['oc_chat_2'],
+      },
+    ];
+
+    expect(
+      selectRoute(larkEntries, {
+        platformName: 'lark-main',
+        platformType: 'lark',
+        event: makeEvent('oc_chat_2', 'lark'),
+      }),
+    ).toEqual({
+      bindingName: 'lark-main-claude',
+      platformName: 'lark-main',
+      agentName: 'claude-prod',
+    });
+  });
+
+  it('routes an arbitrary platform without daemon-side platform schema changes', () => {
+    const matrixEntries: RoutingEntry[] = [
+      {
+        bindingName: 'matrix-main-codex',
+        platformName: 'matrix-main',
+        platformType: 'matrix',
+        agentName: 'codex-dev',
+        channelIds: ['room-1'],
+      },
+    ];
+
+    expect(
+      selectRoute(matrixEntries, {
+        platformName: 'matrix-main',
+        platformType: 'matrix',
+        event: makeEvent('room-1', 'matrix'),
+      }),
+    ).toEqual({
+      bindingName: 'matrix-main-codex',
+      platformName: 'matrix-main',
+      agentName: 'codex-dev',
+    });
+  });
+
   it('fails closed when no binding matches', () => {
     expect(() =>
       selectRoute(entries, {
@@ -95,7 +153,7 @@ describe('selectRoute', () => {
             platformName: 'discord-main',
             platformType: 'discord',
             agentName: 'codex-dev',
-            match: { discord: { channelIds: ['C1'] } },
+            channelIds: ['C1'],
           },
         ],
         {

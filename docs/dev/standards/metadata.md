@@ -126,7 +126,7 @@ contracts:                              # 本 spec 定义的对外契约名
 
 ### 集成侧
 
-- `discord`, `platform-adapter`, `gateway`
+- `discord`, `lark`, `feishu`, `platform-adapter`, `gateway`
 - `cc-cli`, `claude-code`, `agent-runtime`, `subprocess`
 - `message-protocol`, `normalized-event`
 - `agent-event`, `message-flow`, `dispatch`, `tool-boundary`

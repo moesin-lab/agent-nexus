@@ -11,6 +11,7 @@ const INTERNAL_MANIFEST_URLS = [
   new URL('../../agent/claudecode/package.json', import.meta.url),
   new URL('../../agent/codex/package.json', import.meta.url),
   new URL('../../platform/discord/package.json', import.meta.url),
+  new URL('../../platform/lark/package.json', import.meta.url),
 ];
 
 async function readJson(url: URL): Promise<Record<string, unknown>> {
@@ -35,7 +36,7 @@ describe('published CLI package artifact', () => {
         access: 'public',
       },
     });
-    expect(internalManifests).toHaveLength(5);
+    expect(internalManifests).toHaveLength(6);
     expect(internalManifests.every((manifest) => manifest['private'] === true)).toBe(
       true,
     );
@@ -52,7 +53,7 @@ describe('published CLI package artifact', () => {
 
     expect(cliManifest).toMatchObject({
       description: expect.any(String),
-      keywords: expect.arrayContaining(['agent', 'discord', 'cli']),
+      keywords: expect.arrayContaining(['agent', 'discord', 'lark', 'cli']),
       repository: {
         type: 'git',
         url: 'git+https://github.com/moesin-lab/agent-nexus.git',
@@ -69,7 +70,7 @@ describe('published CLI package artifact', () => {
     expect(cliManifest['description']).not.toBe('');
   });
 
-  it('declares native SQLite as an external runtime dependency', async () => {
+  it('declares bundled platform externals as runtime dependencies', async () => {
     const cliManifest = await readJson(CLI_MANIFEST_URL);
     const dependencies = cliManifest['dependencies'] as
       | Record<string, string>
@@ -77,6 +78,7 @@ describe('published CLI package artifact', () => {
     const scripts = cliManifest['scripts'] as Record<string, string> | undefined;
 
     expect(dependencies?.['better-sqlite3']).toBe('^12.11.1');
+    expect(dependencies?.['@larksuiteoapi/node-sdk']).toBe('1.70.0');
     expect(
       Object.values(dependencies ?? {}).some((version) =>
         version.startsWith('workspace:'),
@@ -84,6 +86,9 @@ describe('published CLI package artifact', () => {
     ).toBe(false);
     expect(scripts?.['bundle']).toContain('--target=node22');
     expect(scripts?.['bundle']).toContain('--external:better-sqlite3');
+    expect(scripts?.['bundle']).toContain(
+      '--external:@larksuiteoapi/node-sdk',
+    );
   });
 
   it('packages the executable with its npm README and MIT license', async () => {
@@ -101,5 +106,6 @@ describe('published CLI package artifact', () => {
     ]);
     expect(cliLicense).toBe(rootLicense);
     expect(cliReadme).toContain('npm install -g @moesin-lab/agent-nexus');
+    expect(cliReadme).toContain('docs/product/platforms/lark.md');
   });
 });

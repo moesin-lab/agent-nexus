@@ -177,9 +177,8 @@ request/response body、app secret、token 或消息正文；错误详情只使�
 | `sessionKey` | info | 序列化会话键 |
 | `length` | info | 消息字符数；不含正文 |
 | `errored` | info | 仅错误路径设为 `true` |
-| `text` | **debug only** | 消息正文，**必须过 redaction**；prod 默认 info level 不记 |
 
-**禁止在 info 及以上 level 把消息正文写入日志。** debug level 也须经 `docs/dev/spec/security/redaction.md` 脱敏后才落盘。
+所有 level 都禁止把 IM 入站正文写入日志；只记录长度等 metadata。完整正文只允许按 [`../security/redaction.md`](../security/redaction.md) 的边界进入 transcript。
 
 ## 禁止字段
 

@@ -14,11 +14,11 @@ related:
 
 ## 关机后 bot 还会响应吗？
 
-不会。agent-nexus 是本机进程，不是云服务。电脑关机、进程退出或网络断开后，Discord bot 不会继续处理消息。
+不会。agent-nexus 是本机进程，不是云服务。电脑关机、进程退出或网络断开后，Discord / 飞书 bot 都不会继续处理消息。
 
 ## 为什么 bot 不响应我的消息？
 
-按顺序检查：
+Discord 按顺序检查：
 
 1. Discord Developer Portal 是否开启 `MESSAGE CONTENT INTENT`。
 2. 你是否在 `platforms[].auth.allowlist.userIds` 里，或是否拥有 `roleIds` 中的角色。
@@ -26,11 +26,21 @@ related:
 4. 启动日志是否出现 `discord_ready` 和 `engine_started`。
 5. bot 是否在目标 server / channel 有读写消息权限。
 
+中国版飞书按顺序检查：
+
+1. 应用是否启用机器人、使用长连接订阅 `im.message.receive_v1`，并已发布到当前用户可用范围。
+2. 日志是否出现 `platform_connection_ready`、`platform=lark` 和 `engine_started`。
+3. 消息是否为机器人单聊纯文本，或带非空 `thread_id` 的话题群纯文本。
+4. `bindings[].match.lark.chatIds` 是否包含当前 P2P `chat_id` 或话题父群 `chat_id`。
+5. `platforms[].auth.allowlist.userIds` 是否包含发送者 `open_id`。
+
 ## 多个用户能共用一个 bot 吗？
 
-可以把多个 Discord user id 写进 `platforms[].auth.allowlist.userIds`，也可以用 `roleIds` 授权一组用户。daemon RoutingSession 按 `(platformName, platform, channelId, userId)` 隔离，不同用户不会共享同一个 route；agent conversation 的内部复用由绑定的 agent package 处理。
+可以把多个 Discord user id 或飞书用户 `open_id` 写进 `platforms[].auth.allowlist.userIds`；Discord 还可以用
+`roleIds` 授权一组用户。daemon RoutingSession 按 `(platformName, platform, channelId, userId)` 隔离，不同用户
+不会共享同一个 route；agent conversation 的内部复用由绑定的 agent package 处理。
 
-## 为什么 `allowedUserIds` 必填？
+## 为什么用户 allowlist 必填？
 
 agent-nexus 能驱动本机 Claude Code 读写文件。漏配用户白名单时直接拒绝启动，比“默认所有人都能用”安全。
 
@@ -40,7 +50,9 @@ agent-nexus 能驱动本机 Claude Code 读写文件。漏配用户白名单时�
 
 ## 支持 Codex CLI 吗？
 
-支持。要启用 Codex，在 `agents[]` 里新增或修改一个 `backend: "codex"` 的 agent，并填写 `agents[].codex.workingDir`；再用 `bindings[]` 把 Discord channel 绑定到这个 agent。Codex backend 使用 `codex exec --json` / `codex exec resume`。启动时默认只跑快速 compatibility probe：检查 `codex --version` 与 help 里是否有必需 flag，不发起真实模型 turn；本机未安装 Codex CLI 或 CLI 形态不匹配时会拒绝启动。
+支持。要启用 Codex，在 `agents[]` 里新增或修改一个 `backend: "codex"` 的 agent，并填写 `agents[].codex.workingDir`；再用 `bindings[]` 把目标平台 channel/chat 绑定到这个 agent。Codex backend 使用 `codex exec --json` / `codex exec resume`。启动时默认只跑快速 compatibility probe：检查 `codex --version` 与 help 里是否有必需 flag，不发起真实模型 turn；本机未安装 Codex CLI 或 CLI 形态不匹配时会拒绝启动。
+
+`exec resume` 只恢复模型对话上下文；每个 user turn 仍启动新的 Codex CLI 进程，因此当前不能跨 turn 继续控制同一个 PTY 或长运行工具进程。完整边界见 [`codex-cli.md` §多轮语义与长运行工具进程](../dev/spec/agent-backends/codex-cli.md#多轮语义与长运行工具进程)。
 
 Codex CLI 当前没有 Claude Code 那种执行前工具审批。它的边界来自 `codex.sandbox`、`codex.addDirs`、`--ask-for-approval never`、工作目录和默认不加载用户全局 config / rules。显式 `sandbox: "danger-full-access"` 是 YOLO 模式，不再提供文件系统 sandbox 边界。
 
@@ -66,14 +78,16 @@ Codex CLI 当前没有 Claude Code 那种执行前工具审批。它的边界来
 
 - 配置：`~/.agent-nexus/config.json`
 - Discord token：`~/.agent-nexus/secrets/DISCORD_BOT_TOKEN`
+- 飞书 App Secret：配置的 `appSecretRef` 对应 `~/.agent-nexus/secrets/<name>`
 - Discord 运行状态：默认 `~/.agent-nexus/state/discord-<encodedPlatformName>.json`，例如 `discord-discord-main.json`
 
 不要把 token 写进仓库、Issue、PR 或聊天截图。
 
 ## 支持 Slack / Feishu / Telegram 吗？
 
-不支持。当前唯一平台是 Discord。
+支持 Discord 和中国版飞书。飞书支持自建应用、P2P 单聊与私有话题群纯文本长连接事件；每个话题是独立
+session。普通群时间线、国际版 Lark、卡片、文件与原生 slash command 暂不支持。Slack 和 Telegram 当前不支持。
 
 ## 长回复怎么显示？
 
-Discord 单条消息有长度限制。agent-nexus 会尽量通过 edit 更新当前回复；超过平台限制时会按切片发送或编辑多条消息。
+agent-nexus 会按平台限制处理。Discord 会尽量通过 edit 更新当前回复；中国版飞书不编辑已发消息，超过 4000 个 UTF-16 code unit 时按切片发送多条纯文本。

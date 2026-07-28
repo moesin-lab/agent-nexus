@@ -1,22 +1,18 @@
 import type { NormalizedEvent } from '@agent-nexus/protocol';
 
-export interface DiscordRouteMatch {
-  channelIds: string[];
-}
+export type PlatformType = string;
 
 export interface RoutingEntry {
   bindingName: string;
   platformName: string;
-  platformType: 'discord';
+  platformType: PlatformType;
   agentName: string;
-  match: {
-    discord: DiscordRouteMatch;
-  };
+  channelIds: readonly string[];
 }
 
 export interface RouteContext {
   platformName: string;
-  platformType: 'discord';
+  platformType: PlatformType;
   event: NormalizedEvent;
 }
 
@@ -45,12 +41,7 @@ export class RouteError extends Error {
 function matches(entry: RoutingEntry, context: RouteContext): boolean {
   if (entry.platformName !== context.platformName) return false;
   if (entry.platformType !== context.platformType) return false;
-  if (context.platformType === 'discord') {
-    return entry.match.discord.channelIds.includes(
-      context.event.sessionKey.channelId,
-    );
-  }
-  return false;
+  return entry.channelIds.includes(context.event.sessionKey.channelId);
 }
 
 export function selectRoute(

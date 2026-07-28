@@ -29,14 +29,14 @@ superseded_by: null
 ## Context
 
 MVP 的用户入口是一个 `agent-nexus` 命令，但仓库由 CLI、daemon、protocol、
-两个 agent backend 和 Discord platform 六个 workspace package 组成。内部包用于
+两个 agent backend、Discord platform 和 Lark platform 七个 workspace package 组成。内部包用于
 约束源码依赖方向，不是当前对外扩展 API；把它们全部发布会过早形成兼容性承诺。
 
 原计划中的 `@agent-nexus/cli` 与无 scope 的 `agent-nexus` 均已被其他 npm 项目使用。
 `@moesin-lab/agent-nexus` 当前 registry 查询无结果，但 registry 404 只表示没有公开包，
 不能证明项目维护者控制 `moesin-lab` npm organization。
 
-CLI bundle 已把五个内部 workspace package 编入单个 JavaScript 入口。第三方原生依赖
+CLI bundle 已把六个内部 workspace package 编入单个 JavaScript 入口。第三方原生依赖
 `better-sqlite3` 必须继续作为 npm 运行时依赖安装，不能依赖内部 daemon manifest
 随 bundle 自动传播。
 
@@ -53,7 +53,7 @@ npm trusted publishing 需要先在已存在的 package 设置中绑定发布者
 
 ### Option A：发布一个 scoped CLI，内部包保持 private
 
-- **是什么**：只发布 `@moesin-lab/agent-nexus`，提供 `agent-nexus` bin；五个内部包只参与构建并进入 bundle。
+- **是什么**：只发布 `@moesin-lab/agent-nexus`，提供 `agent-nexus` bin；六个内部包只参与构建并进入 bundle。
 - **优点**：
   - 用户只安装一个包，符合当前产品入口。
   - 不对尚未稳定的内部模块 API 作公共兼容承诺。
@@ -66,12 +66,12 @@ npm trusted publishing 需要先在已存在的 package 设置中绑定发布者
 
 ### Option B：公开发布全部 workspace package
 
-- **是什么**：CLI 与五个内部包全部改为 public，并用 workspace 版本关系发布。
+- **是什么**：CLI 与六个内部包全部改为 public，并用 workspace 版本关系发布。
 - **优点**：
   - npm 原生表达包间依赖，不需要把内部实现 bundle。
   - 第三方可以直接引用 daemon、protocol、agent 和 platform package。
 - **缺点**：
-  - 一次首发形成六个公共版本和兼容矩阵。
+  - 一次首发形成七个公共版本和兼容矩阵。
   - 需要处理发布顺序、同步版本与 breaking change 策略。
   - 当前内部接口尚未被定义为公共扩展 API。
 - **主要风险**：过早固定内部边界，后续重构成本转化为公共 breaking changes。
@@ -111,7 +111,7 @@ OS 方面比较 Linux only、macOS + Linux、三平台三种范围。Linux only 
 
 ## Decision
 
-选择 Option A：首发只发布 `@moesin-lab/agent-nexus` CLI，五个内部 workspace package
+选择 Option A：首发只发布 `@moesin-lab/agent-nexus` CLI，六个内部 workspace package
 保持 private 并 bundle 进 CLI。
 
 首发边界同时锁定：

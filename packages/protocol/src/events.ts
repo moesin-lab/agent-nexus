@@ -49,6 +49,7 @@ interface NormalizedEventBase {
   traceId: string;
 
   replyTo?: MessageRef;
+  responseTarget?: MessageRef;
 
   rawPayload: unknown;
   rawContentType: string;

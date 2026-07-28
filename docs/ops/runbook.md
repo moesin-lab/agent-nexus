@@ -21,9 +21,10 @@ related:
 - `node --version` 为 22.x 或 24.x。
 - `pnpm --version` 可运行。
 - `claude --version` 可运行。
-- 首次运行会自动创建 `~/.agent-nexus/config.json` 与 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN`；后续启动会把模板新增但本地缺失的配置字段补回 `config.json`。编辑后确认两者权限为 `0600`。
+- 首次运行会自动创建 `~/.agent-nexus/config.json` 与默认 Discord secret 文件 `~/.agent-nexus/secrets/DISCORD_BOT_TOKEN`；飞书的 `appSecretRef` 文件需手动创建。后续启动会把模板新增但本地缺失的配置字段补回 `config.json`。编辑后确认配置与 secret 文件权限为 `0600`。
 - 多实例运行时用 `--home <dir>` 或 `AGENT_NEXUS_HOME=<dir>` 指定实例根目录；配置、密钥与状态文件都会从该目录派生。本仓库约定 dev 使用 `~/.agent-nexus`，stable 使用 `~/.agent-nexus-stable`。
-- Discord bot 已开启 `MESSAGE CONTENT INTENT`，并在目标 server / channel 有读写消息权限。
+- Discord 实例：bot 已开启 `MESSAGE CONTENT INTENT`，并在目标 server / channel 有读写消息权限。
+- 中国版飞书实例：自建应用已启用机器人、使用长连接订阅 `im.message.receive_v1`、开通单聊消息收发权限，并发布到目标用户可用范围。
 
 ## 手动启动
 
@@ -48,12 +49,12 @@ agent-nexus --home ~/.agent-nexus-stable
 
 - `secret_loaded`
 - `cc_cli_version`
-- `discord_ready`
+- Discord 的 `discord_ready`，或飞书的 `platform_connection_ready`
 - `engine_started`
 
 ## 停止
 
-前台运行时按 `Ctrl-C`。进程收到 `SIGINT` / `SIGTERM` 后会尝试停止 engine、断开 Discord gateway，并退出。
+前台运行时按 `Ctrl-C`。进程收到 `SIGINT` / `SIGTERM` 后会尝试停止 engine、断开各平台连接，并退出。
 
 ## 配置与状态文件
 
@@ -61,6 +62,7 @@ agent-nexus --home ~/.agent-nexus-stable
 |---|---|---|
 | `<home>/config.json` | 主配置 | `0600` |
 | `<home>/secrets/DISCORD_BOT_TOKEN` | Discord bot token | `0600` |
+| `<home>/secrets/<appSecretRef>` | 飞书 App Secret | `0600` |
 | `<home>/state/discord-<encodedPlatformName>.json` | Discord reply mode 状态 | 目录 `0700` |
 
 首次运行会创建前两个文件的模板 / 空文件，但不会替你填真实 bot id、allowlist、working directory 或 token。
@@ -77,6 +79,10 @@ agent-nexus --home ~/.agent-nexus-stable
 | `cc_compat_probe_failed` | 先跑 `claude --version`；确认 Claude Code 已登录，且当前版本支持长驻 `stream-json` 与工具权限检查 |
 | `agent_compat_probe_failed` 且 `agentBackend=codex` | 先跑 `codex --version`；确认 Codex CLI 已登录；再跑 `scripts/verify-codex-agent.sh` 看 resume、错误或中断验证失败原因 |
 | Discord 里无响应 | 确认 `platforms[].auth.allowlist` 包含发送者 user id 或 role；确认当前频道命中某条 `bindings[].match.discord.channelIds`；默认模式下确认消息显式 @bot |
+| 飞书启动报 `lark_bot_identity_mismatch` | `platforms[].botOpenId` 不是当前应用机器人的 `open_id`；按产品手册调用 bot info 接口重新确认 |
+| 飞书没有 `platform_connection_ready` | 确认使用中国版飞书 `App ID` / `App Secret`；应用已选择长连接、开通所需权限并发布版本 |
+| 飞书消息只被某一个实例偶尔收到 | 同一应用被多个 agent-nexus 进程同时连接，事件会 cluster 分发而不是广播；停止重复实例或为实例分配不同应用 |
+| 飞书消息无响应 | 确认消息是 P2P 纯文本或带 `thread_id` 的话题纯文本；查看 `route_not_found.channelId` 校对 P2P / 父群 `chat_id` 是否在 `match.lark.chatIds`，再查看 `auth_denied.userId` 校对 `auth.allowlist.userIds` |
 | `/discord-reply-mode` / `/reply-mode` 不出现 | 开发时配置 `platforms[].testGuildId`，避免全局 slash command 缓存延迟；确认 bot 邀请包含 `applications.commands` scope；确认 `daemon.commandRegistry.registration.enabled=true`；legacy `/reply-mode` 还要求 `daemon.commandRegistry.aliases.legacy.replyMode=true` |
 | `/codex-new` / `/claudecode-new` 不出现 | 确认对应 backend 的 agent 已配置，且当前 platform 至少有一条 binding 指向该 agent；裸 `/new` 只在同一注册 scope 只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时出现 |
 | 同一个 Discord application 下其它工具注册的 slash command 消失 | agent-nexus 会用期望全集覆盖当前 application 在该 scope 下的命令；不要和其它工具共享同一个 bot application 的 slash command scope |
@@ -122,10 +128,10 @@ stable 实例由 host LaunchAgent 拉起容器内 watchdog：`~/.agent-nexus-sta
 2. 如果 hash 已在 `bad_hashes.tsv`，跳过。
 3. 在专属 release worktree 中执行 `pnpm install --frozen-lockfile` 与 `pnpm build`。
 4. 构建成功后，只有当 child 无子进程且 stdout/stderr 静默超过 idle 窗口，才切换 `current` 并 SIGTERM child。
-5. 候选启动后必须在新 stdout 中出现 `engine_started` 与 `discord_ready`；通过后再等 promote 窗口，才写入 `stable_hash`。
+5. 候选启动后必须在新 stdout 中出现 `engine_started`，以及 `discord_ready` 或 `platform_connection_ready` 之一；通过后再等 promote 窗口，才写入 `stable_hash`。
 6. 候选失败时切回 `stable_hash` 指向的 release；回退不重新 build。
 
-健康检查依赖 `engine_started` 与 `discord_ready` 两条 info 级日志继续写入 stdout。不要把 stable 的 log level 调到 `warn` 以上，也不要把 pino 输出改到非 stdout sink；否则候选会 readiness timeout，并进入临时 cooldown。
+健康检查依赖 `engine_started` 与平台 readiness info 日志（Discord 为 `discord_ready`，飞书为 `platform_connection_ready`）继续写入 stdout。不要把 stable 的 log level 调到 `warn` 以上，也不要把 pino 输出改到非 stdout sink；否则候选会 readiness timeout，并进入临时 cooldown。
 
 默认配置可用环境变量调整：
 
@@ -150,6 +156,7 @@ stable 实例由 host LaunchAgent 拉起容器内 watchdog：`~/.agent-nexus-sta
 
 ## 备份与清理
 
-- 备份 `~/.agent-nexus/config.json` 时不要把 token 一起提交到仓库。
+- 备份 `~/.agent-nexus/config.json` 时不要把 Discord token 或飞书 App Secret 一起提交到仓库。
 - 轮换 token 时，在 Discord Developer Portal 重新生成 token，覆盖 `DISCORD_BOT_TOKEN`，再重启进程。
+- 轮换飞书 App Secret 时，在开放平台生成新值，覆盖 `appSecretRef` 指向的 secret 文件，再重启进程。
 - 删除对应 platform 的 `~/.agent-nexus/state/discord-<encodedPlatformName>.json` 会让 reply mode 回到默认 `mention`。

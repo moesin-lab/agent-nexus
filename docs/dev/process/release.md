@@ -14,7 +14,7 @@ related:
 
 ## 发布边界
 
-MVP 唯一公开产物是 `@moesin-lab/agent-nexus`。它提供 `agent-nexus` 二进制，把五个内部 `@agent-nexus/*` workspace package bundle 进 `dist/index.js`；内部 package 保持 `private: true`。
+MVP 唯一公开产物是 `@moesin-lab/agent-nexus`。它提供 `agent-nexus` 二进制，把六个内部 `@agent-nexus/*` workspace package bundle 进 `dist/index.js`；内部 package 保持 `private: true`。
 
 首发版本是 `0.1.0`，Git tag 是 `v0.1.0`，npm dist-tag 是 `latest`。支持范围与认证迁移决策见 [ADR-0020](../adr/0020-publish-single-npm-cli-package.md)。
 

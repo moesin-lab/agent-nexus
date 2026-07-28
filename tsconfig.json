@@ -6,6 +6,7 @@
     { "path": "./packages/agent/claudecode" },
     { "path": "./packages/agent/codex" },
     { "path": "./packages/platform/discord" },
+    { "path": "./packages/platform/lark" },
     { "path": "./packages/cli" }
   ]
 }

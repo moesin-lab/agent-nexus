@@ -8,11 +8,12 @@ related:
   - dev/adr/0001-im-platform-discord
   - dev/adr/0003-deployment-local-desktop
   - dev/adr/0015-multi-platform-agent-config
+  - dev/adr/0021-lark-thread-as-session-container
   - dev/spec/platform-adapter
   - dev/spec/config-routing
   - dev/spec/infra/observability
   - dev/spec/security/secrets
-adr_status: Proposed
+adr_status: Accepted
 adr_number: "0019"
 decision_date: 2026-07-12
 supersedes: null
@@ -21,7 +22,7 @@ superseded_by: null
 
 # ADR-0019：飞书平台通过官方 Node SDK 接入
 
-- **状态**：Proposed
+- **状态**：Accepted
 - **日期**：2026-07-12
 - **决策者**：senticx@foxmail.com
 - **相关 ADR**：ADR-0001、ADR-0003、ADR-0015
@@ -30,10 +31,11 @@ superseded_by: null
 
 - 2026-07-10：Proposed，初稿评估 `larksuite/cli` 子进程方案
 - 2026-07-12：按设计反馈改选官方 Node SDK；`lark-cli` 降为非运行时参考
+- 2026-07-24：确认接入中国版飞书并接受本 ADR
 
 ## Context
 
-agent-nexus 当前只有 Discord adapter，但实际工作场景需要在飞书私聊中驱动已有 agent。ADR-0001 已把新增企业
+提出本决策时，agent-nexus 只有 Discord adapter，但实际工作场景需要在飞书私聊中驱动已有 agent。ADR-0001 已把新增企业
 IM 平台留给后续 ADR；ADR-0015 已提供命名 platform、agent 与 binding，第二个平台应复用这条中立路由，而不是
 新增旁路 daemon。
 
@@ -61,8 +63,8 @@ SDK 的 `start()` 在内部异步启动连接，并不等待 ready；adapter 必
 但把 CLI 二进制、profile、stdout/stderr wire contract 引入运行时会增加安装、版本、子进程与第二套凭据边界。
 它只作为状态机、错误分类和测试视角参考，不是 dependency、transport 或 protocol boundary。
 
-首版目标仍是单用户、飞书 P2P、纯文本闭环。群聊、卡片、附件与飞书工作资源会扩大授权和数据外泄面，不能与
-第二个平台 walking skeleton 一起进入。
+本 ADR 的 walking skeleton 只决定单用户、飞书 P2P、纯文本闭环。群聊、卡片、附件与飞书工作资源会扩大授权和
+数据外泄面，不与第二个平台 walking skeleton 一起决定；后续话题群扩展由 ADR-0021 单独裁决。
 
 ## Options
 
@@ -98,7 +100,8 @@ SDK 的 `start()` 在内部异步启动连接，并不等待 ready；adapter 必
 
 ## Decision
 
-选 **Option A：直接使用官方 Node SDK 的低层 Client / WSClient**。
+选 **Option A：直接使用官方 Node SDK 的低层 Client / WSClient**，首版固定接入中国版飞书
+（SDK `Domain.Feishu`），不增加可配置的国际版 Lark domain。
 
 决定性理由：在不引入外部 CLI 运行时的前提下复用官方长连接、token 与消息 API，同时保持 auth、idempotency、
 queue、redaction 和 streaming 的唯一 owner 仍在 agent-nexus。`lark-cli` 的状态划分可作为设计输入，但不进入依赖图。
@@ -137,14 +140,14 @@ queue、redaction 和 streaming 的唯一 owner 仍在 agent-nexus。`lark-cli` 
 
 - 不引入 `lark-cli` binary、profile、stdio protocol 或自动安装流程。
 - 不采用 SDK Channel 模块拥有 auth、idempotency、streaming 或 redaction。
-- 不新增飞书群聊、卡片、附件、reaction、typing、thread 或 native command 注册。
+- 本 ADR 不决定飞书群聊、卡片、附件、reaction、typing、thread 或 native command 注册；话题群扩展见 ADR-0021。
 - 不让 agent 调用飞书文档、日历、任务等工作 API。
 - 不自动创建飞书应用或自动申请 scope。
 - 不取代 ADR-0001；Discord 继续是已有完整能力平台。
 
 ## Amendments
 
-无。
+- 2026-07-26：ADR-0021 在 P2P walking skeleton 之外增加私有话题群能力；官方 Node SDK、WebSocket transport 与平台边界决策不变。
 
 ## 参考
 

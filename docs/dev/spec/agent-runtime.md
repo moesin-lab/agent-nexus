@@ -108,7 +108,7 @@ AgentCommandResult {
 | `routingSession` | daemon 的路由上下文；不是 agent conversation 本身 |
 | `status` | runtime 对该 command 的处理结果；`unsupported` 表示 agent package 声明或当前 runtime 状态不支持该 command |
 | `message` | 可选用户可见回复文本；为空时 daemon 不为 agent command 合成业务文案 |
-| `updatedAgentSessionId` | 更新 daemon 持久化的 opaque agent conversation ref；`null` 表示清除，缺省表示不变 |
+| `updatedAgentSessionId` | 更新 daemon 保存的 opaque agent conversation ref；`null` 表示解除当前活跃绑定并按 session model 保留历史，缺省表示不变 |
 
 约束：
 
@@ -385,7 +385,7 @@ Agent command 实现还必须覆盖：
 
 9. 已声明 agent command → `handleCommand()` 收到完整 envelope，daemon 不调用 agent 私有 handler。
 10. unsupported / rejected command → 返回明确 `AgentCommandResult`，不让 daemon 猜测业务状态。
-11. `updatedAgentSessionId` 缺省 / 字符串 / null 三种结果分别保持、更新、清除 daemon opaque ref。
+11. `updatedAgentSessionId` 缺省 / 字符串 / null 三种结果分别保持、更新、解除当前 daemon opaque ref 活跃绑定并保留历史。
 
 ## 多后端扩展（未来）
 

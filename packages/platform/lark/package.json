@@ -1,0 +1,24 @@
+{
+  "name": "@agent-nexus/platform-lark",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --build"
+  },
+  "dependencies": {
+    "@agent-nexus/daemon": "workspace:*",
+    "@agent-nexus/protocol": "workspace:*",
+    "@larksuiteoapi/node-sdk": "1.70.0"
+  }
+}

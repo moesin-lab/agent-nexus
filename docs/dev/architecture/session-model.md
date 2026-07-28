@@ -233,9 +233,11 @@ cursor 的平台还可能在断线窗口丢失事件，幂等只能消除重复�
 
 - transport 的重连、resume、replay cursor 与可能丢失窗口由 [`platform-adapter.md`](../spec/platform-adapter.md) 的平台专属契约定义
 - daemon 只对 adapter 重新投递的事件执行幂等，不从连接状态推断消息是否已交付
-- session registry **不受影响**（是本地内存 + 持久化，不依赖 platform connection 状态）
+- session registry **不受影响**：当前内存记录不依赖 platform connection；目标持久化记录同样独立于 transport
 
-### 进程重启
+### 进程重启（目标持久化模型）
+
+以下流程依赖尚未落地的 SQLite lifecycle registry。当前内存态 MVP 在进程重启后会丢失可恢复列表与活跃绑定，不执行本节恢复流程。
 
 - 启动时从持久化层（SQLite）重建 session registry
 - 所有上一轮的 Active/Idle session 状态转为 **Interrupted**（写回 DB）

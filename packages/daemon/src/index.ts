@@ -40,6 +40,7 @@ export { BasicRedactor, redactText, type Redactor } from './redaction.js';
 export {
   RouteError,
   selectRoute,
+  type PlatformType,
   type RouteContext,
   type RouteDecision,
   type RoutingEntry,

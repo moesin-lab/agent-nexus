@@ -6,6 +6,7 @@ summary: IM 平台适配层接口契约；事件归一化、发送能力、能�
 tags: [spec, platform-adapter, discord, lark, normalized-event, gateway]
 related:
   - dev/adr/0019-lark-platform-via-official-node-sdk
+  - dev/adr/0021-lark-thread-as-session-container
   - dev/spec/message-protocol
   - dev/spec/command-registry
   - dev/spec/config-routing
@@ -34,7 +35,7 @@ contracts:
 
 # Spec：Platform Adapter 接口
 
-定义 IM 平台适配层的接口契约。Discord 已实现；ADR-0019 规划的 Lark adapter 也必须实现此接口并注册到 daemon。
+定义 IM 平台适配层的接口契约。Discord 与 Lark adapter 都实现此接口并由组装层注册到 daemon。
 
 > **package 归属**：`PlatformAdapter` 接口与相关类型（`OutboundMessage` / `MessageRef` / `CapabilitySet`）定义在 `@agent-nexus/protocol` package；**具体平台实现** 住在 `@agent-nexus/platform-<name>` 独立 package（如 `@agent-nexus/platform-discord`）。详见 [`adr/0004-language-runtime.md`](../adr/0004-language-runtime.md) §TS-P7。
 
@@ -56,37 +57,32 @@ interface PlatformAdapter {
     capabilities() -> CapabilitySet
 
     // 生命周期
-    start(handler: EventHandler) -> void
-    stop() -> void
+    start(handler: EventHandler) -> Promise<void>
+    stop() -> Promise<void>
 
     // 发送
-    send(sessionKey, OutboundMessage) -> MessageRef
-    edit(messageRef: MessageRef, OutboundMessage) -> void
-    delete(messageRef: MessageRef) -> void
+    send(sessionKey: SessionKey, message: OutboundMessage) -> Promise<MessageRef>
+    edit(messageRef: MessageRef, message: OutboundMessage) -> Promise<void>
+    delete(messageRef: MessageRef) -> Promise<void>
+    react(messageRef: MessageRef, emoji: string) -> Promise<void>
 
     // 可选：创建平台原生 thread；仅 supportsThreadCreation=true 时由 daemon 调用
-    createThread(input: CreateThreadInput) -> CreateThreadResult
-    updateThread(input: UpdateThreadInput) -> void
+    createThread?(input: CreateThreadInput) -> Promise<CreateThreadResult>
+    updateThread?(input: UpdateThreadInput) -> Promise<void>
 
     // 输入指示（仅 supportsTypingIndicator=true 时由 daemon 调用）
-    setTyping(sessionKey) -> void       // 开始/续期 typing 指示
-    clearTyping(sessionKey) -> void     // 显式清除（turn 结束/interrupt/错误）
+    setTyping(sessionKey: SessionKey) -> Promise<void>
+    clearTyping(sessionKey: SessionKey) -> Promise<void>
 
     // 可选：platform-owned settings 的只读快照与 owner action
-    settingsSnapshot(input: PlatformSettingsSnapshotInput) -> PlatformSettingsSnapshot
-    applySettingsAction(input: PlatformSettingsActionInput) -> PlatformSettingsActionResult
-
-    // 可选：反应/表情
-    react(messageRef: MessageRef, emoji: string) -> void
-
-    // 可选：thread 与 settings 控制面
-    createThread(input: CreateThreadInput) -> CreateThreadResult
-    updateThread(input: UpdateThreadInput) -> void
-    settingsSnapshot(input: PlatformSettingsSnapshotInput) -> PlatformSettingsSnapshot
-    applySettingsAction(input: PlatformSettingsActionInput) -> PlatformSettingsActionResult
+    settingsSnapshot?(input: PlatformSettingsSnapshotInput)
+        -> PlatformSettingsSnapshot | Promise<PlatformSettingsSnapshot>
+    applySettingsAction?(input: PlatformSettingsActionInput)
+        -> PlatformSettingsActionResult | Promise<PlatformSettingsActionResult>
 }
 
-type EventHandler = fn(NormalizedEvent) -> void
+type EventHandler = fn(NormalizedEvent)
+    -> void | EventHandlerResult | Promise<void | EventHandlerResult>
 ```
 
 `PlatformAdapter.name()` 表示 platform type（例如 `discord` / `lark`），不是配置里的 platform instance name。多 bot / 多
@@ -133,6 +129,7 @@ platform instance 的稳定实例名由 [`config-routing.md`](config-routing.md)
 | `guildId` | 否 | guild 消息所属 guild；DM 无该字段 |
 | `initiatorRoleIds` | 否 | guild 内发起者角色 ID，用于 daemon.auth；DM 缺省或空数组 |
 | `threadParentChannelId` | 否 | thread 事件所属父 channel；daemon 可用于 thread 会话继承父频道授权；非 thread 缺省 |
+| `responseTarget` | 否 | 本事件产生的普通出站回复目标；daemon 透传为 `OutboundMessage.replyTo` |
 
 ## OutboundMessage
 
@@ -548,10 +545,10 @@ CreateThreadResult {
 
 ## Lark 专属映射
 
-Lark 首版按 ADR-0019 直接使用官方 `@larksuiteoapi/node-sdk` 的低层 `Client`、`WSClient` 与
-`EventDispatcher`，只支持 bot 身份的 P2P 纯文本消息。兼容契约固定为 SDK 1.70.0；`lark-cli` 只作为
+Lark 按 ADR-0019 直接使用官方 `@larksuiteoapi/node-sdk` 的低层 `Client`、`WSClient` 与
+`EventDispatcher`，支持 bot 身份的 P2P 与话题群纯文本消息。兼容契约固定为 SDK 1.70.0；`lark-cli` 只作为
 lifecycle/error 状态设计参考，不是 dependency、transport、credential provider 或 fixture source。SDK 的高层
-`Channel` 模块不得进入首版，因为其 normalization、safety、streaming 与 outbound owner 会和 agent-nexus 重叠。
+`Channel` 模块不得进入实现，因为其 normalization、safety、streaming 与 outbound owner 会和 agent-nexus 重叠。
 
 ### SDK port 与凭据
 
@@ -561,7 +558,8 @@ adapter 接收配置中的 `appId`、`botOpenId`，以及 secrets loader 解析�
 
 platform-lark 在 package 内部定义最窄的 `LarkSdkFactory` test seam，用于构造 SDK `Client` / `WSClient`；
 该 factory 不进入 protocol 公共接口。production factory 必须固定使用 `@larksuiteoapi/node-sdk@1.70.0`。
-禁止 spawn/exec `lark-cli`，也禁止读取 CLI profile。
+`Client` 与 `WSClient` 必须显式使用 SDK `Domain.Feishu`，首版不接受可配置 domain，也不连接
+`open.larksuite.com`。禁止 spawn/exec `lark-cli`，也禁止读取 CLI profile。
 
 SDK logger 使用 `LoggerLevel.error` 和 agent-nexus 提供的 redacting logger。不得启用 SDK 默认 debug/info
 payload 日志；logger callback 只保留稳定 category 与过 redaction 的 cause，不转发 raw event、request body、
@@ -639,13 +637,12 @@ cluster 分发而非广播，因此 config 已禁止重复 `appId`。`stop()` �
 
 config 的 appId 唯一性只能保护单进程。dev/stable 或其它并行 agent-nexus 进程也必须使用不同 Lark app；同 app
 跨进程运行会把事件随机分给不同 client，典型症状是每个实例都显示 connected，但各自只收到部分用户消息。
-实现 PR 必须把该约束写入 Lark 产品配置文档与运维排障说明。
+Lark 产品配置文档与运维排障说明必须写明该约束。
 
 稳定启动/lifecycle 错误码：
 
 | 条件 | code | retryable |
 |---|---|---|
-| app secret 加载失败 | `lark_secret_unavailable` | false |
 | bot info API 超时/失败/响应非法 | `lark_bot_probe_failed` | 按 SDK/HTTP structured code |
 | bot open_id 与配置不一致 | `lark_bot_identity_mismatch` | false |
 | 30 秒内未 ready | `lark_ws_ready_timeout` | true |
@@ -666,7 +663,10 @@ SDK 1.70.0 的 `im.message.receive_v1` typed event 使用下列字段：
 | `event_id` | `eventId`；缺失时丢弃，不用 message_id 伪造 |
 | `message.message_id` | `messageId` |
 | 稳定文本重投身份 | `idempotencyKey`；按下文公式派生，字段不足时缺省并回退 `messageId` |
-| `message.chat_id` | `sessionKey.channelId` |
+| P2P `message.chat_id` | `sessionKey.channelId` |
+| 话题群 `message.thread_id` | `sessionKey.channelId` |
+| 话题群 `message.chat_id` | `threadParentChannelId` |
+| 话题群当前 `message.message_id` | `responseTarget.messageId` / `messageIds[0]` |
 | `sender.sender_id.open_id` | `sessionKey.initiatorUserId`、`initiator.userId`；也是首版 displayName fallback |
 | `message.content` | JSON decode 后的 `text` |
 | `message.create_time` | 合法毫秒时间戳时映射到 `platformTimestamp` |
@@ -694,10 +694,23 @@ SDK callback object 可能在顶层或嵌套字段携带 `token`、`tenant_key` 
 脱敏后的 `rawPayload` 仍不得持久化、进入 trace/logger 或传给 agent；跨进程/落盘序列化必须按
 [`message-protocol.md`](message-protocol.md#json-序列化约定) 省略 rawPayload。
 
-只有 `message.chat_type="p2p"`、`message.message_type="text"`、`sender.sender_type="user"`、
-`sender.sender_id.open_id != botOpenId`，且 event/message/chat/sender/content 字段类型正确时才调用 handler。
-`message.content` 必须是 JSON object 且唯一接受 string `text`；解码后的 text 超过 1 MiB 时丢弃。
-group、非 text、bot/app sender、字段缺失或非法 JSON 均丢弃；日志不记 content、sender display data 或 raw payload。
+只有以下两类事件可以调用 handler：
+
+- `message.chat_type="p2p"` 的用户纯文本；
+- `message.chat_type="group"` 且 `message.thread_id` 为非空字符串的话题内用户纯文本。
+
+两类事件都要求 `message.message_type="text"`、`sender.sender_type="user"`、
+`sender.sender_id.open_id != botOpenId`，且 event/message/chat/sender/content 字段类型正确。`message.content`
+必须是 JSON object 且唯一接受 string `text`；解码后的 text 超过 1 MiB 时丢弃。话题群事件以 `thread_id`
+作为 session 容器，并用父 `chat_id` 继承 route / auth；群主时间线消息、非 text、bot/app sender、字段缺失或
+非法 JSON 均丢弃。日志不记 content、sender display data 或 raw payload。
+
+若 `message.mentions` 中存在 `id.open_id=botOpenId` 的 mention，adapter 必须从解码文本中移除对应 `key`，再对
+开头空白做 trim；其它用户 mention 保留。这样使用“仅接收 @机器人群消息”权限时，agent 不会看到平台占位符。
+
+话题事件的 `responseTarget` 固定为当前入站 `message_id`，`platform="lark"`、`channelId=thread_id`、
+`messageIds=[message_id]`，`sentAt` 使用合法 `create_time`，否则使用 `receivedAt`。它不是
+`NormalizedEvent.replyTo`：无论用户发的是话题根消息还是后续回复，agent 输出都以本次入站作为 response target。
 
 官方长连接要求 callback 在 3 秒内完成，否则平台会重推。EventDispatcher handler 必须在 2.5 秒预算内只完成
 解析、归一化和向 daemon handler 的交接，禁止等待 agent turn 或 outbound send。handler 返回 promise 时 adapter
@@ -710,13 +723,13 @@ handoff 失败可能丢失该事件，属于已声明的 non-lossless 边界。h
 promise 表示 queued work/turn completion，不属于平台 ACK 等待范围。合约测试必须用真实 Engine handoff 证明入队发生
 在 promise 返回前；若 daemon 未来把 enqueue 延后到异步边界，必须先重设独立 acceptance port，不能静默改变 ACK 语义。
 
-### 出站纯文本
+### 出站纯文本与话题回复
 
 Lark 首版 `supportsEdit=false`；daemon 的流式与工具消息降级遵守
 [`message-protocol.md`](message-protocol.md#流式语义)，同一 turn 仍可能调用多次 `send()`。adapter 每次进入
 `send()` 时生成独立 128-bit 随机 `sendId`（32 位小写 hex），并在该次调用及其内部重试期间保持不变。
 
-adapter 以 4000 UTF-16 code unit 的保守预算切片，按顺序为每片调用：
+adapter 以 4000 UTF-16 code unit 的保守预算切片。`OutboundMessage.replyTo` 缺省时按顺序为每片调用：
 
 ```text
 client.im.v1.message.create({
@@ -729,6 +742,24 @@ client.im.v1.message.create({
   }
 })
 ```
+
+`OutboundMessage.replyTo` 存在时，每片改为调用：
+
+```text
+client.im.v1.message.reply({
+  path: { message_id: replyTo.messageId },
+  data: {
+    msg_type: "text",
+    content: JSON.stringify({ text: slice }),
+    reply_in_thread: true,
+    uuid: sendId + ":" + hex4(sliceIndex)
+  }
+})
+```
+
+`replyTo.platform` 必须等于 `"lark"`，`replyTo.channelId` 必须等于当前 `sessionKey.channelId`，否则在发送第一片前
+以 `lark_reply_target_mismatch` 拒绝。Adapter 不缓存或回退到其它 message ID；target 已失效时按发送失败返回，
+不得静默 create 到父群主时间线。
 
 `sliceIndex` 从 0 开始；超过 `0xffff` 片时必须在发送第一片前以 `message_too_large` 拒绝。uuid 固定为 37
 个 ASCII 字符，同一 send 的重试复用同一键，同一 turn 的不同 send 不因共享 traceId 冲突。
@@ -757,7 +788,7 @@ CapabilitySet {
     supportsButtons: false
     supportsSelects: false
     supportsModals: false
-    supportsThreads: false
+    supportsThreads: true
     supportsThreadCreation: false
     supportsEphemeral: false
     supportsAttachments: false
@@ -770,8 +801,11 @@ CapabilitySet {
 `edit` / `delete` / `react` 返回 unsupported error；`setTyping` / `clearTyping` 为幂等 no-op。daemon 不得在
 capability 为 false 时调用这些 port。
 
-Lark P2P 普通文本仍进入 daemon 的通用 text-prefix 解析，所以启用对应配置时 `/new` 可用；首版不注册 native
-slash command，其余需要 command event 的控制入口不在本期范围。
+Lark P2P 与话题普通文本进入 daemon 的通用 text-prefix 解析，所以启用对应配置时 `/new` 与
+`/new <prompt>` 可用。Lark 不注册 native slash command，`supportsSlashCommands` 必须保持 `false`。
+当文本首 token 精确命中 registry 已知但不能通过 Lark 执行的控制命令时，daemon 返回稳定 unavailable 反馈，
+不得把该文本交给 agent。未知 `/foo` 仍是普通 prompt；关闭 `textPrefixes.newSession` 后 `/new` 也按既有配置
+作为普通 prompt。
 
 ### Lark 合约测试
 
@@ -779,18 +813,20 @@ slash command，其余需要 command event 的控制入口不在本期范围。
    shape，并递归排除 `token` / `tenant_key` / `app_id`。
 2. 同一 sender/chat/create_time/content 但不同 event_id/message_id 的 fixture 生成同一 `idempotencyKey`，
    真实 Engine 只入队一次；不同 create_time 不得合并。
-3. group、非 text、非法 content JSON、缺 event_id、bot/app sender 分别丢弃且不泄露正文。
+3. 话题群 fixture 映射 `thread_id` SessionKey、父 `chat_id` 与当前消息 `responseTarget`；群主时间线、非 text、
+   非法 content JSON、缺 event_id、bot/app sender 分别丢弃且不泄露正文。
 4. start 不把 SDK `start()` 返回当 ready；onReady resolve；retryable onError/30 秒 timeout close 旧 generation、
    保持 promise pending 并进入外层 backoff，non-retryable probe 才 reject；迟到 onReady 强制关闭旧 client。
 5. SDK connected/reconnecting/failed callbacks 映射到 adapter 状态；运行期 terminal failed 保持 reconnecting 并创建新 generation，non-retryable probe 才进入 failed，旧 callback 失效。
 6. stop 在 starting/running/backoff 均取消 timer 并调用 close；重复调用幂等且不创建第二 client。
 7. EventDispatcher callback 在真实 Engine 已同步入队但 turn promise 永不 resolve 时仍于 2.5 秒内返回；同步 handoff 错误被记录并成功 ACK，不进入重推循环。
 8. bot probe 校验 app identity；secret 与 SDK logger 输出不进入日志、错误、SQLite 或 transcript。
-9. send request 使用 chat_id/text/JSON content/sendId:hex4；retryable slice 最多重试一次且 uuid 稳定，同 trace 的两次 sendId 不同。
+9. P2P send 使用 chat_id create；话题 send 使用 message_id reply、`reply_in_thread=true`；两者的 retryable slice
+   最多重试一次且 uuid 稳定，同 trace 的两次 sendId 不同。
 10. 多切片顺序与 MessageRef 正确；中途失败保留已发送 ID 且不重发。
 11. success/error/malformed SDK response 分别返回 MessageRef、分类错误、protocol error。
 12. production dependency 固定 1.70.0；fixture 记录 SDK version、上游 commit、生成路径与日期。
-13. production 路径不 spawn/exec `lark-cli`、不读取 CLI profile，也不使用 SDK Channel 模块。
+13. production 路径显式使用 `Domain.Feishu`，不 spawn/exec `lark-cli`、不读取 CLI profile，也不使用 SDK Channel 模块。
 
 ## 测试契约（合约测试）
 
@@ -819,7 +855,7 @@ Adapter 必须有下列合约测试：
 下列问题不在本 spec 范围：
 
 - 具体的 Discord 凭据管理（见 [`security.md`](security/README.md)）
-- 发送失败时的重试策略（见 [`cost-and-limits.md`](infra/cost-and-limits.md)）
+- 通用发送 budget / limit（见 [`cost-and-limits.md`](infra/cost-and-limits.md)）；平台 API 错误分类与重试由各 adapter 专属段拥有
 - 具体的平台 native embed / component 映射细节（由各 adapter 实现拥有）
 - 产品层面的用户命令集（见 `docs/product/`）
 

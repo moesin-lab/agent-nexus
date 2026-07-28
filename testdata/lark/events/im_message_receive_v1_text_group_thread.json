@@ -1,0 +1,29 @@
+{
+  "event_id": "evt_thread_1",
+  "sender": {
+    "sender_id": {
+      "open_id": "ou_user_open_id"
+    },
+    "sender_type": "user"
+  },
+  "message": {
+    "message_id": "om_thread_message_1",
+    "create_time": "1720000001123",
+    "chat_id": "oc_topic_group_1",
+    "chat_type": "group",
+    "message_type": "text",
+    "content": "{\"text\":\"@_user_1 话题里的任务\"}",
+    "thread_id": "omt_thread_1",
+    "root_id": "om_thread_root_1",
+    "parent_id": "om_thread_root_1",
+    "mentions": [
+      {
+        "key": "@_user_1",
+        "id": {
+          "open_id": "ou_bot_open_id"
+        },
+        "name": "Nexus Bot"
+      }
+    ]
+  }
+}

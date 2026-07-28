@@ -1,0 +1,11 @@
+{
+  "sdk": "@larksuiteoapi/node-sdk",
+  "sdkVersion": "1.70.0",
+  "upstreamCommit": "95dbd3e949ab18491e6dbf3fe7da202ed3fce3bb",
+  "generatedFrom": "types/index.d.ts EventMap[\"im.message.receive_v1\"]",
+  "capturedAt": "2026-07-24",
+  "fixtures": [
+    "events/im_message_receive_v1_text_p2p.json",
+    "events/im_message_receive_v1_text_group_thread.json"
+  ]
+}

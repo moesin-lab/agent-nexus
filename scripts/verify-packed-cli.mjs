@@ -129,6 +129,10 @@ async function verifyTarball(tarballPath, tempRoot) {
     SOURCE_MANIFEST.dependencies['better-sqlite3'],
   );
   assert.equal(
+    manifest.dependencies['@larksuiteoapi/node-sdk'],
+    SOURCE_MANIFEST.dependencies['@larksuiteoapi/node-sdk'],
+  );
+  assert.equal(
     Object.keys(manifest.dependencies).some((name) =>
       name.startsWith('@agent-nexus/'),
     ),

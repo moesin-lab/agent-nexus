@@ -47,6 +47,7 @@ NormalizedEvent {
     text: string?                            // 去 mention 后的正文
     attachments: Attachment[]?
     replyTo: MessageRef?                     // 若本事件是对某消息的回复
+    responseTarget: MessageRef?              // 本事件产生的普通出站应回复到该消息
     command: CommandPayload?                 // type == "command" 时
     interaction: InteractionPayload?         // type == "interaction" 时
     reaction: ReactionPayload?               // type == "reaction" 时
@@ -86,6 +87,11 @@ enum EventType {
 `event.idempotencyKey ?? event.messageId` 作为有效幂等键。该字段必须是非空、带版本前缀的不透明字符串，
 不得直接拼接消息正文或其它敏感原文。
 
+`replyTo` 描述入站消息与历史消息的关系；`responseTarget` 描述本次处理产生的普通出站应该回复到哪里，两者不得
+互相代替。Daemon 必须把 `responseTarget` 透传为事件派生 `OutboundMessage.replyTo`，包括 queue-full、文本命令
+反馈和 agent 输出。Adapter 不得用进程内 `threadId -> latestMessageId` 缓存重建该意图。当前只有 Lark 话题消息
+设置 `responseTarget`；P2P 与没有原生 reply transport 的事件缺省。
+
 ## SessionKey
 
 Platform adapter 产出的入站事件只包含平台类型、频道和发起者；配置实例名由 daemon routing 层在
@@ -94,7 +100,7 @@ Platform adapter 产出的入站事件只包含平台类型、频道和发起者
 ```text
 PlatformSessionKey {
     platform: string                // IM 平台标识，例 "discord" / "lark"
-    channelId: string               // 会话容器 ID（Discord channel/thread ID 或 Lark chat_id）
+    channelId: string               // 会话容器 ID（Discord channel/thread、Lark P2P chat_id 或话题 thread_id）
     initiatorUserId: string         // 发起者 ID
 }
 
@@ -205,30 +211,20 @@ data、interaction token）留在 `rawPayload`，不得升入通用 payload。
 
 daemon → adapter 的出站消息。见 [`platform-adapter.md`](platform-adapter.md) 的定义。以下是**分片/合并**的协议。
 
+事件处理产生的 `OutboundMessage.replyTo` 必须继承 `NormalizedEvent.responseTarget`。同一次 event 的多次
+`send()` 可以指向同一个 target；adapter 自己负责把多片或多条回复映射到平台允许的 reply API。
+
 ### 文本切片
 
-Adapter 按 `CapabilitySet.maxTextLength` 执行平台单条消息预算。超过时：
+Adapter 按 `CapabilitySet.maxTextLength` 执行平台单条消息预算。切片必须满足：
 
-1. 按段落（`\n\n`）分割
-2. 每段不超过 `CapabilitySet.maxTextLength - 50`（预留标记）
-3. 仍超长的段按 `\n` 分；还不行按字符
-4. 每段首行加 `[续 N/M]` 标记（可选；在 spec/observability 里的实验开关控制）
-5. 各段保持代码块（```) 的边界（不在代码块中间切）
+- 每片不超过平台声明的 UTF-16 code unit 预算
+- 按发送顺序拼接所有 slice 后等于原文，不截断、不添加续传标记
+- 正常平台预算下不在 surrogate pair 中间切分；grapheme cluster 是否保持完整由平台专属契约定义
 
-切片由 adapter 在平台发送边界执行并聚合 `MessageRef.messageIds`；daemon 只传完整 `OutboundMessage`，
-不得复制平台长度与 partial-send 语义。可复用的纯切片算法可以下沉公共 helper，但 message id 聚合与中途失败
-仍由具体 adapter 负责。
-
-### 代码块
-
-- CC CLI 输出的代码块用 ``` 包围
-- 切片不得破坏代码块：要切就切在 ``` 外
-- 代码块超长单独发附件（`.txt`）而非截断
-
-### 附件
-
-- 由 adapter 决定走内联（<8MB）还是 CDN（>8MB）
-- daemon 产出 `OutboundAttachment { content, filename, contentType }`
+切片由 adapter 在平台发送边界执行并按顺序聚合 `MessageRef.messageIds`；daemon 只传完整
+`OutboundMessage`，不得复制平台长度、message id 聚合或 partial-send 语义。段落、代码块、附件 fallback 与
+中途失败重试若存在，必须由具体 adapter 专属段定义，不能从本通用协议推断。
 
 ## 流式语义
 
@@ -308,14 +304,16 @@ daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `t
 ## 合约测试
 
 - 平台事件 fixture → NormalizedEvent 的 JSON 快照比对
-- 切片算法：构造 5000 字符文本，分片后拼接 == 原文
+- 带 `responseTarget` 的事件 → queue-full、文本命令反馈与 agent 输出均携带相同 `OutboundMessage.replyTo`
+- 切片算法：构造超过平台预算的文本，每片不超预算且按顺序拼接后等于原文
 - 幂等：同 fixture 两次投递，第二次被 idempotency 层拦下
-- 顺序：同 session 的事件即使乱序到达，也按 sequence 串行处理
+- 顺序：同 session 按 adapter 调用 handler 的到达顺序串行处理，不按 eventId 或平台时间戳重排
 
 ## 反模式
 
 - 在 NormalizedEvent 里塞平台 SDK / CLI 特定类型（应留在 rawPayload）
 - 把 secret、token 或无需跨层消费的完整 wire object 塞进 rawPayload
+- 用 adapter 隐式缓存猜测 response target，或把入站 `replyTo` 当成出站目标
 - 把 `text` 字段当生日礼物塞 mention / emoji 原文（都要归一化或剥离）
 - daemon 复制具体平台的长度、message id 聚合或 partial-send 语义（应由 adapter 负责）
 - 跨语言序列化用非 UTF-8 或 BOM

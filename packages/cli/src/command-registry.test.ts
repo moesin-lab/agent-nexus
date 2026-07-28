@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { codexCommandDescriptors } from '@agent-nexus/agent-codex';
 import { claudeCodeCommandDescriptors } from '@agent-nexus/agent-claudecode';
+import { LARK_CAPABILITIES } from '@agent-nexus/platform-lark';
 import type { CapabilitySet, AgentRuntime } from '@agent-nexus/protocol';
 import type { EngineAgent } from '@agent-nexus/daemon';
 import { ConfigError, type AgentConfig, type AgentNexusConfig } from './config.js';
@@ -120,6 +121,54 @@ function engineAgentsFor(config: AgentNexusConfig): EngineAgent[] {
 }
 
 describe('buildCliCommandRegistrationPlan', () => {
+  it('Lark scope is global and filters every native command capability', () => {
+    const config = baseConfig({
+      platforms: [
+        {
+          name: 'feishu-main',
+          type: 'lark',
+          appId: 'cli_0123456789abcdef',
+          appSecretRef: 'FEISHU_APP_SECRET',
+          botOpenId: 'ou_bot_open_id',
+          auth: {
+            allowlist: {
+              userIds: ['ou_user_open_id'],
+              roleIds: [],
+              allowedGuildIds: [],
+              allowedChannelIds: [],
+              allowDM: true,
+              requireMentionOrSlash: false,
+            },
+          },
+        },
+      ],
+      bindings: [
+        {
+          name: 'feishu-main-codex',
+          platformName: 'feishu-main',
+          agentName: 'codex-dev',
+          match: { lark: { chatIds: ['oc_chat_1'] } },
+        },
+      ],
+    });
+
+    const plan = buildCliCommandRegistrationPlan({
+      config,
+      agents: engineAgentsFor(config),
+      platformName: 'feishu-main',
+      capabilities: LARK_CAPABILITIES,
+      generation: 'lark-g1',
+    });
+
+    expect(plan.scope).toEqual({
+      platformName: 'feishu-main',
+      platformType: 'lark',
+      nativeScope: { kind: 'global' },
+    });
+    expect(plan.commands).toEqual([]);
+    expect(plan.reverseMap.entries).toEqual({});
+  });
+
   it('builds a Discord plan with platform commands and a single-agent alias for the bound Codex owner', () => {
     const config = baseConfig();
     const plan = buildCliCommandRegistrationPlan({

@@ -1,13 +1,14 @@
 {
   "name": "@moesin-lab/agent-nexus",
   "version": "0.1.0",
-  "description": "Run local coding agents from Discord.",
+  "description": "Run local coding agents from Discord or Lark.",
   "private": false,
   "type": "module",
   "license": "MIT",
   "keywords": [
     "agent",
     "discord",
+    "lark",
     "cli",
     "claude-code",
     "codex"
@@ -37,13 +38,14 @@
   },
   "scripts": {
     "build": "tsc --build && npm run bundle",
-    "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --conditions=development --external:better-sqlite3 --external:discord.js --external:execa --external:pino --external:pino-pretty --outfile=dist/index.js && node -e \"require('node:fs').chmodSync('dist/index.js', 0o755)\"",
+    "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --conditions=development --external:@larksuiteoapi/node-sdk --external:better-sqlite3 --external:discord.js --external:execa --external:pino --external:pino-pretty --outfile=dist/index.js && node -e \"require('node:fs').chmodSync('dist/index.js', 0o755)\"",
     "typecheck": "tsc --build",
     "test": "vitest run --root ../.. packages/cli",
     "dev": "tsx watch --conditions=development src/index.ts",
     "prepack": "npm run build"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "1.70.0",
     "better-sqlite3": "^12.11.1",
     "discord.js": "^14.16.0",
     "execa": "^9.5.0",
@@ -55,6 +57,7 @@
     "@agent-nexus/agent-codex": "workspace:*",
     "@agent-nexus/daemon": "workspace:*",
     "@agent-nexus/platform-discord": "workspace:*",
+    "@agent-nexus/platform-lark": "workspace:*",
     "@agent-nexus/protocol": "workspace:*",
     "esbuild": "^0.27.7"
   }

@@ -62,9 +62,11 @@ agent tool：它不经过 Claude Code `allowedTools` / permission control，也�
 | 限制 | 单次 30 秒；stdout/stderr 按到达顺序合计最多 32 KiB，超限终止并标记截断 |
 | 输出 | 显示退出状态和合并输出；空输出仍返回退出状态；发送前走统一 redactor 与 platform 回复目标 |
 | 失败 | spawn、超时、非零退出都形成用户可见 Shell 结果，不启动或污染 agent session |
+| 关停 | daemon 先拒绝新入站并取消 pending item，再终止并等待当前 Shell 进程组，完成后才停止 platform |
 
 开启时启动日志必须发出 `shell_commands_enabled` warn，明确这是远程等价本机执行。超时或输出超限时必须终止
-Shell 进程组；限制只控制本次前台进程，不构成 OS sandbox，也不保证命令未留下独立后台进程。
+Shell 进程组；daemon 关停时执行相同终止流程，不能遗留 detached 前台命令。限制只控制本次前台进程，不构成
+OS sandbox，也不保证命令已自行创建并脱离该进程组的后台进程被清理。
 
 ## 工作目录
 

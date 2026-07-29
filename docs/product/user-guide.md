@@ -208,7 +208,7 @@ chmod 600 ~/.agent-nexus/config.json
 
 该入口支持管道与重定向，沿用 platform allowlist，不提供独立 shell allowlist、agent sandbox 或命令过滤。所有已授权用户都获得 daemon 进程权限下的本机执行能力，也可以通过命令修改 `config.json`。只应在参与者和频道均可信的私有部署中开启。
 
-执行固定使用 `/bin/sh -lc`，30 秒后终止，stdout 与 stderr 按到达顺序合并，最多返回 32 KiB。关闭时，`!` 消息保持普通 prompt。该字段不提供专用聊天或 settings 开关，配置修改仅在重启后生效；启用时 daemon 会写入 `shell_commands_enabled` warn 日志。
+执行固定使用 `/bin/sh -lc`，30 秒后终止，stdout 与 stderr 按到达顺序合并，最多返回 32 KiB。daemon 关停时会先拒绝新消息、取消排队项，再终止并等待正在运行的 Shell。关闭时，`!` 消息保持普通 prompt。该字段不提供专用聊天或 settings 开关，配置修改仅在重启后生效；启用时 daemon 会写入 `shell_commands_enabled` warn 日志。
 
 ### Codex backend 配置细节
 

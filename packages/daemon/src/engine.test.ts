@@ -572,6 +572,23 @@ function makeThrowingTrajectoryStore(): TrajectoryStore & {
 // ----- tests -----
 
 describe('Engine', () => {
+  it('开启感叹号 shell 指令但缺少 platformAuth 时拒绝启动', () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+
+    expect(
+      () =>
+        new Engine({
+          platform,
+          agent: agent.runtime,
+          logger: SILENT_LOGGER,
+          sessionStore: new SessionStore(),
+          defaultSessionConfig: DEFAULT_CFG,
+          shellCommands: { enabled: true },
+        }),
+    ).toThrow(/platformAuth/);
+  });
+
   it('默认关闭感叹号 shell 指令并将原文交给 agent', async () => {
     const platform = makePlatform();
     const agent = makeAgent();
@@ -610,6 +627,7 @@ describe('Engine', () => {
       logger: SILENT_LOGGER,
       sessionStore: new SessionStore(),
       defaultSessionConfig: DEFAULT_CFG,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
       shellCommands: { enabled: true, execute },
     });
 
@@ -644,6 +662,7 @@ describe('Engine', () => {
       logger: SILENT_LOGGER,
       sessionStore: new SessionStore(),
       defaultSessionConfig: DEFAULT_CFG,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
       shellCommands: { enabled: true, execute },
     });
 
@@ -656,18 +675,81 @@ describe('Engine', () => {
     await dispatchHandler(event);
 
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledWith({
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
       command: 'printf hello',
       cwd: '/tmp',
       timeoutMs: 30000,
       maxOutputBytes: 32768,
-    });
+      signal: expect.any(AbortSignal),
+    }));
     expect(agent.startSession).not.toHaveBeenCalled();
     expect(agent.sendInput).not.toHaveBeenCalled();
     expect(platform.send).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ text: expect.stringContaining('hello') }),
     );
+  });
+
+  it('stop 会取消并等待正在执行的 shell 指令', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const started = deferred<void>();
+    let receivedSignal: AbortSignal | undefined;
+    const execute = vi.fn(
+      async (input: { signal?: AbortSignal }) =>
+        new Promise<{
+          output: string;
+          exitCode: number | null;
+          signal: NodeJS.Signals | null;
+          timedOut: boolean;
+          truncated: boolean;
+        }>((resolve) => {
+          receivedSignal = input.signal;
+          started.resolve(undefined);
+          input.signal?.addEventListener(
+            'abort',
+            () =>
+              resolve({
+                output: '',
+                exitCode: null,
+                signal: 'SIGTERM',
+                timedOut: false,
+                truncated: false,
+              }),
+            { once: true },
+          );
+        }),
+    );
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+      defaultSessionConfig: DEFAULT_CFG,
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      shellCommands: { enabled: true, execute },
+    });
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    const dispatch = dispatchHandler(makeEvent('!sleep 10'));
+    await started.promise;
+    const pendingDispatch = dispatchHandler(
+      makeEvent('!printf should-not-run', {
+        eventId: 'e-shell-pending-during-stop',
+        messageId: 'm-shell-pending-during-stop',
+      }),
+    );
+
+    await engine.stop();
+    await dispatch;
+    await pendingDispatch;
+
+    expect(receivedSignal?.aborted).toBe(true);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(platform.stop).toHaveBeenCalledTimes(1);
   });
 
   it('入站日志只记录 metadata，不在任何 level 写入消息正文', async () => {

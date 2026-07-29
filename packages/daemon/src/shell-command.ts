@@ -5,6 +5,7 @@ export interface ShellCommandInput {
   cwd: string;
   timeoutMs: number;
   maxOutputBytes: number;
+  signal?: AbortSignal;
 }
 
 export interface ShellCommandResult {
@@ -21,6 +22,18 @@ export type ShellCommandExecutor = (
 ) => Promise<ShellCommandResult>;
 
 const FORCE_KILL_GRACE_MS = 1000;
+
+function decodeWithinByteLimit(buffer: Buffer, maxBytes: number): string {
+  const output: string[] = [];
+  let outputBytes = 0;
+  for (const character of buffer.toString('utf8')) {
+    const characterBytes = Buffer.byteLength(character);
+    if (outputBytes + characterBytes > maxBytes) break;
+    output.push(character);
+    outputBytes += characterBytes;
+  }
+  return output.join('');
+}
 
 export const executeShellCommand: ShellCommandExecutor = (input) =>
   new Promise((resolve) => {
@@ -87,12 +100,22 @@ export const executeShellCommand: ShellCommandExecutor = (input) =>
       terminate();
     }, input.timeoutMs);
     timeout.unref();
+    const abort = (): void => terminate();
+    if (input.signal?.aborted) {
+      abort();
+    } else {
+      input.signal?.addEventListener('abort', abort, { once: true });
+    }
 
     child.on('close', (exitCode, signal) => {
       clearTimeout(timeout);
       if (forceKillTimer) clearTimeout(forceKillTimer);
+      input.signal?.removeEventListener('abort', abort);
       resolve({
-        output: Buffer.concat(chunks).toString('utf8'),
+        output: decodeWithinByteLimit(
+          Buffer.concat(chunks),
+          input.maxOutputBytes,
+        ),
         exitCode,
         signal,
         timedOut,

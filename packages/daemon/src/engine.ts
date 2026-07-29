@@ -492,6 +492,11 @@ export class Engine {
   private readonly typingRefreshMs: number;
   private readonly shellCommandsEnabled: boolean;
   private readonly shellCommandExecutor: ShellCommandExecutor;
+  private readonly activeShellCommands = new Map<
+    Promise<void>,
+    AbortController
+  >();
+  private stopping = false;
   private readonly agentSessions = new Map<string, ActiveAgentSession>();
   private readonly agentOverridesByChannel = new Map<string, string>();
   private readonly pendingConfigEdits = new Map<string, PendingConfigEdit>();
@@ -520,6 +525,11 @@ export class Engine {
       throw new Error('Engine with routingTable requires platformAuth');
     }
     this.platformAuth = deps.platformAuth;
+    if (deps.shellCommands?.enabled && !deps.platformAuth) {
+      throw new Error(
+        'Engine with shellCommands enabled requires platformAuth',
+      );
+    }
     this.commandRegistry = deps.commandRegistry;
     this.platformCommandHandlerKeys = deps.platformCommandHandlerKeys ?? [];
     this.daemonCommandHandlerKeys = deps.daemonCommandHandlerKeys ?? [];
@@ -576,6 +586,12 @@ export class Engine {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
+    this.messageQueue.clearAll();
+    for (const controller of this.activeShellCommands.values()) {
+      controller.abort();
+    }
+    await Promise.allSettled(this.activeShellCommands.keys());
     await this.platform.stop();
     for (const [sessionKey, active] of this.agentSessions) {
       try {
@@ -585,12 +601,12 @@ export class Engine {
       }
     }
     this.agentSessions.clear();
-    this.messageQueue.clearAll();
     this.sessionStore.clearAll();
     this.idempotencyStore?.clearAll();
   }
 
   private dispatch(event: NormalizedEvent): Promise<void | EventHandlerResult> {
+    if (this.stopping) return Promise.resolve();
     if (event.type === 'command') {
       return this.dispatchCommand(event);
     }
@@ -3572,6 +3588,29 @@ export class Engine {
     command: string,
     sessionKeyStr: string,
   ): Promise<void> {
+    const controller = new AbortController();
+    const task = this.runShellCommand(
+      event,
+      agentSlot,
+      command,
+      sessionKeyStr,
+      controller.signal,
+    );
+    this.activeShellCommands.set(task, controller);
+    try {
+      await task;
+    } finally {
+      this.activeShellCommands.delete(task);
+    }
+  }
+
+  private async runShellCommand(
+    event: NormalizedEvent & { sessionKey: SessionKey },
+    agentSlot: EngineAgent,
+    command: string,
+    sessionKeyStr: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     const active = this.agentSessions.get(sessionKeyStr);
     const cwd =
       active?.agentName === agentSlot.agentName
@@ -3587,6 +3626,7 @@ export class Engine {
         cwd,
         timeoutMs: 30000,
         maxOutputBytes: 32768,
+        signal,
       });
     } catch (err) {
       this.logger.warn(
@@ -4046,6 +4086,7 @@ export class Engine {
     event: NormalizedEvent & { sessionKey: SessionKey },
     agentSlot: EngineAgent,
   ): Promise<void> {
+    if (this.stopping) return;
     const sessionKeyStr = serializeSessionKey(event.sessionKey);
     if (this.seenEventIds.has(event.eventId)) {
       this.logger.info(

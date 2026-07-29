@@ -59,7 +59,13 @@ async function main(): Promise<void> {
 
   const logger = createLogger({ level: config.log.level });
   if (config.daemon.shellCommands.enabled) {
-    logger.warn({}, 'shell_commands_enabled');
+    logger.warn(
+      {
+        securityMode: 'remote-equivalent-local-execution',
+        bypassesAgentSandbox: true,
+      },
+      'shell_commands_enabled',
+    );
   }
 
   let agents;

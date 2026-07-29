@@ -4,3 +4,8 @@
 # 注释行（`#` 开头）和空行忽略。
 pre-decision-analysis
 self-refinement
+development-workflow
+requirement-clarification
+tdd-workflow
+pr-readiness
+subagent-usage

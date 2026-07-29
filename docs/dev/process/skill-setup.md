@@ -96,6 +96,17 @@ Hook 配置同样属于本地 harness 配置，不入库。clone 后除 skill �
 5. 在自己的 harness 上跑挂接脚本（具体命令见上文 per-harness 子节）验证挂接生效
 6. 开 PR 前回答 [`code-review.md` §PR 必答三问](code-review.md#pr-必答三问)（对应哪条 ADR / 哪个 spec / 哪些测试）
 
+## 仓库校验
+
+新增、删除或重命名协作性 skill 后运行：
+
+```bash
+node --test scripts/validate-skills.test.mjs
+node scripts/validate-skills.mjs
+```
+
+校验器 fail-closed 检查 manifest 名称、重复项、skill 目录、通用与 per-harness `SKILL.md` frontmatter、本地 Markdown 链接及断链 symlink。CI 的 source checks 会运行同一组命令；挂接脚本本身仍需按目标 harness 实际执行验证。
+
 ## 范围
 
 纯个人偏好 skill（提示语风格 / 输出 verbosity / 个人习惯）**不适用本规范**——它们继续留各自 harness 的 local 配置目录，不入库、不挂接。

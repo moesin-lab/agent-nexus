@@ -33,6 +33,10 @@ jobs:
 
       - run: node scripts/posttool-pr-check-guard.mjs --self-test
 
+      - run: node --test scripts/validate-skills.test.mjs
+
+      - run: node scripts/validate-skills.mjs
+
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm build

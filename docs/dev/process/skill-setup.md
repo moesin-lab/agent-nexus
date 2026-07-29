@@ -27,9 +27,11 @@ skills/<name>/
         └── SKILL.md                   # Claude Code 执行细节（工具映射 / 具体派发方式 / 路径约定）
 ```
 
-- 规则权威源在 `docs/dev/process/<name>.md`，agent-agnostic
+- 完整协作性 skill 的规则权威源在 `docs/dev/process/<name>.md`，agent-agnostic
 - 通用入口 `SKILL.md` 描述跨 harness 通用行为，不点名特定工具
 - per-harness 执行器住 `harnesses/<harness>/SKILL.md`，承载该 harness 特定细节
+
+若既有 `docs/dev/` owner 已完整定义流程，只缺少高频动作的触发入口，可使用 ADR-0007 定义的**路由入口 skill**。它只能包含触发 / 排除 metadata、既有 owner 链接、相邻 skill 名，以及 owner 已显式定义的导航顺序；不得借入口引入 owner 中不存在的流程事实。需要新增执行顺序、产物格式或门禁时，必须改用完整协作性 skill。
 
 挂接的通用逻辑：优先挂 `skills/<name>/harnesses/<harness>/`（per-harness 执行器），不存在则回退挂 `skills/<name>/`（通用入口）。各 harness 按自身机制（symlink / copy / hook）实现，下两节给出具体实现。
 
@@ -89,7 +91,7 @@ Hook 配置同样属于本地 harness 配置，不入库。clone 后除 skill �
 
 按 ADR-0007 入库判据（影响协作产出格式 / 要他人理解产物 / 多人共用）确认该入库后：
 
-1. 权威源进 `docs/dev/process/<name>/` 或 `docs/dev/process/<name>.md`（agent-agnostic）
+1. 完整协作性 skill：权威源进 `docs/dev/process/<name>/` 或 `docs/dev/process/<name>.md`（agent-agnostic）；路由入口 skill：确认既有 owner 已覆盖且没有新增规则
 2. `skills/<name>/SKILL.md` — harness-neutral 通用入口
 3. `skills/<name>/harnesses/<harness>/SKILL.md` — 至少一个 harness 的执行器（否则挂接脚本只能 fallback 挂通用入口，触发质量打折）
 4. 在 `skills.manifest` 加一行 `<name>`

@@ -11,8 +11,8 @@ description: 当本仓库改动准备创建或更新 PR、声明 ready、交付�
 
 - 在准备创建或更新 PR、交付、声明 ready 或判断可合并性时触发。
 - 实现与测试迭代阶段使用 `tdd-workflow`。
-- 已明确要求处理具体 unresolved review comments 时，使用可用的 `check-pr-comments` 或 `gh-address-comments`。
-- 已明确定位为 GitHub Actions / CI failure 时，使用可用的 `gh-fix-ci`；修复后仍回到本 skill 做整体 readiness 检查。
+- 已明确要求处理具体 unresolved review comments 时，进入 `pr-feedback`。
+- 已明确定位为 GitHub Actions / required check failure 时，进入 `ci-recovery`；修复后仍回到本 skill 做整体 readiness 检查。
 
 ## 先读
 

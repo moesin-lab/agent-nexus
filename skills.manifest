@@ -9,3 +9,11 @@ requirement-clarification
 tdd-workflow
 pr-readiness
 subagent-usage
+issue-intake
+pr-feedback
+ci-recovery
+documentation-workflow
+dependency-change
+release-workflow
+skill-setup
+eval-workflow

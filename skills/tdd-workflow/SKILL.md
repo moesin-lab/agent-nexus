@@ -21,6 +21,6 @@ description: 当本仓库任务将新增功能、修复 bug、修改契约或改
 - 测试分层与 mock 边界：[`docs/dev/testing/strategy.md`](../../docs/dev/testing/strategy.md)
 - 测试产物合格条件：[`docs/dev/standards/testing.md`](../../docs/dev/standards/testing.md)
 - 涉及 fixture 时：[`docs/dev/testing/fixtures.md`](../../docs/dev/testing/fixtures.md)
-- 影响 agent 提示或工具集时：[`docs/dev/testing/eval.md`](../../docs/dev/testing/eval.md)
+- 影响 agent prompt、系统指令、skill 触发 metadata、工具集或模型行为时：进入 `eval-workflow`。
 
 规则冲突或细节不一致时，以对应 owner 文档为准。

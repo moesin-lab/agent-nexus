@@ -12,7 +12,6 @@ description: 当用户要求在 agent-nexus 仓库实现功能、修复缺陷、
 先完整读取 [`docs/dev/process/workflow.md`](../../../../docs/dev/process/workflow.md)，再按当前节点读取：
 
 - [`requirement-clarification.md`](../../../../docs/dev/process/requirement-clarification.md)
-- [`when-to-add-doc.md`](../../../../docs/dev/standards/when-to-add-doc.md)
 - [`tdd.md`](../../../../docs/dev/process/tdd.md)
 - [`commit-and-branch.md`](../../../../docs/dev/process/commit-and-branch.md)
 - [`code-review.md`](../../../../docs/dev/process/code-review.md)
@@ -21,7 +20,12 @@ description: 当用户要求在 agent-nexus 仓库实现功能、修复缺陷、
 
 ## 邻接 skill
 
+- 开发主路径的 issue 节点进入 `issue-intake`。
 - 澄清触发条件命中时进入 `requirement-clarification`。
 - 真方案分叉进入 `pre-decision-analysis`。
+- 文档判定与编写进入 `documentation-workflow`。
+- 依赖与跨 package 边界进入 `dependency-change`。
+- 仓库 skill、manifest 或 harness 挂接进入 `skill-setup`。
+- agent 概率性行为变化并行进入 `eval-workflow`。
+- 合并后的候选制品与发布阶段进入 `release-workflow`。
 - 纠正后的长期规则沉淀进入 `self-refinement`。
-

@@ -312,7 +312,7 @@ describe('createCodexRuntime', () => {
         '--ignore-rules',
         'hello',
       ],
-      { buffer: false, stdin: 'ignore' },
+      { buffer: false, stdin: 'ignore', detached: process.platform !== 'win32' },
     );
 
     child.emitFixture(fixture('baseline-text'));
@@ -355,6 +355,97 @@ describe('createCodexRuntime', () => {
     if (finished?.type !== 'turn_finished') throw new Error('expected finished');
     expect(finished.payload).toEqual({ reason: 'stop', turnSequence: 1 });
   });
+
+  it('结构化 terminal 到达后仍保留 child handle，stop 等待真实退出', async () => {
+    const child = makeExecSubproc();
+    child.kill.mockImplementation(() => true);
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+    const runtime = makeRuntime();
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'terminal-before-exit',
+      traceId: 'trace-terminal-before-exit',
+    });
+    await nextTick();
+    child.emitLine(
+      JSON.stringify({ type: 'thread.started', thread_id: 'thread-terminal-before-exit' }),
+    );
+    child.emitLine(
+      JSON.stringify({
+        type: 'turn.completed',
+        usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 0 },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(events.some((event) => event.type === 'turn_finished')).toBe(true);
+    });
+
+    let stopSettled = false;
+    const stopping = runtime.stopSession(session).finally(() => {
+      stopSettled = true;
+    });
+    await nextTick();
+
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(stopSettled).toBe(false);
+    expect(events.some((event) => event.type === 'session_stopped')).toBe(false);
+
+    child.resolve();
+    await Promise.all([turn, stopping]);
+    expect(events.at(-1)).toMatchObject({
+      type: 'session_stopped',
+      payload: { reason: 'user_stop' },
+    });
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'stop 等待整个独立进程组退出，root 退出后仍升级 SIGKILL',
+    async () => {
+      vi.useFakeTimers();
+      const child = makeExecSubproc();
+      mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+      let groupAlive = true;
+      const processKill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        expect(pid).toBe(-child.pid);
+        if (signal === 0) {
+          if (groupAlive) return true;
+          throw Object.assign(new Error('no such process group'), { code: 'ESRCH' });
+        }
+        if (signal === 'SIGKILL') groupAlive = false;
+        return true;
+      });
+      try {
+        const runtime = makeRuntime();
+        const session = runtime.startSession(sessionKey, sessionConfig);
+        const turn = runtime.sendInput(session, {
+          type: 'user_message',
+          text: 'process-group',
+          traceId: 'trace-process-group',
+        });
+        await nextTick();
+
+        let stopSettled = false;
+        const stopping = runtime.stopSession(session).finally(() => {
+          stopSettled = true;
+        });
+        expect(mockedExeca.mock.calls[0]![2]).toMatchObject({ detached: true });
+        expect(processKill).toHaveBeenCalledWith(-child.pid, 'SIGTERM');
+
+        child.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stopSettled).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(30);
+        expect(processKill).toHaveBeenCalledWith(-child.pid, 'SIGKILL');
+        await Promise.all([turn, stopping]);
+      } finally {
+        processKill.mockRestore();
+      }
+    },
+  );
 
   it('第二轮用 exec resume thread_id 且同一 thread 不重复 session_started', async () => {
     const firstChild = makeExecSubproc();
@@ -783,6 +874,8 @@ describe('createCodexRuntime', () => {
     expect(firstChild.kill).toHaveBeenCalledWith('SIGTERM');
     await vi.advanceTimersByTimeAsync(30);
     expect(firstChild.kill).toHaveBeenCalledWith('SIGKILL');
+    firstChild.reject(new Error('interrupt cleanup exit'));
+    await vi.advanceTimersByTimeAsync(0);
     await nextTick();
     expect(mockedExeca).toHaveBeenCalledTimes(2);
     expect(mockedExeca.mock.calls[1]![1]).toEqual(
@@ -805,6 +898,7 @@ describe('createCodexRuntime', () => {
       }),
     );
     secondChild.resolve();
+    await vi.advanceTimersByTimeAsync(0);
     await second;
 
     expect(events.filter((event) => event.type === 'turn_finished')).toHaveLength(2);
@@ -864,6 +958,8 @@ describe('createCodexRuntime', () => {
     expect(firstChild.kill).toHaveBeenCalledWith('SIGTERM');
     await vi.advanceTimersByTimeAsync(30);
     expect(firstChild.kill).toHaveBeenCalledWith('SIGKILL');
+    firstChild.reject(new Error('timeout cleanup exit'));
+    await vi.advanceTimersByTimeAsync(0);
     await nextTick();
     expect(session.state).toBe('Busy');
     expect(mockedExeca).toHaveBeenCalledTimes(2);
@@ -877,6 +973,7 @@ describe('createCodexRuntime', () => {
       }),
     );
     secondChild.resolve();
+    await vi.advanceTimersByTimeAsync(0);
     await second;
     expect(session.state).toBe('Idle');
   });

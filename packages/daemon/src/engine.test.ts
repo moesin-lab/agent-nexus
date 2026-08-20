@@ -182,7 +182,7 @@ function makeAgent() {
     },
   );
 
-  const stopSession = vi.fn((s: AgentSession) => {
+  const stopSession = vi.fn(async (s: AgentSession) => {
     handlers.delete(s);
   });
 
@@ -247,8 +247,8 @@ function makeAgent() {
     isAlive,
     sendInput,
     handleCommand,
-    onEvent,
     interrupt,
+    onEvent,
   };
 
   return {
@@ -259,6 +259,7 @@ function makeAgent() {
     onEvent,
     sendInput,
     handleCommand,
+    interrupt,
     queueEvents(events: AgentEvent[]): void {
       queue.push({ events, delayMs: 0 });
     },
@@ -339,6 +340,21 @@ const CODEX_STOP_COMMAND: CommandDescriptor = {
   summary: 'Stop the current agent output',
   options: [],
   handlerKey: 'stop',
+  dispatchMode: 'immediate',
+  applicability: {
+    requiredCapabilities: ['slash-command-registration'],
+  },
+  legacyNames: [],
+};
+
+const CODEX_STATUS_COMMAND: CommandDescriptor = {
+  canonicalId: 'agent:codex:status',
+  owner: { type: 'agent', agentOwner: 'codex' },
+  localName: 'status',
+  summary: 'Show the current Codex session status',
+  options: [],
+  handlerKey: 'status',
+  dispatchMode: 'immediate',
   applicability: {
     requiredCapabilities: ['slash-command-registration'],
   },
@@ -1404,6 +1420,65 @@ describe('Engine', () => {
       'This control command is not available as text on this platform.',
       'This control command is not available as text on this platform.',
     ]);
+  });
+
+  it('无 native slash 能力时精确文本控制命令绕过同 SessionKey 队列立即执行', async () => {
+    const platform = makePlatform({ supportsSlashCommands: false });
+    const agent = makeAgent();
+    const engine = new Engine({
+      platform,
+      platformName: 'lark-main',
+      platformType: 'lark',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          commandDescriptors: [CODEX_STOP_COMMAND, CODEX_STATUS_COMMAND],
+          agent: agent.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+    });
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-text-control' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('create session'));
+
+    agent.queueEventsAfter(
+      [ev('turn_finished', { reason: 'stop', turnSequence: 2 })],
+      30,
+    );
+    const busyTurn = dispatchHandler(
+      makeEvent('long turn', { eventId: 'long-turn', messageId: 'long-turn' }),
+    );
+    await vi.waitFor(() => expect(agent.sendInput).toHaveBeenCalledTimes(2));
+
+    await dispatchHandler(
+      makeEvent('/status', { eventId: 'status', messageId: 'status' }),
+    );
+    await dispatchHandler(
+      makeEvent('/stop', { eventId: 'stop', messageId: 'stop' }),
+    );
+
+    expect(agent.handleCommand.mock.calls.map(([, command]) => command.handlerKey)).toEqual([
+      'status',
+      'stop',
+    ]);
+    expect(agent.interrupt).toHaveBeenCalledTimes(1);
+    expect(
+      platform.send.mock.calls.slice(-2).map(([, message]) => message.text),
+    ).toEqual(['[status handled]', '[stop requested]']);
+
+    await busyTurn;
   });
 
   it('textPrefixes.newSession=false 时 /new 文本按普通 prompt 转给 agent', async () => {
@@ -3376,6 +3451,44 @@ describe('Engine', () => {
       'sid-after-text-new',
       'sid-before-text-new',
     ]));
+  });
+
+  it('text /new waits for the old session cleanup before starting its replacement', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-before-awaitable-new' }),
+      ev('text_final', { text: 'first' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('hello'));
+
+    const stopBarrier = deferred<void>();
+    agent.stopSession.mockImplementationOnce(async () => stopBarrier.promise);
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-after-awaitable-new' }),
+      ev('text_final', { text: 'second' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    const replacing = dispatchHandler(makeEvent('/new continue'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(agent.startSession).toHaveBeenCalledTimes(1);
+
+    stopBarrier.resolve(undefined);
+    await replacing;
+    expect(agent.startSession).toHaveBeenCalledTimes(2);
   });
 
   it('immediate agent command without active session does not create a phantom AgentSession', async () => {
@@ -8006,5 +8119,149 @@ describe('Engine', () => {
     expect(platform.stop).toHaveBeenCalledTimes(1);
     expect(agent.stopSession).toHaveBeenCalledTimes(1);
     expect(store.get(ROUTED_SESSION_KEY)).toBeUndefined();
+  });
+
+  it('engine.stop waits for active session cleanup before clearing stores', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-stop-barrier' }),
+      ev('text_final', { text: 'reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('hello'));
+
+    const stopBarrier = deferred<void>();
+    agent.stopSession.mockImplementationOnce(async () => stopBarrier.promise);
+    let shutdownSettled = false;
+    const stopping = engine.stop().finally(() => {
+      shutdownSettled = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(shutdownSettled).toBe(false);
+    expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-stop-barrier');
+
+    stopBarrier.resolve(undefined);
+    await stopping;
+    expect(store.get(ROUTED_SESSION_KEY)).toBeUndefined();
+  });
+
+  it('engine.stop rejects an unconfirmed session cleanup without clearing durable state', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-stop-rejected' }),
+      ev('text_final', { text: 'reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('hello'));
+    const cleanupError = new Error('child exit not confirmed');
+    agent.stopSession.mockRejectedValueOnce(cleanupError);
+
+    const first = engine.stop();
+    const second = engine.stop();
+
+    expect(second).toBe(first);
+    await expect(first).rejects.toBe(cleanupError);
+    expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-stop-rejected');
+  });
+
+  it('concurrent engine.stop calls share one shutdown barrier', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-concurrent-stop' }),
+      ev('text_final', { text: 'reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('hello'));
+
+    const stopBarrier = deferred<void>();
+    agent.stopSession.mockImplementationOnce(async () => stopBarrier.promise);
+    const first = engine.stop();
+    const second = engine.stop();
+
+    expect(second).toBe(first);
+    expect(agent.stopSession).toHaveBeenCalledTimes(1);
+    expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-concurrent-stop');
+
+    stopBarrier.resolve(undefined);
+    await Promise.all([first, second]);
+    expect(platform.stop).toHaveBeenCalledTimes(1);
+    expect(store.get(ROUTED_SESSION_KEY)).toBeUndefined();
+  });
+
+  it('engine.stop waits for an in-flight replacement cleanup and prevents the replacement start', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: new SessionStore(),
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (platform.start as ReturnType<typeof vi.fn>).mock.calls[0]![0] as EventHandler;
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-before-shutdown-race' }),
+      ev('text_final', { text: 'reply' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(makeEvent('hello'));
+
+    const stopBarrier = deferred<void>();
+    agent.stopSession.mockImplementationOnce(async () => stopBarrier.promise);
+    agent.queueEvents([]);
+    const replacing = dispatchHandler(makeEvent('/new continue'));
+    await vi.waitFor(() => expect(agent.stopSession).toHaveBeenCalledTimes(1));
+
+    let shutdownSettled = false;
+    const shutdown = engine.stop().finally(() => {
+      shutdownSettled = true;
+    });
+    await Promise.resolve();
+    expect(shutdownSettled).toBe(false);
+    expect(agent.startSession).toHaveBeenCalledTimes(1);
+
+    stopBarrier.resolve(undefined);
+    await Promise.all([replacing, shutdown]);
+    expect(agent.startSession).toHaveBeenCalledTimes(1);
   });
 });

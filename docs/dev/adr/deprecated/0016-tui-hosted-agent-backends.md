@@ -2,7 +2,7 @@
 title: ADR-0016：TUI-hosted Agent Backend Family
 type: adr
 status: active
-summary: 新增 TUI-hosted agent backend family；用 tmux 承载真实交互式 CLI，并用旁路 parser 抽取可消费状态
+summary: 已由 ADR-0022 取代；历史方案以 tmux 承载真实交互式 CLI，并用旁路 parser 抽取状态
 tags: [adr, decision, agent-runtime, tui, tmux, parser]
 related:
   - dev/adr/0012-claudecode-stream-json-mainline
@@ -11,16 +11,18 @@ related:
   - dev/spec/agent-runtime
   - dev/spec/security/tool-boundary
   - dev/spec/security/auth
-adr_status: Proposed
+adr_status: Superseded
 adr_number: "0016"
 decision_date: 2026-06-05
 supersedes: null
-superseded_by: null
+superseded_by: "0022"
 ---
 
 # ADR-0016：TUI-hosted Agent Backend Family
 
-- **状态**：Proposed
+> **已被 [ADR-0022](../0022-codex-app-server-primary-tui-supplemental.md) 取代，仅供审计追溯。**
+
+- **状态**：Superseded by 0022
 - **日期**：2026-06-05
 - **决策者**：senticx@foxmail.com
 - **相关 ADR**：ADR-0012、ADR-0014
@@ -28,6 +30,7 @@ superseded_by: null
 ## 状态变更日志
 
 - 2026-06-05：Proposed
+- 2026-07-31：Superseded by 0022（Codex app-server 改为结构化业务主控制面，TUI/mux 降为补充视图与通用 CLI 候选能力）
 
 ## Context
 
@@ -131,8 +134,8 @@ TUI-hosted backend 是能力较弱但兼容面更广的运行形态。它不得�
 
 ## 参考
 
-- 相关 spec：[`../spec/agent-runtime.md`](../spec/agent-runtime.md)
-- 相关 architecture：[`../architecture/session-model.md`](../architecture/session-model.md)
-- 相关 security spec：[`../spec/security/tool-boundary.md`](../spec/security/tool-boundary.md)、[`../spec/security/auth.md`](../spec/security/auth.md)
-- 相关 ADR：[`0012-claudecode-stream-json-mainline.md`](0012-claudecode-stream-json-mainline.md)、[`0014-agent-backend-codex-cli.md`](0014-agent-backend-codex-cli.md)
+- 相关 spec：[`../../spec/agent-runtime.md`](../../spec/agent-runtime.md)
+- 相关 architecture：[`../../architecture/session-model.md`](../../architecture/session-model.md)
+- 相关 security spec：[`../../spec/security/tool-boundary.md`](../../spec/security/tool-boundary.md)、[`../../spec/security/auth.md`](../../spec/security/auth.md)
+- 相关 ADR：[`../0012-claudecode-stream-json-mainline.md`](../0012-claudecode-stream-json-mainline.md)、[`../0014-agent-backend-codex-cli.md`](../0014-agent-backend-codex-cli.md)
 - 外部参考：[SiriusNEO/StarAgent](https://github.com/SiriusNEO/StarAgent)、[deepcoldy/botmux](https://github.com/deepcoldy/botmux)

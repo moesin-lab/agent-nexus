@@ -22,7 +22,7 @@ superseded_by: null
 - **状态**：Accepted
 - **日期**：2026-06-23
 - **决策者**：agent-nexus maintainers
-- **相关 ADR**：ADR-0012、ADR-0014、ADR-0016
+- **相关 ADR**：ADR-0012、ADR-0014、ADR-0022
 
 ## 状态变更日志
 

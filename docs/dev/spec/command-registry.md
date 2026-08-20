@@ -395,16 +395,14 @@ daemon 不得从 `codex-new` / `discord-reply-mode` 这类字符串中拆 owner 
 `CapabilitySet.supportsSlashCommands=false` 表示该平台没有本 spec 的 registration / command-event transport，
 不能构建或激活该平台的 reverse map。普通消息里的 `/...` 不因此自动变成 `type:"command"`。
 
-Daemon 可以拥有显式、独立的 text-prefix 功能；当前只有配置控制的 `/new` 与 `/new <prompt>`。处理顺序固定为：
+Daemon 可以拥有显式、独立的 text-control 功能。除配置控制的 `/new` 与 `/new <prompt>` 外，无 native slash 平台支持固定、无参数、整条消息精确匹配的 immediate controls：`/stop`、`/status`、`/kill`，以及 `/<agentOwner>-stop`、`/<agentOwner>-status`、`/nexus-kill`。处理顺序固定为：
 
 1. 若启用 `textPrefixes.newSession` 且首 token 精确为 `/new`，执行现有文本重置语义；
-2. 否则，若首 token 命中已启用 agent descriptors 的 stable name、除 `new` 外的 local name，或 daemon
-   descriptors 的 stable name，返回稳定 unavailable 文本，不进入 agent；
-3. 未知 `/foo` 保持普通 prompt，不能按字符串结构猜 owner 或 handler。
+2. 若平台无 native slash，且 trim 后整条消息精确命中上述 immediate control，则在 per-SessionKey turn queue 外执行与 command event 相同的 auth、route、runtime envelope 或 termination 语义，不等待当前 Busy turn；
+3. 否则，若首 token 命中已启用 agent descriptors 的 stable name、除 allowlist 外的 local name，或 daemon descriptors 的 stable name，返回稳定 unavailable 文本，不进入 agent；
+4. 未知 `/foo` 保持普通 prompt，不能按字符串结构猜 owner 或 handler。
 
-该 guard 不是 registry dispatch，不读取 active reverse map，也不执行 descriptor handler。关闭
-`textPrefixes.newSession` 后 `/new` 按既有配置作为普通 prompt；其它已知命令仍稳定拒绝。支持更多命令时必须
-先定义独立 text command transport，不能绕过 remote-registration activation 契约。
+该 transport 不读取 active reverse map，也不能从任意字符串猜 owner；它只能按当前 route 与 descriptor allowlist 构造 platform-neutral envelope。关闭 `textPrefixes.newSession` 后 `/new` 按既有配置作为普通 prompt。带参数、额外 token、大小写变体与其它已知命令仍稳定拒绝；支持更多命令时必须先更新本节。
 
 Agent command 的远端可见性是 registration scope 粒度，binding 是 channel 粒度。多 agent scope 中，用户可能看见某个 stable agent command 但在当前 channel route 到另一类 agent；这种情况必须以 `command_agent_owner_mismatch` fail-closed。
 
@@ -517,7 +515,7 @@ P3-P5 必须覆盖：
 - remote registration failure 或 partial apply 保留旧 active map。
 - stale generation result 不激活 active map。
 - active map missing、reverse map miss、agent owner mismatch fail-closed。
-- 无 native slash 平台的 `/new` 文本入口可用；其它已知控制命令稳定拒绝且不进入 agent；未知 `/foo` 仍可作为 prompt。
+- 无 native slash 平台的 `/new` 文本入口与精确 `/stop`、`/status`、`/kill` immediate controls 可用；其它已知控制命令稳定拒绝且不进入 agent；未知 `/foo` 仍可作为 prompt。
 - agent command descriptor 来自 agent package 内声明配置文件，并进入对应 package 构建产物。
 - `/stop` 在 single-agent scope 作为 agent alias 路由到当前 backend，并以 agent command envelope 转发；daemon 不校验 agent 私有 handler、不映射为 runtime interrupt。
 - `/nexus-kill` 作为 daemon command 终止当前 RoutingSession，并把 opaque agent conversation ref 保留到可恢复历史。

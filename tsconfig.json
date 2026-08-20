@@ -5,6 +5,7 @@
     { "path": "./packages/daemon" },
     { "path": "./packages/agent/claudecode" },
     { "path": "./packages/agent/codex" },
+    { "path": "./packages/agent/codex-app-server" },
     { "path": "./packages/platform/discord" },
     { "path": "./packages/platform/lark" },
     { "path": "./packages/cli" }

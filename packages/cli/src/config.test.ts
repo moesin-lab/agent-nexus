@@ -4,6 +4,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   stat,
   writeFile,
@@ -377,6 +378,71 @@ describe('config loader', () => {
         }),
       );
       await expect(loadConfig()).rejects.toThrow(/timeoutMs/);
+    }
+  });
+
+  it('loadConfig 解析独立 codex-app-server backend 并拒绝 inactive owner block', async () => {
+    const workingDir = await mkdtemp(join(tmpdir(), 'agent-nexus-codex-app-server-working-'));
+    try {
+      const path = join(tmp, '.agent-nexus', 'config.json');
+      await writeFile(
+        path,
+        JSON.stringify(
+          validConfig({
+            agents: [
+              {
+                name: 'codex-persistent',
+                backend: 'codex-app-server',
+                codexAppServer: { workingDir, sandbox: 'read-only' },
+              },
+            ],
+            bindings: [
+              {
+                ...VALID_BINDING,
+                agentName: 'codex-persistent',
+              },
+            ],
+          }),
+        ),
+      );
+
+      const loaded = await loadConfig();
+      const canonicalWorkingDir = await realpath(workingDir);
+      expect(loaded.agents[0]).toMatchObject({
+        name: 'codex-persistent',
+        backend: 'codex-app-server',
+        codexAppServer: {
+          workingDir: canonicalWorkingDir,
+          sandbox: 'read-only',
+          conversationRetentionMs: null,
+          supplementalViewer: { enabled: false },
+        },
+      });
+
+      await writeFile(
+        path,
+        JSON.stringify(
+          validConfig({
+            agents: [
+              {
+                name: 'codex-persistent',
+                backend: 'codex-app-server',
+                codexAppServer: { workingDir },
+                codex: { workingDir },
+              },
+            ],
+            bindings: [
+              {
+                ...VALID_BINDING,
+                agentName: 'codex-persistent',
+              },
+            ],
+          }),
+        ),
+      );
+      await expect(loadConfig()).rejects.toThrow(/agents\[0\]\.codex.*不允许/);
+    } finally {
+      await rm(workingDir, { recursive: true, force: true });
     }
   });
 

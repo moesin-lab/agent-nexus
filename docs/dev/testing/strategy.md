@@ -131,9 +131,12 @@ CLI 发布验证针对 npm tarball，而不是仓库源码目录。CI 必须先�
 - 包内只有 `dist/index.js`、`package.json`、`README.md` 与 `LICENSE`，可执行位仍为 `0755`；
 - 已安装 manifest 不暴露库入口，也不含内部 `@agent-nexus/*` 运行时依赖；
 - 从已安装包解析并实际打开 `better-sqlite3` 内存数据库，防止默认 trajectory 静默降级；
+- 从已安装包解析 `ws` runtime dependency，防止 bundled CommonJS 动态 require 在 ESM 入口崩溃；
 - 用独立 `AGENT_NEXUS_HOME` 首次启动已安装的 `agent-nexus`，验证配置脚手架和权限。
 
-这组证据在 Ubuntu 24.04 x64、macOS 15 arm64 与 macOS 15 x64 上分别使用 Node.js 22、24 执行。具体命令由 `scripts/verify-packed-cli.mjs` 统一承载，发布流程必须复用同一验证器。
+Codex app-server 的 275 个上游 schema 是仓库测试 fixture，不进入公开 tarball；build 前由 snapshot hash 与 snapshot-derived runtime allowlist tests 固定，bundle 只携带运行时 contract。具备已认证的精确 Codex binary 时，同一验证器设置 `AGENT_NEXUS_RUN_PACKED_CODEX_E2E=1`，通过安装后 bin 的受限 release-verification 入口启动 bundled app-server、完成一轮并等待清理。该 real gate 会产生真实模型调用，不能在缺少认证的通用 CI 中伪装成通过；候选发布前必须在受支持 runner 保存一次成功证据。
+
+这组证据在 Ubuntu 24.04 x64、macOS 15 arm64 与 macOS 15 x64 上分别使用 Node.js 22、24 执行。具体命令由 `scripts/verify-packed-cli.mjs` 统一承载，发布流程必须复用同一验证器；未设置 real gate 时的 manifest/scaffold pass 不得替代 packed Codex turn 证据。
 
 ## 测试工具链
 

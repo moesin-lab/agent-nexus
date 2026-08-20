@@ -481,6 +481,7 @@ export class Engine {
   private readonly streamEditThrottleMs: number;
   private readonly typingRefreshMs: number;
   private readonly agentSessions = new Map<string, ActiveAgentSession>();
+  private readonly sessionStopBarriers = new Map<string, Promise<void>>();
   private readonly agentOverridesByChannel = new Map<string, string>();
   private readonly pendingConfigEdits = new Map<string, PendingConfigEdit>();
   /**
@@ -496,6 +497,8 @@ export class Engine {
    */
   private static readonly DEDUP_CAP = 1024;
   private readonly seenEventIds = new Map<string, true>();
+  private stopping = false;
+  private stopPromise: Promise<void> | undefined;
 
   constructor(deps: EngineDeps) {
     this.platform = deps.platform;
@@ -560,22 +563,43 @@ export class Engine {
     this.newSessionTextPrefixEnabled = update.newSessionTextPrefix;
   }
 
-  async stop(): Promise<void> {
-    await this.platform.stop();
-    for (const [sessionKey, active] of this.agentSessions) {
-      try {
-        active.agent.stopSession(active.session);
-      } catch (err) {
-        this.logger.error({ sessionKey, err }, 'agent_stop_session_failed');
+  stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
+    this.stopping = true;
+    this.stopPromise = (async () => {
+      const platformStop = Promise.resolve().then(() => this.platform.stop());
+      this.messageQueue.clearAll();
+      const activeSessions = [...this.agentSessions];
+      const inFlightStops = [...this.sessionStopBarriers.values()];
+      const cleanupResults = await Promise.allSettled([
+        platformStop,
+        ...inFlightStops,
+        ...activeSessions.map(async ([sessionKey, active]) => {
+          try {
+            await active.agent.stopSession(active.session);
+          } catch (err) {
+            this.logger.error({ sessionKey, err }, 'agent_stop_session_failed');
+            throw err;
+          }
+        }),
+      ]);
+      const failures = cleanupResults.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : [],
+      );
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) {
+        throw new AggregateError(failures, 'engine shutdown cleanup was not confirmed');
       }
-    }
-    this.agentSessions.clear();
-    this.messageQueue.clearAll();
-    this.sessionStore.clearAll();
-    this.idempotencyStore?.clearAll();
+      this.agentSessions.clear();
+      this.sessionStopBarriers.clear();
+      this.sessionStore.clearAll();
+      this.idempotencyStore?.clearAll();
+    })();
+    return this.stopPromise;
   }
 
   private dispatch(event: NormalizedEvent): Promise<void | EventHandlerResult> {
+    if (this.stopping) return Promise.resolve();
     if (event.type === 'command') {
       return this.dispatchCommand(event);
     }
@@ -674,7 +698,7 @@ export class Engine {
     return false;
   }
 
-  private dispatchToAgent(
+  private async dispatchToAgent(
     event: NormalizedEvent,
     route: { bindingName: string; agentName: string },
   ): Promise<void> {
@@ -722,6 +746,16 @@ export class Engine {
         },
         'idempotency_insert',
       );
+    }
+    if (
+      !this.platform.capabilities().supportsSlashCommands &&
+      this.isImmediateTextControl(routedEvent.text) &&
+      (await this.tryDispatchImmediateTextControl(routedEvent, agentSlot))
+    ) {
+      if (this.idempotencyStore && idempotencyKey) {
+        this.idempotencyStore.markProcessed(routedSessionKey, idempotencyKey);
+      }
+      return Promise.resolve();
     }
     const keyStr = queueKeyFromEvent(event, this.platformName);
     const queuedMessage = { text: event.text };
@@ -808,6 +842,92 @@ export class Engine {
       }
       throw err;
     });
+  }
+
+  private isImmediateTextControl(text: string | undefined): boolean {
+    if (!text) return false;
+    const command = text.trim();
+    return (
+      command === '/kill' ||
+      command === '/nexus-kill' ||
+      command === '/stop' ||
+      command === '/status' ||
+      /^\/[^\s/]+-(?:stop|status)$/.test(command)
+    );
+  }
+
+  private async tryDispatchImmediateTextControl(
+    event: NormalizedEvent & { sessionKey: SessionKey },
+    agentSlot: EngineAgent,
+  ): Promise<boolean> {
+    const text = event.text?.trim();
+    if (!text) return false;
+    const owner = agentSlot.agentOwner ?? agentSlot.agent.name();
+    if (text === '/kill' || text === '/nexus-kill') {
+      await this.killRoutingSession(event, event.sessionKey);
+      return true;
+    }
+    const localName =
+      text === '/stop' || text === `/${owner}-stop`
+        ? 'stop'
+        : text === '/status' || text === `/${owner}-status`
+          ? 'status'
+          : null;
+    if (!localName) return false;
+    const descriptor = agentSlot.commandDescriptors?.find(
+      (candidate) =>
+        candidate.owner.type === 'agent' &&
+        candidate.owner.agentOwner === owner &&
+        candidate.localName === localName &&
+        candidate.dispatchMode === 'immediate',
+    );
+    if (!descriptor) return false;
+    const sessionKeyStr = serializeSessionKey(event.sessionKey);
+    const existing = this.agentSessions.get(sessionKeyStr);
+    const active =
+      existing?.agentName === agentSlot.agentName ? existing : undefined;
+    const envelope: AgentCommandEnvelope = {
+      canonicalId: descriptor.canonicalId,
+      localName: descriptor.localName,
+      handlerKey: descriptor.handlerKey,
+      args: {},
+      rawText: event.text,
+      traceId: event.traceId,
+      routingSession: {
+        sessionKey: event.sessionKey,
+        platformName: this.platformName,
+        platformType: this.platformType,
+        channelId: event.sessionKey.channelId,
+        userId: event.sessionKey.initiatorUserId,
+      },
+    };
+    let result: AgentCommandResult;
+    try {
+      result = await agentSlot.agent.handleCommand(active?.session, envelope);
+    } catch (err) {
+      this.logger.error(
+        {
+          traceId: event.traceId,
+          sessionKey: sessionKeyStr,
+          canonicalId: descriptor.canonicalId,
+          handlerKey: descriptor.handlerKey,
+          err,
+        },
+        'agent_command_failed',
+      );
+      await this.sendCommandAck(event, event.sessionKey, COMMAND_FAILED_TEXT);
+      return true;
+    }
+    this.applyAgentCommandResult(event.sessionKey, sessionKeyStr, result, owner);
+    await this.sendCommandAck(
+      event,
+      event.sessionKey,
+      result.message ??
+        (result.status === 'handled'
+          ? '[command handled]'
+          : COMMAND_FAILED_TEXT),
+    );
+    return true;
   }
 
   private commandResponse(text: string, traceId: string): EventHandlerResult {
@@ -1287,12 +1407,16 @@ export class Engine {
       return this.commandResponse(COMMAND_NOT_READY_TEXT, event.traceId);
     }
 
-    const routedSessionKey = withPlatformName(
-      event.sessionKey,
-      this.platformName,
-    );
+    const routedSessionKey = withPlatformName(event.sessionKey, this.platformName);
+    await this.killRoutingSession(event, routedSessionKey);
+  }
+
+  private async killRoutingSession(
+    event: NormalizedEvent,
+    routedSessionKey: SessionKey,
+  ): Promise<void> {
     const sessionKeyStr = serializeSessionKey(routedSessionKey);
-    const hadActiveSession = this.stopActiveSession(sessionKeyStr, event.traceId);
+    const hadActiveSession = await this.stopActiveSession(sessionKeyStr, event.traceId);
     const cancelled = this.messageQueue.clearPending(sessionKeyStr).cancelled;
     if (cancelled > 0) {
       this.logger.info(
@@ -3063,7 +3187,7 @@ export class Engine {
     );
   }
 
-  private handleSessionResumeInteraction(event: NormalizedEvent): EventHandlerResult {
+  private async handleSessionResumeInteraction(event: NormalizedEvent): Promise<EventHandlerResult> {
     const sessionId = event.interaction?.values[0];
     if (!sessionId) {
       return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
@@ -3077,23 +3201,36 @@ export class Engine {
     if (!agentSlot) {
       return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
     }
-    const sessionKeyStr = serializeSessionKey(routedSessionKey);
-    const activeSourceKey = this.sessionStore.activeKeyForSessionId(sessionId);
-    const rebound = this.sessionStore.bindExistingToKey(
-      routedSessionKey,
-      sessionId,
-      new Date(),
-      agentSlot.agentOwner ?? agentSlot.agent.name(),
-    );
-    if (!rebound) {
+    const agentOwner = agentSlot.agentOwner ?? agentSlot.agent.name();
+    const resumable = this.sessionStore
+      .listForUser({
+        platformName: this.platformName,
+        platform: event.sessionKey.platform,
+        initiatorUserId: event.initiator.userId,
+        agentOwner,
+        limit: Number.MAX_SAFE_INTEGER,
+      })
+      .some((candidate) => candidate.sessionId === sessionId);
+    if (!resumable) {
       return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
     }
+    const sessionKeyStr = serializeSessionKey(routedSessionKey);
+    const activeSourceKey = this.sessionStore.activeKeyForSessionId(sessionId);
     const activeKeysToStop = new Set([sessionKeyStr]);
     if (activeSourceKey) {
       activeKeysToStop.add(serializeSessionKey(activeSourceKey));
     }
     for (const activeKey of activeKeysToStop) {
-      this.stopActiveSession(activeKey, event.traceId);
+      await this.stopActiveSession(activeKey, event.traceId);
+    }
+    const rebound = this.sessionStore.bindExistingToKey(
+      routedSessionKey,
+      sessionId,
+      new Date(),
+      agentOwner,
+    );
+    if (!rebound) {
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
     }
     return this.commandResponse(
       `会话已恢复: ${rebound.agentSessionId}\nsession resumed: ${rebound.agentSessionId}`,
@@ -3101,9 +3238,9 @@ export class Engine {
     );
   }
 
-  private handleExternalSessionResumeInteraction(
+  private async handleExternalSessionResumeInteraction(
     event: NormalizedEvent,
-  ): EventHandlerResult {
+  ): Promise<EventHandlerResult> {
     const importId = event.interaction?.values[0];
     if (!importId || !this.externalSessionImporter) {
       return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
@@ -3118,6 +3255,7 @@ export class Engine {
       this.platformName,
     );
     const agentOwner = agentSlot.agentOwner ?? agentSlot.agent.name();
+    await this.stopActiveSession(serializeSessionKey(routedSessionKey), event.traceId);
     let binding;
     try {
       binding = this.externalSessionImporter.bindToRoutingSession({
@@ -3135,7 +3273,6 @@ export class Engine {
       this.logger.error({ traceId: event.traceId, importId, err }, 'external_session_resume_failed');
       return this.commandResponse(COMMAND_FAILED_TEXT, event.traceId);
     }
-    this.stopActiveSession(serializeSessionKey(routedSessionKey), event.traceId);
     return this.commandResponse(
       `[external session resumed: ${binding.nativeSessionRef}]`,
       event.traceId,
@@ -3168,7 +3305,7 @@ export class Engine {
       return this.handleSettingsCommand(event, message);
     }
     if (componentId === SETTINGS_RESUME_COMPONENT_ID) {
-      const result = this.handleSessionResumeInteraction(event);
+      const result = await this.handleSessionResumeInteraction(event);
       return this.handleSettingsCommand(
         event,
         result.commandResponse?.text ?? COMMAND_UNAVAILABLE_TEXT,
@@ -3312,7 +3449,7 @@ export class Engine {
       return this.handleSettingsCommand(event, '配置编辑已取消\nconfig edit cancelled');
     }
     if (componentId === SETTINGS_AGENT_COMPONENT_ID) {
-      const result = this.applySettingsAgent(event);
+      const result = await this.applySettingsAgent(event);
       return this.handleSettingsCommand(
         event,
         result.commandResponse?.text ?? COMMAND_UNAVAILABLE_TEXT,
@@ -3360,21 +3497,21 @@ export class Engine {
     return this.commandResponse(result.message, event.traceId);
   }
 
-  private applySettingsAgent(event: NormalizedEvent): EventHandlerResult {
+  private async applySettingsAgent(event: NormalizedEvent): Promise<EventHandlerResult> {
     const agentName = event.interaction?.values[0];
     if (!agentName || !this.agents.has(agentName)) {
       return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
     }
     const routedChannelId = this.routeEventForBinding(event).sessionKey.channelId;
-    this.agentOverridesByChannel.set(
-      this.channelOverrideKey(event.sessionKey.platform, routedChannelId),
-      agentName,
-    );
     const routedSessionKey = withPlatformName(
       event.sessionKey,
       this.platformName,
     );
-    this.stopActiveSession(serializeSessionKey(routedSessionKey), event.traceId);
+    await this.stopActiveSession(serializeSessionKey(routedSessionKey), event.traceId);
+    this.agentOverridesByChannel.set(
+      this.channelOverrideKey(event.sessionKey.platform, routedChannelId),
+      agentName,
+    );
     this.sessionStore.archiveCurrent(routedSessionKey);
     return this.commandResponse(`Agent 绑定: ${agentName}\nAgent binding: ${agentName}`, event.traceId);
   }
@@ -3969,7 +4106,8 @@ export class Engine {
         this.newSessionTextPrefixEnabled &&
         (trimmed === '/new' || /^\/new\s/.test(trimmed))
       ) {
-        this.stopActiveSession(sessionKeyStr, event.traceId);
+        await this.stopActiveSession(sessionKeyStr, event.traceId);
+        if (this.stopping) return;
         this.sessionStore.archiveCurrent(event.sessionKey);
         const remainder = trimmed.slice('/new'.length).trim();
         if (remainder.length === 0) {
@@ -4312,12 +4450,15 @@ export class Engine {
         toolStatus = undefined;
       };
 
-      const closeSession = (): void => {
+      const closeSession = async (): Promise<void> => {
         if (!session) return;
         const current = this.agentSessions.get(sessionKeyStr);
-        if (current?.session === session) this.agentSessions.delete(sessionKeyStr);
+        if (current?.session === session) {
+          await this.stopActiveSession(sessionKeyStr, event.traceId);
+          return;
+        }
         try {
-          agentSlot.agent.stopSession(session);
+          await agentSlot.agent.stopSession(session);
         } catch (stopErr) {
           this.logger.error(
             { traceId: event.traceId, sessionKey: sessionKeyStr, err: stopErr },
@@ -4512,7 +4653,7 @@ export class Engine {
                 await safeSend(errorText);
               }
             } finally {
-              closeSession();
+              await closeSession();
             }
             this.logger.info(
               {
@@ -4561,11 +4702,12 @@ export class Engine {
         }
       };
 
-      const activeSession = this.getOrStartSession(
+      const activeSession = await this.getOrStartSession(
         event,
         sessionKeyStr,
         agentSlot,
       );
+      if (!activeSession) return;
       // handler closes over this value; assign it before currentTurn.handle can run.
       activeSessionForTrajectory = activeSession;
       session = activeSession.session;
@@ -4618,18 +4760,18 @@ export class Engine {
     }
   }
 
-  private getOrStartSession(
+  private async getOrStartSession(
     event: NormalizedEvent & { sessionKey: SessionKey },
     sessionKeyStr: string,
     agentSlot: EngineAgent,
-  ): ActiveAgentSession {
+  ): Promise<ActiveAgentSession | undefined> {
+    const priorStop = this.sessionStopBarriers.get(sessionKeyStr);
+    if (priorStop) await priorStop;
+    if (this.stopping) return undefined;
     const agentOwner = agentSlot.agentOwner ?? agentSlot.agent.name();
     const stored = this.sessionStore.get(event.sessionKey);
     const incompatibleStoredRef =
       stored?.agentSessionId !== undefined && stored.agentOwner !== agentOwner;
-    if (incompatibleStoredRef) {
-      this.sessionStore.archiveCurrent(event.sessionKey);
-    }
     const active = this.agentSessions.get(sessionKeyStr);
     if (
       active &&
@@ -4647,25 +4789,13 @@ export class Engine {
           'agent_is_alive_failed',
         );
       }
-      try {
-        active.agent.stopSession(active.session);
-      } catch (err) {
-        this.logger.error(
-          { traceId: event.traceId, sessionKey: sessionKeyStr, err },
-          'agent_stop_session_failed',
-        );
-      }
-      this.agentSessions.delete(sessionKeyStr);
+      await this.stopActiveSession(sessionKeyStr, event.traceId);
     } else if (active) {
-      try {
-        active.agent.stopSession(active.session);
-      } catch (err) {
-        this.logger.error(
-          { traceId: event.traceId, sessionKey: sessionKeyStr, err },
-          'agent_stop_session_failed',
-        );
-      }
-      this.agentSessions.delete(sessionKeyStr);
+      await this.stopActiveSession(sessionKeyStr, event.traceId);
+    }
+    if (this.stopping) return undefined;
+    if (incompatibleStoredRef) {
+      this.sessionStore.archiveCurrent(event.sessionKey);
     }
 
     const prevAgentSessionId = incompatibleStoredRef
@@ -4732,17 +4862,31 @@ export class Engine {
     return activeSession;
   }
 
-  private stopActiveSession(sessionKeyStr: string, traceId: string): boolean {
+  private async stopActiveSession(sessionKeyStr: string, traceId: string): Promise<boolean> {
+    const existingBarrier = this.sessionStopBarriers.get(sessionKeyStr);
+    if (existingBarrier) {
+      await existingBarrier;
+      return false;
+    }
     const active = this.agentSessions.get(sessionKeyStr);
     if (!active) return false;
     this.agentSessions.delete(sessionKeyStr);
+    const barrier = Promise.resolve().then(() => active.agent.stopSession(active.session));
+    this.sessionStopBarriers.set(sessionKeyStr, barrier);
+    let cleanupConfirmed = false;
     try {
-      active.agent.stopSession(active.session);
+      await barrier;
+      cleanupConfirmed = true;
     } catch (err) {
       this.logger.error(
         { traceId, sessionKey: sessionKeyStr, err },
         'agent_stop_session_failed',
       );
+      throw err;
+    } finally {
+      if (cleanupConfirmed && this.sessionStopBarriers.get(sessionKeyStr) === barrier) {
+        this.sessionStopBarriers.delete(sessionKeyStr);
+      }
     }
     return true;
   }

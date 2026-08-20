@@ -1,0 +1,14 @@
+{
+  "codexVersion": "0.146.0",
+  "experimental": false,
+  "generationCommand": [
+    "codex",
+    "app-server",
+    "generate-json-schema",
+    "--out",
+    "<OUTPUT_DIR>"
+  ],
+  "generatedFileCount": 275,
+  "upstream": "https://github.com/openai/codex",
+  "upstreamLicense": "Apache-2.0"
+}

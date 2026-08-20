@@ -93,6 +93,7 @@ function riskForPath(path: string): DaemonConfigEditRisk {
     path.endsWith('.addDirs') ||
     path.endsWith('.loadUserConfig') ||
     path.endsWith('.loadRules') ||
+    path.endsWith('.supplementalViewer.enabled') ||
     path.endsWith('.allowedTools') ||
     path.endsWith('.permissionLevel') ||
     path.endsWith('.bin') ||
@@ -456,6 +457,55 @@ function agentFields(agent: AgentConfig, index: number): DaemonConfigEditableFie
         category: `Agent ${agent.name}`,
         path: `${base}.codex.loadRules`,
         value: agent.codex.loadRules,
+        valueKind: 'boolean',
+      }),
+    ];
+  }
+  if (agent.backend === 'codex-app-server') {
+    return [
+      ...common,
+      field({
+        key: `${base}.codexAppServer.workingDir`,
+        label: bilingualLabel(`${agent.name} 工作目录`, `${agent.name} workingDir`),
+        description:
+          `持久 Codex app-server ${agent.name} 的 canonical working directory。 / Canonical working directory for persistent Codex app-server ${agent.name}.`,
+        category: `Agent ${agent.name}`,
+        path: `${base}.codexAppServer.workingDir`,
+        value: agent.codexAppServer.workingDir,
+        valueKind: 'string',
+      }),
+      field({
+        key: `${base}.codexAppServer.bin`,
+        label: bilingualLabel(`${agent.name} Codex 可执行文件`, `${agent.name} Codex bin`),
+        description:
+          `启动 codex app-server 的 executable；错误值会阻止持久会话启动。 / Executable used to start codex app-server; an invalid value prevents persistent sessions from starting.`,
+        category: `Agent ${agent.name}`,
+        path: `${base}.codexAppServer.bin`,
+        value: agent.codexAppServer.bin,
+        valueKind: 'string',
+      }),
+      field({
+        key: `${base}.codexAppServer.sandbox`,
+        label: bilingualLabel(`${agent.name} Sandbox`, `${agent.name} sandbox`),
+        description:
+          `持久 Codex 会话的文件系统边界；danger-full-access 会显著扩大风险。 / Filesystem boundary for persistent Codex sessions; danger-full-access materially expands risk.`,
+        category: `Agent ${agent.name}`,
+        path: `${base}.codexAppServer.sandbox`,
+        value: agent.codexAppServer.sandbox,
+        valueKind: 'enum',
+        options: ['read-only', 'workspace-write', 'danger-full-access'],
+      }),
+      field({
+        key: `${base}.codexAppServer.supplementalViewer.enabled`,
+        label: bilingualLabel(
+          `${agent.name} 补充 Viewer`,
+          `${agent.name} supplemental viewer`,
+        ),
+        description:
+          `显式启用 authenticated loopback WebSocket 与 passive Codex remote TUI；默认关闭，修改后必须重启并重新通过 viewer compatibility gate。 / Explicitly enables authenticated loopback WebSocket and the passive Codex remote TUI. Disabled by default; changes require restart and a fresh viewer compatibility gate.`,
+        category: `Agent ${agent.name}`,
+        path: `${base}.codexAppServer.supplementalViewer.enabled`,
+        value: agent.codexAppServer.supplementalViewer.enabled,
         valueKind: 'boolean',
       }),
     ];

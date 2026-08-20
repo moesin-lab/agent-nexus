@@ -1,0 +1,28 @@
+{
+  "name": "@agent-nexus/agent-codex-app-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --build",
+    "test": "vitest run --root ../../.. packages/agent/codex-app-server"
+  },
+  "dependencies": {
+    "@agent-nexus/daemon": "workspace:*",
+    "@agent-nexus/protocol": "workspace:*",
+    "ws": "8.21.3"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.1"
+  }
+}

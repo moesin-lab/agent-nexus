@@ -1,0 +1,19 @@
+{
+  "source": "codex 0.146.0 app-server generate-json-schema (stable; --experimental omitted)",
+  "codexVersion": "0.146.0",
+  "generatedAt": "2026-07-31",
+  "upstream": "https://github.com/openai/codex",
+  "upstreamLicense": "Apache-2.0",
+  "methods": [
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/tool/requestUserInput",
+    "mcpServer/elicitation/request",
+    "item/permissions/requestApproval",
+    "item/tool/call",
+    "account/chatgptAuthTokens/refresh",
+    "attestation/generate",
+    "applyPatchApproval",
+    "execCommandApproval"
+  ]
+}

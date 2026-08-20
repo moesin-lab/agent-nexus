@@ -12,6 +12,7 @@ related:
   - dev/spec/command-registry
   - dev/spec/agent-backends/claude-code-cli
   - dev/spec/agent-backends/codex-cli
+  - dev/spec/agent-backends/codex-app-server
   - dev/spec/message-protocol
   - dev/spec/security/README
   - dev/spec/infra/cost-and-limits
@@ -46,7 +47,7 @@ interface AgentRuntime {
 
     // Session 生命周期
     startSession(sessionKey, config: SessionConfig) -> AgentSession
-    stopSession(session: AgentSession) -> void
+    stopSession(session: AgentSession) -> Promise<void>
     isAlive(session: AgentSession) -> bool
 
     // 输入
@@ -62,13 +63,23 @@ interface AgentRuntime {
 
 interface AgentSession {
     key: SessionKey
-    backend: string                          // "claudecode" | "codex"
+    backend: string                          // "claudecode" | "codex" | "codex-app-server"
     state: Spawning | Ready | Busy | Idle | Errored | Stopped
     startedAt: timestamp
     pid: int?                                // 本机子进程 pid（如适用）
     agentSessionId: string?                  // opaque agent conversation ref；如 Codex thread_id / CC session_id，daemon 只存取不解释
 }
 ```
+
+`stopSession()` 是 session 生命周期的异步屏障，而不是 fire-and-forget signal：
+
+- 首次调用必须立即让 `isAlive(session)` 变为 `false`，阻止新输入进入旧 session；
+- Promise 只能在 backend 拥有的 child / process group、pipe、pending request 与临时凭据全部结束或释放后 resolve；`session_stopped` 只能在该 cleanup 边界之后发出；
+- 同一 `AgentSession` 上的重复或并发调用必须幂等，并共享同一个完成结果；
+- child-backed runtime 必须按自身 grace 配置从 graceful signal 升级到 force kill；超过有界 cleanup deadline 仍不能确认退出时 reject，不能永久 pending；
+- daemon 在 shutdown、`/new`、kill、resume、agent 切换、失活 session 替换和 error cleanup 路径必须 await 该 Promise，不能在旧 cleanup 尚未完成时启动替代 session；
+- daemon shutdown 一开始即停止接收新 dispatch、取消 queued input，并行等待所有 active session stop settle；只有这些 barrier settle 后才能清空持久与幂等状态并完成 shutdown；
+- cleanup 无法确认时 Promise 必须 reject，调用方记录 `agent_stop_session_failed`；不得把“已发送 SIGTERM”误报为 cleanup 完成。
 
 ### Agent command envelope
 
@@ -307,7 +318,7 @@ backend 选择属于配置 / 路由层，不属于 `AgentRuntime` 接口。当�
 
 - `agents[].backend` 只决定该命名 agent 启用哪个 `@agent-nexus/agent-<name>` package；daemon 不读取该字段。
 - `agents[].timeoutMs` 是 backend 无关的 `SessionConfig.timeoutMs` 默认值；默认值由 [`config-routing.md`](config-routing.md#agentconfig) 定义。
-- backend 自己的字段住各 owner 配置块：`agents[].claudeCode` 由 `@agent-nexus/agent-claudecode` 解析，`agents[].codex` 由 `@agent-nexus/agent-codex` 解析。
+- backend 自己的字段住各 owner 配置块：`agents[].claudeCode` 由 `@agent-nexus/agent-claudecode` 解析，`agents[].codex` 由 `@agent-nexus/agent-codex` 解析，`agents[].codexAppServer` 由 `@agent-nexus/agent-codex-app-server` 解析。
 - CLI 可以按当前配置 schema 调用对应 parser / probe / runtime factory，但不得实现 backend 业务逻辑或校验 owner 字段。
 - legacy 单实例配置中的顶层 `agent.backend` 只能作为迁移错误处理对象，不得静默混入新结构。
 
@@ -318,7 +329,7 @@ Agent package 可以暴露 platform-neutral command descriptors；字段形状�
 约束：
 
 - agent descriptor 不得 import platform package、platform SDK 类型或 platform naming policy。
-- agent descriptor 的 `owner.type` 必须是 `agent`，`owner.agentOwner` 必须与该 package 的稳定 owner id 一致；当前 owner id 与 `AgentRuntime.name()` / backend 枚举保持一致（`codex`、`claudecode`）。
+- agent descriptor 的 `owner.type` 必须是 `agent`，`owner.agentOwner` 必须与该 package 的稳定 owner id 一致；当前 owner id 与 `AgentRuntime.name()` / backend 枚举保持一致（`codex`、`codex-app-server`、`claudecode`）。
 - agent command handler 接收 daemon 已完成 routing / auth / reverse-map 解析后的 `AgentCommandEnvelope`；不得重新解释平台 command name。
 - agent package 只能声明当前 agent-nexus runtime 真实支持的 command；不得照搬 TUI-only slash command 列表。
 
@@ -357,7 +368,24 @@ adapter 侧实现职责：
 - **安全默认值**：默认 `read-only` sandbox、固定 `--ask-for-approval never`、忽略 user config/rules；显式 `danger-full-access` 才进入 YOLO 模式。
 - **能力声明**：`supportsStreaming=false`，除非后续 probe 坐实 text delta。
 
-Codex 的 `exec-server` / `app-server` 未经当前 contract 验证，不属于主路径。
+`codex` backend 只拥有逐 turn 的 `codex exec --json` 路径，不得在内部静默切换到 app-server，也不得接收 `codexAppServer` owner 配置。
+
+### Codex app-server 实现
+
+`agent/codex-app-server` 实现常驻 Codex app-server 后端，具体外部契约锁定在：
+
+→ [`codex-app-server.md`](agent-backends/codex-app-server.md)
+
+adapter 侧实现职责：
+
+- **启动**：每个 `AgentSession` 启动独立 app-server child；默认使用 `--listen stdio://`，只有显式启用 supplemental viewer 且当前 binary 通过 viewer admission gate 时才使用 authenticated loopback WebSocket。完成 initialize 与 thread start/resume 后才发出 `session_started`。
+- **多轮**：在同一 thread 上串行调用 `turn/start`，以 thread id / turn id 校验所有 response、notification 与 ServerRequest 的归属。
+- **输出解析**：只把 allowlist 内、通过 schema/version gate 的 item/status/usage/terminal 事件提升为 `AgentEvent`；未知终态与控制请求 fail closed。
+- **中断与终止**：Busy 时用 `turn/interrupt` 等待结构化 terminal；`stopSession()` 终止整个 child process group并保留可恢复 conversation home。
+- **安全默认值**：默认匿名 stdio；viewer 模式仅使用 per-incarnation capability-token authenticated loopback WebSocket。两种 transport 都固定 `experimentalApi=false`、`approvalPolicy=never`、按 SessionKey 隔离且跨 child 持久的 conversation-private `CODEX_HOME`；不继承用户 config、rules、MCP、hooks、skills、plugins 或 feature flags。
+- **能力声明**：只能声明 contract tests 与真实 probe 已覆盖的能力；experimental process/background-terminal 与 remote TUI 不属于首版能力。
+
+`codex-app-server` 与 `codex` 是两个独立 backend id。daemon 保存的 opaque conversation ref 只能交还给产生它的 backend owner，不能跨 backend resume。
 
 ## 权限边界
 

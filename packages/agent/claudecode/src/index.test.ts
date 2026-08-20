@@ -55,6 +55,7 @@ function makeInteractiveSubproc(): {
   then: Promise<void>['then'];
   catch: Promise<void>['catch'];
   finally: Promise<void>['finally'];
+  pid: number;
 } {
   const stdout = new PassThrough();
   const stdin = new PassThrough();
@@ -99,6 +100,7 @@ function makeInteractiveSubproc(): {
     then: settled.then.bind(settled),
     catch: settled.catch.bind(settled),
     finally: settled.finally.bind(settled),
+    pid: 1234,
   };
 }
 
@@ -696,6 +698,7 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
       },
     });
     await turn;
+    await runtime.stopSession(session);
 
     expect(child.kill).toHaveBeenCalledWith('SIGTERM');
     const err = events.find((event) => event.type === 'error');
@@ -731,6 +734,7 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
       permissionMode: 'bypassPermissions',
     });
     await turn;
+    await runtime.stopSession(session);
 
     expect(child.kill).toHaveBeenCalled();
     expect(events.map((event) => event.type)).toEqual([
@@ -1168,9 +1172,10 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     expect(toolFinished.payload.status).toBe('ok');
   });
 
-  it('marks wallclock timeout as synthetic terminal and stops the session with error', async () => {
+  it('marks wallclock timeout as synthetic terminal and reports stop only after child exit', async () => {
     vi.useFakeTimers();
     const child = makeInteractiveSubproc();
+    child.kill.mockImplementation(() => true);
     mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
 
     const runtime = createClaudeCodeRuntime({
@@ -1196,11 +1201,19 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     await turn;
 
     expect(child.kill).toHaveBeenCalledWith('SIGINT');
-    expect(events.map((event) => event.type)).toEqual([
-      'turn_finished',
-      'error',
-      'session_stopped',
-    ]);
+    expect(events.map((event) => event.type)).toEqual(['turn_finished', 'error']);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+    expect(events.some((event) => event.type === 'session_stopped')).toBe(false);
+
+    child.reject(new Error('timeout cleanup exit'));
+    await runtime.stopSession(session);
+    expect(events.at(-1)).toMatchObject({
+      type: 'session_stopped',
+      payload: { reason: 'error' },
+    });
     const finished = events[0];
     if (finished?.type !== 'turn_finished') throw new Error('expected turn_finished');
     expect(finished.payload).toMatchObject({
@@ -1208,6 +1221,93 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
       source: 'runtime-synthesized',
     });
   });
+
+  it('fatal write failure keeps cleanup pending until the child really exits', async () => {
+    const child = makeInteractiveSubproc();
+    child.kill.mockImplementation(() => true);
+    child.stdin.write = (() => {
+      throw new Error('broken stdin');
+    }) as typeof child.stdin.write;
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+
+    const runtime = createClaudeCodeRuntime({
+      claudeBin: 'claude',
+      allowedTools: ['Read'],
+      defaultWorkingDir: '/x',
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, sessionConfig);
+    const events = await collectEvents(runtime, session);
+
+    await runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'write fails',
+      traceId: 't-write-fail-exit-barrier',
+    });
+    await nextTick();
+
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(events.some((event) => event.type === 'session_stopped')).toBe(false);
+
+    child.reject(new Error('fatal cleanup exit'));
+    await runtime.stopSession(session);
+    expect(events.at(-1)).toMatchObject({
+      type: 'session_stopped',
+      payload: { reason: 'error' },
+    });
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'stop waits for descendants after the Claude root process exits',
+    async () => {
+      vi.useFakeTimers();
+      const child = makeInteractiveSubproc();
+      mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+      let groupAlive = true;
+      const processKill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        expect(pid).toBe(-child.pid);
+        if (signal === 0) {
+          if (groupAlive) return true;
+          throw Object.assign(new Error('no such process group'), { code: 'ESRCH' });
+        }
+        if (signal === 'SIGKILL') groupAlive = false;
+        return true;
+      });
+      try {
+        const runtime = createClaudeCodeRuntime({
+          claudeBin: 'claude',
+          allowedTools: ['Read'],
+          defaultWorkingDir: '/x',
+          logger: fakeLogger,
+          sigtermGraceMs: 30,
+        });
+        const session = runtime.startSession(sessionKey, sessionConfig);
+        const turn = runtime.sendInput(session, {
+          type: 'user_message',
+          text: 'process-group',
+          traceId: 't-process-group',
+        });
+        await nextTick();
+
+        let stopSettled = false;
+        const stopping = runtime.stopSession(session).finally(() => {
+          stopSettled = true;
+        });
+        expect(mockedExeca.mock.calls[0]![2]).toMatchObject({ detached: true });
+        expect(processKill).toHaveBeenCalledWith(-child.pid, 'SIGTERM');
+
+        child.resolve();
+        await nextTick();
+        expect(stopSettled).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(30);
+        expect(processKill).toHaveBeenCalledWith(-child.pid, 'SIGKILL');
+        await Promise.all([turn, stopping]);
+      } finally {
+        processKill.mockRestore();
+      }
+    },
+  );
 
   it('upgrades interrupted turn cleanup from SIGTERM to SIGKILL', async () => {
     vi.useFakeTimers();
@@ -1312,7 +1412,10 @@ describe('createClaudeCodeRuntime persistent stream-json session', () => {
     await turn;
 
     child.reject(new Error('idle crash'));
-    await nextTick();
+    await vi.waitFor(() => {
+      expect(events.some((event) => event.type === 'error')).toBe(true);
+    });
+    await runtime.stopSession(session);
 
     const err = events.find((event) => event.type === 'error');
     if (err?.type !== 'error') throw new Error('expected error');

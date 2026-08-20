@@ -39,6 +39,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Install terminal-session integration dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes tmux
+
       - run: pnpm build
 
       - run: pnpm test

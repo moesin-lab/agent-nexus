@@ -299,6 +299,10 @@ function isConfirmedMissingTmuxTarget(error: unknown): boolean {
     /^error connecting to [^\r\n]+ \(No such file or directory\)$/.test(message);
 }
 
+function isTransientTmuxServerExit(error: unknown): boolean {
+  return commandExitStatus(error) === 1 && commandStderr(error) === 'server exited unexpectedly';
+}
+
 function ownerHash(ownerToken: string): string {
   return createHash('sha256').update(ownerToken).digest('hex');
 }
@@ -1104,16 +1108,25 @@ export class ExperimentalTmuxTerminalSessionHost {
   }
 
   private hasTarget(socketPath: string, target: string): boolean {
-    try {
-      this.tmux(socketPath, ['has-session', '-t', target]);
-      return true;
-    } catch (error) {
-      if (isConfirmedMissingTmuxTarget(error)) return false;
-      throw terminalError(
-        'TerminalDependencyUnavailable',
-        `tmux target presence could not be verified: ${commandStderr(error) || 'unknown error'}`,
-      );
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        this.tmux(socketPath, ['has-session', '-t', target]);
+        return true;
+      } catch (error) {
+        if (isConfirmedMissingTmuxTarget(error)) return false;
+        if (isTransientTmuxServerExit(error) && attempt < 3) {
+          // The server can disappear while answering has-session. Retry until
+          // tmux provides either a live target or its canonical absent proof.
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+          continue;
+        }
+        throw terminalError(
+          'TerminalDependencyUnavailable',
+          `tmux target presence could not be verified: ${commandStderr(error) || 'unknown error'}`,
+        );
+      }
     }
+    throw terminalError('TerminalInternalFailure', 'tmux target probe retry exhausted');
   }
 
   private showOption(socketPath: string, target: string, name: string): string {

@@ -295,6 +295,7 @@ process.exit(0);`,
     const realTmux = execFileSync('which', ['tmux'], { encoding: 'utf8' }).trim();
     const denyProbe = join(rootDir, 'deny-probe');
     const corruptProbe = join(rootDir, 'corrupt-probe');
+    const exitingProbe = join(rootDir, 'exiting-probe');
     const proxyPath = join(rootDir, 'tmux-probe-proxy.mjs');
     writeFileSync(
       proxyPath,
@@ -305,6 +306,10 @@ const args = process.argv.slice(2);
 if (existsSync(${JSON.stringify(denyProbe)}) && args.includes('has-session')) process.exit(91);
 if (existsSync(${JSON.stringify(corruptProbe)}) && args.includes('has-session')) {
   process.stderr.write('error connecting to managed socket (Socket operation on non-socket)\\n');
+  process.exit(1);
+}
+if (existsSync(${JSON.stringify(exitingProbe)}) && args.includes('has-session')) {
+  process.stderr.write('server exited unexpectedly\\n');
   process.exit(1);
 }
 const result = spawnSync(${JSON.stringify(realTmux)}, args, { stdio: 'inherit' });
@@ -338,6 +343,13 @@ process.exit(result.status ?? 1);
       handle.incarnationId,
     )).toThrowError(/TerminalDependencyUnavailable/);
     rmSync(corruptProbe, { force: true });
+    writeFileSync(exitingProbe, 'yes', { mode: 0o600 });
+    expect(() => first.inspect(
+      handle.sessionId,
+      handle.ownerToken,
+      handle.incarnationId,
+    )).toThrowError(/TerminalDependencyUnavailable/);
+    rmSync(exitingProbe, { force: true });
     first.detach();
     const second = new ExperimentalTmuxTerminalSessionHost({ rootDir, tmuxBin: proxyPath });
     hosts.push(second);
@@ -346,6 +358,42 @@ process.exit(result.status ?? 1);
       /TerminalDependencyUnavailable/,
     );
     rmSync(denyProbe, { force: true });
+  });
+
+  it('should_retry_a_transient_tmux_server_exit_without_treating_it_as_absence', () => {
+    const rootDir = temporaryDirectory('agent-nexus-terminal-transient-probe-');
+    const realTmux = execFileSync('which', ['tmux'], { encoding: 'utf8' }).trim();
+    const injectFailure = join(rootDir, 'inject-transient-probe');
+    const failureObserved = join(rootDir, 'transient-probe-observed');
+    const proxyPath = join(rootDir, 'tmux-transient-probe-proxy.mjs');
+    writeFileSync(
+      proxyPath,
+      `#!/usr/bin/env node
+import { existsSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const args = process.argv.slice(2);
+if (existsSync(${JSON.stringify(injectFailure)}) && !existsSync(${JSON.stringify(failureObserved)}) && args.includes('has-session')) {
+  writeFileSync(${JSON.stringify(failureObserved)}, 'yes');
+  process.stderr.write('server exited unexpectedly\\n');
+  process.exit(1);
+}
+const result = spawnSync(${JSON.stringify(realTmux)}, args, { stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`,
+      { mode: 0o700 },
+    );
+    chmodSync(proxyPath, 0o700);
+    const host = new ExperimentalTmuxTerminalSessionHost({ rootDir, tmuxBin: proxyPath });
+    hosts.push(host);
+    const handle = startShell(host);
+    writeFileSync(injectFailure, 'yes', { mode: 0o600 });
+
+    expect(host.inspect(
+      handle.sessionId,
+      handle.ownerToken,
+      handle.incarnationId,
+    ).state).toBe('Running');
+    expect(existsSync(failureObserved)).toBe(true);
   });
 
   it('should_not_treat_an_absent_socket_as_proof_when_tmux_itself_cannot_start', () => {

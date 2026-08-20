@@ -125,7 +125,7 @@ TerminalSessionHost.reconcileAllocatedStart(sessionId, ownerToken)
 - `resize` 对相同 dimensions 幂等。
 - `stop(Graceful)` 发送 interrupt 后必须等待真实退出；超时返回 `TerminalStateConflict`，caller 仍可调用 `stop(Force)`。Force 将带 nonce 的私有 control request 写入同目录临时文件，经 flush/close 后 atomic rename 发布；仍持有 `ChildProcess` 对象的 launcher 校验完整 request 后终止自己创建的独立 child process group，并回写绑定同一 nonce 的 ack。host 收到匹配 ack 且 tmux target 消失后才返回成功，不得从恢复出的裸 PID 直接发送信号。只有真实退出或 force 成功才进入幂等终态，重复调用返回 `alreadyTerminal=true`。
 - `recover` 对当前 host incarnation 幂等；重复调用返回同一 live handle，不生成第二个 viewer。
-- `has-session` 在 tmux server 恰好退出时可能返回精确的 `server exited unexpectedly`。adapter 只把它当瞬时 probe failure 做有界短重试；最终仍必须得到 live target 或 tmux 的 canonical missing-target 诊断。持续返回该错误、未知 exit/stderr、binary 不可执行或 socket 类型异常均为 `TerminalDependencyUnavailable`，不得猜测 target 已不存在。
+- `has-session` 在 tmux server 恰好退出时可能返回精确的 `server exited unexpectedly`。adapter 只把它当瞬时 probe failure 做有界短重试；最终仍必须得到 live target 或 tmux 的 canonical missing-target 诊断（包括 target 已消失但 server 尚未完全退出时的 `no current target`）。持续返回该错误、未知 exit/stderr、binary 不可执行或 socket 类型异常均为 `TerminalDependencyUnavailable`，不得猜测 target 已不存在。
 
 ## 错误分类
 

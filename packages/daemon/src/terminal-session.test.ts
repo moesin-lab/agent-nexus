@@ -658,6 +658,39 @@ process.exit(result.status ?? 1);
     )).toEqual({ state: 'Stopped', alreadyTerminal: true });
   });
 
+  it('should_accept_no_current_target_as_canonical_absence_after_graceful_exit', () => {
+    const rootDir = temporaryDirectory('agent-nexus-terminal-no-current-target-');
+    const realTmux = execFileSync('which', ['tmux'], { encoding: 'utf8' }).trim();
+    const proxyPath = join(rootDir, 'tmux-no-current-target-proxy.mjs');
+    writeFileSync(
+      proxyPath,
+      `#!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
+const args = process.argv.slice(2);
+const result = spawnSync(${JSON.stringify(realTmux)}, args, { encoding: 'utf8' });
+if (args.includes('has-session') && result.status === 1) {
+  process.stderr.write('no current target\\n');
+  process.exit(1);
+}
+if (result.stdout) process.stdout.write(result.stdout);
+if (result.stderr) process.stderr.write(result.stderr);
+process.exit(result.status ?? 1);
+`,
+      { mode: 0o700 },
+    );
+    chmodSync(proxyPath, 0o700);
+    const host = new ExperimentalTmuxTerminalSessionHost({ rootDir, tmuxBin: proxyPath });
+    hosts.push(host);
+    const handle = startShell(host);
+
+    expect(host.stop(
+      handle.sessionId,
+      handle.ownerToken,
+      handle.incarnationId,
+      'Graceful',
+    )).toEqual({ state: 'Exited', alreadyTerminal: false });
+  });
+
   it('should_not_intercept_the_child_exit_signal_reemitted_by_the_launcher', async () => {
     const host = makeHost();
     const handle = host.start({

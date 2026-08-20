@@ -294,7 +294,8 @@ function commandStderr(error: unknown): string {
 function isConfirmedMissingTmuxTarget(error: unknown): boolean {
   if (commandExitStatus(error) !== 1 || !error || typeof error !== 'object') return false;
   const message = commandStderr(error);
-  return /^can't find session: [^\r\n]+$/.test(message) ||
+  return message === 'no current target' ||
+    /^can't find session: [^\r\n]+$/.test(message) ||
     /^no server running on [^\r\n]+$/.test(message) ||
     /^error connecting to [^\r\n]+ \(No such file or directory\)$/.test(message);
 }

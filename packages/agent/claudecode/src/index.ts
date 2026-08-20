@@ -92,7 +92,9 @@ interface RuntimeState {
   cleanupBarrier?: Promise<void>;
   cleanupBarrierResolve?: () => void;
   cleanupTimers: NodeJS.Timeout[];
+  stopPromise?: Promise<void>;
   sessionStarted: boolean;
+  sessionStoppedEmitted: boolean;
   stopped: boolean;
   errored: boolean;
 }
@@ -333,8 +335,7 @@ function finishTurn(
 
 function cleanupAfterRealResult(state: RuntimeState): void {
   const turn = state.currentTurn;
-  if (!turn) return;
-  clearTurnTimer(turn);
+  if (turn) clearTurnTimer(turn);
   clearCleanupTimers(state);
   state.currentTurn = undefined;
   state.cleanupBarrierResolve?.();
@@ -351,6 +352,67 @@ export function createClaudeCodeRuntime(
   const syntheticDeliveryMs = opts.syntheticTurnFinishedDeliveryMs ?? 250;
   const gracefulInterruptMs = opts.gracefulInterruptMs ?? 5_000;
   const sigtermGraceMs = opts.sigtermGraceMs ?? 5_000;
+
+  function signalProcessTree(proc: ChildProcess, signal: NodeJS.Signals): void {
+    if (process.platform !== 'win32' && proc.pid) {
+      try {
+        process.kill(-proc.pid, signal);
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      }
+    }
+    proc.kill(signal);
+  }
+
+  function processGroupAlive(proc: ChildProcess): boolean {
+    if (process.platform === 'win32' || !proc.pid) return false;
+    try {
+      process.kill(-proc.pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+    }
+  }
+
+  async function waitForProcessTreeExit(
+    proc: ChildProcess,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    let rootSettled = false;
+    const settled = Promise.resolve(proc).then(
+      () => {
+        rootSettled = true;
+      },
+      () => {
+        rootSettled = true;
+      },
+    );
+    const startedAt = Date.now();
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      settled,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (!rootSettled) return false;
+    if (!processGroupAlive(proc)) return true;
+    const remainingMs = Math.max(0, timeoutMs - (Date.now() - startedAt));
+    if (remainingMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, remainingMs));
+    }
+    return !processGroupAlive(proc);
+  }
+
+  async function terminateProcess(proc: ChildProcess): Promise<void> {
+    signalProcessTree(proc, 'SIGTERM');
+    if (await waitForProcessTreeExit(proc, sigtermGraceMs)) return;
+    signalProcessTree(proc, 'SIGKILL');
+    if (await waitForProcessTreeExit(proc, sigtermGraceMs)) return;
+    throw new Error('Claude Code subprocess tree exit was not confirmed after SIGKILL');
+  }
 
   const capabilities: AgentCapabilitySet = {
     supportsThinking: false,
@@ -379,6 +441,42 @@ export function createClaudeCodeRuntime(
     });
   }
 
+  function emitSessionStopped(
+    state: RuntimeState,
+    traceId: string,
+    reason: Extract<AgentEvent, { type: 'session_stopped' }>['payload']['reason'],
+  ): void {
+    if (state.sessionStoppedEmitted) return;
+    state.sessionStoppedEmitted = true;
+    emitEvent(state, 'session_stopped', traceId, { reason });
+  }
+
+  function startFatalCleanup(
+    session: AgentSession,
+    state: RuntimeState,
+    traceId: string,
+    delayMs = 0,
+  ): Promise<void> {
+    if (state.stopPromise) return state.stopPromise;
+    const proc = state.proc;
+    state.stopPromise = (async () => {
+      if (delayMs > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
+      if (proc) await terminateProcess(proc);
+      if (state.proc === proc) {
+        state.proc = undefined;
+        session.pid = undefined;
+      }
+      cleanupAfterRealResult(state);
+      emitSessionStopped(state, traceId, 'error');
+    })();
+    void state.stopPromise.catch((error: unknown) => {
+      logger.error({ traceId, error }, 'claudecode_error_cleanup_failed');
+    });
+    return state.stopPromise;
+  }
+
   function stopWithError(
     session: AgentSession,
     state: RuntimeState,
@@ -386,19 +484,16 @@ export function createClaudeCodeRuntime(
     errorKind: string,
     message: string,
   ): void {
+    if (state.stopPromise) return;
     state.errored = true;
     session.state = 'Errored';
-    state.proc?.kill('SIGTERM');
     const turn = state.currentTurn;
+    emitEvent(state, 'error', traceId, { errorKind, message });
     if (turn && !turn.terminalEmitted) {
-      emitEvent(state, 'error', traceId, { errorKind, message });
       finishTurn(state, 'error');
-      cleanupAfterRealResult(state);
-    } else {
-      emitEvent(state, 'error', traceId, { errorKind, message });
-      cleanupAfterRealResult(state);
     }
-    emitEvent(state, 'session_stopped', traceId, { reason: 'error' });
+    clearCleanupTimers(state);
+    void startFatalCleanup(session, state, traceId);
   }
 
   function beginCleanupBarrier(
@@ -415,21 +510,20 @@ export function createClaudeCodeRuntime(
     clearCleanupTimers(state);
     state.cleanupTimers.push(
       setTimeout(() => {
-        proc.kill('SIGTERM');
+        if (
+          state.currentTurn?.traceId !== traceId ||
+          state.proc !== proc ||
+          state.stopped ||
+          state.errored
+        ) return;
+        state.errored = true;
+        session.state = 'Errored';
+        emitEvent(state, 'error', traceId, {
+          errorKind: 'interrupt_cleanup_failed',
+          message: 'Claude Code did not acknowledge interrupted turn cleanup',
+        });
+        void startFatalCleanup(session, state, traceId);
       }, gracefulInterruptMs),
-      setTimeout(() => {
-        proc.kill('SIGKILL');
-        if (!state.errored && !state.stopped) {
-          state.errored = true;
-          session.state = 'Errored';
-          emitEvent(state, 'error', traceId, {
-            errorKind: 'interrupt_cleanup_failed',
-            message: 'Claude Code did not acknowledge interrupted turn cleanup',
-          });
-          emitEvent(state, 'session_stopped', traceId, { reason: 'error' });
-        }
-        cleanupAfterRealResult(state);
-      }, gracefulInterruptMs + sigtermGraceMs),
     );
   }
 
@@ -458,6 +552,7 @@ export function createClaudeCodeRuntime(
     const proc = execa(claudeBin, args, {
       buffer: false,
       cwd,
+      detached: process.platform !== 'win32',
     }) as ChildProcess;
     if (!proc.stdout) throw new Error('subprocess stdout is null');
     if (!proc.stdin) throw new Error('subprocess stdin is null');
@@ -476,28 +571,41 @@ export function createClaudeCodeRuntime(
       }
     });
 
-    void Promise.resolve(proc).catch((err: unknown) => {
-      if (!state.stopped && !state.errored) {
-        const traceId = state.currentTurn?.traceId ?? 'system';
-        logger.warn(
-          {
-            sessionKey: serializeSessionKey(session.key),
+    void Promise.resolve(proc).then(
+      () => {
+        if (!state.stopped && !state.errored) {
+          stopWithError(
+            session,
+            state,
+            state.currentTurn?.traceId ?? 'system',
+            'process_exited',
+            'Claude Code subprocess exited unexpectedly',
+          );
+        }
+      },
+      (err: unknown) => {
+        if (!state.stopped && !state.errored) {
+          const traceId = state.currentTurn?.traceId ?? 'system';
+          logger.warn(
+            {
+              sessionKey: serializeSessionKey(session.key),
+              traceId,
+              errorKind: 'agent',
+              code: 'spawn_failed',
+              cause: buildSafeCause(err),
+            },
+            'claudecode_subproc_error',
+          );
+          stopWithError(
+            session,
+            state,
             traceId,
-            errorKind: 'agent',
-            code: 'spawn_failed',
-            cause: buildSafeCause(err),
-          },
-          'claudecode_subproc_error',
-        );
-        stopWithError(
-          session,
-          state,
-          traceId,
-          'spawn_failed',
-          err instanceof Error ? err.message : String(err),
-        );
-      }
-    });
+            'spawn_failed',
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      },
+    );
   }
 
   async function readStdoutLoop(
@@ -780,7 +888,6 @@ export function createClaudeCodeRuntime(
       turn.timeout = setTimeout(() => {
         proc.kill('SIGINT');
         finishTurn(state, 'wallclock_timeout', 'runtime-synthesized');
-        beginCleanupBarrier(session, state, proc, input.traceId);
         if (!state.errored && !state.stopped) {
           state.errored = true;
           session.state = 'Errored';
@@ -788,7 +895,12 @@ export function createClaudeCodeRuntime(
             errorKind: 'wallclock_timeout',
             message: 'Claude Code turn exceeded wallclock timeout',
           });
-          emitEvent(state, 'session_stopped', input.traceId, { reason: 'error' });
+          void startFatalCleanup(
+            session,
+            state,
+            input.traceId,
+            gracefulInterruptMs,
+          );
         }
       }, state.config.timeoutMs ?? defaultTimeoutMs);
       try {
@@ -829,6 +941,28 @@ export function createClaudeCodeRuntime(
     return true;
   }
 
+  function stopRuntimeSession(session: AgentSession, traceId: string): Promise<void> {
+    const state = getState(session);
+    if (state.stopPromise) return state.stopPromise;
+    state.stopped = true;
+    session.state = 'Stopped';
+    const proc = state.proc;
+    clearCleanupTimers(state);
+    if (state.currentTurn && !state.currentTurn.terminalEmitted) {
+      finishTurn(state, 'user_interrupt', 'runtime-synthesized');
+    }
+    state.stopPromise = (async () => {
+      if (proc) await terminateProcess(proc);
+      if (state.proc === proc) {
+        state.proc = undefined;
+        session.pid = undefined;
+      }
+      cleanupAfterRealResult(state);
+      emitSessionStopped(state, traceId, 'user_stop');
+    })();
+    return state.stopPromise;
+  }
+
   const runtime: AgentRuntime = {
     name(): string {
       return 'claudecode';
@@ -855,6 +989,7 @@ export function createClaudeCodeRuntime(
         nextTurnSequence: 1,
         cleanupTimers: [],
         sessionStarted: false,
+        sessionStoppedEmitted: false,
         stopped: false,
         errored: false,
       });
@@ -892,18 +1027,7 @@ export function createClaudeCodeRuntime(
     ): Promise<AgentCommandResult> {
       if (command.handlerKey === 'new') {
         if (session) {
-          const state = getState(session);
-          state.stopped = true;
-          session.state = 'Stopped';
-          state.proc?.kill('SIGTERM');
-          clearCleanupTimers(state);
-          if (state.currentTurn && !state.currentTurn.terminalEmitted) {
-            finishTurn(state, 'user_interrupt', 'runtime-synthesized');
-            cleanupAfterRealResult(state);
-          }
-          emitEvent(state, 'session_stopped', command.traceId, {
-            reason: 'user_stop',
-          });
+          await stopRuntimeSession(session, command.traceId);
         }
         return {
           status: 'handled',
@@ -924,19 +1048,9 @@ export function createClaudeCodeRuntime(
       return { status: 'unsupported', message: '[unsupported command]' };
     },
 
-    stopSession(session: AgentSession): void {
+    stopSession(session: AgentSession): Promise<void> {
       const state = getState(session);
-      state.stopped = true;
-      session.state = 'Stopped';
-      state.proc?.kill('SIGTERM');
-      clearCleanupTimers(state);
-      if (state.currentTurn && !state.currentTurn.terminalEmitted) {
-        finishTurn(state, 'error');
-        cleanupAfterRealResult(state);
-      }
-      emitEvent(state, 'session_stopped', state.currentTurn?.traceId ?? 'system', {
-        reason: 'user_stop',
-      });
+      return stopRuntimeSession(session, state.currentTurn?.traceId ?? 'system');
     },
 
     async sendInput(session: AgentSession, input: AgentInput): Promise<void> {

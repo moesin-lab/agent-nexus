@@ -68,6 +68,7 @@ interface TurnState {
   toolCalls: Map<string, ToolCallState>;
   sawThreadStarted: boolean;
   terminalEmitted: boolean;
+  syntheticTerminalEmitted: boolean;
   resolve: () => void;
   timeout?: NodeJS.Timeout;
 }
@@ -82,9 +83,10 @@ interface RuntimeState {
   nextTurnSequence: number;
   currentTurn?: TurnState;
   cleanupBarrier?: Promise<void>;
-  cleanupBarrierResolve?: () => void;
   cleanupTimers: NodeJS.Timeout[];
+  stopPromise?: Promise<void>;
   sessionStarted: boolean;
+  sessionStoppedEmitted: boolean;
   stopped: boolean;
   errored: boolean;
 }
@@ -172,6 +174,7 @@ function finishTurn(
   const turn = state.currentTurn;
   if (!turn || turn.terminalEmitted) return;
   turn.terminalEmitted = true;
+  turn.syntheticTerminalEmitted = source === 'runtime-synthesized';
   clearTurnTimer(turn);
   finishOpenToolCalls(
     state,
@@ -186,15 +189,19 @@ function finishTurn(
   turn.resolve();
 }
 
-function cleanupAfterTurn(session: AgentSession, state: RuntimeState): void {
-  const turn = state.currentTurn;
-  if (turn) clearTurnTimer(turn);
+function cleanupAfterTurn(
+  session: AgentSession,
+  state: RuntimeState,
+  proc?: ChildProcess,
+  turn: TurnState | undefined = state.currentTurn,
+): void {
+  if (proc && state.proc !== proc) return;
+  if (turn && state.currentTurn === turn) {
+    clearTurnTimer(turn);
+    state.currentTurn = undefined;
+  }
   clearCleanupTimers(state);
-  state.currentTurn = undefined;
   state.proc = undefined;
-  state.cleanupBarrierResolve?.();
-  state.cleanupBarrier = undefined;
-  state.cleanupBarrierResolve = undefined;
   session.pid = undefined;
   if (!state.stopped && !state.errored) session.state = 'Idle';
 }
@@ -224,6 +231,67 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
   const gracefulInterruptMs = opts.gracefulInterruptMs ?? 5_000;
   const sigtermGraceMs = opts.sigtermGraceMs ?? 5_000;
 
+  function signalProcessTree(proc: ChildProcess, signal: NodeJS.Signals): void {
+    if (process.platform !== 'win32' && proc.pid) {
+      try {
+        process.kill(-proc.pid, signal);
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      }
+    }
+    proc.kill(signal);
+  }
+
+  function processGroupAlive(proc: ChildProcess): boolean {
+    if (process.platform === 'win32' || !proc.pid) return false;
+    try {
+      process.kill(-proc.pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+    }
+  }
+
+  async function waitForProcessTreeExit(
+    proc: ChildProcess,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    let rootSettled = false;
+    const settled = Promise.resolve(proc).then(
+      () => {
+        rootSettled = true;
+      },
+      () => {
+        rootSettled = true;
+      },
+    );
+    const startedAt = Date.now();
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      settled,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (!rootSettled) return false;
+    if (!processGroupAlive(proc)) return true;
+    const remainingMs = Math.max(0, timeoutMs - (Date.now() - startedAt));
+    if (remainingMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, remainingMs));
+    }
+    return !processGroupAlive(proc);
+  }
+
+  async function terminateProcess(proc: ChildProcess): Promise<void> {
+    signalProcessTree(proc, 'SIGTERM');
+    if (await waitForProcessTreeExit(proc, sigtermGraceMs)) return;
+    signalProcessTree(proc, 'SIGKILL');
+    if (await waitForProcessTreeExit(proc, sigtermGraceMs)) return;
+    throw new Error('Codex subprocess tree exit was not confirmed after SIGKILL');
+  }
+
   function getState(session: AgentSession): RuntimeState {
     const state = stateMap.get(session);
     if (!state) throw new Error('unknown session');
@@ -243,6 +311,16 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
     });
   }
 
+  function emitSessionStopped(
+    state: RuntimeState,
+    traceId: string,
+    reason: Extract<AgentEvent, { type: 'session_stopped' }>['payload']['reason'],
+  ): void {
+    if (state.sessionStoppedEmitted) return;
+    state.sessionStoppedEmitted = true;
+    emitEvent(state, 'session_stopped', traceId, { reason });
+  }
+
   function stopWithError(
     session: AgentSession,
     state: RuntimeState,
@@ -250,15 +328,25 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
     code: string,
     message: string,
   ): void {
+    if (state.stopPromise) return;
     state.errored = true;
     session.state = 'Errored';
-    state.proc?.kill('SIGTERM');
+    const proc = state.proc;
+    const cleanupBarrier = state.cleanupBarrier;
     emitEvent(state, 'error', traceId, { errorKind: 'agent', code, message });
     if (state.currentTurn && !state.currentTurn.terminalEmitted) {
       finishTurn(state, 'error');
     }
-    emitEvent(state, 'session_stopped', traceId, { reason: 'error' });
-    cleanupAfterTurn(session, state);
+    clearCleanupTimers(state);
+    state.stopPromise = (async () => {
+      if (proc) await terminateProcess(proc);
+      if (cleanupBarrier) await cleanupBarrier;
+      cleanupAfterTurn(session, state, proc);
+      emitSessionStopped(state, traceId, 'error');
+    })();
+    void state.stopPromise.catch((error: unknown) => {
+      logger.error({ traceId, error }, 'codex_error_cleanup_failed');
+    });
   }
 
   function beginCleanupTimers(
@@ -266,20 +354,63 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
     state: RuntimeState,
     proc: ChildProcess,
   ): void {
-    if (!state.cleanupBarrier) {
-      state.cleanupBarrier = new Promise<void>((resolve) => {
-        state.cleanupBarrierResolve = resolve;
-      });
-    }
     clearCleanupTimers(state);
     state.cleanupTimers.push(
       setTimeout(() => {
-        proc.kill('SIGTERM');
+        void terminateProcess(proc).catch((error: unknown) => {
+          if (state.stopped || state.errored || state.proc !== proc) return;
+          state.errored = true;
+          session.state = 'Errored';
+          emitEvent(state, 'error', state.currentTurn?.traceId ?? 'system', {
+            errorKind: 'agent',
+            code: 'codex_interrupt_cleanup_failed',
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
       }, gracefulInterruptMs),
-      setTimeout(() => {
-        proc.kill('SIGKILL');
-        cleanupAfterTurn(session, state);
-      }, gracefulInterruptMs + sigtermGraceMs),
+    );
+  }
+
+  function observeProcess(
+    session: AgentSession,
+    state: RuntimeState,
+    proc: ChildProcess,
+    turn: TurnState,
+  ): void {
+    const barrier = (async () => {
+      let processError: unknown;
+      try {
+        await proc;
+      } catch (error) {
+        processError = error;
+      }
+      if (processGroupAlive(proc)) await terminateProcess(proc);
+      if (state.proc !== proc) return;
+      let unexpectedExit = false;
+      if (!state.stopped && !state.errored && !turn.terminalEmitted) {
+        unexpectedExit = true;
+        state.errored = true;
+        session.state = 'Errored';
+        emitEvent(state, 'error', turn.traceId, {
+          errorKind: 'agent',
+          code: processError ? 'codex_subproc_error' : 'codex_process_exited_without_terminal',
+          message: processError instanceof Error
+            ? processError.message
+            : 'Codex process exited without a terminal JSONL event',
+        });
+        finishTurn(state, 'error');
+      }
+      cleanupAfterTurn(session, state, proc, turn);
+      if (unexpectedExit) emitSessionStopped(state, turn.traceId, 'error');
+    })();
+    state.cleanupBarrier = barrier;
+    void barrier.then(
+      () => {
+        if (state.cleanupBarrier === barrier) state.cleanupBarrier = undefined;
+      },
+      (error: unknown) => {
+        logger.error({ traceId: turn.traceId, error }, 'codex_process_cleanup_failed');
+      },
     );
   }
 
@@ -453,7 +584,6 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
         usageRecordFromCodex(runtimeConfig, turn, event['usage']),
       );
       finishTurn(state, 'stop');
-      cleanupAfterTurn(session, state);
     } else if (type === 'error') {
       if (!turn || turn.terminalEmitted) return;
       const message = truncate(
@@ -476,7 +606,6 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
         message: safeString(err['message']) ?? 'Codex CLI turn failed',
       });
       finishTurn(state, 'error');
-      cleanupAfterTurn(session, state);
     } else {
       logger.debug({ eventType: type }, 'codex_unknown_event');
     }
@@ -524,6 +653,7 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
       ? buildCodexResumeArgs(runtimeConfig, threadId, prompt)
       : buildCodexExecArgs(runtimeConfig, prompt);
 
+    let completedTurn!: TurnState;
     await new Promise<void>((resolve) => {
       const turn: TurnState = {
         traceId,
@@ -532,8 +662,10 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
         toolCalls: new Map(),
         sawThreadStarted: false,
         terminalEmitted: false,
+        syntheticTerminalEmitted: false,
         resolve,
       };
+      completedTurn = turn;
       state.currentTurn = turn;
       session.state = 'Busy';
 
@@ -542,6 +674,7 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
         proc = execa(runtimeConfig.bin, args, {
           buffer: false,
           stdin: 'ignore',
+          detached: process.platform !== 'win32',
         }) as ChildProcess;
       } catch (err) {
         emitEvent(state, 'error', traceId, {
@@ -554,20 +687,20 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
         return;
       }
 
-      if (!proc.stdout) {
-        emitEvent(state, 'error', traceId, {
-          errorKind: 'agent',
-          code: 'codex_stdout_missing',
-          message: 'Codex subprocess stdout is missing',
-        });
-        proc.kill('SIGTERM');
-        finishTurn(state, 'error');
-        cleanupAfterTurn(session, state);
-        return;
-      }
-
       state.proc = proc;
       session.pid = proc.pid;
+      observeProcess(session, state, proc, turn);
+
+      if (!proc.stdout) {
+        stopWithError(
+          session,
+          state,
+          traceId,
+          'codex_stdout_missing',
+          'Codex subprocess stdout is missing',
+        );
+        return;
+      }
       turn.timeout = setTimeout(() => {
         proc.kill('SIGINT');
         finishTurn(state, 'wallclock_timeout', 'runtime-synthesized');
@@ -591,36 +724,12 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
         }
       });
 
-      void Promise.resolve(proc).then(
-        () => {
-          if (!state.stopped && !state.errored && state.currentTurn === turn) {
-            if (!turn.terminalEmitted) {
-              emitEvent(state, 'error', traceId, {
-                errorKind: 'agent',
-                code: 'codex_process_exited_without_terminal',
-                message: 'Codex process exited without a terminal JSONL event',
-              });
-              finishTurn(state, 'error');
-            }
-            cleanupAfterTurn(session, state);
-          }
-        },
-        (err: unknown) => {
-          if (!state.stopped && !state.errored && state.currentTurn === turn) {
-            if (!turn.terminalEmitted) {
-              emitEvent(state, 'error', traceId, {
-                errorKind: 'agent',
-                code: 'codex_subproc_error',
-                message: err instanceof Error ? err.message : String(err),
-              });
-              finishTurn(state, 'error');
-              emitEvent(state, 'session_stopped', traceId, { reason: 'error' });
-            }
-            cleanupAfterTurn(session, state);
-          }
-        },
-      );
     });
+    if (state.stopPromise) {
+      await state.stopPromise;
+    } else if (!completedTurn.syntheticTerminalEmitted && state.cleanupBarrier) {
+      await state.cleanupBarrier;
+    }
   }
 
   function requestInterrupt(session: AgentSession): boolean {
@@ -636,6 +745,25 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
     finishTurn(state, 'user_interrupt', 'runtime-synthesized');
     beginCleanupTimers(session, state, proc);
     return true;
+  }
+
+  function stopRuntimeSession(session: AgentSession, traceId: string): Promise<void> {
+    const state = getState(session);
+    if (state.stopPromise) return state.stopPromise;
+    state.stopped = true;
+    session.state = 'Stopped';
+    const proc = state.proc;
+    clearCleanupTimers(state);
+    if (state.currentTurn && !state.currentTurn.terminalEmitted) {
+      finishTurn(state, 'user_interrupt', 'runtime-synthesized');
+    }
+    state.stopPromise = (async () => {
+      if (proc) await terminateProcess(proc);
+      if (state.cleanupBarrier) await state.cleanupBarrier;
+      cleanupAfterTurn(session, state, proc);
+      emitSessionStopped(state, traceId, 'user_stop');
+    })();
+    return state.stopPromise;
   }
 
   return {
@@ -664,25 +792,16 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
         nextTurnSequence: 1,
         cleanupTimers: [],
         sessionStarted: false,
+        sessionStoppedEmitted: false,
         stopped: false,
         errored: false,
       });
       return session;
     },
 
-    stopSession(session: AgentSession): void {
+    stopSession(session: AgentSession): Promise<void> {
       const state = getState(session);
-      state.stopped = true;
-      session.state = 'Stopped';
-      state.proc?.kill('SIGTERM');
-      clearCleanupTimers(state);
-      if (state.currentTurn && !state.currentTurn.terminalEmitted) {
-        finishTurn(state, 'error');
-      }
-      emitEvent(state, 'session_stopped', state.currentTurn?.traceId ?? 'system', {
-        reason: 'user_stop',
-      });
-      cleanupAfterTurn(session, state);
+      return stopRuntimeSession(session, state.currentTurn?.traceId ?? 'system');
     },
 
     isAlive(session: AgentSession): boolean {
@@ -725,18 +844,7 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
     ): Promise<AgentCommandResult> {
       if (command.handlerKey === 'new') {
         if (session) {
-          const state = getState(session);
-          state.stopped = true;
-          session.state = 'Stopped';
-          state.proc?.kill('SIGTERM');
-          clearCleanupTimers(state);
-          if (state.currentTurn && !state.currentTurn.terminalEmitted) {
-            finishTurn(state, 'user_interrupt', 'runtime-synthesized');
-          }
-          emitEvent(state, 'session_stopped', command.traceId, {
-            reason: 'user_stop',
-          });
-          cleanupAfterTurn(session, state);
+          await stopRuntimeSession(session, command.traceId);
         }
         return {
           status: 'handled',

@@ -26,6 +26,11 @@ import {
   CodexConfigError,
 } from '@agent-nexus/agent-codex';
 import {
+  parseCodexAppServerConfig,
+  type CodexAppServerConfig,
+  CodexAppServerConfigError,
+} from '@agent-nexus/agent-codex-app-server';
+import {
   checkPlatformAuth,
   DEFAULT_DAEMON_RUNTIME_CONFIG,
   parseDaemonConfig,
@@ -42,6 +47,7 @@ import type { NormalizedEvent } from '@agent-nexus/protocol';
 export type {
   ClaudeCodeConfig,
   CodexConfig,
+  CodexAppServerConfig,
   DiscordPlatformConfig,
   DiscordBindingMatchConfig,
   LarkPlatformConfig,
@@ -49,7 +55,7 @@ export type {
   PlatformAuthConfig,
 };
 
-export type AgentBackend = 'claudecode' | 'codex';
+export type AgentBackend = 'claudecode' | 'codex' | 'codex-app-server';
 
 type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
@@ -75,6 +81,12 @@ export type AgentConfig =
       backend: 'codex';
       timeoutMs?: number;
       codex: CodexConfig;
+    }
+  | {
+      name: string;
+      backend: 'codex-app-server';
+      timeoutMs?: number;
+      codexAppServer: CodexAppServerConfig;
     };
 
 export interface AgentNexusConfig {
@@ -147,7 +159,7 @@ export class SecretsPermissionError extends Error {
 }
 
 const DEFAULT_LOG_LEVEL = 'info' as const;
-const BACKENDS = ['claudecode', 'codex'] as const;
+const BACKENDS = ['claudecode', 'codex', 'codex-app-server'] as const;
 const PLATFORM_TYPES = ['discord', 'lark'] as const;
 const LEGACY_TOP_LEVEL_KEYS = ['discord', 'agent', 'claudeCode', 'codex'] as const;
 export const AGENT_NEXUS_HOME_ENV = 'AGENT_NEXUS_HOME' as const;
@@ -726,7 +738,7 @@ function parseAgent(raw: unknown, index: number): AgentConfig {
   }
   assertNoUnknownKeys(
     raw,
-    ['name', 'backend', 'timeoutMs', 'claudeCode', 'codex'],
+    ['name', 'backend', 'timeoutMs', 'claudeCode', 'codex', 'codexAppServer'],
     path,
   );
   const name = requireNonEmptyString(raw, 'name', path);
@@ -739,9 +751,38 @@ function parseAgent(raw: unknown, index: number): AgentConfig {
   }
   const backend = backendRaw as AgentBackend;
 
+  if (backend === 'codex-app-server') {
+    for (const inactive of ['claudeCode', 'codex'] as const) {
+      if (inactive in raw) {
+        throw new ConfigError(
+          `字段 ${path}.${inactive} 不允许出现在 backend="codex-app-server" 的 agent 中`,
+        );
+      }
+    }
+    if (!('codexAppServer' in raw)) throw new ConfigError(`缺字段 ${path}.codexAppServer`);
+    try {
+      return {
+        name,
+        backend,
+        timeoutMs,
+        codexAppServer: parseCodexAppServerConfig(raw['codexAppServer']),
+      };
+    } catch (err) {
+      if (err instanceof CodexAppServerConfigError) {
+        throw new ConfigError(`${path}.codexAppServer ${err.message}`);
+      }
+      throw err;
+    }
+  }
+
   if (backend === 'codex') {
     if ('claudeCode' in raw) {
       throw new ConfigError(`字段 ${path}.claudeCode 不允许出现在 backend="codex" 的 agent 中`);
+    }
+    if ('codexAppServer' in raw) {
+      throw new ConfigError(
+        `字段 ${path}.codexAppServer 不允许出现在 backend="codex" 的 agent 中`,
+      );
     }
     if (!('codex' in raw)) {
       throw new ConfigError(`缺字段 ${path}.codex`);
@@ -758,6 +799,11 @@ function parseAgent(raw: unknown, index: number): AgentConfig {
 
   if ('codex' in raw) {
     throw new ConfigError(`字段 ${path}.codex 不允许出现在 backend="claudecode" 的 agent 中`);
+  }
+  if ('codexAppServer' in raw) {
+    throw new ConfigError(
+      `字段 ${path}.codexAppServer 不允许出现在 backend="claudecode" 的 agent 中`,
+    );
   }
   if (!('claudeCode' in raw)) {
     throw new ConfigError(`缺字段 ${path}.claudeCode`);

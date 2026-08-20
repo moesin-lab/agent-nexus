@@ -14,7 +14,7 @@ related:
 
 ## 发布边界
 
-MVP 唯一公开产物是 `@moesin-lab/agent-nexus`。它提供 `agent-nexus` 二进制，把六个内部 `@agent-nexus/*` workspace package bundle 进 `dist/index.js`；内部 package 保持 `private: true`。
+MVP 唯一公开产物是 `@moesin-lab/agent-nexus`。它提供 `agent-nexus` 二进制，把七个内部 `@agent-nexus/*` workspace package bundle 进 `dist/index.js`；内部 package 保持 `private: true`。
 
 首发版本是 `0.1.0`，Git tag 是 `v0.1.0`，npm dist-tag 是 `latest`。支持范围与认证迁移决策见 [ADR-0020](../adr/0020-publish-single-npm-cli-package.md)。
 
@@ -28,10 +28,12 @@ pnpm build
 pnpm test
 pnpm pack:cli
 node scripts/verify-packed-cli.mjs packages/cli/moesin-lab-agent-nexus-0.1.0.tgz
+AGENT_NEXUS_RUN_PACKED_CODEX_E2E=1 \
+  node scripts/verify-packed-cli.mjs packages/cli/moesin-lab-agent-nexus-0.1.0.tgz
 git diff --check
 ```
 
-验证器安装并复验传入的同一个 tarball，包括包内容、bin 权限、内部 workspace bundle 边界、`better-sqlite3` 原生查询和首次启动脚手架。证据定义与 CI 矩阵见 [`../testing/strategy.md` §发布制品验证](../testing/strategy.md#发布制品验证)。
+验证器安装并复验传入的同一个 tarball，包括包内容、bin 权限、内部 workspace bundle 边界、`better-sqlite3` 原生查询、`ws` runtime dependency 和首次启动脚手架。第二次命令需要本机已认证的精确 Codex binary，会从安装后的 bin 启动 bundled app-server、完成真实一轮并确认清理；缺少该证据时不能把通用 packed smoke 当作 Codex release gate。证据定义与 CI 矩阵见 [`../testing/strategy.md` §发布制品验证](../testing/strategy.md#发布制品验证)。
 
 ## 首发前一次性配置
 

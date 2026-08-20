@@ -9,6 +9,7 @@ related:
   - dev/spec/security/auth
   - dev/spec/agent-backends/claude-code-cli
   - dev/spec/agent-backends/codex-cli
+  - dev/spec/agent-backends/codex-app-server
   - dev/spec/agent-runtime
   - dev/adr/0012-claudecode-stream-json-mainline
   - dev/adr/0014-agent-backend-codex-cli
@@ -33,6 +34,7 @@ contracts:
 - **`--allowed-tools` / `--permission-mode` 是配置意图声明，不是安全边界**：ADR-0012 决策点 5.1 实测（CC 2.1.148 / 2.1.149）二者不单独强制工具边界；工具隔离的强制点见 §工具隔离强制点
 - `claudeCode.permissionLevel` 默认必须为 `default`，agent-nexus 启动 CC 子进程时必须显式传 `--permission-mode <permissionLevel>`，避免继承用户全局 `settings.permissions.defaultMode`。允许值与 CC CLI 对齐：`default` / `acceptEdits` / `auto` / `bypassPermissions` / `dontAsk` / `plan`；非 `default` 只允许用户显式配置，且必须打 warn、跳过 `can_use_tool` probe，并标注为不满足工具隔离强安全承诺。`bypassPermissions` 是 Claude Code backend 的显式 YOLO 模式，语义接近远程等价本机执行，启动时必须有 `claudecode_bypass_permissions_enabled` warn。
 - Codex CLI 当前没有执行前工具审批 / allowlist / denylist / control request。Codex backend 只能用 `--sandbox`、`--ask-for-approval never`、`--cd`、`--add-dir`、`--ignore-user-config`、`--ignore-rules` 表达 process-level 边界；当显式配置 `sandbox="danger-full-access"` 时，不再提供文件系统 sandbox 边界。详见 [`codex-cli.md`](../agent-backends/codex-cli.md) 与 ADR-0014。
+- Codex app-server 首版固定 `approvalPolicy="never"`，只开放 spec method allowlist；它不是执行前按工具名 allowlist。详见 [`codex-app-server.md`](../agent-backends/codex-app-server.md) 与 ADR-0022。
 
 ## 启用危险工具的要求
 
@@ -51,6 +53,7 @@ contracts:
 - `SessionConfig.workingDir` 限定 CC 的默认工作目录
 - 传递方式：CC CLI 没有 `--cwd` flag；`workingDir` 通过子进程 `cwd` 选项传给 `claude` 进程。详见 [`claude-code-cli.md`](../agent-backends/claude-code-cli.md) §启动命令模板 / §Flag 参考矩阵。
 - Codex CLI 使用 `--cd <workingDir>` 绑定工作根；sandboxed 模式下额外可写目录只能来自显式 `codex.addDirs` 并逐个传 `--add-dir`。`danger-full-access` 下 `workingDir` 只是启动根，`addDirs` 不构成访问边界。详见 [`codex-cli.md`](../agent-backends/codex-cli.md)。
+- Codex app-server 的 thread cwd 必须等于 canonical `SessionConfig.workingDir`；sandbox/additional roots 只能来自 `codexAppServer` owner 配置。response 中返回的 cwd 或 `codexHome` 与注入值不一致时立即终止 session。
 - 如果 CC 配置允许多个 allowed dirs，沿用 CC 的 allowlist（本项目不重复实现）
 - **不继承** agent-nexus 进程的 cwd；每 session 显式传子进程 cwd
 - `/nexus-working-dir` 与 settings config editor 都允许把 workingDir 设为任意非空绝对路径，不强制包含在 agent 默认 `workingDir` 下。workingDir 是启动位置与 process-level sandbox 输入，不是独立安全边界；真实可读写范围仍由 backend sandbox / `addDirs` / CC 工具强制点与部署层 OS 纵深共同决定。
@@ -70,6 +73,21 @@ Codex backend 当前不满足本节 Claude Code 的执行前工具白名单强�
 - 用户启用 Codex backend 时，安全承诺降级为 process-level sandbox / approval / workingDir / add-dir / config inheritance 组合；任何 UI 或日志不得宣称"按工具名白名单执行前拦截"。显式 `danger-full-access` 进一步降级为远程等价本机执行，只能依赖身份 allowlist、部署隔离与操作者信任。
 - `danger-full-access` 启动时必须有 warn 级日志，便于 operator 和事故复盘识别高权限 session。
 - 若未来 Codex CLI 暴露执行前工具审批或 allowlist，必须先更新 `codex-cli.md` 与本 spec，并用 CompatibilityProbe fail-closed 验证。
+
+### Codex app-server 隔离与控制边界
+
+Codex app-server 的结构化 ServerRequest 能拒绝审批，但首版没有完整飞书 approval broker，不能把“能看到请求”表述为已实现按工具白名单：
+
+- 每个 agent conversation generation 必须使用独立、跨 local child 持久的随机 homeId `CODEX_HOME`；SessionKey 只记录创建/rebind 审计，不拥有 home。只允许复制下述认证材料，并由 agent-nexus 生成最小 `config.toml`；不得继承用户 config、rules、MCP、hooks、skills、plugins、features、model 或其它 Codex state。
+- 首版认证唯一允许的源材料是 `<sourceCodexHome>/auth.json`；API-key env、其它 credential 文件、源 config 与整个目录复制均不支持。源 home 与文件必须 canonicalize、属于当前 uid、不是 symlink，auth 必须是 regular file、mode 不含 group/world bits、大小 `1..1048576` bytes。实现用 `O_NOFOLLOW` 打开后 `fstat` 再读，避免先 check 后 reopen。
+- conversation-private home 位于 CLI 注入的 agent-nexus `persistenceRoot`，root、`homes/` 与随机 128-bit homeId 子目录 mode `0700`，registry、owner metadata、生成的 `config.toml` mode `0600`。managed config 只包含 agent-nexus 明确拥有的最小值（当前固定 `check_for_update_on_startup=false`，防止无人值守 viewer 被 update modal 阻塞）；已有 managed config 内容漂移时用 private temp + fsync + atomic rename 替换，不合并 user config。首次创建时 auth 通过 exclusive temp file `0600` 写入、fsync、rename，再校验目标没有越出 root；允许 Codex 在该副本内原子刷新，但永不写回 source。
+- 每次 seed 记录 source auth 内容 SHA-256、size 与 mtime 到 secret metadata（`0600`，日志不输出）。若 app-server 请求 `account/chatgptAuthTokens/refresh`，当前 child fail closed并把 conversation 标为 `auth_stale`。下一次 start 只有在重新安全打开 source 后发现 SHA-256 与 last-seeded digest 不同，才原子替换 durable `auth.json` 并清除 stale；digest 相同则 fail fast，提示 operator 先运行 Codex login，不进入重复 spawn/crash。rotation 只替换 auth，不覆盖 rollout/config/registry。
+- normal stop、committed child crash 与 daemon shutdown 只结束 child并保留 durable home。未 commit 的 creating home 由下次 registry reconciliation 删除；committed home 只有在 operator 显式启用 backend retention 后才可按 lastUsedAt GC。GC 通过 private registry 定位单个 conversation home；删除前必须确认没有 live lease，并用打开的 root-relative handle/lstat 复核 threadId/homeId/owner metadata、拒绝 symlink 和越界路径。清理失败产生安全错误与可审计日志，不得静默复用。
+- child 环境变量按 allowlist 构造，显式移除 OpenAI endpoint/provider override、Lark/Discord token、数据库凭据、daemon secret 与其它无关敏感变量。隔离目标是避免静默继承，不声称抵御同 uid 恶意进程。
+- client request 只允许 initialize、thread start/resume/read、turn start/interrupt 与 unsubscribe 等 backend spec 明列方法；禁止 filesystem、login、plugin、remote-control、daemon、process、background-terminal 及通用 method passthrough。
+- ServerRequest 必须按 backend spec 的逐 method exact schema 恰好响应一次。command/file approval decline，MCP elicitation cancel；permissions 没有 deny variant，必须回合法 JSON-RPC error并 interrupt。auth refresh、user-input、dynamic tool、attestation 与 unknown request 按表结束 turn/session，不能伪造空授权或 token。
+- `danger-full-access` 与现有 Codex backend 相同，等价远程本机执行能力，必须有 warn 级日志和平台首条安全警告；method allowlist 与 private home 不构成文件系统 sandbox。
+- 可选 remote viewer 只能通过 ADR-0023 定义的 per-incarnation capability token 连接 loopback app-server。controller 与 viewer 均拥有完整 app-server client 权限；token 是高权限 secret，必须使用 mode `0600` 文件向 server 提供，并只通过单用途环境变量向 viewer 提供。不得写入 argv、日志、registry、终端快照或平台消息；旧 incarnation token 必须失效。viewer 不扩大 sandbox，但会扩大同一 sandbox 内可发起操作的本机入口，因此默认关闭且失败时回退 stdio 主路径。
 
 ## 核心威胁关联
 
@@ -91,6 +109,10 @@ Discord 账号被盗 → 远程等价本机操作（见 `security.md` §"核心�
 - **工作目录正确锁定**：fake CC spawn 时子进程 `cwd` 选项等于 `SessionConfig.workingDir`；argv 中**不**出现 `--cwd`。
 - **MCP 默认全禁**：配置未显式列 MCP → CC 启动参数不带任何 MCP 注册
 - **Codex native whitelist 不支持**：Codex backend 不得把 Claude Code 的 `allowedTools` 语义翻译成不存在的 Codex allowlist flag
+- **Codex app-server private home**：fresh generation 使用不同随机 home；同一 conversation rebind 后按 thread registry 恢复原 home；commit 前 crash 的 creating home被 reconciliation 清理且从未暴露 ref；用户 MCP/skills/plugins/config 未加载；stop/crash 后 committed home 保留且能 resume，只有显式 retention GC 才清理；source/destination symlink、owner/mode/size/越界与返回 home 不匹配时 fail closed
+- **认证 rotation**：refresh request 让 Busy turn 恰好一次 error terminal并标记 stale；源 digest 未变化时后续启动 fail fast，变化后只原子替换 auth 并成功恢复同一 thread，rollout/config 不丢失
+- **Codex app-server method/ServerRequest allowlist**：禁止方法不能写入 pipe；approval/MCP/unknown request 均在 deadline 内 deny/cancel/error，且被测副作用未发生
+- **Codex remote viewer admission**：真实 Codex 对无 token、错误 token、旧 token 返回拒绝，正确 token 才完成 upgrade；listener 只绑定 loopback，token 文件 mode `0600`，argv/日志/snapshot/registry 均不含 token；app-server incarnation 更换后旧 viewer 被停止且旧 token 不再可用
 - **OS 级 defense-in-depth 不在自动合约测试范围**：§工具隔离强制点 第 2 点的 OS 隔离（工作目录写入范围 / 敏感路径不可读 / 网络策略）依赖部署环境，由**部署层配置 + 上线前审计 checklist** 验证，不作单测覆盖；spec 不把它当"无需验证"，而是验证责任在部署/审计而非进程内单测
 
 ## 反模式

@@ -10,6 +10,7 @@ related:
   - dev/adr/0015-multi-platform-agent-config
   - dev/spec/platform-adapter
   - dev/spec/agent-runtime
+  - dev/spec/agent-backends/codex-app-server
   - dev/spec/message-flow
   - dev/spec/infra/trajectory-observability
   - dev/spec/security/auth
@@ -215,7 +216,7 @@ matcher 自行解释。
 ```text
 AgentConfig {
     name: string                      // 全局唯一，稳定 agent 名
-    backend: "claudecode" | "codex"
+    backend: "claudecode" | "codex" | "codex-app-server"
     timeoutMs?: int                   // 单次输入墙钟超时；默认 300000，必须为正整数毫秒值
 
     // backend="claudecode" owner 字段，由 agent-claudecode parser 校验
@@ -223,6 +224,9 @@ AgentConfig {
 
     // backend="codex" owner 字段，由 agent-codex parser 校验
     codex?: CodexConfig
+
+    // backend="codex-app-server" owner 字段，由 agent-codex-app-server parser 校验
+    codexAppServer?: CodexAppServerConfig
 }
 ```
 
@@ -233,11 +237,35 @@ AgentConfig {
 | `name` | 非空字符串；在 `agents[]` 内唯一；binding 只能通过此名称引用 |
 | `backend` | 必填；未知 backend 启动失败 |
 | `timeoutMs` | 可选；单次输入的 wall-clock timeout，默认 `300000`；必须是正整数毫秒值，且不超过 JS timer 上限 `2147483647` |
-| `claudeCode` | `backend="claudecode"` 时必填；`backend="codex"` 时必须缺省；字段内容只能由 `@agent-nexus/agent-claudecode` parser 校验 |
-| `codex` | `backend="codex"` 时必填；`backend="claudecode"` 时必须缺省；字段内容只能由 `@agent-nexus/agent-codex` parser 校验 |
+| `claudeCode` | `backend="claudecode"` 时必填；其它 backend 时必须缺省；字段内容只能由 `@agent-nexus/agent-claudecode` parser 校验 |
+| `codex` | `backend="codex"` 时必填；其它 backend 时必须缺省；字段内容只能由 `@agent-nexus/agent-codex` parser 校验 |
+| `codexAppServer` | `backend="codex-app-server"` 时必填；其它 backend 时必须缺省；字段内容只能由 `@agent-nexus/agent-codex-app-server` parser 校验 |
 
 `AgentConfig` 不继承全局 workingDir、timeout 或 backend 私有安全字段。需要两套不同工作目录、timeout 或 Claude Code `allowedTools` 边界时，配置两个不同 `agents[]` 项。
 inactive backend 配置块必须拒绝，不能作为"未知但忽略"字段保留，避免陈旧私有配置影响审计。
+
+### CodexAppServerConfig
+
+```text
+CodexAppServerConfig {
+    bin: string
+    workingDir: absolute path
+    sandbox: "read-only" | "workspace-write" | "danger-full-access"
+    addDirs: absolute path[]
+    maxInputBytes: int
+    requestTimeoutMs: int
+    interruptGraceMs: int
+    terminateGraceMs: int
+    conversationRetentionMs: int | null
+    supplementalViewer: {
+        enabled: bool
+    }
+}
+```
+
+字段范围、默认值与安全语义由 [`agent-backends/codex-app-server.md`](agent-backends/codex-app-server.md) 拥有。parser 必须拒绝未知字段；`approvalPolicy`、experimental API、listen address、remote auth、viewer endpoint/token/token file/tmux 参数、用户配置继承和 dangerous bypass 不属于可配置 surface。`workingDir` 与 `addDirs` 必须先 canonicalize；不存在、非目录或 canonical 后重复的路径启动失败。`conversationRetentionMs` 默认 null；非 null 是 backend-owned GC，不代表 daemon RoutingSession archive callback。`supplementalViewer.enabled` 默认 `false`，是 restart-only 的 operator intent；settings preview 可以展示风险，但不得对 live app-server incarnation 热切换。
+
+CLI 组装层另向 runtime factory 注入可信 `sourceCodexHome` 与 `persistenceRoot`；二者不是 `AgentConfig` 字段，不接受 settings editor、环境中的 JSON 覆盖或平台消息修改。owner parser 不读取这两个路径中的 secret 内容，只验证 runtime dependency 的 canonical path 与权限；认证复制规则由 [`security/tool-boundary.md`](security/tool-boundary.md) 拥有。
 
 ## PlatformBinding
 
@@ -311,7 +339,7 @@ CLI loader 的职责：
 
 CLI loader 不得：
 
-- 解释 `claudeCode` / `codex` 的业务字段。
+- 解释 `claudeCode` / `codex` / `codexAppServer` 的业务字段。
 - 解释 Discord token 明文值。
 - 用 routing matcher 解释 user/role/guild/DM 授权字段。
 - 在未知字段或未知条件上静默忽略。
@@ -486,7 +514,7 @@ platformName + platform + channelId + initiatorUserId
 | platform / agent name 重复 | loadConfig | `ConfigError`，列出重复 name |
 | 未知 platform type / backend | loadConfig | `ConfigError`，列出允许值 |
 | platform auth 缺失或非法 | loadConfig | `ConfigError`，含 `platforms[i].auth` 字段路径 |
-| agent owner 字段缺失或 inactive backend 块存在 | loadConfig | `ConfigError`，含 `agents[i].claudeCode` / `agents[i].codex` 字段路径 |
+| agent owner 字段缺失或 inactive backend 块存在 | loadConfig | `ConfigError`，含 `agents[i].claudeCode` / `agents[i].codex` / `agents[i].codexAppServer` 字段路径 |
 | platform statePath 显式重复 | loadConfig | `ConfigError`，列出重复 `platforms[].statePath` |
 | binding name 重复 | loadConfig | `ConfigError`，列出重复 name |
 | binding 引用不存在 platform / agent | loadConfig | `ConfigError`，含 binding 字段路径 |

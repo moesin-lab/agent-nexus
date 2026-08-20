@@ -142,3 +142,15 @@ export {
   type ExternalResumeSessionEntry,
   type SessionEntry,
 } from './session-store.js';
+export {
+  ExperimentalTmuxTerminalSessionHost,
+  TerminalSessionStartError,
+  type TerminalAttachDescriptor,
+  type TerminalKey,
+  type TerminalObservation,
+  type TerminalSessionHandle,
+  type TerminalSessionStart,
+  type TerminalSessionStartLifecycle,
+  type TerminalSessionState,
+  type TerminalWrite,
+} from './terminal-session.js';

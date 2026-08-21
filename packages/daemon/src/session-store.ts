@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { SessionKey } from '@agent-nexus/protocol';
+import type { SessionContainerRef, SessionKey } from '@agent-nexus/protocol';
 import { serializeSessionKey } from '@agent-nexus/protocol';
 
 /**
@@ -22,16 +22,24 @@ export interface SessionEntry {
 }
 
 export interface ThreadRegistryEntry {
+  kind?: 'thread';
   parentChannelId: string;
   ownerUserId: string;
-  autoArchiveDurationMinutes: 60 | 1440 | 4320 | 10080;
+  autoArchiveDurationMinutes?: 60 | 1440 | 4320 | 10080;
   renameOnFirstPrompt?: boolean;
+  bindingMode?: SessionContainerRef['bindingMode'];
+  rootMessageId?: string;
+  url?: string;
+  parentUrl?: string;
+  agentName?: string;
+  agentOwner?: string;
 }
 
 export interface ListedSessionEntry extends Omit<SessionEntry, 'agentSessionId'> {
   sessionId: string;
   key: SessionKey;
   agentSessionId: string;
+  sessionContainer?: SessionContainerRef;
 }
 
 export interface ExternalResumeSessionEntry {
@@ -204,6 +212,7 @@ export class SessionStore {
         lastTurnAt: new Date(entry.lastTurnAt),
         title: entry.title,
         nextSession: entry.nextSession ? { ...entry.nextSession } : undefined,
+        ...this.listedSessionContainer(key),
       });
     }
     return entries
@@ -245,6 +254,7 @@ export class SessionStore {
     now: Date,
     agentOwner?: string,
   ): SessionEntry | undefined {
+    if (this.isFixedContainer(targetKey)) return undefined;
     const sourceRecord = this.sessionsBySessionId.get(sessionId);
     const sourceKey = sourceRecord?.key ?? this.keysBySessionId.get(sessionId);
     if (!sourceKey || !sourceRecord) return undefined;
@@ -289,6 +299,9 @@ export class SessionStore {
     entry: ExternalResumeSessionEntry,
     sessionId?: string,
   ): SessionEntry {
+    if (this.isFixedContainer(targetKey)) {
+      throw new Error('Cannot rebind a fixed session container');
+    }
     if (sessionId) {
       if (this.keysBySessionId.has(sessionId)) {
         throw new Error(`Session id is already in use: ${sessionId}`);
@@ -373,14 +386,79 @@ export class SessionStore {
   }
 
   registerThread(key: SessionKey, thread: ThreadRegistryEntry): void {
-    this.threadsByChannel.set(
-      threadRegistryKey({
-        platformName: key.platformName,
-        platform: key.platform,
-        channelId: key.channelId,
-      }),
-      { ...thread },
-    );
+    const registryKey = threadRegistryKey({
+      platformName: key.platformName,
+      platform: key.platform,
+      channelId: key.channelId,
+    });
+    const existing = this.threadsByChannel.get(registryKey);
+    const fixedRootChanged =
+      existing?.bindingMode === 'fixed' &&
+      thread.bindingMode === 'fixed' &&
+      existing.rootMessageId !== undefined &&
+      thread.rootMessageId !== undefined &&
+      existing.rootMessageId !== thread.rootMessageId;
+    const next: ThreadRegistryEntry = {
+      ...existing,
+      ...thread,
+      kind: 'thread',
+      ...(thread.url === undefined && existing?.url && !fixedRootChanged
+        ? { url: existing.url }
+        : {}),
+      ...(thread.parentUrl === undefined && existing?.parentUrl
+        ? { parentUrl: existing.parentUrl }
+        : {}),
+    };
+    if (fixedRootChanged && thread.url === undefined) delete next.url;
+    this.threadsByChannel.set(registryKey, next);
+  }
+
+  claimFixedThreadAgent(
+    key: SessionKey,
+    identity: { agentName: string; agentOwner: string },
+  ): boolean {
+    const registryKey = threadRegistryKey({
+      platformName: key.platformName,
+      platform: key.platform,
+      channelId: key.channelId,
+    });
+    const thread = this.threadsByChannel.get(registryKey);
+    if (!thread || thread.bindingMode !== 'fixed') return true;
+    if (thread.agentName && thread.agentName !== identity.agentName) {
+      return false;
+    }
+    if (thread.agentOwner && thread.agentOwner !== identity.agentOwner) {
+      return false;
+    }
+    this.threadsByChannel.set(registryKey, {
+      ...thread,
+      agentName: identity.agentName,
+      agentOwner: identity.agentOwner,
+    });
+    return true;
+  }
+
+  private isFixedContainer(key: SessionKey): boolean {
+    return this.findThreadByChannelId(key)?.bindingMode === 'fixed';
+  }
+
+  private listedSessionContainer(
+    key: SessionKey,
+  ): { sessionContainer: SessionContainerRef } | Record<string, never> {
+    const thread = this.findThreadByChannelId(key);
+    if (!thread) return {};
+    return {
+      sessionContainer: {
+        kind: 'thread',
+        bindingMode: thread.bindingMode ?? 'rebindable',
+        parentChannelId: thread.parentChannelId,
+        ...(thread.rootMessageId
+          ? { rootMessageId: thread.rootMessageId }
+          : {}),
+        ...(thread.url ? { url: thread.url } : {}),
+        ...(thread.parentUrl ? { parentUrl: thread.parentUrl } : {}),
+      },
+    };
   }
 
   setChannelWorkingDir(

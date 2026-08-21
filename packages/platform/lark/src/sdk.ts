@@ -5,6 +5,9 @@ import {
   EventDispatcher,
   LoggerLevel,
   WSClient,
+  defaultHttpInstance,
+  type HttpInstance,
+  type HttpRequestOptions,
   type Logger as LarkSdkLogger,
 } from '@larksuiteoapi/node-sdk';
 import type { Logger } from '@agent-nexus/daemon';
@@ -15,6 +18,37 @@ import type {
   LarkSdkWsClientPort,
   LarkWsCallbacks,
 } from './sdk-port.js';
+
+const LARK_HTTP_REQUEST_TIMEOUT_MS = 10_000;
+
+function withRequestTimeout<D>(
+  options: HttpRequestOptions<D> | undefined,
+): HttpRequestOptions<D> {
+  return {
+    ...options,
+    timeout: options?.timeout ?? LARK_HTTP_REQUEST_TIMEOUT_MS,
+  };
+}
+
+// SDK 1.70.0 的共享 axios instance 默认无 timeout；显式包装后 token 与消息 API 都不会永久悬挂。
+const timedHttpInstance: HttpInstance = {
+  request: (options) =>
+    defaultHttpInstance.request(withRequestTimeout(options)),
+  get: (url, options) =>
+    defaultHttpInstance.get(url, withRequestTimeout(options)),
+  delete: (url, options) =>
+    defaultHttpInstance.delete(url, withRequestTimeout(options)),
+  head: (url, options) =>
+    defaultHttpInstance.head(url, withRequestTimeout(options)),
+  options: (url, options) =>
+    defaultHttpInstance.options(url, withRequestTimeout(options)),
+  post: (url, data, options) =>
+    defaultHttpInstance.post(url, data, withRequestTimeout(options)),
+  put: (url, data, options) =>
+    defaultHttpInstance.put(url, data, withRequestTimeout(options)),
+  patch: (url, data, options) =>
+    defaultHttpInstance.patch(url, data, withRequestTimeout(options)),
+};
 
 function createSafeSdkLogger(logger: Logger): LarkSdkLogger {
   const ignore = (): void => {};
@@ -55,11 +89,13 @@ export class ProductionLarkSdkFactory implements LarkSdkFactory {
       domain: Domain.Feishu,
       loggerLevel: LoggerLevel.error,
       logger: this.sdkLogger,
+      httpInstance: timedHttpInstance,
     });
     return {
       request: (request) => client.request(request),
       createMessage: (message) => client.im.v1.message.create(message),
       replyMessage: (message) => client.im.v1.message.reply(message),
+      getMessage: (message) => client.im.v1.message.get(message),
     };
   }
 

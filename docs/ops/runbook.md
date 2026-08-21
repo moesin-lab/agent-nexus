@@ -82,7 +82,8 @@ agent-nexus --home ~/.agent-nexus-stable
 | 飞书启动报 `lark_bot_identity_mismatch` | `platforms[].botOpenId` 不是当前应用机器人的 `open_id`；按产品手册调用 bot info 接口重新确认 |
 | 飞书没有 `platform_connection_ready` | 确认使用中国版飞书 `App ID` / `App Secret`；应用已选择长连接、开通所需权限并发布版本 |
 | 飞书消息只被某一个实例偶尔收到 | 同一应用被多个 agent-nexus 进程同时连接，事件会 cluster 分发而不是广播；停止重复实例或为实例分配不同应用 |
-| 飞书消息无响应 | 确认消息是 P2P 纯文本或带 `thread_id` 的话题纯文本；查看 `route_not_found.channelId` 校对 P2P / 父群 `chat_id` 是否在 `match.lark.chatIds`，再查看 `auth_denied.userId` 校对 `auth.allowlist.userIds` |
+| 飞书普通任务消息无响应 | 普通任务必须发在带 `thread_id` 的话题内；P2P 与群主时间线普通文本按设计静默拒绝，只接受明确控制命令。再查看 `route_not_found.channelId` 校对父群 `chat_id` 是否在 `match.lark.chatIds`，并查看 `auth_denied.userId` 校对 `auth.allowlist.userIds` |
+| `/nexus-sessions` 只显示父群入口或稳定 ID | 根消息 AppLink 查询未成功；确认应用具备读取目标消息的权限并可访问飞书开放 API，随后在原话题再发一条消息触发重试 |
 | `/discord-reply-mode` / `/reply-mode` 不出现 | 开发时配置 `platforms[].testGuildId`，避免全局 slash command 缓存延迟；确认 bot 邀请包含 `applications.commands` scope；确认 `daemon.commandRegistry.registration.enabled=true`；legacy `/reply-mode` 还要求 `daemon.commandRegistry.aliases.legacy.replyMode=true` |
 | `/codex-new` / `/claudecode-new` 不出现 | 确认对应 backend 的 agent 已配置，且当前 platform 至少有一条 binding 指向该 agent；裸 `/new` 只在同一注册 scope 只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时出现 |
 | 同一个 Discord application 下其它工具注册的 slash command 消失 | agent-nexus 会用期望全集覆盖当前 application 在该 scope 下的命令；不要和其它工具共享同一个 bot application 的 slash command scope |

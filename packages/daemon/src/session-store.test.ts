@@ -899,4 +899,171 @@ describe('SessionStore', () => {
       ownerUserId: 'U1',
     });
   });
+
+  it('lists a fixed topic session with its stored resume link', () => {
+    const store = new SessionStore();
+    const key = makeKey({
+      platformName: 'lark-main',
+      platform: 'lark',
+      channelId: 'omt-topic-1',
+    });
+    store.registerThread(key, {
+      parentChannelId: 'oc-chat-1',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-root-1',
+      url: 'https://applink.feishu.cn/client/message/open?messageId=om-root-1',
+      parentUrl: 'https://applink.feishu.cn/client/chat/open?openChatId=oc-chat-1',
+    });
+    store.set(key, {
+      agentSessionId: 'sid-topic-1',
+      agentOwner: 'codex',
+      lastTurnAt: new Date(1),
+      title: 'Topic prompt',
+    });
+
+    expect(
+      store.listForUser({
+        platformName: 'lark-main',
+        platform: 'lark',
+        initiatorUserId: 'U1',
+        limit: 10,
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        key,
+        sessionContainer: {
+          kind: 'thread',
+          bindingMode: 'fixed',
+          parentChannelId: 'oc-chat-1',
+          rootMessageId: 'om-root-1',
+          url: 'https://applink.feishu.cn/client/message/open?messageId=om-root-1',
+          parentUrl: 'https://applink.feishu.cn/client/chat/open?openChatId=oc-chat-1',
+        },
+      }),
+    ]);
+  });
+
+  it('fills a missing topic link without erasing an already resolved link', () => {
+    const store = new SessionStore();
+    const key = makeKey({ channelId: 'omt-topic-1' });
+    store.registerThread(key, {
+      parentChannelId: 'oc-chat-1',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-root-1',
+      parentUrl: 'https://applink.feishu.cn/client/chat/open?openChatId=oc-chat-1',
+    });
+    store.registerThread(key, {
+      parentChannelId: 'oc-chat-1',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-root-1',
+      url: 'https://applink.feishu.cn/client/message/open?messageId=om-root-1',
+      parentUrl: 'https://applink.feishu.cn/client/chat/open?openChatId=oc-chat-1',
+    });
+    store.registerThread(key, {
+      parentChannelId: 'oc-chat-1',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-root-1',
+    });
+
+    expect(store.findThreadByChannelId(key)).toMatchObject({
+      url: 'https://applink.feishu.cn/client/message/open?messageId=om-root-1',
+      parentUrl: 'https://applink.feishu.cn/client/chat/open?openChatId=oc-chat-1',
+    });
+  });
+
+  it('drops a stale fixed-topic link when the observed root message changes', () => {
+    const store = new SessionStore();
+    const key = makeKey({ channelId: 'omt-topic-1' });
+    store.registerThread(key, {
+      parentChannelId: 'oc-chat-1',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-old-root',
+      url: 'https://applink.feishu.cn/client/message/open?messageId=om-old-root',
+    });
+
+    store.registerThread(key, {
+      parentChannelId: 'oc-chat-1',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-new-root',
+    });
+
+    expect(store.findThreadByChannelId(key)).toMatchObject({
+      rootMessageId: 'om-new-root',
+    });
+    expect(store.findThreadByChannelId(key)?.url).toBeUndefined();
+  });
+
+  it('atomically pins a fixed topic to its first agent identity', () => {
+    const store = new SessionStore();
+    const key = makeKey({ channelId: 'omt-topic-1' });
+    store.registerThread(key, {
+      parentChannelId: 'oc-chat-1',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-root-1',
+    });
+
+    expect(
+      store.claimFixedThreadAgent(key, {
+        agentName: 'codex-dev',
+        agentOwner: 'codex',
+      }),
+    ).toBe(true);
+    expect(
+      store.claimFixedThreadAgent(key, {
+        agentName: 'codex-prod',
+        agentOwner: 'codex',
+      }),
+    ).toBe(false);
+    expect(
+      store.claimFixedThreadAgent(key, {
+        agentName: 'claude-prod',
+        agentOwner: 'claudecode',
+      }),
+    ).toBe(false);
+    expect(store.findThreadByChannelId(key)).toMatchObject({
+      agentName: 'codex-dev',
+      agentOwner: 'codex',
+    });
+  });
+
+  it('does not bind another resumable session into a fixed topic', () => {
+    const store = new SessionStore();
+    const sourceKey = makeKey({ channelId: 'C-old' });
+    const fixedTopicKey = makeKey({ channelId: 'omt-topic-1' });
+    store.set(sourceKey, {
+      agentSessionId: 'sid-old',
+      agentOwner: 'codex',
+      lastTurnAt: new Date(1),
+    });
+    const [source] = store.listForUser({
+      platformName: 'discord-main',
+      platform: 'discord',
+      initiatorUserId: 'U1',
+      limit: 10,
+    });
+    store.registerThread(fixedTopicKey, {
+      parentChannelId: 'oc-chat-1',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-root-1',
+    });
+
+    expect(
+      store.bindExistingToKey(
+        fixedTopicKey,
+        source!.sessionId,
+        new Date(2),
+        'codex',
+      ),
+    ).toBeUndefined();
+    expect(store.get(sourceKey)?.agentSessionId).toBe('sid-old');
+    expect(store.get(fixedTopicKey)).toBeUndefined();
+  });
 });

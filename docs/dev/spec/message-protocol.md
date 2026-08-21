@@ -62,6 +62,8 @@ NormalizedEvent {
     guildId: string?                         // guild 事件所属 guild；DM 缺省
     initiatorRoleIds: string[]?              // guild 内发起者角色 ID；DM 缺省/空
     threadParentChannelId: string?           // thread 事件所属父 channel；非 thread 缺省
+    deliveryScope: "session" | "control"?    // 缺省 session；control 只允许显式控制文本
+    sessionContainer: SessionContainerRef?   // 平台原生 Session 容器定位引用
 
     // 用户信息
     initiator: {
@@ -69,6 +71,15 @@ NormalizedEvent {
         displayName: string
         isBot: bool
     }
+}
+
+SessionContainerRef {
+    kind: "thread"
+    bindingMode: "fixed" | "rebindable"
+    parentChannelId: string
+    rootMessageId: string?
+    url: string?                             // 平台明确给出的精确容器 URL
+    parentUrl: string?                       // 精确 URL 缺失时的父容器入口
 }
 
 enum EventType {
@@ -92,6 +103,15 @@ enum EventType {
 反馈和 agent 输出。Adapter 不得用进程内 `threadId -> latestMessageId` 缓存重建该意图。当前只有 Lark 话题消息
 设置 `responseTarget`；P2P 与没有原生 reply transport 的事件缺省。
 
+`deliveryScope` 缺省为 `session`。`control` 事件只能进入当前平台明确列入的文本控制面；其它普通文本与
+未知 `/...` 均静默丢弃，不得进入幂等、队列、SessionStore 或 agent。该字段表达 platform adapter 已知的原生容器
+角色，不由 daemon 根据 platform 字符串猜测。
+
+`sessionContainer` 是路由与恢复所需的平台中立定位引用，不改变 SessionKey 身份。`bindingMode="fixed"` 表示容器与
+当前 RoutingSession 一一对应：不得在容器内通过 `/new` 产生新 generation，也不得把其它 session rebind 到该
+容器。`url` 只能保存平台明确提供的精确 URL；不能从 ID 猜测。缺少 `url` 时保留 `parentUrl` 和稳定 ID
+作为降级定位信息。
+
 ## SessionKey
 
 Platform adapter 产出的入站事件只包含平台类型、频道和发起者；配置实例名由 daemon routing 层在
@@ -100,7 +120,7 @@ Platform adapter 产出的入站事件只包含平台类型、频道和发起者
 ```text
 PlatformSessionKey {
     platform: string                // IM 平台标识，例 "discord" / "lark"
-    channelId: string               // 会话容器 ID（Discord channel/thread、Lark P2P chat_id 或话题 thread_id）
+    channelId: string               // 原生容器 ID（Discord channel/thread、Lark P2P chat_id 或话题 thread_id）
     initiatorUserId: string         // 发起者 ID
 }
 
@@ -305,6 +325,8 @@ daemon 默认用 `ui.toolMessages="append"` 展示工具调用轨迹：每个 `t
 
 - 平台事件 fixture → NormalizedEvent 的 JSON 快照比对
 - 带 `responseTarget` 的事件 → queue-full、文本命令反馈与 agent 输出均携带相同 `OutboundMessage.replyTo`
+- `deliveryScope="control"` 的普通文本与未知 `/...` 静默终止，不占用幂等、队列或 SessionStore
+- `bindingMode="fixed"` 的容器保留定位引用，并拒绝 `/new` 分代和 session rebind
 - 切片算法：构造超过平台预算的文本，每片不超预算且按顺序拼接后等于原文
 - 幂等：同 fixture 两次投递，第二次被 idempotency 层拦下
 - 顺序：同 session 按 adapter 调用 handler 的到达顺序串行处理，不按 eventId 或平台时间戳重排

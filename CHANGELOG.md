@@ -22,6 +22,10 @@ related:
 - 新增中国版飞书自建应用的 P2P 纯文本长连接接入；首次配置提示提供飞书官方应用创建链接和安全的 App ID / App Secret 后续步骤。
 - 新增固定 Codex 0.146.0 app-server 契约的结构化 backend，并提供默认关闭、独立鉴权的只读 tmux viewer；支持 durable thread resume、受控中断、进程组清理，以及 connection-private 的稳定 process start/status/output/stdin/terminate 与跨 turn 生命周期，并把源码与安装包真实 Codex 验证证据绑定到 exact tag commit 的发布门禁。
 
+### Changed
+
+- 飞书改为“一话题一 Session”：话题外普通文本与未知命令静默拒绝，P2P/群主时间线只保留显式控制命令；固定话题锁定首次命中的 agent identity，不再允许 `/new`、kill 归档或 session rebind，并在有限超时内解析根消息 AppLink，供 `/nexus-sessions` 返回原话题继续。
+
 ## [0.1.0] - 2026-07-26
 
 ### Added

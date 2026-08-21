@@ -10,6 +10,8 @@ import type {
   MessageRef,
   OutboundMessage,
   PlatformAdapter,
+  ResolveSessionContainerInput,
+  ResolveSessionContainerResult,
   SessionKey,
   NormalizedEvent,
 } from '@agent-nexus/protocol';
@@ -184,6 +186,7 @@ function normalizeLarkEvent(
   const chatId = message['chat_id'];
   const chatType = message['chat_type'];
   const threadId = message['thread_id'];
+  const rootId = message['root_id'];
   const createTime = message['create_time'];
   const content = message['content'];
   if (
@@ -194,12 +197,7 @@ function normalizeLarkEvent(
     messageId.length === 0 ||
     typeof chatId !== 'string' ||
     chatId.length === 0 ||
-    (chatType !== 'p2p' &&
-      !(
-        chatType === 'group' &&
-        typeof threadId === 'string' &&
-        threadId.length > 0
-      )) ||
+    (chatType !== 'p2p' && chatType !== 'group') ||
     typeof content !== 'string'
   ) {
     return undefined;
@@ -227,7 +225,17 @@ function normalizeLarkEvent(
             'utf8',
           )
           .digest('hex');
-  const channelId = chatType === 'p2p' ? chatId : (threadId as string);
+  const isTopic =
+    chatType === 'group' &&
+    typeof threadId === 'string' &&
+    threadId.length > 0;
+  const channelId = isTopic ? threadId : chatId;
+  const rootMessageId =
+    typeof rootId === 'string' && rootId.length > 0
+      ? rootId
+      : isTopic
+        ? messageId
+        : undefined;
 
   return {
     eventId,
@@ -241,6 +249,7 @@ function normalizeLarkEvent(
     ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     traceId: randomUUID(),
     type: 'message',
+    deliveryScope: isTopic ? 'session' : 'control',
     text,
     rawPayload: sanitizeRawPayload(raw),
     rawContentType: RAW_CONTENT_TYPE,
@@ -248,9 +257,18 @@ function normalizeLarkEvent(
     ...(timestamp === undefined
       ? {}
       : { platformTimestamp: new Date(timestamp) }),
-    ...(chatType === 'group'
+    ...(isTopic
       ? {
           threadParentChannelId: chatId,
+          sessionContainer: {
+            kind: 'thread',
+            bindingMode: 'fixed',
+            parentChannelId: chatId,
+            ...(rootMessageId ? { rootMessageId } : {}),
+            parentUrl:
+              'https://applink.feishu.cn/client/chat/open?openChatId=' +
+              encodeURIComponent(chatId),
+          },
           responseTarget: {
             platform: 'lark',
             channelId,
@@ -368,6 +386,48 @@ function parseMessageResponse(response: unknown): string {
     throw new LarkPlatformError('lark_sdk_protocol_error', false);
   }
   return data['message_id'];
+}
+
+function parseSessionContainerLink(
+  response: unknown,
+  rootMessageId: string,
+): string | undefined {
+  if (!isRecord(response) || response['code'] !== 0) {
+    throw new LarkPlatformError(
+      'lark_message_query_failed',
+      isRecord(response) && response['retryable'] === true,
+    );
+  }
+  const data = response['data'];
+  const items = isRecord(data) ? data['items'] : undefined;
+  if (!Array.isArray(items)) {
+    throw new LarkPlatformError('lark_sdk_protocol_error', false);
+  }
+  const matches = items.filter(
+    (item) => isRecord(item) && item['message_id'] === rootMessageId,
+  );
+  if (matches.length === 0) return undefined;
+  if (matches.length !== 1) {
+    throw new LarkPlatformError('lark_sdk_protocol_error', false);
+  }
+  const link = matches[0]!['message_app_link'];
+  if (link === undefined || link === '') return undefined;
+  if (typeof link !== 'string') {
+    throw new LarkPlatformError('lark_sdk_protocol_error', false);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(link);
+  } catch {
+    throw new LarkPlatformError('lark_sdk_protocol_error', false);
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.hostname !== 'applink.feishu.cn'
+  ) {
+    throw new LarkPlatformError('lark_sdk_protocol_error', false);
+  }
+  return link;
 }
 
 function defaultSleep(milliseconds: number): Promise<void> {
@@ -855,6 +915,39 @@ export class LarkPlatformAdapter implements PlatformAdapter {
       messageIds: sentIds,
       sentAt: this.internals.now?.() ?? new Date(),
     };
+  }
+
+  async resolveSessionContainer(
+    input: ResolveSessionContainerInput,
+  ): Promise<ResolveSessionContainerResult | undefined> {
+    const rootMessageId = input.container.rootMessageId;
+    if (
+      input.sessionKey.platform !== 'lark' ||
+      input.container.kind !== 'thread' ||
+      !rootMessageId
+    ) {
+      return undefined;
+    }
+    if (
+      !this.client ||
+      (this.state !== 'running' && this.state !== 'reconnecting')
+    ) {
+      throw new LarkPlatformError('lark_not_running', false);
+    }
+    try {
+      const response = await this.client.getMessage({
+        path: { message_id: rootMessageId },
+      });
+      const url = parseSessionContainerLink(response, rootMessageId);
+      return url ? { url } : undefined;
+    } catch (error) {
+      if (error instanceof LarkPlatformError) throw error;
+      throw new LarkPlatformError(
+        'lark_message_query_failed',
+        isRetryableSendFailure(error),
+        { cause: error },
+      );
+    }
   }
 
   private async sendSlice(

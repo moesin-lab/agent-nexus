@@ -103,6 +103,7 @@ function makePlatform(capOverrides: Partial<CapabilitySet> = {}): PlatformAdapte
   clearTyping: ReturnType<typeof vi.fn>;
   createThread: ReturnType<typeof vi.fn>;
   updateThread: ReturnType<typeof vi.fn>;
+  resolveSessionContainer: ReturnType<typeof vi.fn>;
   settingsSnapshot: ReturnType<typeof vi.fn>;
   applySettingsAction: ReturnType<typeof vi.fn>;
   start: ReturnType<typeof vi.fn>;
@@ -131,6 +132,7 @@ function makePlatform(capOverrides: Partial<CapabilitySet> = {}): PlatformAdapte
       url: 'https://discord.com/channels/G1/T1',
     })),
     updateThread: vi.fn(async () => undefined),
+    resolveSessionContainer: vi.fn(async () => undefined),
     settingsSnapshot: vi.fn(async () => ({ items: [] })),
     applySettingsAction: vi.fn(async () => ({
       status: 'handled',
@@ -331,6 +333,11 @@ const CODEX_NEW_COMMAND: CommandDescriptor = {
   handlerKey: 'new',
   applicability: { requiredCapabilities: ['slash-command-registration'] },
   legacyNames: [],
+};
+
+const CODEX_OPAQUE_NEW_COMMAND: CommandDescriptor = {
+  ...CODEX_NEW_COMMAND,
+  handlerKey: 'start-conversation',
 };
 
 const CODEX_STOP_COMMAND: CommandDescriptor = {
@@ -8263,5 +8270,638 @@ describe('Engine', () => {
     stopBarrier.resolve(undefined);
     await Promise.all([replacing, shutdown]);
     expect(agent.startSession).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['ordinary control-plane text', '/unknown-control'])(
+    'silently rejects control-plane message %j before idempotency and routing state',
+    async (text) => {
+      const platform = makePlatform();
+      const agent = makeAgent();
+      const store = new SessionStore();
+      const idempotencyStore = new InMemoryIdempotencyStore();
+      const checkAndSet = vi.spyOn(idempotencyStore, 'checkAndSet');
+      const engine = new Engine({
+        platform,
+        agent: agent.runtime,
+        logger: SILENT_LOGGER,
+        sessionStore: store,
+        idempotencyStore,
+        defaultSessionConfig: DEFAULT_CFG,
+      });
+
+      await engine.start();
+      const dispatchHandler = (
+        platform.start as ReturnType<typeof vi.fn>
+      ).mock.calls[0]![0] as EventHandler;
+      await dispatchHandler(
+        makeEvent(text, {
+          platform: 'lark',
+          sessionKey: {
+            platform: 'lark',
+            channelId: 'oc-control',
+            initiatorUserId: 'U1',
+          },
+          deliveryScope: 'control',
+        }),
+      );
+
+      expect(checkAndSet).not.toHaveBeenCalled();
+      expect(agent.startSession).not.toHaveBeenCalled();
+      expect(agent.sendInput).not.toHaveBeenCalled();
+      expect(platform.send).not.toHaveBeenCalled();
+      expect(store.size).toBe(0);
+    },
+  );
+
+  it('never falls through an unavailable control-plane status command to the agent', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const idempotencyStore = new InMemoryIdempotencyStore();
+    const checkAndSet = vi.spyOn(idempotencyStore, 'checkAndSet');
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      idempotencyStore,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(
+      makeEvent('/status', {
+        platform: 'lark',
+        sessionKey: {
+          platform: 'lark',
+          channelId: 'oc-control',
+          initiatorUserId: 'U1',
+        },
+        deliveryScope: 'control',
+      }),
+    );
+
+    expect(checkAndSet).not.toHaveBeenCalled();
+    expect(agent.startSession).not.toHaveBeenCalled();
+    expect(agent.sendInput).not.toHaveBeenCalled();
+    expect(store.size).toBe(0);
+  });
+
+  it('handles /new on the control plane as guidance without starting an agent session', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(
+      makeEvent('/new investigate this', {
+        platform: 'lark',
+        sessionKey: {
+          platform: 'lark',
+          channelId: 'oc-control',
+          initiatorUserId: 'U1',
+        },
+        deliveryScope: 'control',
+      }),
+    );
+
+    expect(platform.send).toHaveBeenCalledWith(
+      expect.objectContaining({ channelId: 'oc-control' }),
+      expect.objectContaining({
+        text: '[start a new topic to create a new session]',
+      }),
+    );
+    expect(agent.startSession).not.toHaveBeenCalled();
+    expect(agent.sendInput).not.toHaveBeenCalled();
+    expect(store.size).toBe(0);
+  });
+
+  it('renders /nexus-sessions on the control plane as a link list without rebinding', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const topicKey: SessionKey = {
+      platformName: 'mock-platform',
+      platform: 'lark',
+      channelId: 'omt-topic-1',
+      initiatorUserId: 'U1',
+    };
+    store.registerThread(topicKey, {
+      parentChannelId: 'oc-control',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-root-1',
+      url: 'https://applink.feishu.cn/client/message/open?messageId=om-root-1',
+    });
+    store.set(topicKey, {
+      agentSessionId: 'sid-topic-1',
+      agentOwner: 'mock-agent',
+      lastTurnAt: new Date(1),
+      title: 'Investigate failing tests',
+    });
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(
+      makeEvent('/nexus-sessions', {
+        platform: 'lark',
+        sessionKey: {
+          platform: 'lark',
+          channelId: 'oc-control',
+          initiatorUserId: 'U1',
+        },
+        deliveryScope: 'control',
+      }),
+    );
+
+    expect(platform.send).toHaveBeenCalledWith(
+      expect.objectContaining({ channelId: 'oc-control' }),
+      expect.objectContaining({
+        text: expect.stringContaining(
+          'https://applink.feishu.cn/client/message/open?messageId=om-root-1',
+        ),
+      }),
+    );
+    expect(store.get(topicKey)?.agentSessionId).toBe('sid-topic-1');
+    expect(agent.startSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps one fixed topic on one session across turns and stores its container metadata', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+    const fixedTopic = {
+      kind: 'thread' as const,
+      bindingMode: 'fixed' as const,
+      parentChannelId: 'oc-control',
+      rootMessageId: 'om-root-1',
+      parentUrl:
+        'https://applink.feishu.cn/client/chat/open?openChatId=oc-control',
+    };
+    const topicEvent = (text: string) =>
+      makeEvent(text, {
+        platform: 'lark',
+        sessionKey: {
+          platform: 'lark',
+          channelId: 'omt-topic-1',
+          initiatorUserId: 'U1',
+        },
+        threadParentChannelId: 'oc-control',
+        deliveryScope: 'session',
+        sessionContainer: fixedTopic,
+      });
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-topic-1' }),
+      ev('text_final', { text: 'first' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+    await dispatchHandler(topicEvent('first prompt'));
+    agent.queueEvents([
+      ev('text_final', { text: 'second' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 2 }),
+    ]);
+    await dispatchHandler(topicEvent('second prompt'));
+
+    expect(agent.startSession).toHaveBeenCalledTimes(1);
+    expect(agent.sendInput).toHaveBeenCalledTimes(2);
+    expect(
+      store.get({
+        platformName: 'mock-platform',
+        platform: 'lark',
+        channelId: 'omt-topic-1',
+        initiatorUserId: 'U1',
+      })?.agentSessionId,
+    ).toBe('sid-topic-1');
+    expect(
+      store.findThreadByChannelId({
+        platformName: 'mock-platform',
+        platform: 'lark',
+        channelId: 'omt-topic-1',
+      }),
+    ).toMatchObject(fixedTopic);
+  });
+
+  it.each(['/new', '/new continue', '/kill', '/nexus-kill'])(
+    'does not replace or archive a fixed topic session for %j',
+    async (control) => {
+      const platform = makePlatform();
+      const agent = makeAgent();
+      const store = new SessionStore();
+      const engine = new Engine({
+        platform,
+        agent: agent.runtime,
+        logger: SILENT_LOGGER,
+        sessionStore: store,
+        defaultSessionConfig: DEFAULT_CFG,
+      });
+      const topicEvent = (text: string) =>
+        makeEvent(text, {
+          platform: 'lark',
+          sessionKey: {
+            platform: 'lark',
+            channelId: 'omt-topic-1',
+            initiatorUserId: 'U1',
+          },
+          threadParentChannelId: 'oc-control',
+          deliveryScope: 'session',
+          sessionContainer: {
+            kind: 'thread',
+            bindingMode: 'fixed',
+            parentChannelId: 'oc-control',
+            rootMessageId: 'om-root-1',
+          },
+        });
+
+      await engine.start();
+      const dispatchHandler = (
+        platform.start as ReturnType<typeof vi.fn>
+      ).mock.calls[0]![0] as EventHandler;
+      agent.queueEvents([
+        ev('session_started', { agentSessionId: 'sid-topic-1' }),
+        ev('text_final', { text: 'first' }),
+        ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+      ]);
+      await dispatchHandler(topicEvent('first prompt'));
+      await dispatchHandler(topicEvent(control));
+
+      expect(agent.startSession).toHaveBeenCalledTimes(1);
+      expect(agent.stopSession).not.toHaveBeenCalled();
+      expect(
+        store.get({
+          platformName: 'mock-platform',
+          platform: 'lark',
+          channelId: 'omt-topic-1',
+          initiatorUserId: 'U1',
+        })?.agentSessionId,
+      ).toBe('sid-topic-1');
+      expect(platform.send).toHaveBeenLastCalledWith(
+        expect.objectContaining({ channelId: 'omt-topic-1' }),
+        expect.objectContaining({
+          text: '[start a new topic to create a new session]',
+        }),
+      );
+    },
+  );
+
+  it('blocks native new in a fixed topic by stable localName instead of opaque handlerKey', async () => {
+    const platform = makePlatform({
+      supportsSlashCommands: true,
+      supportsEphemeral: true,
+    });
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const topicKey: SessionKey = {
+      platformName: 'discord-main',
+      platform: 'discord',
+      channelId: 'T1',
+      initiatorUserId: 'U1',
+    };
+    store.registerThread(topicKey, {
+      parentChannelId: 'C1',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'M-root',
+    });
+    const registry = new ActiveCommandRegistry();
+    registry.activate(
+      buildCommandRegistrationPlan({
+        descriptors: [CODEX_OPAQUE_NEW_COMMAND],
+        scope: COMMAND_SCOPE,
+        capabilities: {
+          ...platformCaps,
+          supportsSlashCommands: true,
+          supportsEphemeral: true,
+        },
+        policy: DEFAULT_COMMAND_NAME_POLICY,
+        agentOwnersInScope: ['codex'],
+        generation: 'g-opaque-new',
+      }),
+      new Date(0),
+    );
+    const engine = new Engine({
+      platform,
+      platformName: 'discord-main',
+      platformType: 'discord',
+      agents: [
+        {
+          agentName: 'codex-dev',
+          agentOwner: 'codex',
+          agent: agent.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      routingTable: [
+        {
+          bindingName: 'discord-main-codex',
+          platformName: 'discord-main',
+          platformType: 'discord',
+          agentName: 'codex-dev',
+          channelIds: ['C1'],
+        },
+      ],
+      platformAuth: PLATFORM_AUTH_ALLOW_U1,
+      commandRegistry: registry,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    const result = await dispatchHandler(
+      makeCommandEvent('new', {
+        sessionKey: {
+          platform: 'discord',
+          channelId: 'T1',
+          initiatorUserId: 'U1',
+        },
+      }),
+    );
+
+    expect(result?.commandResponse?.text).toBe(
+      '[start a new topic to create a new session]',
+    );
+    expect(agent.handleCommand).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'different owner after session_started',
+      nextAgentName: 'claude-prod',
+      nextAgentOwner: 'claudecode',
+      emitSessionStarted: true,
+    },
+    {
+      name: 'same owner with a different agentName',
+      nextAgentName: 'codex-prod',
+      nextAgentOwner: 'codex',
+      emitSessionStarted: true,
+    },
+    {
+      name: 'different owner before an agentSessionId exists',
+      nextAgentName: 'claude-prod',
+      nextAgentOwner: 'claudecode',
+      emitSessionStarted: false,
+    },
+  ])(
+    'keeps a fixed topic pinned when runtime routing changes: $name',
+    async ({ nextAgentName, nextAgentOwner, emitSessionStarted }) => {
+      const platform = makePlatform();
+      const firstAgent = makeAgent();
+      const nextAgent = makeAgent();
+      const store = new SessionStore();
+      const auth = {
+        allowlist: {
+          ...PLATFORM_AUTH_ALLOW_U1.allowlist,
+          allowedChannelIds: ['oc-control'],
+        },
+      };
+      const firstRoute: RoutingEntry = {
+        bindingName: 'lark-codex',
+        platformName: 'lark-main',
+        platformType: 'lark',
+        agentName: 'codex-dev',
+        channelIds: ['oc-control'],
+      };
+      const engine = new Engine({
+        platform,
+        platformName: 'lark-main',
+        platformType: 'lark',
+        agents: [
+          {
+            agentName: 'codex-dev',
+            agentOwner: 'codex',
+            agent: firstAgent.runtime,
+            defaultSessionConfig: DEFAULT_CFG,
+          },
+          {
+            agentName: nextAgentName,
+            agentOwner: nextAgentOwner,
+            agent: nextAgent.runtime,
+            defaultSessionConfig: DEFAULT_CFG,
+          },
+        ],
+        routingTable: [firstRoute],
+        platformAuth: auth,
+        logger: SILENT_LOGGER,
+        sessionStore: store,
+      });
+      const topicEvent = (text: string) =>
+        makeEvent(text, {
+          platform: 'lark',
+          sessionKey: {
+            platform: 'lark',
+            channelId: 'omt-topic-1',
+            initiatorUserId: 'U1',
+          },
+          threadParentChannelId: 'oc-control',
+          deliveryScope: 'session',
+          sessionContainer: {
+            kind: 'thread',
+            bindingMode: 'fixed',
+            parentChannelId: 'oc-control',
+            rootMessageId: 'om-root-1',
+          },
+        });
+
+      await engine.start();
+      const dispatchHandler = (
+        platform.start as ReturnType<typeof vi.fn>
+      ).mock.calls[0]![0] as EventHandler;
+      firstAgent.queueEvents([
+        ...(emitSessionStarted
+          ? [ev('session_started', { agentSessionId: 'sid-topic-1' })]
+          : []),
+        ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+      ]);
+      await dispatchHandler(topicEvent('first prompt'));
+
+      engine.applyRuntimeUpdate({
+        routingTable: [
+          {
+            ...firstRoute,
+            bindingName: 'lark-updated',
+            agentName: nextAgentName,
+          },
+        ],
+        platformAuth: auth,
+        toolMessageMode: 'append',
+        newSessionTextPrefix: true,
+      });
+      await dispatchHandler(topicEvent('second prompt'));
+
+      expect(firstAgent.startSession).toHaveBeenCalledTimes(1);
+      expect(firstAgent.stopSession).not.toHaveBeenCalled();
+      expect(nextAgent.startSession).not.toHaveBeenCalled();
+      expect(nextAgent.sendInput).not.toHaveBeenCalled();
+      expect(
+        store.findThreadByChannelId({
+          platformName: 'lark-main',
+          platform: 'lark',
+          channelId: 'omt-topic-1',
+        }),
+      ).toMatchObject({
+        agentName: 'codex-dev',
+        agentOwner: 'codex',
+      });
+    },
+  );
+
+  it('resolves a fixed topic link after dispatch without blocking the turn', async () => {
+    const platform = makePlatform();
+    const link = deferred<{ url: string } | undefined>();
+    platform.resolveSessionContainer.mockImplementationOnce(() => link.promise);
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const engine = new Engine({
+      platform,
+      agent: agent.runtime,
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+      defaultSessionConfig: DEFAULT_CFG,
+    });
+    agent.queueEvents([
+      ev('session_started', { agentSessionId: 'sid-topic-1' }),
+      ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+    ]);
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    const dispatched = dispatchHandler(
+      makeEvent('prompt', {
+        platform: 'lark',
+        sessionKey: {
+          platform: 'lark',
+          channelId: 'omt-topic-1',
+          initiatorUserId: 'U1',
+        },
+        deliveryScope: 'session',
+        sessionContainer: {
+          kind: 'thread',
+          bindingMode: 'fixed',
+          parentChannelId: 'oc-control',
+          rootMessageId: 'om-root-1',
+        },
+      }),
+    );
+
+    await expect(dispatched).resolves.toBeUndefined();
+    expect(agent.sendInput).toHaveBeenCalledTimes(1);
+    expect(platform.resolveSessionContainer).toHaveBeenCalledTimes(1);
+
+    link.resolve({
+      url: 'https://applink.feishu.cn/client/message/open?messageId=om-root-1',
+    });
+    await vi.waitFor(() =>
+      expect(
+        store.findThreadByChannelId({
+          platformName: 'mock-platform',
+          platform: 'lark',
+          channelId: 'omt-topic-1',
+        }),
+      ).toMatchObject({
+        url: 'https://applink.feishu.cn/client/message/open?messageId=om-root-1',
+      }),
+    );
+  });
+
+  it('times out a stuck topic link lookup and retries it on the next event', async () => {
+    vi.useFakeTimers();
+    try {
+      const platform = makePlatform();
+      platform.resolveSessionContainer
+        .mockImplementationOnce(() => new Promise(() => {}))
+        .mockResolvedValueOnce(undefined);
+      const agent = makeAgent();
+      const store = new SessionStore();
+      const engine = new Engine({
+        platform,
+        agent: agent.runtime,
+        logger: SILENT_LOGGER,
+        sessionStore: store,
+        defaultSessionConfig: DEFAULT_CFG,
+      });
+      const topicEvent = (text: string) =>
+        makeEvent(text, {
+          platform: 'lark',
+          sessionKey: {
+            platform: 'lark',
+            channelId: 'omt-topic-timeout',
+            initiatorUserId: 'U1',
+          },
+          deliveryScope: 'session',
+          sessionContainer: {
+            kind: 'thread',
+            bindingMode: 'fixed',
+            parentChannelId: 'oc-control',
+            rootMessageId: 'om-root-timeout',
+          },
+        });
+
+      await engine.start();
+      const dispatchHandler = (
+        platform.start as ReturnType<typeof vi.fn>
+      ).mock.calls[0]![0] as EventHandler;
+      agent.queueEvents([
+        ev('session_started', { agentSessionId: 'sid-topic-timeout' }),
+        ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+      ]);
+      await dispatchHandler(topicEvent('first prompt'));
+      expect(platform.resolveSessionContainer).toHaveBeenCalledTimes(1);
+
+      agent.queueEvents([
+        ev('turn_finished', { reason: 'stop', turnSequence: 2 }),
+      ]);
+      await dispatchHandler(topicEvent('before timeout'));
+      expect(platform.resolveSessionContainer).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      agent.queueEvents([
+        ev('turn_finished', { reason: 'stop', turnSequence: 3 }),
+      ]);
+      await dispatchHandler(topicEvent('after timeout'));
+
+      expect(platform.resolveSessionContainer).toHaveBeenCalledTimes(2);
+      expect(agent.sendInput).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

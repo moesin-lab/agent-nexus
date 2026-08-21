@@ -80,6 +80,7 @@ class FakeSdkFactory implements LarkSdkFactory {
   public readonly wsClients: LarkSdkWsClientPort[] = [];
   public autoReady = true;
   public readonly replyMessage = vi.fn();
+  public readonly getMessage = vi.fn();
   public readonly client: LarkSdkClientPort = {
     request: vi.fn(async () => ({
       code: 0,
@@ -87,6 +88,7 @@ class FakeSdkFactory implements LarkSdkFactory {
     })),
     createMessage: vi.fn(),
     replyMessage: this.replyMessage,
+    getMessage: this.getMessage,
   } as LarkSdkClientPort;
 
   createClient(): LarkSdkClientPort {
@@ -236,6 +238,7 @@ describe('LarkPlatformAdapter inbound', () => {
       messageId: 'om_message_1',
       idempotencyKey: expectedIdempotencyKey,
       type: 'message',
+      deliveryScope: 'control',
       text: '你好，飞书',
       rawContentType: 'lark-node-sdk:im.message.receive_v1@1.70.0',
       receivedAt: new Date('2026-07-24T12:00:00.000Z'),
@@ -274,6 +277,15 @@ describe('LarkPlatformAdapter inbound', () => {
       },
       messageId: 'om_thread_message_1',
       threadParentChannelId: 'oc_topic_group_1',
+      deliveryScope: 'session',
+      sessionContainer: {
+        kind: 'thread',
+        bindingMode: 'fixed',
+        parentChannelId: 'oc_topic_group_1',
+        rootMessageId: 'om_thread_root_1',
+        parentUrl:
+          'https://applink.feishu.cn/client/chat/open?openChatId=oc_topic_group_1',
+      },
       responseTarget: {
         platform: 'lark',
         channelId: 'omt_thread_1',
@@ -286,7 +298,7 @@ describe('LarkPlatformAdapter inbound', () => {
     });
   });
 
-  it('忽略不带 thread_id 的群主时间线消息', async () => {
+  it('把不带 thread_id 的群主时间线标记为控制面', async () => {
     const factory = new FakeSdkFactory();
     const adapter = makeAdapter(factory);
     const handler = vi.fn();
@@ -300,7 +312,91 @@ describe('LarkPlatformAdapter inbound', () => {
       },
     });
 
-    expect(handler).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryScope: 'control',
+        sessionKey: expect.objectContaining({
+          channelId: 'oc_topic_group_1',
+        }),
+      }),
+    );
+  });
+
+  it('通过根消息查询补齐飞书话题精确链接', async () => {
+    const factory = new FakeSdkFactory();
+    factory.getMessage.mockResolvedValue({
+      code: 0,
+      data: {
+        items: [
+          {
+            message_id: 'om_thread_root_1',
+            message_app_link:
+              'https://applink.feishu.cn/client/message/link/open?token=topic-token',
+          },
+        ],
+      },
+    });
+    const adapter = makeAdapter(factory);
+    await adapter.start(vi.fn());
+
+    await expect(
+      adapter.resolveSessionContainer?.({
+        sessionKey: {
+          platformName: 'lark-main',
+          platform: 'lark',
+          channelId: 'omt_thread_1',
+          initiatorUserId: 'ou_user_open_id',
+        },
+        container: {
+          kind: 'thread',
+          bindingMode: 'fixed',
+          parentChannelId: 'oc_topic_group_1',
+          rootMessageId: 'om_thread_root_1',
+        },
+        traceId: 'trace-topic-link',
+      }),
+    ).resolves.toEqual({
+      url: 'https://applink.feishu.cn/client/message/link/open?token=topic-token',
+    });
+    expect(factory.getMessage).toHaveBeenCalledWith({
+      path: { message_id: 'om_thread_root_1' },
+    });
+  });
+
+  it('根消息查询没有匹配项时保持 URL 未解析', async () => {
+    const factory = new FakeSdkFactory();
+    factory.getMessage.mockResolvedValue({
+      code: 0,
+      data: {
+        items: [
+          {
+            message_id: 'om_other_root',
+            message_app_link:
+              'https://applink.feishu.cn/client/message/link/open?token=other',
+          },
+        ],
+      },
+    });
+    const adapter = makeAdapter(factory);
+    await adapter.start(vi.fn());
+
+    await expect(
+      adapter.resolveSessionContainer({
+        sessionKey: {
+          platformName: 'lark-main',
+          platform: 'lark',
+          channelId: 'omt_thread_1',
+          initiatorUserId: 'ou_user_open_id',
+        },
+        container: {
+          kind: 'thread',
+          bindingMode: 'fixed',
+          parentChannelId: 'oc_topic_group_1',
+          rootMessageId: 'om_thread_root_1',
+        },
+        traceId: 'trace-topic-link-miss',
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it('只移除 bot mention，保留话题文本中的其他用户 mention', async () => {
@@ -415,12 +511,12 @@ describe('LarkPlatformAdapter inbound', () => {
     });
     await engine.start();
 
-    const firstResult = factory.onMessage?.(BASE_EVENT);
+    const firstResult = factory.onMessage?.(THREAD_EVENT);
     const replayResult = factory.onMessage?.({
-      ...BASE_EVENT,
+      ...THREAD_EVENT,
       event_id: 'evt_replay',
       message: {
-        ...BASE_EVENT.message,
+        ...THREAD_EVENT.message,
         message_id: 'om_message_replay',
       },
     });
@@ -435,8 +531,152 @@ describe('LarkPlatformAdapter inbound', () => {
     await engine.stop();
   });
 
+  it('真实 Engine 在同一飞书话题跨 turn 复用 session，并隔离不同话题', async () => {
+    const factory = new FakeSdkFactory();
+    const adapter = makeAdapter(factory);
+    const sendInput = vi.fn(async () => {});
+    const startSession = vi.fn(
+      (key: SessionKey): AgentSession => ({
+        key,
+        backend: 'mock',
+        state: 'Ready',
+        startedAt: new Date(0),
+      }),
+    );
+    const runtime: AgentRuntime = {
+      name: () => 'mock-agent',
+      capabilities: () => ({
+        supportsThinking: false,
+        supportsStreaming: false,
+        supportsToolCallEvents: false,
+        supportsInterrupt: false,
+        supportsStdinInterrupt: false,
+      }),
+      startSession,
+      stopSession: async () => {},
+      isAlive: () => true,
+      sendInput,
+      handleCommand: async () => ({ status: 'handled' }),
+      onEvent: () => {},
+      interrupt: () => {},
+    };
+    const engine = new Engine({
+      platform: adapter,
+      platformName: 'lark-main',
+      platformType: 'lark',
+      agent: runtime,
+      defaultSessionConfig: {
+        workingDir: '/workspace/project',
+        timeoutMs: 30_000,
+      },
+      logger: makeLogger(),
+      sessionStore: new SessionStore(),
+    });
+    await engine.start();
+
+    factory.onMessage?.(THREAD_EVENT);
+    factory.onMessage?.({
+      ...THREAD_EVENT,
+      event_id: 'evt_thread_2',
+      message: {
+        ...THREAD_EVENT.message,
+        message_id: 'om_thread_message_2',
+        create_time: '1720000002123',
+        content: '{"text":"@_user_1 第二轮"}',
+      },
+    });
+    await vi.waitFor(() => expect(sendInput).toHaveBeenCalledTimes(2));
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(sendInput.mock.calls[0]![0]).toBe(sendInput.mock.calls[1]![0]);
+
+    factory.onMessage?.({
+      ...THREAD_EVENT,
+      event_id: 'evt_other_topic',
+      message: {
+        ...THREAD_EVENT.message,
+        message_id: 'om_other_topic_message',
+        thread_id: 'omt_thread_2',
+        root_id: 'om_other_topic_root',
+        parent_id: 'om_other_topic_root',
+        create_time: '1720000003123',
+        content: '{"text":"@_user_1 另一个话题"}',
+      },
+    });
+    await vi.waitFor(() => expect(sendInput).toHaveBeenCalledTimes(3));
+    expect(startSession).toHaveBeenCalledTimes(2);
+    expect(sendInput.mock.calls[2]![0]).not.toBe(sendInput.mock.calls[0]![0]);
+
+    await engine.stop();
+  });
+
   it.each([
-    ['group', { message: { ...BASE_EVENT.message, chat_type: 'group' } }],
+    ['P2P', BASE_EVENT],
+    [
+      '群主时间线',
+      {
+        ...THREAD_EVENT,
+        event_id: 'evt_group_control',
+        message: {
+          ...THREAD_EVENT.message,
+          message_id: 'om_group_control',
+          thread_id: undefined,
+          root_id: undefined,
+          parent_id: undefined,
+        },
+      },
+    ],
+  ])('真实 Engine 对话题外 %s 普通文本保持静默', async (_name, event) => {
+    const factory = new FakeSdkFactory();
+    const adapter = makeAdapter(factory);
+    const startSession = vi.fn((key: SessionKey): AgentSession => ({
+      key,
+      backend: 'mock',
+      state: 'Ready',
+      startedAt: new Date(0),
+    }));
+    const sendInput = vi.fn(async () => {});
+    const engine = new Engine({
+      platform: adapter,
+      platformName: 'lark-main',
+      platformType: 'lark',
+      agent: {
+        name: () => 'mock-agent',
+        capabilities: () => ({
+          supportsThinking: false,
+          supportsStreaming: false,
+          supportsToolCallEvents: false,
+          supportsInterrupt: false,
+          supportsStdinInterrupt: false,
+        }),
+        startSession,
+        stopSession: async () => {},
+        isAlive: () => true,
+        sendInput,
+        handleCommand: async () => ({ status: 'handled' }),
+        onEvent: () => {},
+        interrupt: () => {},
+      },
+      defaultSessionConfig: {
+        workingDir: '/workspace/project',
+        timeoutMs: 30_000,
+      },
+      logger: makeLogger(),
+      sessionStore: new SessionStore(),
+    });
+    await engine.start();
+
+    factory.onMessage?.(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(startSession).not.toHaveBeenCalled();
+    expect(sendInput).not.toHaveBeenCalled();
+    expect(factory.client.createMessage).not.toHaveBeenCalled();
+    expect(factory.replyMessage).not.toHaveBeenCalled();
+
+    await engine.stop();
+  });
+
+  it.each([
     ['image', { message: { ...BASE_EVENT.message, message_type: 'image' } }],
     ['invalid json', { message: { ...BASE_EVENT.message, content: '{' } }],
     ['missing event id', { event_id: undefined }],
@@ -535,7 +775,7 @@ describe('LarkPlatformAdapter inbound', () => {
     });
     await engine.start();
 
-    factory.onMessage?.(BASE_EVENT);
+    factory.onMessage?.(THREAD_EVENT);
     await vi.waitFor(() => {
       expect(sendInput).toHaveBeenCalledTimes(1);
     });
@@ -544,14 +784,14 @@ describe('LarkPlatformAdapter inbound', () => {
     expect(segments).toEqual([
       expect.objectContaining({
         kind: 'user-message',
-        summary: '你好，飞书',
+        summary: '话题里的任务',
       }),
     ]);
     expect(sendInput).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         type: 'user_message',
-        text: '你好，飞书',
+        text: '话题里的任务',
       }),
     );
     const persisted = JSON.stringify(segments);

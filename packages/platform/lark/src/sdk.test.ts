@@ -10,6 +10,15 @@ const sdkMocks = vi.hoisted(() => ({
   request: vi.fn(async () => ({ code: 0 })),
   createMessage: vi.fn(async () => ({ code: 0 })),
   replyMessage: vi.fn(async () => ({ code: 0 })),
+  getMessage: vi.fn(async () => ({ code: 0 })),
+  httpRequest: vi.fn(async () => ({ data: {} })),
+  httpGet: vi.fn(async () => ({ data: {} })),
+  httpDelete: vi.fn(async () => ({ data: {} })),
+  httpHead: vi.fn(async () => ({ data: {} })),
+  httpOptions: vi.fn(async () => ({ data: {} })),
+  httpPost: vi.fn(async () => ({ data: {} })),
+  httpPut: vi.fn(async () => ({ data: {} })),
+  httpPatch: vi.fn(async () => ({ data: {} })),
   wsStart: vi.fn(async () => {}),
   wsClose: vi.fn(),
 }));
@@ -21,6 +30,7 @@ vi.mock('@larksuiteoapi/node-sdk', () => {
         message: {
           create: sdkMocks.createMessage,
           reply: sdkMocks.replyMessage,
+          get: sdkMocks.getMessage,
         },
       },
     };
@@ -69,6 +79,16 @@ vi.mock('@larksuiteoapi/node-sdk', () => {
     WSClient,
     Domain: { Feishu: 0, Lark: 1 },
     LoggerLevel: { error: 1 },
+    defaultHttpInstance: {
+      request: sdkMocks.httpRequest,
+      get: sdkMocks.httpGet,
+      delete: sdkMocks.httpDelete,
+      head: sdkMocks.httpHead,
+      options: sdkMocks.httpOptions,
+      post: sdkMocks.httpPost,
+      put: sdkMocks.httpPut,
+      patch: sdkMocks.httpPatch,
+    },
   };
 });
 
@@ -118,6 +138,32 @@ describe('ProductionLarkSdkFactory', () => {
       handshakeTimeoutMs: 15_000,
       wsConfig: { pingTimeout: 10 },
     });
+  });
+
+  it('Client HTTP adapter 为所有飞书 API 请求设置有限超时', async () => {
+    const factory = new ProductionLarkSdkFactory(makeLogger());
+    factory.createClient({
+      appId: 'cli_0123456789abcdef',
+      appSecret: 'secret',
+    });
+    const options = sdkMocks.clientOptions.at(-1) as {
+      httpInstance: {
+        request(input: { method: string; timeout?: number }): Promise<unknown>;
+        get(url: string, input?: { timeout?: number }): Promise<unknown>;
+      };
+    };
+
+    await options.httpInstance.request({ method: 'GET' });
+    await options.httpInstance.get('/open-apis/im/v1/messages/om-root');
+
+    expect(sdkMocks.httpRequest).toHaveBeenLastCalledWith({
+      method: 'GET',
+      timeout: 10_000,
+    });
+    expect(sdkMocks.httpGet).toHaveBeenLastCalledWith(
+      '/open-apis/im/v1/messages/om-root',
+      { timeout: 10_000 },
+    );
   });
 
   it('EventDispatcher 只注册 im.message.receive_v1', () => {
@@ -198,6 +244,8 @@ describe('ProductionLarkSdkFactory', () => {
         replyMessage(input: typeof replyInput): Promise<unknown>;
       }
     ).replyMessage(replyInput);
+    const getInput = { path: { message_id: 'om_thread_root_1' } };
+    await client.getMessage(getInput);
 
     expect(sdkMocks.request).toHaveBeenCalledWith({
       method: 'GET',
@@ -205,5 +253,6 @@ describe('ProductionLarkSdkFactory', () => {
     });
     expect(sdkMocks.createMessage).toHaveBeenCalledWith(messageInput);
     expect(sdkMocks.replyMessage).toHaveBeenCalledWith(replyInput);
+    expect(sdkMocks.getMessage).toHaveBeenCalledWith(getInput);
   });
 });

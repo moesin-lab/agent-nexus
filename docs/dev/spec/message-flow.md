@@ -44,6 +44,9 @@ contracts:
         │  (2) NormalizedEvent + configured platformName
         ▼
 @agent-nexus/daemon · daemon.Engine.dispatch(RouteContext)
+  ├─ control-surface gate  deliveryScope=control 只保留显式精确控制文本
+  │     普通文本 / 未知命令 → 静默终止，不进入 SessionStore / 幂等 / 队列
+  │     允许的控制文本 ↓
   ├─ daemon.router        platform instance + binding 选 agent
   │                                              (权威源：config-routing.md §路由匹配语义)
   │     未命中 / 多重命中 → 不调用 agent → 流程终止
@@ -79,7 +82,10 @@ contracts:
 
 **入站顺序硬约束**（权威源：config-routing.md §路由匹配语义 + security/auth.md §权限检查位置 + infra/idempotency.md §流程）：
 
-`routing → auth → idempotency → 限流/预算 → session 队列`
+`control-surface gate → routing → auth → idempotency → 限流/预算 → session 队列`
+
+control-surface gate 只对 `deliveryScope="control"` 的 message 生效，权威命令集见
+[`command-registry.md`](command-registry.md#无-native-slash-平台的文本边界)。它只做无副作用分类；获准控制仍必须继续经过 route/auth。
 
 `RouteContext.platformName` 由 CLI / daemon 在注册每个 configured platform instance 时注入；
 `PlatformAdapter` 仍只产出 `NormalizedEvent`。
@@ -179,10 +185,11 @@ Claude Code runtime 执行前 permission control
 2. **idempotency 先于 限流/预算**——重放事件不应消耗限流配额
 3. **限流/预算 先于 session FIFO 入队**——避免被拒绝的事件排队等待
 4. **同 sessionKey 串行**——见 [`architecture/session-model.md`](../architecture/session-model.md)
+5. **control scope 普通文本无副作用终止**——必须早于 idempotency、SessionStore 与队列
 
 出站：
 
-5. **redact 在所有出站事件路径上无例外**——包括日志 / 数据库 / IM 输出（权威源：[`security/redaction.md`](security/redaction.md) §兜底原则）
+6. **redact 在所有出站事件路径上无例外**——包括日志 / 数据库 / IM 输出（权威源：[`security/redaction.md`](security/redaction.md) §兜底原则）
 
 ---
 

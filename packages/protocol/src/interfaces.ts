@@ -9,7 +9,7 @@ import type {
   AgentCommandEnvelope,
   AgentCommandResult,
 } from './command.js';
-import type { NormalizedEvent } from './events.js';
+import type { NormalizedEvent, SessionContainerRef } from './events.js';
 import type {
   CapabilitySet,
   MessageComponent,
@@ -75,6 +75,16 @@ export interface UpdateThreadInput {
   traceId: string;
 }
 
+export interface ResolveSessionContainerInput {
+  sessionKey: SessionKey;
+  container: SessionContainerRef;
+  traceId: string;
+}
+
+export interface ResolveSessionContainerResult {
+  url: string;
+}
+
 export type EventHandler = (
   event: NormalizedEvent,
 ) => void | EventHandlerResult | Promise<void | EventHandlerResult>;
@@ -94,6 +104,9 @@ export interface PlatformAdapter {
   react(ref: MessageRef, emoji: string): Promise<void>;
   createThread?(input: CreateThreadInput): Promise<CreateThreadResult>;
   updateThread?(input: UpdateThreadInput): Promise<void>;
+  resolveSessionContainer?(
+    input: ResolveSessionContainerInput,
+  ): Promise<ResolveSessionContainerResult | undefined>;
   settingsSnapshot?(
     input: PlatformSettingsSnapshotInput,
   ): PlatformSettingsSnapshot | Promise<PlatformSettingsSnapshot>;

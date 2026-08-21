@@ -40,6 +40,15 @@ export interface ReactionPayload {
   targetMessageId: string;
 }
 
+export interface SessionContainerRef {
+  kind: 'thread';
+  bindingMode: 'fixed' | 'rebindable';
+  parentChannelId: string;
+  rootMessageId?: string;
+  url?: string;
+  parentUrl?: string;
+}
+
 interface NormalizedEventBase {
   eventId: string;
   platform: string;
@@ -59,6 +68,8 @@ interface NormalizedEventBase {
   guildId?: string;
   initiatorRoleIds?: string[];
   threadParentChannelId?: string;
+  deliveryScope?: 'session' | 'control';
+  sessionContainer?: SessionContainerRef;
 
   initiator: Initiator;
 }

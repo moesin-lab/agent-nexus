@@ -310,10 +310,15 @@ Discord 当前最小 binding 条件只支持 `channelIds`。用户、角色、gu
 `PlatformAuthConfig` / `daemon.auth`，不属于 routing matcher。若配置了未知 binding 条件字段，loader 必须
 fail-closed，错误消息包含字段路径。
 
-Lark 支持 P2P chat 与带 `thread_id` 的话题消息，binding 必须显式列出 `match.lark.chatIds`。P2P 直接使用
-`chat_id`；话题使用父群 `chat_id`，不得把逐个 `thread_id` 写进 binding。`chatIds` 不是授权替代品；用户
+Lark 支持 P2P/群主时间线控制消息与带 `thread_id` 的话题 Session 消息，binding 必须显式列出
+`match.lark.chatIds`。P2P 与群主时间线直接使用 `chat_id`；话题使用父群 `chat_id`，不得把逐个 `thread_id`
+写进 binding。`chatIds` 不是授权替代品；用户
 `open_id` 仍由 `PlatformAuthConfig` 校验。同一 bot app 只建一个 platform instance；官方长连接对同 app 多 client
 采用 cluster 分发而非广播，需要路由到多个 agent 时增加 bindings，不得用重复 `appId` / `botOpenId` 启动多个 client。
+
+`sessionContainer.bindingMode="fixed"` 的话题在首次接受 dispatch 时固定 `agentName + agentOwner`。热更新 binding 后若同一
+话题命中不同 `agentName`（包括同 owner 的另一实例）或不同 owner，daemon 必须在停止当前 runtime handle、归档绑定或启动新
+backend 之前 fail closed；热更新只影响尚未固定的话题。
 
 ### 空条件禁止
 

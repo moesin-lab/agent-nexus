@@ -105,6 +105,17 @@ Reviewer 在 PR 里看到下列模式，应直接要求修正或拒绝：
 - 跨 owner link 在 GitHub Web 视图下通过 symlink 路径解析可能 broken（已知缺陷）；agent 通过 SKILL.md 触发链路 + IDE follow symlink 不受影响
 - 不允许"协作性 skill 例外"——skill 内容仍受所有 owner 矩阵规则（含禁入类型、单选判定、跨 owner 不复述）约束
 
+### 路由入口 skill
+
+ADR-0007 允许为已由既有 owner 完整定义的高频动作增加路由入口。此类 `SKILL.md` 属导航 metadata，只允许：
+
+- 描述应触发和不应触发的请求语义
+- 链接既有 owner
+- 提及相邻 skill 名
+- 按链接 owner 已显式定义的顺序提供导航
+
+它不得引入 owner 中不存在的执行顺序、产物格式、门禁、失败处理或领域规则，因此不要求同名 owner 与 docs symlink。一旦入口需要承载新的事实，就不再是路由入口，必须按本节前述约定建立 owner。
+
 ## 既有违反处理
 
 本文件不维护具体迁移清单；否则标准文档会反过来复述被治理的事实。初始问题诊断见 [ADR-0008](../adr/0008-doc-layering-ssot.md#context)，具体清理按后续 PR 逐项处理。

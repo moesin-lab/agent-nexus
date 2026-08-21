@@ -117,6 +117,7 @@ AI coding agent 的 skill 文件（如 Claude Code 的 `~/.claude/skills/<name>/
 ## Amendments
 
 - **2026-04-26：skill 内 docs 通过 symlink 聚合呈现** —— 第 5 条原文要求"规则权威源仍在 `docs/dev/process/<name>.md`，agent-agnostic"。SSOT 清理后实践发现：协作性 skill 的内容按 owner 矩阵被切到多个 owner 后（process 流程编排 / standards 反模式 / scratch 模板），skill 视角下不再是一个完整 unit——agent 触发后要跨 4 个目录读，人类浏览也分散。本次修订引入"两个视图共存"机制：物理位置仍按 owner 矩阵治理（`docs/dev/<owner>/<skill>/` 子目录），但在 `skills/<name>/` 下用 symlink 把各 owner 子目录聚合呈现（`skills/<name>/process` → `docs/dev/process/<name>/`，`skills/<name>/standards` → `docs/dev/standards/<name>/`）。SKILL.md 内的 link 改用 skill 内相对路径（`./process/README.md` / `./standards/scratch-template.md`），让 agent 触发链路 + 人类浏览都看到完整 unit；docs/dev 视图保持 owner 治理纯洁性，path 判据 + reviewer 习惯不破。具体 symlink 约定与 frontmatter 处理见 `docs/dev/standards/doc-ownership.md` §"协作性 skill docs 子目录约定"。
+- **2026-07-29：允许无新增规则的路由入口 skill** —— 部分既有流程已由一个或多个 `docs/dev/` owner 完整定义，但其高频动作缺少可触发 metadata，导致相关 owner 静默不进入上下文。允许为这类动作增加路由入口：`SKILL.md` 可声明触发 / 排除 metadata、链接既有 owner、列出相邻 skill，并按 owner 已显式定义的顺序提供导航；不得引入 owner 中不存在的流程、标准、模板、门禁或失败处理。此类入口不要求创建同名 owner 或 docs symlink；一旦需要定义新的执行事实，必须升级为完整协作性 skill，并按原约定建立 owner 与聚合 symlink。
 
 ## Out of scope
 

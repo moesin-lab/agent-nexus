@@ -152,6 +152,25 @@ describe('createConfigReloader', () => {
     expect(update.newSessionTextPrefix).toBe(false);
   });
 
+  it('shellCommands 修改只在重启后生效', async () => {
+    const target = makeTarget('discord-main');
+    const next = baseConfig();
+    next.daemon.shellCommands.enabled = true;
+    const reload = createConfigReloader({
+      initialConfig: baseConfig(),
+      load: async () => next,
+      targets: [target],
+      runningAgentNames: ['codex-dev'],
+      logger: SILENT_LOGGER,
+    });
+
+    const result = await reload();
+
+    expect(result.status).toBe('reloaded');
+    expect(result.message).toContain('restart required');
+    expect(result.message).toContain('daemon');
+  });
+
   it('混合平台 reload 把各自 auth 应用到正确实例，并共享完整 routing table', async () => {
     const larkPlatform = {
       name: 'lark-main',

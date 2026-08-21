@@ -58,6 +58,15 @@ async function main(): Promise<void> {
   }
 
   const logger = createLogger({ level: config.log.level });
+  if (config.daemon.shellCommands.enabled) {
+    logger.warn(
+      {
+        securityMode: 'remote-equivalent-local-execution',
+        bypassesAgentSandbox: true,
+      },
+      'shell_commands_enabled',
+    );
+  }
 
   let agents;
   try {
@@ -206,6 +215,9 @@ async function main(): Promise<void> {
       },
       textPrefixes: {
         newSession: config.daemon.commandRegistry.textPrefixes.newSession,
+      },
+      shellCommands: {
+        enabled: config.daemon.shellCommands.enabled,
       },
       trajectory: {
         enabled: trajectoryWriteEnabled,

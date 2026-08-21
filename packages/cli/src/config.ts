@@ -327,6 +327,9 @@ const DEFAULT_CONFIG_TEMPLATE = `\
         "newSession": true
       }
     },
+    "shellCommands": {
+      "enabled": false
+    },
     "trajectory": {
       "enabled": true,
       "externalImport": {

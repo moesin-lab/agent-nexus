@@ -28,6 +28,26 @@ describe('daemon config', () => {
 });
 
 describe('daemon runtime config', () => {
+  it('缺省关闭感叹号 shell 指令', () => {
+    expect(parseDaemonRuntimeConfig(undefined).shellCommands).toEqual({
+      enabled: false,
+    });
+  });
+
+  it('仅接受显式布尔值开启感叹号 shell 指令', () => {
+    expect(
+      parseDaemonRuntimeConfig({
+        shellCommands: { enabled: true },
+      }).shellCommands,
+    ).toEqual({ enabled: true });
+
+    expect(() =>
+      parseDaemonRuntimeConfig({
+        shellCommands: { enabled: 'true' },
+      }),
+    ).toThrow(/daemon\.shellCommands\.enabled/);
+  });
+
   it('缺省 commandRegistry 配置保持兼容默认值', () => {
     expect(parseDaemonRuntimeConfig(undefined)).toEqual(
       DEFAULT_DAEMON_RUNTIME_CONFIG,

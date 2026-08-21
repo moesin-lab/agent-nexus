@@ -349,6 +349,7 @@ describe('config loader', () => {
     expect(cfg.daemon.commandRegistry.aliases.singleAgent.enabled).toBe(true);
     expect(cfg.daemon.commandRegistry.aliases.legacy.replyMode).toBe(true);
     expect(cfg.daemon.commandRegistry.textPrefixes.newSession).toBe(true);
+    expect(cfg.daemon.shellCommands.enabled).toBe(false);
     expect(cfg.log.level).toBe('debug');
   });
 
@@ -388,6 +389,7 @@ describe('config loader', () => {
     const persisted = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
 
     expect(cfg.daemon.commandRegistry.registration.applyTimeoutMs).toBe(30000);
+    expect(cfg.daemon.shellCommands.enabled).toBe(false);
     expect(cfg.daemon.trajectory.enabled).toBe(true);
     expect(cfg.daemon.trajectory.externalImport.enabled).toBe(false);
     expect(cfg.daemon.trajectory.providerCapture.enabled).toBe(false);
@@ -408,6 +410,7 @@ describe('config loader', () => {
           },
           textPrefixes: { newSession: true },
         },
+        shellCommands: { enabled: false },
         trajectory: {
           enabled: true,
           externalImport: {

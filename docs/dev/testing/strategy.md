@@ -134,9 +134,9 @@ CLI 发布验证针对 npm tarball，而不是仓库源码目录。CI 必须先�
 - 从已安装包解析 `ws` runtime dependency，防止 bundled CommonJS 动态 require 在 ESM 入口崩溃；
 - 用独立 `AGENT_NEXUS_HOME` 首次启动已安装的 `agent-nexus`，验证配置脚手架和权限。
 
-Codex app-server 的 275 个上游 schema 是仓库测试 fixture，不进入公开 tarball；build 前由 snapshot hash 与 snapshot-derived runtime allowlist tests 固定，bundle 只携带运行时 contract。具备已认证的精确 Codex binary 时，同一验证器设置 `AGENT_NEXUS_RUN_PACKED_CODEX_E2E=1`，通过安装后 bin 的受限 release-verification 入口启动 bundled app-server、完成一轮并等待清理。该 real gate 会产生真实模型调用，不能在缺少认证的通用 CI 中伪装成通过；候选发布前必须在受支持 runner 保存一次成功证据。
+Codex app-server 的 275 个上游 schema 是仓库测试 fixture，不进入公开 tarball；build 前由 snapshot hash 与 snapshot-derived runtime allowlist tests 固定，bundle 只携带运行时 contract。具备已认证的精确 Codex binary 时，同一验证器设置 `AGENT_NEXUS_RUN_PACKED_CODEX_E2E=1`，通过安装后 bin 的受限 release-verification 入口启动 bundled app-server、完成一轮并等待清理。该 real gate 会产生真实模型调用，不能在缺少认证的通用 CI 中伪装成通过；候选发布前必须在受支持 runner 保存源码 real suite 与 packed real gate 的成功证据，证据记录完整 commit SHA、runner OS/arch、Node 版本、Codex 版本和命令结果。
 
-这组证据在 Ubuntu 24.04 x64、macOS 15 arm64 与 macOS 15 x64 上分别使用 Node.js 22、24 执行。具体命令由 `scripts/verify-packed-cli.mjs` 统一承载，发布流程必须复用同一验证器；未设置 real gate 时的 manifest/scaffold pass 不得替代 packed Codex turn 证据。
+这组证据在 Ubuntu 24.04 x64、macOS 15 arm64 与 macOS 15 x64 上分别使用 Node.js 22、24 执行。具体 packed 命令由 `scripts/verify-packed-cli.mjs` 统一承载，发布流程必须复用同一验证器；未设置 real gate 时的 manifest/scaffold pass 不得替代 packed Codex turn 证据。发布 workflow 必须要求显式输入 exact commit 与本仓库证据 URL，并在 publish 前验证证据 commit 等于当前 tag commit；受保护 environment reviewer 负责核对 URL 中的实际内容。
 
 ## 测试工具链
 

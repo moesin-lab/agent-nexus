@@ -11,6 +11,53 @@ const MODULE_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_ROOT = resolve(dirname(MODULE_PATH), '..');
 const SEMVER_PATTERN =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const FULL_COMMIT_PATTERN = /^[0-9a-f]{40}$/;
+
+export function validateCodexRealGateEvidence({
+  releaseCommit,
+  evidenceCommit,
+  evidence,
+}) {
+  assert.match(
+    releaseCommit ?? '',
+    FULL_COMMIT_PATTERN,
+    'release commit must be a full Git SHA',
+  );
+  assert.match(
+    evidenceCommit ?? '',
+    FULL_COMMIT_PATTERN,
+    'Codex real-gate commit must be a full Git SHA',
+  );
+  assert.equal(
+    evidenceCommit,
+    releaseCommit,
+    'Codex real-gate commit must match the release commit',
+  );
+  assert.ok(evidence?.trim(), 'Codex real-gate evidence URL is required');
+
+  let evidenceUrl;
+  try {
+    evidenceUrl = new URL(evidence);
+  } catch {
+    assert.fail('Codex real-gate evidence must be a valid URL');
+  }
+  assert.equal(
+    evidenceUrl.protocol,
+    'https:',
+    'Codex real-gate evidence must use HTTPS',
+  );
+  assert.equal(
+    evidenceUrl.hostname,
+    'github.com',
+    'Codex real-gate evidence must be hosted on GitHub',
+  );
+  assert.ok(
+    evidenceUrl.pathname.startsWith('/moesin-lab/agent-nexus/'),
+    'Codex real-gate evidence must belong to moesin-lab/agent-nexus',
+  );
+
+  return { commit: evidenceCommit, evidence };
+}
 
 async function assertTagCommitInMain(root, tagName) {
   const ancestry = spawnSync(
@@ -73,6 +120,11 @@ export async function prepareNpmRelease({
     manifest.version,
     `confirmation must equal ${manifest.version}`,
   );
+  validateCodexRealGateEvidence({
+    releaseCommit: env.GITHUB_SHA,
+    evidenceCommit: env.RELEASE_CODEX_REAL_GATE_COMMIT,
+    evidence: env.RELEASE_CODEX_REAL_GATE_EVIDENCE,
+  });
   assert.equal(manifest.name, '@moesin-lab/agent-nexus');
   assert.equal(manifest.private, false);
   await assertTagInMain(root, expectedTag);

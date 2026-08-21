@@ -81,6 +81,14 @@ describe('release artifact validation', () => {
     ]);
 
     expect(workflow).toContain('workflow_dispatch:');
+    expect(workflow).toContain('codex-real-gate-commit:');
+    expect(workflow).toContain('codex-real-gate-evidence:');
+    expect(workflow).toContain(
+      'RELEASE_CODEX_REAL_GATE_COMMIT: ${{ inputs.codex-real-gate-commit }}',
+    );
+    expect(workflow).toContain(
+      'RELEASE_CODEX_REAL_GATE_EVIDENCE: ${{ inputs.codex-real-gate-evidence }}',
+    );
     expect(workflow).toContain('environment: npm-production');
     expect(workflow).toContain('needs: build');
     expect(workflow).toContain('NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}');
@@ -143,7 +151,11 @@ describe('release artifact validation', () => {
         env: {
           GITHUB_REF_TYPE: 'tag',
           GITHUB_REF_NAME: 'v0.1.0',
+          GITHUB_SHA: 'a'.repeat(40),
           RELEASE_CONFIRM_VERSION: '0.1.0',
+          RELEASE_CODEX_REAL_GATE_COMMIT: 'a'.repeat(40),
+          RELEASE_CODEX_REAL_GATE_EVIDENCE:
+            'https://github.com/moesin-lab/agent-nexus/issues/186#issuecomment-1',
           GITHUB_OUTPUT: output,
         },
         assertTagInMain: async () => {},
@@ -166,5 +178,44 @@ describe('release artifact validation', () => {
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
+  });
+
+  it('rejects missing, foreign or commit-mismatched Codex real-gate evidence', async () => {
+    // @ts-expect-error JavaScript release helper has no declaration file.
+    const { validateCodexRealGateEvidence } = await import(
+      '../../../scripts/prepare-npm-release.mjs'
+    );
+    const releaseCommit = 'a'.repeat(40);
+    const evidence =
+      'https://github.com/moesin-lab/agent-nexus/actions/runs/123456789';
+
+    expect(
+      validateCodexRealGateEvidence({
+        releaseCommit,
+        evidenceCommit: releaseCommit,
+        evidence,
+      }),
+    ).toEqual({ commit: releaseCommit, evidence });
+    expect(() =>
+      validateCodexRealGateEvidence({
+        releaseCommit,
+        evidenceCommit: 'b'.repeat(40),
+        evidence,
+      })
+    ).toThrow(/commit/i);
+    expect(() =>
+      validateCodexRealGateEvidence({
+        releaseCommit,
+        evidenceCommit: releaseCommit,
+        evidence: '',
+      })
+    ).toThrow(/evidence/i);
+    expect(() =>
+      validateCodexRealGateEvidence({
+        releaseCommit,
+        evidenceCommit: releaseCommit,
+        evidence: 'https://github.com/another-owner/another-repo/actions/runs/1',
+      })
+    ).toThrow(/agent-nexus/i);
   });
 });

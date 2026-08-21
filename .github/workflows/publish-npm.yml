@@ -7,6 +7,14 @@ on:
         description: Type the package version selected by the release tag
         required: true
         type: string
+      codex-real-gate-commit:
+        description: Full tag commit SHA verified by the authenticated Codex release gate
+        required: true
+        type: string
+      codex-real-gate-evidence:
+        description: Saved agent-nexus GitHub URL for successful real Codex and packed CLI evidence
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -56,6 +64,8 @@ jobs:
         id: artifact
         env:
           RELEASE_CONFIRM_VERSION: ${{ inputs.confirm-version }}
+          RELEASE_CODEX_REAL_GATE_COMMIT: ${{ inputs.codex-real-gate-commit }}
+          RELEASE_CODEX_REAL_GATE_EVIDENCE: ${{ inputs.codex-real-gate-evidence }}
         run: node scripts/prepare-npm-release.mjs
 
       - name: Verify exact packed artifact

@@ -221,6 +221,9 @@ const COMMAND_UNAVAILABLE_TEXT = 'This command is not available in this channel.
 const COMMAND_FAILED_TEXT = 'Command failed.';
 const TEXT_COMMAND_UNAVAILABLE =
   'This control command is not available as text on this platform.';
+const NEW_TOPIC_GUIDANCE_TEXT = '[start a new topic to create a new session]';
+const FIXED_SESSION_CONTAINER_TEXT = NEW_TOPIC_GUIDANCE_TEXT;
+const SESSION_CONTAINER_RESOLUTION_TIMEOUT_MS = 15_000;
 const SESSION_RESUME_COMPONENT_ID = 'nexus:sessions:resume';
 const EXTERNAL_SESSIONS_COMPONENT_PREFIX = 'nexus:external-sessions:';
 const EXTERNAL_SESSIONS_RESUME_COMPONENT_ID = `${EXTERNAL_SESSIONS_COMPONENT_PREFIX}resume`;
@@ -316,6 +319,20 @@ type PreparedWorkingDirUpdate =
       apply(): string;
     }
   | { ok: false; message: string };
+
+// Adapter 应先约束 transport timeout；这里再兜底释放 daemon 的 per-session 去重占位。
+function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error('session_container_resolution_timeout'));
+    }, timeoutMs);
+    (timer as { unref?: () => void }).unref?.();
+  });
+  return Promise.race([operation, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
 
 interface PendingConfigEdit {
   path: string;
@@ -484,6 +501,7 @@ export class Engine {
   private readonly sessionStopBarriers = new Map<string, Promise<void>>();
   private readonly agentOverridesByChannel = new Map<string, string>();
   private readonly pendingConfigEdits = new Map<string, PendingConfigEdit>();
+  private readonly sessionContainerResolutions = new Map<string, Promise<void>>();
   /**
    * Daemon 级 per-SessionKey barrier：同 key 的 message / queued command
    * 按到达序执行，不同 key 之间互不阻塞。
@@ -606,10 +624,165 @@ export class Engine {
     if (event.type === 'interaction') {
       return this.dispatchInteraction(event);
     }
+    if (event.deliveryScope === 'control') {
+      if (!this.isControlPlaneText(event.text)) return Promise.resolve();
+      const route = this.route(event);
+      if (!route) return Promise.resolve();
+      if (!this.checkAuth(event)) return Promise.resolve();
+      return this.dispatchControlPlaneMessage(event, route);
+    }
     const route = this.route(event);
     if (!route) return Promise.resolve();
     if (!this.checkAuth(event)) return Promise.resolve();
+    this.rememberSessionContainer(event);
     return this.dispatchToAgent(event, route);
+  }
+
+  private isControlPlaneText(text: string | undefined): boolean {
+    const command = text?.trim();
+    if (!command) return false;
+    return (
+      command === '/nexus-sessions' ||
+      command === '/new' ||
+      /^\/new\s/.test(command) ||
+      this.isImmediateTextControl(command)
+    );
+  }
+
+  private async dispatchControlPlaneMessage(
+    event: NormalizedEvent,
+    route: { bindingName: string; agentName: string },
+  ): Promise<void> {
+    const text = event.text?.trim();
+    const routedSessionKey = withPlatformName(
+      event.sessionKey,
+      this.platformName,
+    );
+    const routedEvent: NormalizedEvent & { sessionKey: SessionKey } = {
+      ...event,
+      sessionKey: routedSessionKey,
+    };
+    const agentSlot = this.agents.get(route.agentName);
+    if (!agentSlot) return;
+    if (text === '/new' || (text !== undefined && /^\/new\s/.test(text))) {
+      await this.sendCommandAck(
+        routedEvent,
+        routedSessionKey,
+        NEW_TOPIC_GUIDANCE_TEXT,
+      );
+      return;
+    }
+    if (text === '/nexus-sessions') {
+      const sessions = this.sessionStore.listForUser({
+        platformName: this.platformName,
+        platform: event.sessionKey.platform,
+        initiatorUserId: event.initiator.userId,
+        agentOwner: agentSlot.agentOwner ?? agentSlot.agent.name(),
+        limit: 25,
+      });
+      await this.sendCommandAck(
+        routedEvent,
+        routedSessionKey,
+        this.renderControlPlaneSessionList(sessions),
+      );
+      return;
+    }
+    await this.tryDispatchImmediateTextControl(routedEvent, agentSlot);
+  }
+
+  private renderControlPlaneSessionList(
+    sessions: ReturnType<SessionStore['listForUser']>,
+  ): string {
+    if (sessions.length === 0) return '[no resumable sessions]';
+    return [
+      'Resumable sessions:',
+      ...sessions.map((session, index) => {
+        const title = session.title ?? session.key.channelId;
+        const container = session.sessionContainer;
+        const target =
+          container?.url ??
+          container?.parentUrl ??
+          session.key.channelId;
+        const ids = container?.rootMessageId
+          ? `${session.key.channelId} · ${container.rootMessageId}`
+          : session.key.channelId;
+        return `${index + 1}. ${title}\n${target}\n${ids}`;
+      }),
+    ].join('\n');
+  }
+
+  private rememberSessionContainer(event: NormalizedEvent): void {
+    const container = event.sessionContainer;
+    if (!container) return;
+    const sessionKey = withPlatformName(event.sessionKey, this.platformName);
+    this.sessionStore.registerThread(sessionKey, {
+      parentChannelId: container.parentChannelId,
+      ownerUserId: event.initiator.userId,
+      bindingMode: container.bindingMode,
+      ...(container.rootMessageId
+        ? { rootMessageId: container.rootMessageId }
+        : {}),
+      ...(container.url ? { url: container.url } : {}),
+      ...(container.parentUrl ? { parentUrl: container.parentUrl } : {}),
+    });
+    const registered = this.sessionStore.findThreadByChannelId(sessionKey);
+    if (
+      registered?.url ||
+      !this.platform.resolveSessionContainer ||
+      this.sessionContainerResolutions.has(serializeSessionKey(sessionKey))
+    ) {
+      return;
+    }
+    const key = serializeSessionKey(sessionKey);
+    let resolution!: Promise<void>;
+    resolution = Promise.resolve()
+      .then(() => {
+        const operation = this.platform.resolveSessionContainer?.({
+          sessionKey,
+          container,
+          traceId: event.traceId,
+        });
+        return operation
+          ? withTimeout(operation, SESSION_CONTAINER_RESOLUTION_TIMEOUT_MS)
+          : undefined;
+      })
+      .then((result) => {
+        if (!result?.url || this.stopping) return;
+        const current = this.sessionStore.findThreadByChannelId(sessionKey);
+        if (
+          current?.rootMessageId &&
+          container.rootMessageId &&
+          current.rootMessageId !== container.rootMessageId
+        ) {
+          return;
+        }
+        this.sessionStore.registerThread(sessionKey, {
+          parentChannelId: container.parentChannelId,
+          ownerUserId: event.initiator.userId,
+          bindingMode: container.bindingMode,
+          ...(container.rootMessageId
+            ? { rootMessageId: container.rootMessageId }
+            : {}),
+          url: result.url,
+          ...(container.parentUrl ? { parentUrl: container.parentUrl } : {}),
+        });
+      })
+      .catch((err: unknown) => {
+        this.logger.debug(
+          {
+            traceId: event.traceId,
+            sessionKey: key,
+            err,
+          },
+          'session_container_resolution_failed',
+        );
+      })
+      .finally(() => {
+        if (this.sessionContainerResolutions.get(key) === resolution) {
+          this.sessionContainerResolutions.delete(key);
+        }
+      });
+    this.sessionContainerResolutions.set(key, resolution);
   }
 
   private checkAuth(event: NormalizedEvent): boolean {
@@ -719,6 +892,20 @@ export class Engine {
         'route_agent_missing',
       );
       return Promise.resolve();
+    }
+    if (
+      this.isFixedSessionContainer(routedSessionKey) &&
+      this.isFixedSessionReplacementText(routedEvent.text)
+    ) {
+      await this.sendCommandAck(
+        routedEvent,
+        routedSessionKey,
+        FIXED_SESSION_CONTAINER_TEXT,
+      );
+      return;
+    }
+    if (!this.claimFixedSessionAgent(routedSessionKey, agentSlot, event.traceId)) {
+      return;
     }
     const idempotencyKey = event.idempotencyKey?.trim() || event.messageId;
     if (this.idempotencyStore && idempotencyKey) {
@@ -854,6 +1041,50 @@ export class Engine {
       command === '/status' ||
       /^\/[^\s/]+-(?:stop|status)$/.test(command)
     );
+  }
+
+  private isFixedSessionReplacementText(text: string | undefined): boolean {
+    const command = text?.trim();
+    return (
+      !!command &&
+      (command === '/new' ||
+        /^\/new\s/.test(command) ||
+        command === '/kill' ||
+        command === '/nexus-kill')
+    );
+  }
+
+  private isFixedSessionContainer(key: SessionKey): boolean {
+    return (
+      this.sessionStore.findThreadByChannelId(key)?.bindingMode === 'fixed'
+    );
+  }
+
+  private claimFixedSessionAgent(
+    key: SessionKey,
+    agentSlot: EngineAgent,
+    traceId: string,
+  ): boolean {
+    if (!this.isFixedSessionContainer(key)) return true;
+    const agentOwner = agentSlot.agentOwner ?? agentSlot.agent.name();
+    const claimed = this.sessionStore.claimFixedThreadAgent(key, {
+      agentName: agentSlot.agentName,
+      agentOwner,
+    });
+    if (claimed) return true;
+    const fixed = this.sessionStore.findThreadByChannelId(key);
+    this.logger.warn(
+      {
+        traceId,
+        sessionKey: serializeSessionKey(key),
+        fixedAgentName: fixed?.agentName,
+        fixedAgentOwner: fixed?.agentOwner,
+        requestedAgentName: agentSlot.agentName,
+        requestedAgentOwner: agentOwner,
+      },
+      'fixed_session_agent_mismatch',
+    );
+    return false;
   }
 
   private async tryDispatchImmediateTextControl(
@@ -1264,6 +1495,12 @@ export class Engine {
       event.sessionKey,
       this.platformName,
     );
+    if (
+      decision.localName === 'new' &&
+      this.isFixedSessionContainer(routedSessionKey)
+    ) {
+      return this.commandResponse(FIXED_SESSION_CONTAINER_TEXT, event.traceId);
+    }
     const sessionKeyStr = serializeSessionKey(routedSessionKey);
     const agentSlot = this.agents.get(decision.agentName);
     if (!agentSlot) {
@@ -1276,6 +1513,9 @@ export class Engine {
         },
         'route_agent_missing',
       );
+      return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
+    }
+    if (!this.claimFixedSessionAgent(routedSessionKey, agentSlot, event.traceId)) {
       return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
     }
 
@@ -1343,6 +1583,7 @@ export class Engine {
       return;
     }
     if (result.updatedAgentSessionId === null) {
+      if (this.isFixedSessionContainer(sessionKey)) return;
       this.sessionStore.archiveCurrent(sessionKey);
       const active = this.agentSessions.get(sessionKeyStr);
       if (!active) return;
@@ -1408,6 +1649,9 @@ export class Engine {
     }
 
     const routedSessionKey = withPlatformName(event.sessionKey, this.platformName);
+    if (this.isFixedSessionContainer(routedSessionKey)) {
+      return this.commandResponse(FIXED_SESSION_CONTAINER_TEXT, event.traceId);
+    }
     await this.killRoutingSession(event, routedSessionKey);
   }
 
@@ -1415,6 +1659,14 @@ export class Engine {
     event: NormalizedEvent,
     routedSessionKey: SessionKey,
   ): Promise<void> {
+    if (this.isFixedSessionContainer(routedSessionKey)) {
+      await this.sendCommandAck(
+        event,
+        routedSessionKey,
+        FIXED_SESSION_CONTAINER_TEXT,
+      );
+      return;
+    }
     const sessionKeyStr = serializeSessionKey(routedSessionKey);
     const hadActiveSession = await this.stopActiveSession(sessionKeyStr, event.traceId);
     const cancelled = this.messageQueue.clearPending(sessionKeyStr).cancelled;
@@ -3196,6 +3448,9 @@ export class Engine {
       event.sessionKey,
       this.platformName,
     );
+    if (this.isFixedSessionContainer(routedSessionKey)) {
+      return this.commandResponse(FIXED_SESSION_CONTAINER_TEXT, event.traceId);
+    }
     const route = this.route(event);
     const agentSlot = route ? this.agents.get(route.agentName) : undefined;
     if (!agentSlot) {
@@ -3254,6 +3509,9 @@ export class Engine {
       event.sessionKey,
       this.platformName,
     );
+    if (this.isFixedSessionContainer(routedSessionKey)) {
+      return this.commandResponse(FIXED_SESSION_CONTAINER_TEXT, event.traceId);
+    }
     const agentOwner = agentSlot.agentOwner ?? agentSlot.agent.name();
     await this.stopActiveSession(serializeSessionKey(routedSessionKey), event.traceId);
     let binding;
@@ -3507,6 +3765,9 @@ export class Engine {
       event.sessionKey,
       this.platformName,
     );
+    if (this.isFixedSessionContainer(routedSessionKey)) {
+      return this.commandResponse(FIXED_SESSION_CONTAINER_TEXT, event.traceId);
+    }
     await this.stopActiveSession(serializeSessionKey(routedSessionKey), event.traceId);
     this.agentOverridesByChannel.set(
       this.channelOverrideKey(event.sessionKey.platform, routedChannelId),
@@ -4102,6 +4363,17 @@ export class Engine {
       const rawText = event.text ?? '';
       const trimmed = rawText.trim();
       let prompt: string;
+      if (
+        this.isFixedSessionContainer(event.sessionKey) &&
+        this.isFixedSessionReplacementText(trimmed)
+      ) {
+        await this.sendCommandAck(
+          event,
+          event.sessionKey,
+          FIXED_SESSION_CONTAINER_TEXT,
+        );
+        return;
+      }
       if (
         this.newSessionTextPrefixEnabled &&
         (trimmed === '/new' || /^\/new\s/.test(trimmed))
@@ -4768,6 +5040,9 @@ export class Engine {
     const priorStop = this.sessionStopBarriers.get(sessionKeyStr);
     if (priorStop) await priorStop;
     if (this.stopping) return undefined;
+    if (!this.claimFixedSessionAgent(event.sessionKey, agentSlot, event.traceId)) {
+      return undefined;
+    }
     const agentOwner = agentSlot.agentOwner ?? agentSlot.agent.name();
     const stored = this.sessionStore.get(event.sessionKey);
     const incompatibleStoredRef =
@@ -4795,6 +5070,18 @@ export class Engine {
     }
     if (this.stopping) return undefined;
     if (incompatibleStoredRef) {
+      if (this.isFixedSessionContainer(event.sessionKey)) {
+        this.logger.warn(
+          {
+            traceId: event.traceId,
+            sessionKey: sessionKeyStr,
+            storedAgentOwner: stored?.agentOwner,
+            requestedAgentOwner: agentOwner,
+          },
+          'fixed_session_owner_mismatch',
+        );
+        return undefined;
+      }
       this.sessionStore.archiveCurrent(event.sessionKey);
     }
 

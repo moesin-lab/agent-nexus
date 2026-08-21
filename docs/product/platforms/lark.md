@@ -18,11 +18,11 @@ related:
 
 能力边界：
 
-- 接收机器人与用户的单聊（P2P）纯文本，以及话题群中带 `thread_id` 的纯文本
-- 一个飞书话题对应一个独立 session；话题群主时间线消息不会进入 agent
+- 接收机器人与用户的单聊（P2P）、群主时间线控制文本，以及话题群中带 `thread_id` 的 Session 文本
+- 一个飞书话题固定对应一个 Session；P2P 与群主时间线普通文本静默拒绝，不会进入 agent
 - 只发送纯文本消息，长回复按 4000 个 UTF-16 code unit 切片
-- 支持把纯文本 `/new` 或 `/new <prompt>` 作为新会话入口
-- 话题仍保留在飞书 UI；当前 agent conversation ref 只在 daemon 内存中，进程重启后下一条消息从新会话开始
+- `/new` 与 `/new <prompt>` 只提示新建话题，不在现有话题或 P2P 下生成第二个 Session
+- 保存话题精确 AppLink；OpenAPI 未返回加密消息链接时用 chat / thread / position 组装，`/nexus-sessions` 可引导回原话题；当前引用仍只在 daemon 内存中，进程重启会丢失列表
 - 不支持图片/文件、卡片、富文本、消息编辑、删除、reaction、typing indicator 或飞书原生 slash command
 
 ## 创建飞书自建应用
@@ -111,7 +111,7 @@ chmod 600 ~/.agent-nexus/secrets/FEISHU_APP_SECRET
       "agentName": "codex-dev",
       "match": {
         "lark": {
-          "chatIds": ["oc_p2p_chat_id"]
+          "chatIds": ["oc_topic_group_chat_id"]
         }
       }
     }
@@ -126,8 +126,8 @@ binding 与 auth，但 session、queue 和 agent conversation ref 都按 `thread
 如果暂时不知道这两个 ID：
 
 1. 先给 `chatIds` 和 `userIds` 填语法合法的临时值并启动。
-2. 给机器人发送一条单聊消息；`route_not_found` 日志中的 `channelId` 就是该会话 `chat_id`。
-3. 更新 `chatIds` 并重启，再发一条消息；`auth_denied` 日志中的 `userId` 就是发送者 `open_id`。
+2. 在 P2P 或群主时间线发送精确命令 `/nexus-sessions`；`route_not_found` 日志中的 `channelId` 就是该会话或父群 `chat_id`。普通文本会在 route 前静默终止，不能用于发现 ID。
+3. 更新 `chatIds` 并重启，再发 `/nexus-sessions`；`auth_denied` 日志中的 `userId` 就是发送者 `open_id`。
 4. 把该 `open_id` 加入 `userIds`，重启后再次验证。
 
 ## 创建 session 话题群
@@ -139,7 +139,8 @@ binding 与 auth，但 session、queue 和 agent conversation ref 都按 `thread
 5. 新建两个话题并分别发送不同 prompt；机器人回复应留在原话题，两个话题的上下文互不影响。
 
 若应用已获“接收群聊全部消息”权限并发布生效，话题内无需每条 @机器人；否则使用 @机器人触发。群主时间线消息
-即使 @机器人也不会进入 agent，必须创建或进入话题。
+即使 @机器人也不会作为 prompt 进入 agent，必须创建或进入话题。话题第一次进入 daemon 后即固定绑定一个
+Session 和当时命中的 agent 实例；后续配置热更新不会把已有话题切到另一实例。需要新上下文时新建话题，不在原话题执行 `/new`。
 
 ## 启动与验证
 
@@ -155,14 +156,18 @@ agent-nexus
 在飞书里给机器人发送：
 
 ```text
-ping
-/new 从一个新会话开始
+P2P：/nexus-sessions
+话题：ping
 ```
 
-P2P 与话题内都应返回纯文本；话题回复必须留在原话题。飞书长连接不需要公网 webhook 或本机监听端口。
+P2P 应返回可恢复话题列表或 `[no resumable sessions]`；话题中的 `ping` 应收到留在原话题的回复。P2P 或群主
+时间线发送普通文本时没有任何回复，这是预期行为。飞书长连接不需要公网 webhook 或本机监听端口。
 
-飞书没有可注册的原生 slash command。这里的 `/new` 是普通文本前缀；`/new` 与 `/new <prompt>` 可用。其它
-已知控制命令（例如 `/stop`、`/nexus-settings`）当前会返回“不支持”反馈，不会误送给模型；未知 `/foo` 仍按
-普通 prompt 处理。
+飞书没有可注册的原生 slash command。P2P/群主时间线的首批控制入口是 `/nexus-sessions`；`/new` 与
+`/new <prompt>` 只返回“请新建话题”指引。普通文本、未知 `/foo` 和未列入控制面的命令均静默拒绝。话题内
+`/status`、`/stop` 仍控制该话题的后端任务；`/new`、`/kill` 与 `/nexus-kill` 不会替换或归档固定 Session。
+
+`/nexus-sessions` 优先展示飞书返回的精确根消息 AppLink；链接读取暂时失败时降级显示父群入口和
+`thread_id/root_id`，在原话题再发一条消息会重试补齐。
 
 同一个飞书应用不要同时启动多个 agent-nexus 进程。官方长连接会在同应用的多个客户端间分发事件，不会向每个客户端广播；要路由到多个 agent，应在同一 platform 下增加 bindings。

@@ -60,6 +60,12 @@ SessionKey 维度上的查询索引与唯一约束见 [`persistence.md`](../spec
 
 managed topology metadata 在当前内存态 MVP 中不会跨进程恢复。丢失后，子容器只能依赖 adapter 提供的父容器 context 做 fallback；daemon 不再保留 owner-only、自动命名或 session switcher 占位等 managed 行为。
 
+平台可把原生容器标记为 fixed session container。该容器的稳定路由 key 与一个 RoutingSession 一一对应，并在首次接受
+dispatch 时固定到当时的 `agentName + agentOwner`：配置热重载不得把它切换到同 owner 的另一实例或不同 backend。运行时句柄重建
+仍 resume 原 opaque ref，但 `/new`、kill 归档或 session rebind 不能在同一容器下产生新 generation。定位引用与
+RoutingSession metadata 关联，列表恢复时引导用户回到原容器，不把对话迁移到控制面。字段契约见
+[`message-protocol.md`](../spec/message-protocol.md#normalizedevent)。
+
 ### 不在 SessionKey 里的东西
 
 - **不包含 messageId**：messageId 是消息级概念，不是会话级
@@ -158,7 +164,7 @@ Trajectory read model 不改变本状态机。它以 RoutingSession / sessionId 
 
 外部 session resume 的架构边界与本节一致：daemon 保存 opaque native ref 并交给 agent runtime resume；外部 transcript 内容不因导入而进入模型上下文。字段、状态和查询契约见 [`trajectory-observability.md`](../spec/infra/trajectory-observability.md)。
 
-当前实现还未落地本文件描述的 SQLite lifecycle registry。内存态 MVP 支持 daemon-owned `/nexus-sessions`：按当前 platform instance + platform + user 及更新时间倒序列出最近可恢复、且与当前 agent owner 兼容的 opaque agent conversation ref，包括同一 SessionKey 下被 `/new`、`/nexus-kill`、agent binding 切换或 session rebind 挤出活跃区的历史项。展示标题取自该 session 的第一条用户消息；用户通过平台支持的交互组件选择后，把当前 SessionKey 绑定到所选 `agentSessionId`，下一条消息使用 `SessionConfig.resumeFromAgentSessionId` 恢复。rebind 迁移 opaque ref、agent owner、标题与下一次 spawn override，不复制平台原生会话拓扑元数据；不兼容当前 agent owner 的历史不会显示，过期 interaction 也不能跨 backend 重绑。daemon-created 容器占位在 agent session 启动前不进入可恢复列表。
+当前实现还未落地本文件描述的 SQLite lifecycle registry。内存态 MVP 支持 daemon-owned `/nexus-sessions`：按当前 platform instance + platform + user 及更新时间倒序列出最近可恢复、且与当前 agent owner 兼容的 opaque agent conversation ref，包括同一 SessionKey 下被 `/new`、`/nexus-kill`、agent binding 切换或 session rebind 挤出活跃区的历史项。展示标题取自该 session 的第一条用户消息。可 rebind 容器通过平台交互组件把当前 SessionKey 绑定到所选 `agentSessionId`，下一条消息使用 `SessionConfig.resumeFromAgentSessionId` 恢复；rebind 迁移 opaque ref、agent owner、标题与下一次 spawn override，不复制平台原生会话拓扑元数据。fixed session container 则在列表中展示原容器 URL/定位 ID，用户回原容器继续，不执行 rebind。不兼容当前 agent owner 的历史不会显示，过期 interaction 也不能跨 backend 重绑。daemon-created 容器占位在 agent session 启动前不进入可恢复列表。
 
 内存态 MVP 的容量上限是软上限：当前进程通常最多保留 `100` 条 session 记录；超过上限时只淘汰非活跃历史中 `lastTurnAt` 最早的记录，不为凑上限中断仍活跃的 runtime handle。若活跃记录本身超过上限，记录数可暂时超出；某条记录转为非活跃历史时立即再次执行淘汰。进程重启仍会丢失这份内存态列表。
 

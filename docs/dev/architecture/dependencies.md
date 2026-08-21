@@ -84,7 +84,7 @@ cli 里可以写一些 glue 代码，但禁止写业务逻辑。
 | protocol | `packages/protocol/` | `@agent-nexus/protocol` | 已实现 |
 | daemon | `packages/daemon/` | `@agent-nexus/daemon` | 已实现 |
 | platform-discord | `packages/platform/discord/` | `@agent-nexus/platform-discord` | 已实现 |
-| platform-lark | `packages/platform/lark/` | `@agent-nexus/platform-lark` | 已实现；通过官方 Node SDK 接入中国版飞书 P2P 与话题群纯文本 |
+| platform-lark | `packages/platform/lark/` | `@agent-nexus/platform-lark` | 已实现；通过官方 Node SDK 接入中国版飞书控制面与话题 Session 文本 |
 | agent-claudecode | `packages/agent/claudecode/` | `@agent-nexus/agent-claudecode` | 已实现 |
 | agent-codex | `packages/agent/codex/` | `@agent-nexus/agent-codex` | 已实现；通过 CLI `agents[].backend="codex"` 显式启用 |
 | daemon.terminal-session | `packages/daemon/src/terminal-session.ts` | `@agent-nexus/daemon` 子模块 | 实验中；补充终端会话窄接口与 tmux adapter，不提供 agent 业务状态 |

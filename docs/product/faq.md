@@ -30,8 +30,8 @@ Discord 按顺序检查：
 
 1. 应用是否启用机器人、使用长连接订阅 `im.message.receive_v1`，并已发布到当前用户可用范围。
 2. 日志是否出现 `platform_connection_ready`、`platform=lark` 和 `engine_started`。
-3. 消息是否为机器人单聊纯文本，或带非空 `thread_id` 的话题群纯文本。
-4. `bindings[].match.lark.chatIds` 是否包含当前 P2P `chat_id` 或话题父群 `chat_id`。
+3. 普通任务是否发在带非空 `thread_id` 的话题内；P2P 和群主时间线普通文本按设计静默拒绝。
+4. `bindings[].match.lark.chatIds` 是否包含话题父群 `chat_id`；控制面命令则检查当前 P2P 或父群 `chat_id`。
 5. `platforms[].auth.allowlist.userIds` 是否包含发送者 `open_id`。
 
 ## 多个用户能共用一个 bot 吗？
@@ -85,8 +85,9 @@ Codex CLI 当前没有 Claude Code 那种执行前工具审批。它的边界来
 
 ## 支持 Slack / Feishu / Telegram 吗？
 
-支持 Discord 和中国版飞书。飞书支持自建应用、P2P 单聊与私有话题群纯文本长连接事件；每个话题是独立
-session。普通群时间线、国际版 Lark、卡片、文件与原生 slash command 暂不支持。Slack 和 Telegram 当前不支持。
+支持 Discord 和中国版飞书。飞书支持自建应用、P2P/群主时间线控制文本与私有话题群 Session 文本长连接事件；
+每个话题固定对应一个 Session。话题外普通 prompt、国际版 Lark、卡片、文件与原生 slash command 暂不支持。
+Slack 和 Telegram 当前不支持。
 
 ## 长回复怎么显示？
 

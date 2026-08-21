@@ -12,6 +12,7 @@ export type {
   InteractionPayload,
   NormalizedEvent,
   ReactionPayload,
+  SessionContainerRef,
 } from './events.js';
 
 export type {
@@ -84,5 +85,7 @@ export type {
   EventHandlerResult,
   EventModalResponse,
   PlatformAdapter,
+  ResolveSessionContainerInput,
+  ResolveSessionContainerResult,
   UpdateThreadInput,
 } from './interfaces.js';

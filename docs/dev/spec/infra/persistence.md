@@ -81,7 +81,7 @@ contracts:
 | `tokens_used` | INTEGER NOT NULL DEFAULT 0 | input+output 累计 |
 | `cost_used_usd` | REAL | NULL 表示订阅模式未归因 |
 | `budget_limit_usd` | REAL | NULL 表示 $ 预算未启用（opt-in） |
-| `meta_json` | TEXT | 任意扩展 JSON |
+| `meta_json` | TEXT | 受约束扩展 JSON；当前可保存 `sessionContainer` 定位引用 |
 
 索引：
 
@@ -99,6 +99,9 @@ contracts:
   [`session-model.md` §可恢复 AgentConversation 绑定](../../architecture/session-model.md#可恢复-agentconversation-绑定)。
 - `next_session_json` 表示下一次 spawn 前的一次性 override，例如 pending `workingDir`。
   普通 metadata upsert 不携带该字段表示保留旧值；消费后置 NULL；将现有 resumable session 绑定到新 SessionKey 时，它随 `agent_conversation_ref` 一起迁移。
+- `meta_json.sessionContainer` 使用 `message-protocol.md` 的 `SessionContainerRef` 形状。普通 metadata upsert 不携带时保留旧值；
+  异步 URL resolver 只能补写 `url`，不得覆盖 `kind`、`bindingMode`、`parentChannelId` 或 `rootMessageId`。
+  rebind 不迁移该字段；fixed container 必须拒绝 rebind。URL 与稳定 ID 只对通过当前 platform auth 的用户展示，不进入日志或 trajectory 摘要。
 
 ### idempotency
 

@@ -70,6 +70,10 @@ interface PlatformAdapter {
     createThread?(input: CreateThreadInput) -> Promise<CreateThreadResult>
     updateThread?(input: UpdateThreadInput) -> Promise<void>
 
+    // 可选：补齐平台原生 Session 容器的精确定位 URL
+    resolveSessionContainer?(input: ResolveSessionContainerInput)
+        -> Promise<ResolveSessionContainerResult | undefined>
+
     // 输入指示（仅 supportsTypingIndicator=true 时由 daemon 调用）
     setTyping(sessionKey: SessionKey) -> Promise<void>
     clearTyping(sessionKey: SessionKey) -> Promise<void>
@@ -92,6 +96,10 @@ platform instance 的稳定实例名由 [`config-routing.md`](config-routing.md)
 `settingsSnapshot` 是只读、按调用用户求值的反向读 port，用于 daemon 拼装 `/nexus-settings` 面板。它只能暴露平台 owner 自己持有的设置，例如 Discord adapter 的 reply-mode；daemon-owned session / thread / workingDir / agent binding override 仍由 daemon 自己拼入 snapshot。每个 item 必须带 `owner`、`source`、`durability` 与 `canChange`，其中 `canChange` 使用调用方身份判断，不能把平台 allowlist 逻辑搬到 daemon 里重写。
 
 `applySettingsAction` 是 owner action port，用于 settings 面板把 platform-owned 写操作派回 adapter。Discord v1 仅支持 `action="discord.replyMode"`；权限、输入校验、状态文件写入与 `/discord-reply-mode` 保持同 owner 语义。daemon 不得直接改 platform 私有状态。
+
+`resolveSessionContainer` 是可选的读 port。Daemon 只能在 route/auth 通过且已保存
+`NormalizedEvent.sessionContainer` 的稳定 ID 后调用；调用不得阻塞平台入站 ACK、幂等占位或消息入队。成功只补写
+URL，失败保留已存稳定 ID 并允许后续事件重试；不得把读取失败升格为 turn 失败。
 
 ### 启动与停止
 
@@ -281,9 +289,22 @@ UpdateThreadInput {
     title: string?
     traceId: string
 }
+
+ResolveSessionContainerInput {
+    sessionKey: SessionKey
+    container: SessionContainerRef
+    traceId: string
+}
+
+ResolveSessionContainerResult {
+    url: string
+}
 ```
 
 `autoArchiveDurationMinutes` 是通用 TTL 意图，不定义具体枚举；adapter 若不支持或平台只支持离散值，必须在实现侧拒绝或映射到最近合法值，并记录结构化日志。
+
+`resolveSessionContainer` 输入不携带用户消息正文或 raw payload。Adapter 必须校验返回 URL 属于目标平台的
+可导航 HTTPS 域名；空结果返回 `undefined`，响应形状非法则按 platform protocol error 拒绝。
 
 Settings port 用于 platform control surface 查询 / 修改平台层设置。它不承载 daemon auth、agent config 或平台 secret。
 
@@ -546,7 +567,8 @@ CreateThreadResult {
 ## Lark 专属映射
 
 Lark 按 ADR-0019 直接使用官方 `@larksuiteoapi/node-sdk` 的低层 `Client`、`WSClient` 与
-`EventDispatcher`，支持 bot 身份的 P2P 与话题群纯文本消息。兼容契约固定为 SDK 1.70.0；`lark-cli` 只作为
+`EventDispatcher`，支持 bot 身份的 P2P/群主时间线控制文本与话题群 Session 文本。兼容契约固定为 SDK 1.70.0；
+`lark-cli` 只作为
 lifecycle/error 状态设计参考，不是 dependency、transport、credential provider 或 fixture source。SDK 的高层
 `Channel` 模块不得进入实现，因为其 normalization、safety、streaming 与 outbound owner 会和 agent-nexus 重叠。
 
@@ -663,9 +685,10 @@ SDK 1.70.0 的 `im.message.receive_v1` typed event 使用下列字段：
 | `event_id` | `eventId`；缺失时丢弃，不用 message_id 伪造 |
 | `message.message_id` | `messageId` |
 | 稳定文本重投身份 | `idempotencyKey`；按下文公式派生，字段不足时缺省并回退 `messageId` |
-| P2P `message.chat_id` | `sessionKey.channelId` |
+| P2P/群主时间线 `message.chat_id` | `sessionKey.channelId`，`deliveryScope="control"` |
 | 话题群 `message.thread_id` | `sessionKey.channelId` |
 | 话题群 `message.chat_id` | `threadParentChannelId` |
+| 话题群 `message.root_id ?? message.message_id` | `sessionContainer.rootMessageId` |
 | 话题群当前 `message.message_id` | `responseTarget.messageId` / `messageIds[0]` |
 | `sender.sender_id.open_id` | `sessionKey.initiatorUserId`、`initiator.userId`；也是首版 displayName fallback |
 | `message.content` | JSON decode 后的 `text` |
@@ -694,16 +717,19 @@ SDK callback object 可能在顶层或嵌套字段携带 `token`、`tenant_key` 
 脱敏后的 `rawPayload` 仍不得持久化、进入 trace/logger 或传给 agent；跨进程/落盘序列化必须按
 [`message-protocol.md`](message-protocol.md#json-序列化约定) 省略 rawPayload。
 
-只有以下两类事件可以调用 handler：
+只有以下三类事件可以调用 handler：
 
-- `message.chat_type="p2p"` 的用户纯文本；
-- `message.chat_type="group"` 且 `message.thread_id` 为非空字符串的话题内用户纯文本。
+- `message.chat_type="p2p"` 的用户纯文本，标记 `deliveryScope="control"`；
+- `message.chat_type="group"` 且没有 `thread_id` 的群主时间线用户纯文本，标记 `deliveryScope="control"`；
+- `message.chat_type="group"` 且 `message.thread_id` 为非空字符串的话题内用户纯文本，标记
+  `deliveryScope="session"` 与 `sessionContainer.bindingMode="fixed"`。
 
-两类事件都要求 `message.message_type="text"`、`sender.sender_type="user"`、
+三类事件都要求 `message.message_type="text"`、`sender.sender_type="user"`、
 `sender.sender_id.open_id != botOpenId`，且 event/message/chat/sender/content 字段类型正确。`message.content`
 必须是 JSON object 且唯一接受 string `text`；解码后的 text 超过 1 MiB 时丢弃。话题群事件以 `thread_id`
-作为 session 容器，并用父 `chat_id` 继承 route / auth；群主时间线消息、非 text、bot/app sender、字段缺失或
-非法 JSON 均丢弃。日志不记 content、sender display data 或 raw payload。
+作为 session 容器，并用父 `chat_id` 继承 route / auth。P2P 与群主时间线事件只交给 daemon 控制面 gate；普通
+文本必须在 daemon 静默终止。非 text、bot/app sender、字段缺失或非法 JSON 均丢弃。日志不记 content、sender
+display data 或 raw payload。
 
 若 `message.mentions` 中存在 `id.open_id=botOpenId` 的 mention，adapter 必须从解码文本中移除对应 `key`，再对
 开头空白做 trim；其它用户 mention 保留。这样使用“仅接收 @机器人群消息”权限时，agent 不会看到平台占位符。
@@ -711,6 +737,16 @@ SDK callback object 可能在顶层或嵌套字段携带 `token`、`tenant_key` 
 话题事件的 `responseTarget` 固定为当前入站 `message_id`，`platform="lark"`、`channelId=thread_id`、
 `messageIds=[message_id]`，`sentAt` 使用合法 `create_time`，否则使用 `receivedAt`。它不是
 `NormalizedEvent.replyTo`：无论用户发的是话题根消息还是后续回复，agent 输出都以本次入站作为 response target。
+
+话题根消息还要填入 `sessionContainer.rootMessageId = message.root_id ?? message.message_id`，并以
+`https://applink.feishu.cn/client/chat/open?openChatId=<encoded chat_id>` 作为 `parentUrl`。Adapter 实现
+`resolveSessionContainer`：以 `rootMessageId` 调用 `client.im.v1.message.get`，只接受 `code=0` 且唯一匹配根消息的响应。
+优先使用合法的 `https://applink.feishu.cn/` `message_app_link`；该字段为空时，必须校验响应中的 `chat_id` / `thread_id`
+与当前容器一致，并用 `thread_message_position` 组装 `/client/thread/open` 精确链接，同时携带 PC 与移动端使用的两套
+chat / thread 参数名。该查询由 daemon 在 route/auth 通过后异步发起，不阻塞下文的快速 ACK；
+查询失败不影响 turn，后续话题事件可重试补齐 URL。production Lark OpenAPI Client 的 HTTP 请求默认 10 秒 transport timeout；
+WS endpoint discovery 沿用 SDK 自带的 15 秒 timeout。daemon 另外以 15 秒 resolver deadline 释放 in-flight 去重项，避免
+platform promise 永久悬挂后阻止该话题重试。
 
 官方长连接要求 callback 在 3 秒内完成，否则平台会重推。EventDispatcher handler 必须在 2.5 秒预算内只完成
 解析、归一化和向 daemon handler 的交接，禁止等待 agent turn 或 outbound send。handler 返回 promise 时 adapter
@@ -801,20 +837,23 @@ CapabilitySet {
 `edit` / `delete` / `react` 返回 unsupported error；`setTyping` / `clearTyping` 为幂等 no-op。daemon 不得在
 capability 为 false 时调用这些 port。
 
-Lark P2P 与话题普通文本进入 daemon 的通用 text-prefix 解析，所以启用对应配置时 `/new` 与
-`/new <prompt>` 可用。Lark 不注册 native slash command，`supportsSlashCommands` 必须保持 `false`。
-当文本首 token 精确命中 registry 已知但不能通过 Lark 执行的控制命令时，daemon 返回稳定 unavailable 反馈，
-不得把该文本交给 agent。未知 `/foo` 仍是普通 prompt；关闭 `textPrefixes.newSession` 后 `/new` 也按既有配置
-作为普通 prompt。
+Lark 不注册 native slash command，`supportsSlashCommands` 必须保持 `false`。P2P/群主时间线只允许精确文本控制命令；
+首批为 `/nexus-sessions`、`/status`、`/<agentOwner>-status`、`/stop`、`/<agentOwner>-stop`、`/kill` 与
+`/nexus-kill`。`/new` 与 `/new <prompt>` 返回稳定“请新建话题”反馈，不重置或启动 P2P session。其它普通文本和未知
+`/foo` 静默丢弃，不进入 agent。
+
+话题内的 `/new` 同样返回“请新建话题”，`/kill` 与 `/nexus-kill` 不得归档当前固定绑定；需要替换 Session 时必须
+由用户新建话题。`/nexus-sessions` 在不支持 select 的 Lark 上返回纯文本话题列表，每项优先显示精确 URL，否则显示
+`parentUrl` 和 `thread_id/root_id`；不把历史 session rebind 到当前控制面或另一话题。
 
 ### Lark 合约测试
 
-1. 真实 SDK 1.70.0 event fixture 映射稳定 eventId/messageId/idempotencyKey/P2P SessionKey/text；rawPayload 保留脱敏后的 SDK
+1. 真实 SDK 1.70.0 event fixture 映射稳定 eventId/messageId/idempotencyKey/P2P SessionKey/text/control scope；rawPayload 保留脱敏后的 SDK
    shape，并递归排除 `token` / `tenant_key` / `app_id`。
 2. 同一 sender/chat/create_time/content 但不同 event_id/message_id 的 fixture 生成同一 `idempotencyKey`，
    真实 Engine 只入队一次；不同 create_time 不得合并。
-3. 话题群 fixture 映射 `thread_id` SessionKey、父 `chat_id` 与当前消息 `responseTarget`；群主时间线、非 text、
-   非法 content JSON、缺 event_id、bot/app sender 分别丢弃且不泄露正文。
+3. 话题群 fixture 映射 `thread_id` SessionKey、父 `chat_id`、根 `message_id`、固定容器与当前消息 `responseTarget`；
+   群主时间线映射为 control scope；非 text、非法 content JSON、缺 event_id、bot/app sender 分别丢弃且不泄露正文。
 4. start 不把 SDK `start()` 返回当 ready；onReady resolve；retryable onError/30 秒 timeout close 旧 generation、
    保持 promise pending 并进入外层 backoff，non-retryable probe 才 reject；迟到 onReady 强制关闭旧 client。
 5. SDK connected/reconnecting/failed callbacks 映射到 adapter 状态；运行期 terminal failed 保持 reconnecting 并创建新 generation，non-retryable probe 才进入 failed，旧 callback 失效。
@@ -827,6 +866,10 @@ Lark P2P 与话题普通文本进入 daemon 的通用 text-prefix 解析，所�
 11. success/error/malformed SDK response 分别返回 MessageRef、分类错误、protocol error。
 12. production dependency 固定 1.70.0；fixture 记录 SDK version、上游 commit、生成路径与日期。
 13. production 路径显式使用 `Domain.Feishu`，不 spawn/exec `lark-cli`、不读取 CLI profile，也不使用 SDK Channel 模块。
+14. 根消息查询不阻塞 EventDispatcher ACK；合法 `message_app_link` 被补写，空/非法响应稳定降级且不影响 turn。
+15. P2P/群主时间线普通文本与未知 `/foo` 零回复、零 Session、零 agent 调用；话题 `/new` 按稳定 `localName` 拒绝且不产生第二 generation。
+16. fixed 话题首次 dispatch 固定 agent identity；热路由切到同 owner 不同实例、不同 owner，或在 agent ref 建立前切换时均 fail closed 且不停止原 handle。
+17. AppLink 查询永久不返回时，turn 不阻塞；resolver deadline 后释放去重项，下一条话题消息只发起一次重试；production HTTP adapter 注入有限 timeout。
 
 ## 测试契约（合约测试）
 

@@ -439,14 +439,13 @@ running item 不能被 `/nexus-queue` 编辑或重排；要保留 pending 并尽
 
 ## 在飞书里使用
 
-机器人单聊中的纯文本继续使用 P2P `chat_id` 作为 session 容器，不需要 @机器人。私有话题群中，每个
-`thread_id` 是一个独立 session，父群 `chat_id` 负责匹配 binding 与 auth；群主时间线消息不会进入 agent。
-发送 `/new` 或 `/new <prompt>` 可以重置当前 P2P 或当前话题 session。
+机器人单聊和群主时间线只作控制面：普通文本与未知命令静默拒绝，不创建 session。私有话题群中，每个
+`thread_id` 固定对应一个 Session，父群 `chat_id` 负责匹配 binding 与 auth；需要新上下文时新建话题。
 
-飞书不注册原生 slash command，也不支持 Discord 专属的 reply mode、交互面板或 queue 面板。`/new` 是普通
-文本前缀；其它已知但不可执行的控制命令会收到 unavailable 反馈，不会进入 agent。Agent 运行期间继续发送的
-普通文本仍会进入当前话题的 daemon queue，但当前没有飞书原生的队列管理 UI。完整能力边界、话题群设置和 ID
-获取步骤见 [`platforms/lark.md`](platforms/lark.md)。
+飞书不注册原生 slash command，也不支持 Discord 专属的 reply mode、交互面板或 queue 面板。控制面用
+`/nexus-sessions` 查看可恢复话题链接；`/new` 只提示新建话题。话题内 `/new`、`/kill` 和 `/nexus-kill` 不会
+替换或归档固定 Session。Agent 运行期间继续发送的普通文本仍会进入当前话题的 daemon queue，但当前没有飞书
+原生的队列管理 UI。完整能力边界、话题群设置和 ID 获取步骤见 [`platforms/lark.md`](platforms/lark.md)。
 
 重载配置：
 

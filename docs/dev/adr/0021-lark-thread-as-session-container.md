@@ -2,7 +2,7 @@
 title: ADR-0021：飞书话题作为独立 session 容器
 type: adr
 status: active
-summary: 选择飞书话题群的 thread 作为独立 SessionKey，私聊保留为兼容与 onboarding 入口
+summary: 选择飞书话题的 thread 作为固定 Session 容器，话题外只承载控制面
 tags: [adr, decision, platform-adapter, lark, session]
 related:
   - dev/adr/0019-lark-platform-via-official-node-sdk
@@ -26,6 +26,7 @@ superseded_by: null
 ## 状态变更日志
 
 - 2026-07-26：Proposed
+- 2026-08-21：收紧为一话题一 Session；P2P 与群主时间线不再承载普通 prompt
 
 ## Context
 
@@ -36,6 +37,9 @@ ADR-0019 的 walking skeleton 把飞书 P2P `chat_id` 映射为 SessionKey。这
 飞书机器人不支持注册 Discord 式 native slash command。普通文本 `/new` 可以重置当前 route，却不能替代
 可见、可命名、可回到历史上下文的原生容器。飞书话题群已经提供用户可理解的并行上下文：每个话题有稳定
 `thread_id`，群本身有稳定 `chat_id`。
+
+真实使用中，同一话题再执行 `/new` 或把另一个可恢复对话 rebind 到该话题，会破坏“话题就是
+Session”的用户心智。P2P 普通文本若继续进入 agent，也会产生一个飞书界面中无话题入口的隐式 Session。
 
 现有 Session Model 已规定平台原生子容器形成独立 SessionKey，父容器只用于 route、auth 与 channel default
 继承。飞书 adapter 应复用这个中立模型，不在 daemon 增加飞书专属 session registry，也不把话题标题或消息正文
@@ -69,14 +73,25 @@ Adapter 必须回复话题中的消息并要求 `reply_in_thread=true`，否则 
 
 ## Decision
 
-选择 **Option B：私有话题群作为 session hub，每个话题一个 SessionKey**。
+选择 **Option B：私有话题群作为 session hub，每个话题一个固定 Session**。
 
-P2P 继续作为 onboarding、配置排障和向后兼容入口。话题群只接受带非空 `thread_id` 的用户纯文本；群主时间线
-消息不进入 agent。入站消息自身作为 response target，daemon 将该意图透传给 adapter，Lark adapter 使用 reply API
-并设置 `reply_in_thread=true`。
+P2P 保留为 onboarding、配置排障和 session 检索的控制面，不再是普通 prompt 入口。话题群只接受带非空
+`thread_id` 的用户纯文本；群主时间线消息不进入 agent。话题外的普通文本必须静默丢弃，不回复、不建
+RoutingSession、不调用 agent；只有明确列入文本控制面的精确命令才能继续分发。
 
-飞书原生 slash command 能力仍声明为不支持。普通文本 `/new` 继续重置当前话题 session；其余 registry 已知但
-本平台不能执行的控制命令返回稳定的 unavailable 反馈，不得作为普通 prompt 发送给 agent。
+话题首次进入 daemon 时固定绑定一个 RoutingSession 和当时命中的 `agentName + agentOwner`。配置热更新不能把已有话题
+切换到另一 agent 实例。该容器不接受 `/new` 产生新 generation，也不接受把其它 session rebind 进来；新 Session 由用户
+新建飞书话题获得。入站话题消息自身作为 response target，daemon 将该意图透传给
+adapter，Lark adapter 使用 reply API 并设置 `reply_in_thread=true`。
+
+daemon 同时保留平台容器定位引用：`chat_id`、`thread_id`、`root_id`、精确消息 URL 与父群 AppLink。飞书入站事件
+不直接提供消息 URL；adapter 在快速 ACK 之后以 `root_id` 调用消息查询 API，优先使用 `message_app_link`，字段为空时
+用响应中的 `chat_id + thread_id + thread_message_position` 组装精确话题 AppLink。查询不得
+阻塞首条 prompt 入队，并受 transport timeout 与 daemon resolver deadline 约束；失败时保留稳定 ID 与父群 AppLink，后续
+话题消息可重试补齐。
+
+飞书原生 slash command 能力仍声明为不支持。话题外只接受明确列入控制面的精确文本命令，普通文本和未知命令
+静默丢弃；话题内普通文本进入 agent，但 `/new` 与会归档固定绑定的 kill 命令只返回稳定指引。
 
 ## Consequences
 
@@ -85,7 +100,8 @@ P2P 继续作为 onboarding、配置排障和向后兼容入口。话题群只�
 - 一个飞书话题对应一个可见、稳定、可并行的 RoutingSession。
 - 话题 route 与 allowlist 复用父群配置，不需要把动态 `thread_id` 逐个写进 binding。
 - queue、幂等与 agent conversation ref 自然按 `thread_id` 隔离。
-- P2P 配置与已有用户路径保持兼容。
+- P2P 只承载可审计的控制命令，不会意外建立隐式 Session。
+- 控制面可按保留的平台定位引用展示可恢复话题。
 
 ### 负向
 
@@ -93,6 +109,7 @@ P2P 继续作为 onboarding、配置排障和向后兼容入口。话题群只�
 - `NormalizedEvent` 需要显式 response target，daemon 的所有事件派生出站路径都要保持该字段。
 - Lark adapter 同时维护 create 与 reply 两种发送调用，并分别覆盖重试、切片和 partial-send。
 - 话题参与者共享同一原生内容，但当前 SessionKey 仍包含发起用户；多人共享一个 agent session 不在本决策内。
+- 精确话题 URL 需要额外读 API；权限、限流或网络失败会暂时只保存稳定定位字段和父群入口。
 
 ### 需要后续跟进的事
 
@@ -108,7 +125,7 @@ P2P 继续作为 onboarding、配置排障和向后兼容入口。话题群只�
 
 ## Amendments
 
-无。
+- 2026-08-21：P2P 收紧为控制面；话题收紧为不可重绑、不可 `/new` 分代并固定 agent identity 的 Session 容器；增加有限超时的平台容器定位引用保留决策。
 
 ## 参考
 

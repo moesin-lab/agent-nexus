@@ -8,14 +8,15 @@ import { serializeSessionKey } from '@agent-nexus/protocol';
  * 列表、绑定、next workingDir 相关方法是 daemon-owned session/thread
  * command 接线的 store 层契约；业务路由保持在 Engine / command handler。
  *
- * MVP 仅在进程内存活；进程重启即清空。持久化、状态机、TTL、并发竞态
- * 处理留给后续 PR——TODO docs/dev/architecture/session-model.md。
+ * 默认可作为纯内存 store；production 通过 SessionStorePersistence 同步落盘。
+ * runtime handle 与 queue 不属于本 store，不会进入 snapshot。
  */
 export interface SessionEntry {
   agentSessionId?: string;
   agentOwner?: string;
   lastTurnAt: Date;
   title?: string;
+  workingDir?: string;
   nextSession?: {
     workingDir?: string;
   };
@@ -66,10 +67,41 @@ export interface FindThreadInput {
 interface StoredSessionRecord {
   key: SessionKey;
   entry: SessionEntry;
+  generation: number;
+  createdAt: Date;
+  archivedAt?: Date;
+  trajectorySequence: number;
 }
 
 export interface SessionStoreOptions {
   maxEntries?: number;
+  persistence?: SessionStorePersistence;
+}
+
+export interface SessionStoreSnapshot {
+  sessions: Array<{
+    sessionId: string;
+    key: SessionKey;
+    entry: SessionEntry;
+    generation: number;
+    createdAt: Date;
+    archivedAt?: Date;
+    trajectorySequence: number;
+    current: boolean;
+  }>;
+  threads: Array<{
+    key: FindThreadInput;
+    entry: ThreadRegistryEntry;
+  }>;
+}
+
+export interface SessionStorePersistence {
+  load(): SessionStoreSnapshot | undefined;
+  save(
+    snapshot: SessionStoreSnapshot,
+    options?: { restoring?: boolean },
+  ): void;
+  close(): void;
 }
 
 const DEFAULT_MAX_SESSION_ENTRIES = 100;
@@ -81,11 +113,22 @@ export class SessionStore {
   private readonly sessionsBySessionId = new Map<string, StoredSessionRecord>();
   private readonly trajectorySequencesBySessionId = new Map<string, number>();
   private readonly threadsByChannel = new Map<string, ThreadRegistryEntry>();
+  private readonly threadKeysByChannel = new Map<string, FindThreadInput>();
   private readonly workingDirsByChannel = new Map<string, string>();
   private readonly maxEntries: number;
+  private readonly persistence: SessionStorePersistence | undefined;
+  private committedSnapshot: SessionStoreSnapshot = emptySnapshot();
+  private persistenceTransactionActive = false;
 
   constructor(options: SessionStoreOptions = {}) {
     this.maxEntries = options.maxEntries ?? DEFAULT_MAX_SESSION_ENTRIES;
+    this.persistence = options.persistence;
+    const snapshot = this.persistence?.load();
+    if (!snapshot) return;
+    const evicted = this.hydrate(snapshot);
+    const restored = this.snapshot();
+    if (evicted) this.persistence?.save(restored, { restoring: true });
+    this.committedSnapshot = cloneSnapshot(restored);
   }
 
   get(key: SessionKey): SessionEntry | undefined {
@@ -132,6 +175,12 @@ export class SessionStore {
       nextEntry.title = existing.title;
     }
     if (
+      nextEntry.workingDir === undefined &&
+      existing?.workingDir !== undefined
+    ) {
+      nextEntry.workingDir = existing.workingDir;
+    }
+    if (
       nextEntry.nextSession === undefined &&
       existing?.nextSession !== undefined
     ) {
@@ -139,16 +188,34 @@ export class SessionStore {
     }
     this.map.set(keyStr, nextEntry);
     this.keysBySessionId.set(sessionId, { ...key });
+    const existingRecord = this.sessionsBySessionId.get(sessionId);
     this.sessionsBySessionId.set(sessionId, {
       key: { ...key },
       entry: cloneEntry(nextEntry),
+      generation:
+        existingRecord?.generation ?? this.nextGenerationForKey(key, sessionId),
+      createdAt:
+        existingRecord?.createdAt ?? new Date(nextEntry.lastTurnAt),
+      trajectorySequence:
+        this.trajectorySequencesBySessionId.get(sessionId) ??
+        existingRecord?.trajectorySequence ??
+        0,
     });
     this.evictOverflow();
+    this.persist();
   }
 
   nextTrajectorySequence(sessionId: string): number {
     const next = (this.trajectorySequencesBySessionId.get(sessionId) ?? 0) + 1;
     this.trajectorySequencesBySessionId.set(sessionId, next);
+    const record = this.sessionsBySessionId.get(sessionId);
+    if (record) {
+      this.sessionsBySessionId.set(sessionId, {
+        ...record,
+        trajectorySequence: next,
+      });
+      this.persist();
+    }
     return next;
   }
 
@@ -161,13 +228,23 @@ export class SessionStore {
       this.sessionsBySessionId.delete(sessionId);
       this.trajectorySequencesBySessionId.delete(sessionId);
     }
-    return this.map.delete(keyStr);
+    const deleted = this.map.delete(keyStr);
+    if (sessionId || deleted) this.persist();
+    return deleted;
   }
 
   archiveCurrent(key: SessionKey): boolean {
+    const hadCurrent = this.archiveCurrentInMemory(key);
+    if (hadCurrent === undefined) return false;
+    this.evictOverflow();
+    this.persist();
+    return hadCurrent;
+  }
+
+  private archiveCurrentInMemory(key: SessionKey): boolean | undefined {
     const keyStr = serializeSessionKey(key);
     const sessionId = this.sessionIdsByKey.get(keyStr);
-    if (!sessionId) return false;
+    if (!sessionId) return undefined;
     const record = this.sessionsBySessionId.get(sessionId);
     this.sessionIdsByKey.delete(keyStr);
     const hadCurrent = this.map.delete(keyStr);
@@ -175,7 +252,10 @@ export class SessionStore {
       this.hardDeleteSession(sessionId);
       return hadCurrent;
     }
-    this.evictOverflow();
+    this.sessionsBySessionId.set(sessionId, {
+      ...record,
+      archivedAt: new Date(),
+    });
     return hadCurrent;
   }
 
@@ -186,7 +266,37 @@ export class SessionStore {
     this.sessionsBySessionId.clear();
     this.trajectorySequencesBySessionId.clear();
     this.threadsByChannel.clear();
+    this.threadKeysByChannel.clear();
     this.workingDirsByChannel.clear();
+    this.persist();
+  }
+
+  close(): void {
+    this.persistence?.close();
+  }
+
+  runInPersistenceTransaction<T>(
+    transaction: (action: () => T) => T,
+    action: () => T,
+  ): T {
+    if (this.persistenceTransactionActive) {
+      throw new Error('Nested SessionStore persistence transaction is unsupported');
+    }
+    const memoryBefore = this.snapshot();
+    const committedBefore = cloneSnapshot(this.committedSnapshot);
+    this.persistenceTransactionActive = true;
+    let result: T;
+    try {
+      result = transaction(action);
+    } catch (error) {
+      this.hydrate(memoryBefore);
+      this.committedSnapshot = committedBefore;
+      throw error;
+    } finally {
+      this.persistenceTransactionActive = false;
+    }
+    this.committedSnapshot = cloneSnapshot(this.snapshot());
+    return result;
   }
 
   get size(): number {
@@ -233,10 +343,12 @@ export class SessionStore {
     const record = this.sessionsBySessionId.get(sessionId);
     if (record) {
       this.sessionsBySessionId.set(sessionId, {
+        ...record,
         key: { ...record.key },
         entry: cloneEntry(updated),
       });
     }
+    this.persist();
     return true;
   }
 
@@ -270,11 +382,12 @@ export class SessionStore {
       agentOwner: source.agentOwner,
       lastTurnAt: now,
       title: source.title,
+      workingDir: source.workingDir,
     };
     if (source.nextSession) rebound.nextSession = { ...source.nextSession };
     const targetSessionId = this.sessionIdsByKey.get(targetKeyStr);
     if (targetSessionId && targetSessionId !== sessionId) {
-      this.archiveCurrent(targetKey);
+      this.archiveCurrentInMemory(targetKey);
     }
     if (
       sourceKeyStr !== targetKeyStr &&
@@ -287,10 +400,17 @@ export class SessionStore {
     this.keysBySessionId.set(sessionId, { ...targetKey });
     this.map.set(targetKeyStr, cloneEntry(rebound));
     this.sessionsBySessionId.set(sessionId, {
+      ...sourceRecord,
       key: { ...targetKey },
       entry: cloneEntry(rebound),
+      generation:
+        sourceKeyStr === targetKeyStr
+          ? sourceRecord.generation
+          : this.nextGenerationForKey(targetKey, sessionId),
+      archivedAt: undefined,
     });
     this.evictOverflow();
+    this.persist();
     return cloneEntry(rebound);
   }
 
@@ -306,7 +426,7 @@ export class SessionStore {
       if (this.keysBySessionId.has(sessionId)) {
         throw new Error(`Session id is already in use: ${sessionId}`);
       }
-      this.archiveCurrent(targetKey);
+      this.archiveCurrentInMemory(targetKey);
       const keyStr = serializeSessionKey(targetKey);
       const stored = cloneEntry(entry);
       this.sessionIdsByKey.set(keyStr, sessionId);
@@ -315,17 +435,22 @@ export class SessionStore {
       this.sessionsBySessionId.set(sessionId, {
         key: { ...targetKey },
         entry: cloneEntry(stored),
+        generation: this.nextGenerationForKey(targetKey, sessionId),
+        createdAt: new Date(stored.lastTurnAt),
+        trajectorySequence: 0,
       });
       this.evictOverflow();
+      this.persist();
       return cloneEntry(stored);
     }
-    if (this.get(targetKey)) this.archiveCurrent(targetKey);
+    if (this.get(targetKey)) this.archiveCurrentInMemory(targetKey);
     this.set(targetKey, entry);
     return cloneEntry(this.get(targetKey)!);
   }
 
-  private evictOverflow(): void {
-    if (this.sessionsBySessionId.size <= this.maxEntries) return;
+  private evictOverflow(): boolean {
+    if (this.sessionsBySessionId.size <= this.maxEntries) return false;
+    let evicted = false;
     const activeSessionIds = new Set(this.sessionIdsByKey.values());
     const candidates = [...this.sessionsBySessionId.entries()]
       .filter(([sessionId]) => !activeSessionIds.has(sessionId))
@@ -337,7 +462,9 @@ export class SessionStore {
     for (const candidate of candidates) {
       if (this.sessionsBySessionId.size <= this.maxEntries) break;
       this.hardDeleteSession(candidate.sessionId);
+      evicted = true;
     }
+    return evicted;
   }
 
   private hardDeleteSession(sessionId: string): void {
@@ -378,10 +505,12 @@ export class SessionStore {
       : undefined;
     if (sessionId && record) {
       this.sessionsBySessionId.set(sessionId, {
+        ...record,
         key: { ...record.key },
         entry: cloneEntry(rest),
       });
     }
+    this.persist();
     return workingDir;
   }
 
@@ -411,6 +540,12 @@ export class SessionStore {
     };
     if (fixedRootChanged && thread.url === undefined) delete next.url;
     this.threadsByChannel.set(registryKey, next);
+    this.threadKeysByChannel.set(registryKey, {
+      platformName: key.platformName,
+      platform: key.platform,
+      channelId: key.channelId,
+    });
+    this.persist();
   }
 
   claimFixedThreadAgent(
@@ -435,6 +570,7 @@ export class SessionStore {
       agentName: identity.agentName,
       agentOwner: identity.agentOwner,
     });
+    this.persist();
     return true;
   }
 
@@ -471,6 +607,125 @@ export class SessionStore {
   getChannelWorkingDir(input: FindThreadInput): string | undefined {
     return this.workingDirsByChannel.get(threadRegistryKey(input));
   }
+
+  private nextGenerationForKey(key: SessionKey, excludedSessionId?: string): number {
+    const keyStr = serializeSessionKey(key);
+    let max = 0;
+    for (const [sessionId, record] of this.sessionsBySessionId.entries()) {
+      if (sessionId === excludedSessionId) continue;
+      if (serializeSessionKey(record.key) !== keyStr) continue;
+      max = Math.max(max, record.generation);
+    }
+    return max + 1;
+  }
+
+  private snapshot(): SessionStoreSnapshot {
+    return {
+      sessions: [...this.sessionsBySessionId.entries()].map(
+        ([sessionId, record]) => ({
+          sessionId,
+          key: { ...record.key },
+          entry: cloneEntry(record.entry),
+          generation: record.generation,
+          createdAt: new Date(record.createdAt),
+          archivedAt: record.archivedAt
+            ? new Date(record.archivedAt)
+            : undefined,
+          trajectorySequence: record.trajectorySequence,
+          current:
+            this.sessionIdsByKey.get(serializeSessionKey(record.key)) ===
+            sessionId,
+        }),
+      ),
+      threads: [...this.threadsByChannel.entries()].flatMap(
+        ([registryKey, entry]) => {
+          const key = this.threadKeysByChannel.get(registryKey);
+          return key ? [{ key: { ...key }, entry: { ...entry } }] : [];
+        },
+      ),
+    };
+  }
+
+  private hydrate(snapshot: SessionStoreSnapshot): boolean {
+    this.resetMemory();
+    for (const session of snapshot.sessions) {
+      const key = { ...session.key };
+      const entry = cloneEntry(session.entry);
+      this.keysBySessionId.set(session.sessionId, key);
+      this.sessionsBySessionId.set(session.sessionId, {
+        key,
+        entry,
+        generation: session.generation,
+        createdAt: new Date(session.createdAt),
+        archivedAt: session.archivedAt
+          ? new Date(session.archivedAt)
+          : undefined,
+        trajectorySequence: session.trajectorySequence,
+      });
+      this.trajectorySequencesBySessionId.set(
+        session.sessionId,
+        session.trajectorySequence,
+      );
+      if (session.current) {
+        const keyStr = serializeSessionKey(key);
+        this.sessionIdsByKey.set(keyStr, session.sessionId);
+        this.map.set(keyStr, cloneEntry(entry));
+      }
+    }
+    for (const thread of snapshot.threads) {
+      const registryKey = threadRegistryKey(thread.key);
+      this.threadKeysByChannel.set(registryKey, { ...thread.key });
+      this.threadsByChannel.set(registryKey, { ...thread.entry });
+    }
+    return this.evictOverflow();
+  }
+
+  private resetMemory(): void {
+    this.map.clear();
+    this.sessionIdsByKey.clear();
+    this.keysBySessionId.clear();
+    this.sessionsBySessionId.clear();
+    this.trajectorySequencesBySessionId.clear();
+    this.threadsByChannel.clear();
+    this.threadKeysByChannel.clear();
+    this.workingDirsByChannel.clear();
+  }
+
+  private persist(): void {
+    if (!this.persistence) return;
+    const snapshot = this.snapshot();
+    try {
+      this.persistence.save(snapshot);
+      if (!this.persistenceTransactionActive) {
+        this.committedSnapshot = cloneSnapshot(snapshot);
+      }
+    } catch (error) {
+      this.hydrate(this.committedSnapshot);
+      throw error;
+    }
+  }
+}
+
+function emptySnapshot(): SessionStoreSnapshot {
+  return { sessions: [], threads: [] };
+}
+
+function cloneSnapshot(snapshot: SessionStoreSnapshot): SessionStoreSnapshot {
+  return {
+    sessions: snapshot.sessions.map((session) => ({
+      ...session,
+      key: { ...session.key },
+      entry: cloneEntry(session.entry),
+      createdAt: new Date(session.createdAt),
+      archivedAt: session.archivedAt
+        ? new Date(session.archivedAt)
+        : undefined,
+    })),
+    threads: snapshot.threads.map((thread) => ({
+      key: { ...thread.key },
+      entry: { ...thread.entry },
+    })),
+  };
 }
 
 function threadRegistryKey(input: FindThreadInput): string {

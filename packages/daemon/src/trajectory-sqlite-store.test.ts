@@ -12,6 +12,11 @@ import {
   type ProviderCallObservation,
   type TrajectorySegment,
 } from './trajectory-store.js';
+import {
+  CURRENT_STATE_SCHEMA_VERSION,
+  SqliteStateDatabase,
+  StateDatabaseError,
+} from './state-db.js';
 
 const tempDirs: string[] = [];
 const require = createRequire(import.meta.url);
@@ -30,15 +35,180 @@ describe('SqliteTrajectoryStore', () => {
     first.close();
 
     const db = openDb(dbPath);
-    expect(readSchemaVersion(db)).toBe(1);
+    expect(readSchemaVersion(db)).toBe(CURRENT_STATE_SCHEMA_VERSION);
     db.close();
 
     const second = new SqliteTrajectoryStore({ path: dbPath });
     second.close();
 
     const reopened = openDb(dbPath);
-    expect(readSchemaVersion(reopened)).toBe(1);
+    expect(readSchemaVersion(reopened)).toBe(CURRENT_STATE_SCHEMA_VERSION);
     reopened.close();
+  });
+
+  it('migrates a V1 trajectory database to sessions without losing records', () => {
+    const dbPath = tempDbPath();
+    createV1StateDb(dbPath);
+
+    const state = new SqliteStateDatabase({ path: dbPath });
+    const store = new SqliteTrajectoryStore({ database: state.database });
+
+    expect(readSchemaVersion(state.database)).toBe(CURRENT_STATE_SCHEMA_VERSION);
+    expect(store.getExternalSessionImport('imp-v1')).toMatchObject({
+      sourceSessionId: 'source-v1',
+      metadataJson: '{}',
+    });
+    const sessionsTable = state.database
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sessions'",
+      )
+      .get();
+    expect(sessionsTable).toEqual({ name: 'sessions' });
+    store.close();
+    state.close();
+
+    const reopened = new SqliteStateDatabase({ path: dbPath });
+    expect(readSchemaVersion(reopened.database)).toBe(
+      CURRENT_STATE_SCHEMA_VERSION,
+    );
+    reopened.close();
+  });
+
+  it('fails closed when the state schema version is newer than supported', () => {
+    const dbPath = tempDbPath();
+    const db = openDb(dbPath);
+    db.exec(`
+      CREATE TABLE trajectory_schema_version (
+        id INTEGER PRIMARY KEY,
+        version INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO trajectory_schema_version (id, version, updated_at)
+      VALUES (1, ${CURRENT_STATE_SCHEMA_VERSION + 1}, '2026-08-21T00:00:00.000Z');
+    `);
+    db.close();
+
+    expect(() => new SqliteStateDatabase({ path: dbPath })).toThrow(
+      StateDatabaseError,
+    );
+    try {
+      new SqliteStateDatabase({ path: dbPath });
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'unsupported-schema-version' });
+    }
+  });
+
+  it('fails closed when a current-version database is missing sessions', () => {
+    const dbPath = tempDbPath();
+    const first = new SqliteStateDatabase({ path: dbPath });
+    first.database.exec('DROP TABLE sessions');
+    first.close();
+
+    expect(() => new SqliteStateDatabase({ path: dbPath })).toThrow(
+      StateDatabaseError,
+    );
+    try {
+      new SqliteStateDatabase({ path: dbPath });
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'invalid-schema' });
+    }
+  });
+
+  it('fails closed when a current-version trajectory table is missing a required column', () => {
+    const dbPath = tempDbPath();
+    const first = new SqliteStateDatabase({ path: dbPath });
+    first.database.exec('ALTER TABLE trajectory_segments DROP COLUMN summary');
+    first.close();
+
+    expect(() => new SqliteStateDatabase({ path: dbPath })).toThrow(
+      StateDatabaseError,
+    );
+    try {
+      new SqliteStateDatabase({ path: dbPath });
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'invalid-schema' });
+    }
+  });
+
+  it.each([
+    {
+      label: 'column type',
+      sql: `
+        ALTER TABLE sessions DROP COLUMN cost_used_usd;
+        ALTER TABLE sessions ADD COLUMN cost_used_usd TEXT;
+      `,
+    },
+    {
+      label: 'not-null constraint',
+      sql: `
+        ALTER TABLE sessions DROP COLUMN working_dir;
+        ALTER TABLE sessions ADD COLUMN working_dir TEXT;
+      `,
+    },
+  ])('fails closed when a current-version $label is incompatible', ({ sql }) => {
+    const dbPath = tempDbPath();
+    const first = new SqliteStateDatabase({ path: dbPath });
+    first.database.exec(sql);
+    first.close();
+
+    expect(() => new SqliteStateDatabase({ path: dbPath })).toThrow(
+      StateDatabaseError,
+    );
+  });
+
+  it('fails closed when a current-version required index is missing', () => {
+    const dbPath = tempDbPath();
+    const first = new SqliteStateDatabase({ path: dbPath });
+    first.database.exec('DROP INDEX idx_sessions_last_activity');
+    first.close();
+
+    expect(() => new SqliteStateDatabase({ path: dbPath })).toThrow(
+      StateDatabaseError,
+    );
+  });
+
+  it('does not accept a partial index as the session generation unique constraint', () => {
+    const dbPath = tempDbPath();
+    const first = new SqliteStateDatabase({ path: dbPath });
+    first.database.exec(`
+      ALTER TABLE sessions RENAME TO sessions_old;
+      DROP TABLE sessions_old;
+      CREATE TABLE sessions (
+        session_id TEXT PRIMARY KEY,
+        session_key TEXT NOT NULL,
+        generation INTEGER NOT NULL CHECK (generation >= 1),
+        state TEXT NOT NULL CHECK (
+          state IN ('Created', 'Active', 'Idle', 'Archived', 'Errored', 'Interrupted')
+        ),
+        created_at TEXT NOT NULL,
+        last_activity_at TEXT NOT NULL,
+        archived_at TEXT,
+        agent_backend TEXT NOT NULL,
+        agent_conversation_ref TEXT,
+        working_dir TEXT NOT NULL,
+        next_session_json TEXT,
+        transcript_path TEXT NOT NULL,
+        turns_used INTEGER NOT NULL DEFAULT 0,
+        tool_calls_used INTEGER NOT NULL DEFAULT 0,
+        wall_clock_ms INTEGER NOT NULL DEFAULT 0,
+        tokens_used INTEGER NOT NULL DEFAULT 0,
+        cost_used_usd REAL,
+        budget_limit_usd REAL,
+        meta_json TEXT
+      );
+      CREATE INDEX idx_sessions_last_activity
+        ON sessions(last_activity_at);
+      CREATE INDEX idx_sessions_key_generation
+        ON sessions(session_key, generation DESC);
+      CREATE UNIQUE INDEX idx_sessions_partial_unique
+        ON sessions(session_key, generation)
+        WHERE state = 'Active';
+    `);
+    first.close();
+
+    expect(() => new SqliteStateDatabase({ path: dbPath })).toThrow(
+      StateDatabaseError,
+    );
   });
 
   it('persists external imports, trajectory segments, and provider observations across reopen', () => {
@@ -401,6 +571,101 @@ function readSchemaVersion(db: BetterSqliteDatabase): number {
     )
     .get() as { version: number } | undefined;
   return row?.version ?? 0;
+}
+
+function createV1StateDb(path: string): void {
+  const db = openDb(path);
+  db.exec(`
+    CREATE TABLE trajectory_schema_version (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      version INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    INSERT INTO trajectory_schema_version (id, version, updated_at)
+    VALUES (1, 1, '2026-08-21T00:00:00.000Z');
+
+    CREATE TABLE external_session_imports (
+      import_id TEXT PRIMARY KEY,
+      source_adapter TEXT NOT NULL,
+      source_session_id TEXT NOT NULL,
+      source_path_hash TEXT NOT NULL,
+      native_session_ref TEXT,
+      linked_session_id TEXT,
+      state TEXT NOT NULL,
+      confidence TEXT NOT NULL,
+      metadata_json TEXT NOT NULL,
+      error_json TEXT,
+      discovered_at TEXT NOT NULL,
+      imported_at TEXT,
+      linked_at TEXT
+    );
+    CREATE INDEX idx_external_session_imports_source
+      ON external_session_imports(source_adapter, source_session_id);
+    CREATE INDEX idx_external_session_imports_linked_session
+      ON external_session_imports(linked_session_id);
+    CREATE INDEX idx_external_session_imports_state
+      ON external_session_imports(state, discovered_at DESC);
+    INSERT INTO external_session_imports (
+      import_id, source_adapter, source_session_id, source_path_hash,
+      state, confidence, metadata_json, discovered_at
+    ) VALUES (
+      'imp-v1', 'codex-cli-jsonl', 'source-v1', 'sha256:v1',
+      'registered', 'high', '{}', '2026-08-21T00:00:00.000Z'
+    );
+
+    CREATE TABLE trajectory_segments (
+      segment_id TEXT PRIMARY KEY,
+      session_id TEXT,
+      import_id TEXT,
+      provider_observation_id TEXT,
+      source TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      trace_id TEXT,
+      turn_sequence INTEGER,
+      sequence INTEGER NOT NULL,
+      ts TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      content_ref TEXT,
+      usage_event_id TEXT,
+      log_anchor_json TEXT,
+      confidence TEXT NOT NULL,
+      redaction_state TEXT NOT NULL,
+      metadata_json TEXT NOT NULL
+    );
+    CREATE INDEX idx_trajectory_segments_session
+      ON trajectory_segments(session_id, ts, sequence);
+    CREATE INDEX idx_trajectory_segments_import
+      ON trajectory_segments(import_id, ts, sequence);
+    CREATE INDEX idx_trajectory_segments_source_kind
+      ON trajectory_segments(source, kind);
+    CREATE TABLE provider_call_observations (
+      observation_id TEXT PRIMARY KEY,
+      session_id TEXT,
+      trace_id TEXT,
+      backend TEXT NOT NULL,
+      capture_mode TEXT NOT NULL,
+      request_started_at TEXT NOT NULL,
+      response_finished_at TEXT,
+      provider_host TEXT,
+      model TEXT,
+      request_summary TEXT NOT NULL,
+      response_summary TEXT,
+      request_body_ref TEXT,
+      response_body_ref TEXT,
+      stream_frames_ref TEXT,
+      request_bytes INTEGER NOT NULL,
+      response_bytes INTEGER,
+      redaction_state TEXT NOT NULL,
+      alignment_json TEXT NOT NULL,
+      error_code TEXT,
+      metadata_json TEXT NOT NULL
+    );
+    CREATE INDEX idx_provider_call_observations_session
+      ON provider_call_observations(session_id, request_started_at);
+    CREATE INDEX idx_provider_call_observations_backend
+      ON provider_call_observations(backend, request_started_at);
+  `);
+  db.close();
 }
 
 function importRecord(

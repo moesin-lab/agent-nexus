@@ -282,6 +282,7 @@ interface ActiveAgentSession {
   agentName: string;
   session: AgentSession;
   sessionId: string;
+  workingDir: string;
   currentTurn?: {
     eventId: string;
     traceId: string;
@@ -610,7 +611,6 @@ export class Engine {
       }
       this.agentSessions.clear();
       this.sessionStopBarriers.clear();
-      this.sessionStore.clearAll();
       this.idempotencyStore?.clearAll();
     })();
     return this.stopPromise;
@@ -3919,6 +3919,10 @@ export class Engine {
       event.sessionKey,
     );
     if (nextWorkingDir) return nextWorkingDir;
+    const restoredWorkingDir = this.sessionStore.get(
+      event.sessionKey,
+    )?.workingDir;
+    if (restoredWorkingDir) return restoredWorkingDir;
     const currentChannelWorkingDir = this.sessionStore.getChannelWorkingDir({
       platformName: this.platformName,
       platform: event.sessionKey.platform,
@@ -4771,6 +4775,7 @@ export class Engine {
                 agentOwner: agentSlot.agentOwner ?? agentSlot.agent.name(),
                 lastTurnAt: new Date(),
                 title,
+                workingDir: activeSessionForTrajectory?.workingDir,
               });
               this.renameThreadBestEffort(event, title);
             }
@@ -5105,6 +5110,7 @@ export class Engine {
       agentName: agentSlot.agentName,
       session,
       sessionId: config.sessionId,
+      workingDir,
     };
     this.agentSessions.set(sessionKeyStr, activeSession);
     agentSlot.agent.onEvent(session, async (agentEvent) => {

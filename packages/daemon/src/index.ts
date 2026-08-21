@@ -141,7 +141,16 @@ export {
   SessionStore,
   type ExternalResumeSessionEntry,
   type SessionEntry,
+  type SessionStorePersistence,
+  type SessionStoreSnapshot,
 } from './session-store.js';
+export { SqliteSessionPersistence } from './session-sqlite-store.js';
+export {
+  CURRENT_STATE_SCHEMA_VERSION,
+  SqliteStateDatabase,
+  StateDatabaseError,
+  type StateDatabaseErrorCode,
+} from './state-db.js';
 export {
   ExperimentalTmuxTerminalSessionHost,
   TerminalSessionStartError,

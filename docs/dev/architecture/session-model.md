@@ -58,7 +58,7 @@ SessionKey 维度上的查询索引与唯一约束见 [`persistence.md`](../spec
 
 支持原生子会话容器的平台把子容器作为独立 SessionKey 参与路由、队列与持久化；父子拓扑只用于 route、auth 与 channel default 继承，不改变 SessionKey 身份。Daemon-owned `/nexus-new-thread` 通过 adapter capability 创建子容器，并把 managed topology metadata 与 RoutingSession 分开保存：rebind 不复制拓扑，首条用户消息才启动 agent，`session_started` 后才写入 opaque agent conversation ref。
 
-managed topology metadata 在当前内存态 MVP 中不会跨进程恢复。丢失后，子容器只能依赖 adapter 提供的父容器 context 做 fallback；daemon 不再保留 owner-only、自动命名或 session switcher 占位等 managed 行为。
+daemon-created 容器在 agent session 启动前的占位 topology metadata 仍不跨进程恢复。已经形成 RoutingSession 的容器定位引用随 session 记录持久化；丢失未绑定占位后，子容器只能依赖 adapter 提供的父容器 context 做 fallback，daemon 不再保留 owner-only、自动命名或 session switcher 占位等 managed 行为。
 
 平台可把原生容器标记为 fixed session container。该容器的稳定路由 key 与一个 RoutingSession 一一对应，并在首次接受
 dispatch 时固定到当时的 `agentName + agentOwner`：配置热重载不得把它切换到同 owner 的另一实例或不同 backend。运行时句柄重建
@@ -133,7 +133,7 @@ RoutingSession metadata 关联，列表恢复时引导用户回到原容器，�
 | Errored → Active | 用户 `/resume` 且在冷却期内或冷却期结束后的第一条新消息（见 `cost-and-limits.md` §熔断） |
 | Errored → Archived | 用户 `/end`，或冷却期后仍无新消息达到归档阈值 |
 | Active/Idle → Interrupted | **进程重启**：所有非终态 session 转入 Interrupted |
-| Interrupted → Active | 用户 `/resume` → spawn 新 agent 子进程（复用 transcript）|
+| Interrupted → Active | 用户 `/resume`，或 fixed session container 收到下一条有效消息 → spawn 新 agent 子进程（复用 opaque agent conversation ref）|
 | Interrupted → Archived | 用户 `/end`，或超过 `limits.session.interruptedToArchiveMs`（默认 24 小时） |
 
 **终态**：`Archived`。终态 session 不再接受任何操作；同 SessionKey 的新消息会触发 `generation + 1` 的新 Created 实例。
@@ -146,7 +146,7 @@ RoutingSession metadata 关联，列表恢复时引导用户回到原容器，�
 - `/resume` → Errored/Interrupted → Active（会尝试 spawn 新 agent）
 - 用户在新的平台会话容器发消息 → 创建新 SessionKey 的 Created
 
-Agent-owned `/new`、`/stop`、`/steer` 等 command 不直接改写本状态机；daemon 只把它们按 command registry 路由给 agent package。若 agent command 结果要求更新 opaque agent conversation ref，daemon 只保存该 opaque ref，不解释 agent conversation 语义。Agent-owned `/new` 会解除当前 SessionKey 的活跃绑定，但保留旧 opaque ref 作为 `/nexus-sessions` 可恢复历史；下一条消息用同一 SessionKey 开新 generation。Daemon-owned `/nexus-kill` 是 RoutingSession 级控制：停止当前 runtime handle、取消 pending items，并让当前 RoutingSession 离开活跃对话区；旧 opaque ref 仍作为 `/nexus-sessions` 可恢复历史保留，直到内存容量淘汰。
+Agent-owned `/new`、`/stop`、`/steer` 等 command 不直接改写本状态机；daemon 只把它们按 command registry 路由给 agent package。若 agent command 结果要求更新 opaque agent conversation ref，daemon 只保存该 opaque ref，不解释 agent conversation 语义。Agent-owned `/new` 会解除当前 SessionKey 的活跃绑定，但保留旧 opaque ref 作为 `/nexus-sessions` 可恢复历史；下一条消息用同一 SessionKey 开新 generation。Daemon-owned `/nexus-kill` 是 RoutingSession 级控制：停止当前 runtime handle、取消 pending items，并让当前 RoutingSession 离开活跃对话区；旧 opaque ref 仍作为 `/nexus-sessions` 可恢复历史保留，直到 registry 容量淘汰。
 
 ### 可恢复 AgentConversation 绑定
 
@@ -156,7 +156,7 @@ RoutingSession 持有的 opaque agent conversation ref 与 live `AgentSession` h
 
 当同一 SessionKey 没有可复用的 live handle 但仍有 opaque ref 时，daemon 启动新的 `AgentSession`，并把该 ref 放进 `SessionConfig.resumeFromAgentSessionId`。
 
-用户把已有 resumable session 绑定到新的 SessionKey 时，daemon 迁移 opaque ref 和下一次 spawn 所需的一次性 override；平台原生会话拓扑仍归原容器，不随 rebind 复制。
+用户把已有 resumable session 绑定到新的 SessionKey 时，daemon 迁移 opaque ref、该 session 实际 workingDir 和下一次 spawn 所需的一次性 override；平台原生会话拓扑仍归原容器，不随 rebind 复制。
 
 ### Trajectory read model
 
@@ -164,13 +164,13 @@ Trajectory read model 不改变本状态机。它以 RoutingSession / sessionId 
 
 外部 session resume 的架构边界与本节一致：daemon 保存 opaque native ref 并交给 agent runtime resume；外部 transcript 内容不因导入而进入模型上下文。字段、状态和查询契约见 [`trajectory-observability.md`](../spec/infra/trajectory-observability.md)。
 
-当前实现还未落地本文件描述的 SQLite lifecycle registry。内存态 MVP 支持 daemon-owned `/nexus-sessions`：按当前 platform instance + platform + user 及更新时间倒序列出最近可恢复、且与当前 agent owner 兼容的 opaque agent conversation ref，包括同一 SessionKey 下被 `/new`、`/nexus-kill`、agent binding 切换或 session rebind 挤出活跃区的历史项。展示标题取自该 session 的第一条用户消息。可 rebind 容器通过平台交互组件把当前 SessionKey 绑定到所选 `agentSessionId`，下一条消息使用 `SessionConfig.resumeFromAgentSessionId` 恢复；rebind 迁移 opaque ref、agent owner、标题与下一次 spawn override，不复制平台原生会话拓扑元数据。fixed session container 则在列表中展示原容器 URL/定位 ID，用户回原容器继续，不执行 rebind。不兼容当前 agent owner 的历史不会显示，过期 interaction 也不能跨 backend 重绑。daemon-created 容器占位在 agent session 启动前不进入可恢复列表。
+当前实现把 RoutingSession registry 持久化到 `<home>/state.db`。daemon-owned `/nexus-sessions` 按当前 platform instance + platform + user 及更新时间倒序列出最近可恢复、且与当前 agent owner 兼容的 opaque agent conversation ref，包括同一 SessionKey 下被 `/new`、`/nexus-kill`、agent binding 切换或 session rebind 挤出活跃区的历史项。展示标题取自该 session 的第一条用户消息。可 rebind 容器通过平台交互组件把当前 SessionKey 绑定到所选 `agentSessionId`，下一条消息使用 `SessionConfig.resumeFromAgentSessionId` 恢复；rebind 迁移 opaque ref、agent owner、标题、实际 workingDir 与下一次 spawn override，不复制平台原生会话拓扑元数据。fixed session container 的定位引用与首次固定的 agent identity 一并落盘；列表展示原容器 URL/定位 ID，用户回原容器发送下一条消息时以原 opaque ref 启动新的 runtime handle，不执行 rebind。不兼容当前 agent owner 的历史不会显示，过期 interaction 也不能跨 backend 重绑。daemon-created 容器占位在 agent session 启动前不进入可恢复列表。
 
-内存态 MVP 的容量上限是软上限：当前进程通常最多保留 `100` 条 session 记录；超过上限时只淘汰非活跃历史中 `lastTurnAt` 最早的记录，不为凑上限中断仍活跃的 runtime handle。若活跃记录本身超过上限，记录数可暂时超出；某条记录转为非活跃历史时立即再次执行淘汰。进程重启仍会丢失这份内存态列表。
+registry 的容量上限是软上限：当前实例通常最多保留 `100` 条 session 记录；超过上限时只淘汰非活跃历史中 `lastTurnAt` 最早的记录，并同步删除对应持久记录，不为凑上限中断仍活跃的 runtime handle。若活跃记录本身超过上限，记录数可暂时超出；某条记录转为非活跃历史时立即再次执行淘汰。
 
-workingDir 解析分三层：一次性 session override > channel workingDir default > agent config default。`/nexus-working-dir path:<absolute-path>` 默认设置当前 channel/thread 的 channel default；thread 若未设置自己的 default，则继承父 channel 的 default。`/nexus-working-dir ... scope:session` 才在当前原始 SessionKey（channel 或 thread + user）上保存一次性 `nextSession.workingDir`，仅在下一次真正 `startSession` 时消费。thread 继承父频道 binding 只影响 route/auth 与 channel default 读取，不会把 session override 写到父频道 key。workingDir 设置必须是非空绝对路径；不要求位于当前 binding 目标 agent 的默认 `workingDir` 之内。状态变更进入同 SessionKey 的 daemon queue：空闲时可立即完成；若当前 turn 正在运行，则先返回 queued ack，待排到队头后再写入并发送最终结果。由于 SessionKey 包含 platformName、platform、channelId 与 initiatorUserId，channel-scope workingDir 对同频道不同用户不提供全序保证。
+workingDir 解析顺序是：一次性 session override > 当前 RoutingSession 上次实际 workingDir > channel workingDir default > agent config default。恢复同一 session 时保持它实际启动过的目录；channel default 与 agent default 只在该 session 尚无实际目录时参与解析。`/nexus-working-dir path:<absolute-path>` 默认设置当前 channel/thread 的 channel default；thread 若未设置自己的 default，则继承父 channel 的 default。`/nexus-working-dir ... scope:session` 才在当前原始 SessionKey（channel 或 thread + user）上保存一次性 `nextSession.workingDir`，仅在下一次真正 `startSession` 时消费。thread 继承父频道 binding 只影响 route/auth 与 channel default 读取，不会把 session override 写到父频道 key。workingDir 设置必须是非空绝对路径；不要求位于当前 binding 目标 agent 的默认 `workingDir` 之内。状态变更进入同 SessionKey 的 daemon queue：空闲时可立即完成；若当前 turn 正在运行，则先返回 queued ack，待排到队头后再写入并发送最终结果。由于 SessionKey 包含 platformName、platform、channelId 与 initiatorUserId，channel-scope workingDir 对同频道不同用户不提供全序保证。
 
-`/nexus-settings` 可设置当前 channel/thread 的 agent binding override。override 的路由契约由 [`config-routing.md`](../spec/config-routing.md#运行时-channel-agent-override) 拥有；本模型只依赖其组合结果：切换 agent owner 会解除触发者当前原始 SessionKey 上的活跃绑定，把旧 opaque agent conversation ref 留在 `/nexus-sessions` 历史中，并让下一条消息按新 agent owner 启动或恢复。该列表、managed topology registry、channel default、agent binding override、一次性 override 与 daemon queue 都随进程重启丢失，不替代 Interrupted / Archived 的持久状态机。
+`/nexus-settings` 可设置当前 channel/thread 的 agent binding override。override 的路由契约由 [`config-routing.md`](../spec/config-routing.md#运行时-channel-agent-override) 拥有；本模型只依赖其组合结果：切换 agent owner 会解除触发者当前原始 SessionKey 上的活跃绑定，把旧 opaque agent conversation ref 留在 `/nexus-sessions` 历史中，并让下一条消息按新 agent owner 启动或恢复。session 列表、一次性 next-session override 与已绑定容器定位引用会持久化；未绑定的 managed topology 占位、channel default、agent binding override 与 daemon queue 仍随进程重启丢失。
 
 ## 幂等
 
@@ -239,17 +239,15 @@ cursor 的平台还可能在断线窗口丢失事件，幂等只能消除重复�
 
 - transport 的重连、resume、replay cursor 与可能丢失窗口由 [`platform-adapter.md`](../spec/platform-adapter.md) 的平台专属契约定义
 - daemon 只对 adapter 重新投递的事件执行幂等，不从连接状态推断消息是否已交付
-- session registry **不受影响**：当前内存记录不依赖 platform connection；目标持久化记录同样独立于 transport
+- session registry **不受影响**：内存索引与 SQLite 记录都独立于 platform transport connection
 
-### 进程重启（目标持久化模型）
+### 进程重启
 
-以下流程依赖尚未落地的 SQLite lifecycle registry。当前内存态 MVP 在进程重启后会丢失可恢复列表与活跃绑定，不执行本节恢复流程。
-
-- 启动时从持久化层（SQLite）重建 session registry
-- 所有上一轮的 Active/Idle session 状态转为 **Interrupted**（写回 DB）
-- 收到任何 Interrupted session 所属 SessionKey 的消息 → 先发提示"上次被中断了，是否恢复"（通过 ephemeral ACK + 按钮，按 `platform-adapter.md` 能力决定）
-- 用户 `/resume` → spawn 新 agent 子进程，复用当前 session 实例，保留历史 transcript
-- 用户 `/end` 或超过 `limits.session.interruptedToArchiveMs`（默认 24 小时）→ Archived，同 SessionKey 下次消息会创建新 generation 的新 Created
+- CLI 在启动任何 platform 连接前从 SQLite 重建 current/history session registry，并把上一进程的非终态记录写为 **Interrupted**。
+- runtime handle、in-flight turn 与 daemon queue 不落盘，也不会在启动时自动 replay。
+- fixed session container 保持同一个 sessionId/generation；用户回到原话题发送下一条有效消息时，daemon 启动新的 runtime handle，并把已保存的 opaque ref 作为 `resumeFromAgentSessionId`。
+- rebindable 容器的历史继续通过 `/nexus-sessions` 选择后恢复。
+- 完整的 Idle/Interrupted 超时归档与交互式确认门仍按本状态机演进；当前 registry persistence 不从 SQLite 自行 replay 用户输入。
 
 ### agent 子进程崩溃
 

@@ -81,7 +81,7 @@ contracts:
 | `tokens_used` | INTEGER NOT NULL DEFAULT 0 | input+output 累计 |
 | `cost_used_usd` | REAL | NULL 表示订阅模式未归因 |
 | `budget_limit_usd` | REAL | NULL 表示 $ 预算未启用（opt-in） |
-| `meta_json` | TEXT | 受约束扩展 JSON；当前可保存 `sessionContainer` 定位引用 |
+| `meta_json` | TEXT | 受约束扩展 JSON；保存可逆 `sessionKey` 字段、标题、容器定位引用、fixed agent identity 与 trajectory sequence |
 
 索引：
 
@@ -102,6 +102,9 @@ contracts:
 - `meta_json.sessionContainer` 使用 `message-protocol.md` 的 `SessionContainerRef` 形状。普通 metadata upsert 不携带时保留旧值；
   异步 URL resolver 只能补写 `url`，不得覆盖 `kind`、`bindingMode`、`parentChannelId` 或 `rootMessageId`。
   rebind 不迁移该字段；fixed container 必须拒绝 rebind。URL 与稳定 ID 只对通过当前 platform auth 的用户展示，不进入日志或 trajectory 摘要。
+- `meta_json.sessionKey` 保存完整四字段对象，用于无损恢复；不得通过对 `session_key` 的冒号拼接字符串执行 `split` 反序列化。
+- `meta_json.title` 保存 `/nexus-sessions` 展示标题；`meta_json.fixedThread` 只保存容器 owner 与首次固定的 `agentName + agentOwner`，不保存平台密钥。
+- `meta_json.trajectorySequence` 保存该 session 已分配的最后 sequence，重启后继续单调递增。
 
 ### idempotency
 
@@ -180,6 +183,8 @@ contracts:
 - `idx_external_session_imports_state (state, discovered_at DESC)`
 
 字段语义和状态机见 [`trajectory-observability.md`](trajectory-observability.md#导入状态)。
+
+把 external import 绑定为 RoutingSession 时，`external_session_imports.state/linked_session_id` 与对应 `sessions` 行必须在同一个 `state.db` 事务提交；任一写入失败都回滚整个绑定并允许重试。
 
 ### trajectory_segments
 
@@ -327,10 +332,11 @@ interface Store {
 
 ## 迁移
 
-- SQLite store 维护 `trajectory_schema_version` 表，当前版本为 1。
-- 启动时检查 schema version；无版本记录的旧库会运行幂等 V1 migration 并写入版本。
+- SQLite store 沿用历史物理表名 `trajectory_schema_version` 作为整个 `state.db` 的唯一 schema version，当前版本为 2；不得另建 session 专属版本真相源。
+- 启动时检查 schema version；无版本记录的旧库依次运行幂等 V1 trajectory migration 与 V2 sessions migration，已有 V1 数据库只追加 V2。
 - 每次 schema 变更必须提升版本并在 store open 时自动跑 pending migration。
 - 遇到高于当前 runtime 支持的 schema version 必须 fail-closed。
+- 当前版本号存在但缺少必需表/列时同样 fail-closed，不得静默回退为内存 SessionStore。
 - 禁止手工改 schema。
 
 ## 备份

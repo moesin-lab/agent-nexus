@@ -22,7 +22,7 @@ related:
 - 一个飞书话题固定对应一个 Session；P2P 与群主时间线普通文本静默拒绝，不会进入 agent
 - 只发送纯文本消息，长回复按 4000 个 UTF-16 code unit 切片
 - `/new` 与 `/new <prompt>` 只提示新建话题，不在现有话题或 P2P 下生成第二个 Session
-- 保存话题精确 AppLink；OpenAPI 未返回加密消息链接时用 chat / thread / position 组装，`/nexus-sessions` 可引导回原话题；当前引用仍只在 daemon 内存中，进程重启会丢失列表
+- 保存话题精确 AppLink；OpenAPI 未返回加密消息链接时用 chat / thread / position 组装，`/nexus-sessions` 可在 daemon 重启后继续引导回原话题
 - 不支持图片/文件、卡片、富文本、消息编辑、删除、reaction、typing indicator 或飞书原生 slash command
 
 ## 创建飞书自建应用

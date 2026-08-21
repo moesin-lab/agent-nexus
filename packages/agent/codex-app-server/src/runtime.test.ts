@@ -14,6 +14,13 @@ import {
 } from './runtime.js';
 import type { CodexAppServerConfig } from './config.js';
 import { AppServerForeignTurnError } from './controller.js';
+import {
+  CodexProcessError,
+  type CodexProcessOutputPage,
+  type CodexProcessStatus,
+  type CodexProcessTerminateResult,
+  type CodexProcessWriteResult,
+} from './process-controller.js';
 
 class FakeEngine implements CodexAppServerSessionEngine {
   readonly starts: Array<string | undefined> = [];
@@ -27,6 +34,8 @@ class FakeEngine implements CodexAppServerSessionEngine {
   stopDeferred: { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void } | null = null;
   controllerState: ReturnType<CodexAppServerSessionEngine['status']> = 'Idle';
   readonly fatalHandlers = new Set<(error: Error) => void>();
+  readonly processHandles = new Set<string>();
+  processSequence = 0;
 
   async start(resumeThreadId?: string) {
     this.starts.push(resumeThreadId);
@@ -46,6 +55,66 @@ class FakeEngine implements CodexAppServerSessionEngine {
     this.interruptCalls += 1;
     if (this.interruptError) throw this.interruptError;
     return true;
+  }
+
+  async startProcess(): Promise<CodexProcessStatus> {
+    const handle = `process-${++this.processSequence}`;
+    this.processHandles.add(handle);
+    return {
+      handle,
+      state: 'running',
+      nextCursor: 0,
+      oldestCursor: 0,
+      stdinOpen: true,
+    };
+  }
+
+  processStatus(handle: string): CodexProcessStatus {
+    if (!this.processHandles.has(handle)) {
+      throw new CodexProcessError('process_not_found', 'process not found');
+    }
+    return {
+      handle,
+      state: 'running',
+      nextCursor: 0,
+      oldestCursor: 0,
+      stdinOpen: true,
+    };
+  }
+
+  readProcessOutput(input: { handle: string; cursor: number }): CodexProcessOutputPage {
+    return {
+      status: this.processStatus(input.handle),
+      requestedCursor: input.cursor,
+      oldestCursor: 0,
+      nextCursor: input.cursor,
+      truncatedBefore: false,
+      chunks: [],
+    };
+  }
+
+  async writeProcessStdin(input: { handle: string; dataBase64?: string }): Promise<CodexProcessWriteResult> {
+    this.processStatus(input.handle);
+    return {
+      acceptedBytes: Buffer.from(input.dataBase64 ?? '', 'base64').length,
+      stdinOpen: true,
+    };
+  }
+
+  async terminateProcess(handle: string): Promise<CodexProcessTerminateResult> {
+    this.processStatus(handle);
+    this.processHandles.delete(handle);
+    return {
+      alreadyTerminal: false,
+      status: {
+        handle,
+        state: 'exited',
+        nextCursor: 0,
+        oldestCursor: 0,
+        stdinOpen: false,
+        exitCode: 137,
+      },
+    };
   }
 
   async stop(): Promise<void> {
@@ -664,6 +733,111 @@ describe('createCodexAppServerRuntime', () => {
       CodexAppServerRuntimeError,
     );
     expect(() => runtime.interrupt(clone)).toThrow(CodexAppServerRuntimeError);
+    await expect(runtime.processStatus(clone, 'process-1')).rejects.toBeInstanceOf(
+      CodexProcessError,
+    );
+    await expect(runtime.processStatus(clone, 'process-1')).rejects.toMatchObject({
+      code: 'process_not_found',
+    });
+  });
+
+  it('should_fail_closed_when_the_live_session_key_is_mutated', async () => {
+    const { engine, runtime, session } = setup();
+    await waitFor(() => session.state === 'Idle');
+    const started = await runtime.startProcess(session, { argv: ['/usr/bin/tool'] });
+    const originalChannelId = session.key.channelId;
+    session.key.channelId = 'chat-foreign-mutated';
+    expect(runtime.isAlive(session)).toBe(false);
+
+    for (const operation of [
+      () => runtime.startProcess(session, { argv: ['/usr/bin/other'] }),
+      () => runtime.processStatus(session, started.handle),
+      () => runtime.readProcessOutput(session, { handle: started.handle, cursor: 0 }),
+      () => runtime.writeProcessStdin(session, {
+        handle: started.handle,
+        dataBase64: Buffer.from('forbidden').toString('base64'),
+      }),
+      () => runtime.terminateProcess(session, started.handle),
+    ]) {
+      await expect(operation()).rejects.toMatchObject({
+        name: 'CodexProcessError',
+        code: 'process_not_found',
+      });
+    }
+    expect(engine.processHandles.has(started.handle)).toBe(true);
+
+    session.key.channelId = originalChannelId;
+    await expect(runtime.processStatus(session, started.handle)).resolves.toMatchObject({
+      state: 'running',
+    });
+  });
+
+  it('should_keep_process_control_on_the_runtime_private_session_across_turns', async () => {
+    const { engine, runtime, session } = setup();
+    await waitFor(() => session.state === 'Idle');
+
+    const processStatus = await runtime.startProcess(session, { argv: ['/usr/bin/tool'] });
+    engine.outcomes.push({ status: 'completed', text: 'turn one' });
+    await runtime.sendInput(session, input('first turn', 'trace-process-turn-1'));
+
+    await expect(runtime.processStatus(session, processStatus.handle)).resolves.toMatchObject({
+      state: 'running',
+    });
+    await expect(runtime.writeProcessStdin(session, {
+      handle: processStatus.handle,
+      dataBase64: Buffer.from('ping').toString('base64'),
+    })).resolves.toEqual({ acceptedBytes: 4, stdinOpen: true });
+    await expect(runtime.terminateProcess(session, processStatus.handle)).resolves.toMatchObject({
+      status: { state: 'exited', exitCode: 137 },
+    });
+  });
+
+  it('should_not_route_a_process_handle_across_session_keys', async () => {
+    const engines: FakeEngine[] = [];
+    const runtime = createCodexAppServerRuntime(config, {
+      createEngine: () => {
+        const engine = new FakeEngine();
+        engines.push(engine);
+        return engine;
+      },
+    });
+    const sessionA = runtime.startSession(key, sessionConfig);
+    const sessionB = runtime.startSession(
+      { ...key, channelId: 'chat-2' },
+      { ...sessionConfig, sessionId: 'session-2' },
+    );
+    await waitFor(() => sessionA.state === 'Idle' && sessionB.state === 'Idle');
+
+    const started = await runtime.startProcess(sessionA, { argv: ['/usr/bin/tool'] });
+    let foreignError: unknown;
+    let unknownError: unknown;
+    await runtime.processStatus(sessionB, started.handle).catch((error: unknown) => {
+      foreignError = error;
+    });
+    await runtime.processStatus(sessionB, 'random-unknown-handle').catch((error: unknown) => {
+      unknownError = error;
+    });
+
+    expect(foreignError).toBeInstanceOf(CodexProcessError);
+    expect(foreignError).toMatchObject({ code: 'process_not_found' });
+    expect(unknownError).toBeInstanceOf(CodexProcessError);
+    expect(unknownError).toMatchObject({ code: 'process_not_found' });
+    expect((foreignError as Error).message).toBe((unknownError as Error).message);
+    await expect(runtime.readProcessOutput(sessionB, {
+      handle: started.handle,
+      cursor: 0,
+    })).rejects.toThrow(/not found/);
+    await expect(runtime.writeProcessStdin(sessionB, {
+      handle: started.handle,
+      dataBase64: Buffer.from('forbidden').toString('base64'),
+    })).rejects.toThrow(/not found/);
+    await expect(runtime.terminateProcess(sessionB, started.handle)).rejects.toThrow(/not found/);
+    await expect(runtime.processStatus(sessionA, started.handle)).resolves.toMatchObject({
+      state: 'running',
+    });
+
+    await Promise.all([runtime.stopSession(sessionA), runtime.stopSession(sessionB)]);
+    expect(engines).toHaveLength(2);
   });
 
   it('should_report_structured_session_status_without_exposing_the_thread_id', async () => {

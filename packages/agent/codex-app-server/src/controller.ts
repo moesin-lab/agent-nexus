@@ -1,4 +1,5 @@
 import type { CodexAppServerSandbox } from './config.js';
+import type { RpcRequestOptions } from './rpc-transport.js';
 import {
   isServerNotificationMethod0_146,
   SERVER_NOTIFICATION_OWNERSHIP_0_146,
@@ -6,9 +7,11 @@ import {
 } from './protocol-contract-0-146.js';
 
 export interface AppServerRpcPort {
-  request(method: string, params: unknown): Promise<unknown>;
+  request(method: string, params: unknown, options?: RpcRequestOptions): Promise<unknown>;
   notify(method: string, params: unknown): Promise<void>;
 }
+
+export type { RpcRequestOptions } from './rpc-transport.js';
 
 export interface AppServerControllerOptions {
   clientVersion: string;
@@ -282,13 +285,10 @@ export class AppServerController {
   }
 
   handleInitializationNotification(frame: Record<string, unknown>): void {
-    this.handleNotification(frame, true);
+    this.handleNotification(frame);
   }
 
-  handleNotification(
-    frame: Record<string, unknown>,
-    initializationReplay = false,
-  ): void {
+  handleNotification(frame: Record<string, unknown>): void {
     this.assertUsable();
     try {
       const method = nonEmptyString(frame['method'], 'notification.method');
@@ -384,10 +384,17 @@ export class AppServerController {
         active.resolve({ status, text: final });
         return;
       }
+      if (
+        method === 'command/exec/outputDelta' ||
+        method === 'process/outputDelta' ||
+        method === 'process/exited'
+      ) {
+        this.throwFatal('unowned or disabled process notification');
+      }
       if (!isServerNotificationMethod0_146(method)) {
         this.throwFatal('unsupported notification outside 0.146.0 snapshot');
       }
-      this.assertIgnoredNotificationOwnership(method, params, initializationReplay);
+      this.assertIgnoredNotificationOwnership(method, params);
       // Known stable telemetry/tool notifications not promoted by the first release are ignored.
     } catch (error) {
       if (error instanceof AppServerControllerError && this.fatalError === error) throw error;
@@ -414,9 +421,8 @@ export class AppServerController {
   private assertIgnoredNotificationOwnership(
     method: ServerNotificationMethod0_146,
     params: Record<string, unknown>,
-    initializationReplay: boolean,
   ): void {
-    if (initializationReplay && method === 'thread/tokenUsage/updated') {
+    if (method === 'thread/tokenUsage/updated') {
       this.assertThread(params['threadId']);
       const turnId = nonEmptyString(params['turnId'], `${method}.turnId`);
       if (!this.ownedTurnIds.has(turnId)) {

@@ -212,8 +212,8 @@ async function verifyTarball(tarballPath, tempRoot) {
         AGENT_NEXUS_HOME: cliHome,
       },
     });
-    assert.match(packedCodex.stdout, /packed Codex app-server turn verified/);
-    process.stdout.write('packed Codex turn verified from installed CLI\n');
+    assert.match(packedCodex.stdout, /packed Codex app-server process lifecycle verified/);
+    process.stdout.write('packed Codex process lifecycle verified from installed CLI\n');
   }
 }
 

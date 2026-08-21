@@ -166,7 +166,7 @@ Idle|Busy -> stop -> Stopping -> Stopped
 | `turn/completed(interrupted)` | `turn_finished(user_interrupt)` |
 | `turn/completed(failed)` | `error` → `turn_finished(error)` |
 
-`thread/resume` 可能在 response 前重放同一 thread 上一轮的 `thread/tokenUsage/updated`。该 frame 只允许在有界 initialization notification buffer 回放阶段出现：必须匹配 resumed thread，且 `turnId` 必须属于同一 response 的 `thread.turns[].id`，随后忽略，不产生 `AgentEvent`；进入 live 阶段后仍必须匹配当前 active turn。未知历史 turn 与其它历史 turn/item notification 不因 resume 而放宽 ownership。
+`thread/resume` 可能在 response 前或 response 后延迟重放同一 thread 上一轮的 `thread/tokenUsage/updated`。该 frame 必须匹配当前 thread，且 `turnId` 必须已由同一 response 的 `thread.turns[].id` 或本 connection 成功的 `turn/start` 证明归属，随后忽略，不产生 `AgentEvent`。未知 turn 与其它历史 turn/item notification 不因 resume 而放宽 ownership。
 
 未来启用 streaming 前必须先补 delta/final 去重与顺序 contract tests；启用后 `text_final` 仍承载完整 final text，daemon 的 outbound 聚合不得重复展示。首版只发 final。unknown item type 记录有界 diagnostic 并忽略；unknown terminal status、ownership id 或 ServerRequest 不得忽略。
 
@@ -286,7 +286,7 @@ agent-nexus 生成并维护 conversation-private `config.toml`，固定 `check_f
 7. Node 22 与 24、macOS arm64/x64、Linux x64；未覆盖平台 fail closed。
 8. packed CLI：原始 schema testdata 不进入公开包；发布前先证明 snapshot hash 与 snapshot-derived runtime contract 已进入 bundle，再从安装后的 CLI release-verification 入口启动 app-server、完成两轮与 process start/output/stdin/terminate 并等待清理，不能只跑源码测试或首次配置脚手架。
 9. authenticated viewer：真实 tmux `codex --remote` 与 structured controller 同时连接；controller final 出现在 terminal snapshot，旧 token 对新 incarnation 返回 401；真实 viewer 输入 foreign turn 时不产生平台 `error/text/item/turn`，只在 cleanup 完成后产生 `session_stopped(system/error)`。
-10. hard crash：独立 daemon worker 完成一轮后 SIGKILL；匿名 pipe supervisor 必须清除旧 app-server PGID，next-start reconciliation 必须清除旧 viewer PGID/token/stale lease，随后同一 thread 在新 incarnation resume 并完成一轮。
+10. hard crash：独立 daemon worker 完成一轮并启动长运行 process 后 SIGKILL；匿名 pipe supervisor 必须清除旧 app-server PGID 与 process PID，next-start reconciliation 必须清除旧 viewer PGID/token/stale lease，随后同一 thread 在新 incarnation resume、旧 process handle 返回 not found，并完成一轮。
 
 stable process owner 的详细 gate 由 [`codex-app-server-process.md`](codex-app-server-process.md) 定义；experimental `process/*` 与 background terminal 不得用该 gate 冒充完成。passive remote TUI viewer 只有在 ADR-0023、terminal-session spec 的 admission、incarnation、secret hygiene、双 client 广播和真实 E2E 门禁全部通过后才算完成；stdio 主路径测试不能替代这些证据。可写 attach / 人工接管不属于该 gate。
 

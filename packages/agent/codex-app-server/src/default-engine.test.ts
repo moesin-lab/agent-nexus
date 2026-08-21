@@ -15,6 +15,7 @@ import {
   type CodexAppServerViewerHostPort,
 } from './default-engine.js';
 import type { CodexAppServerConfig } from './config.js';
+import type { RpcRequestOptions } from './rpc-transport.js';
 import type {
   CodexRemoteViewerHandle,
   CodexRemoteViewerPort,
@@ -37,8 +38,14 @@ afterEach(async () => {
 
 class FakeHost implements CodexAppServerHostPort {
   readonly requests: string[] = [];
+  readonly requestDetails: Array<{
+    method: string;
+    params: Record<string, unknown>;
+    options?: RpcRequestOptions;
+  }> = [];
   stopped = false;
   private turnNumber = 0;
+  private readonly processes = new Map<string, (response: unknown) => void>();
 
   constructor(
     readonly options: ProcessHostOptions,
@@ -49,8 +56,17 @@ class FakeHost implements CodexAppServerHostPort {
   pid(): number { return 9001; }
   status = 'unused';
 
-  async request(method: string, params: unknown): Promise<unknown> {
+  async request(
+    method: string,
+    params: unknown,
+    options?: RpcRequestOptions,
+  ): Promise<unknown> {
     this.requests.push(method);
+    this.requestDetails.push({
+      method,
+      params: params as Record<string, unknown>,
+      ...(options === undefined ? {} : { options }),
+    });
     if (method === 'initialize') {
       return {
         codexHome: this.options.codexHome,
@@ -90,6 +106,34 @@ class FakeHost implements CodexAppServerHostPort {
       return { turn: { id: `turn_${this.turnNumber}`, status: 'inProgress' } };
     }
     if (method === 'turn/interrupt') return {};
+    if (method === 'command/exec') {
+      const processId = (params as { processId: string }).processId;
+      return new Promise<unknown>((resolve) => this.processes.set(processId, resolve));
+    }
+    if (method === 'command/exec/write') {
+      const input = params as { processId: string; deltaBase64?: string };
+      if (!this.processes.has(input.processId)) throw new Error('process not found');
+      if (input.deltaBase64) {
+        this.callbacks.onNotification?.({
+          method: 'command/exec/outputDelta',
+          params: {
+            processId: input.processId,
+            stream: 'stdout',
+            deltaBase64: input.deltaBase64,
+            capReached: false,
+          },
+        });
+      }
+      return {};
+    }
+    if (method === 'command/exec/terminate') {
+      const processId = (params as { processId: string }).processId;
+      const resolve = this.processes.get(processId);
+      if (!resolve) throw new Error('process not found');
+      this.processes.delete(processId);
+      resolve({ exitCode: 137, stdout: '', stderr: '' });
+      return {};
+    }
     throw new Error(`unexpected ${method}`);
   }
 
@@ -632,6 +676,150 @@ describe('createDefaultCodexAppServerEngineFactory', () => {
     releaseHost();
     await expect(starting).resolves.toEqual({ threadId: 'thr_durable', pid: 9001 });
     expect(hosts[0]!.requests[0]).toBe('initialize');
+  });
+
+  it('should_keep_one_sandboxed_process_live_across_completed_turns_and_route_its_output', async () => {
+    const sourceCodexHome = await privateDirectory('agent-nexus-codex-source-');
+    const persistenceRoot = await privateDirectory('agent-nexus-codex-persistence-');
+    await writeFile(join(sourceCodexHome, 'auth.json'), '{"token":"secret"}', { mode: 0o600 });
+    let host!: FakeHost;
+    const factory = createDefaultCodexAppServerEngineFactory({
+      sourceCodexHome,
+      persistenceRoot,
+      agentName: 'codex-dev',
+      clientVersion: '0.1.0',
+      environment: {},
+      createHost: (options, callbacks) => {
+        host = new FakeHost(options, callbacks);
+        return host;
+      },
+    });
+    const engine = factory({ key, sessionConfig, backendConfig: {
+      ...backendConfig,
+      sandbox: 'workspace-write',
+      addDirs: ['/extra'],
+    } });
+    await engine.start();
+
+    const processStatus = await engine.startProcess({ argv: ['/usr/bin/tool', '--serve'] });
+    const exec = host.requestDetails.find((request) => request.method === 'command/exec')!;
+    expect(exec).toMatchObject({
+      params: {
+        command: ['/usr/bin/tool', '--serve'],
+        cwd: '/workspace',
+        env: { CODEX_HOME: null },
+        sandboxPolicy: {
+          type: 'workspaceWrite',
+          writableRoots: ['/workspace', '/extra'],
+          networkAccess: false,
+        },
+      },
+      options: { timeoutMs: null },
+    });
+    const processId = exec.params['processId'] as string;
+    host.callbacks.onNotification?.({
+      method: 'command/exec/outputDelta',
+      params: {
+        processId,
+        stream: 'stdout',
+        deltaBase64: Buffer.from('before-turn\n').toString('base64'),
+        capReached: false,
+      },
+    });
+    const beforeTurnCursor = engine.processStatus(processStatus.handle).nextCursor;
+
+    const turn = engine.runTurn('first', 'message-process-turn-1');
+    await vi.waitFor(() => expect(host.requests.filter((method) => method === 'turn/start')).toHaveLength(1));
+    host.callbacks.onNotification?.({
+      method: 'item/started',
+      params: {
+        threadId: 'thr_durable',
+        turnId: 'turn_1',
+        item: { id: 'item_process_turn_1', type: 'agentMessage' },
+      },
+    });
+    host.callbacks.onNotification?.({
+      method: 'item/completed',
+      params: {
+        threadId: 'thr_durable',
+        turnId: 'turn_1',
+        item: {
+          id: 'item_process_turn_1',
+          type: 'agentMessage',
+          text: 'turn complete',
+          phase: 'final_answer',
+        },
+      },
+    });
+    host.callbacks.onNotification?.({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thr_durable',
+        turn: { id: 'turn_1', status: 'completed', items: [], error: null },
+      },
+    });
+    await expect(turn).resolves.toMatchObject({ status: 'completed', text: 'turn complete' });
+
+    host.callbacks.onNotification?.({
+      method: 'command/exec/outputDelta',
+      params: {
+        processId,
+        stream: 'stderr',
+        deltaBase64: Buffer.from('after-turn\n').toString('base64'),
+        capReached: false,
+      },
+    });
+    const page = engine.readProcessOutput({
+      handle: processStatus.handle,
+      cursor: beforeTurnCursor,
+    });
+    expect(Buffer.concat(page.chunks.map((chunk) =>
+      Buffer.from(chunk.dataBase64, 'base64'))).toString()).toBe('after-turn\n');
+
+    await expect(engine.writeProcessStdin({
+      handle: processStatus.handle,
+      dataBase64: Buffer.from('PING\n').toString('base64'),
+    })).resolves.toMatchObject({ acceptedBytes: 5 });
+    expect(engine.processStatus(processStatus.handle).state).toBe('running');
+    await expect(engine.terminateProcess(processStatus.handle)).resolves.toMatchObject({
+      status: { state: 'exited', exitCode: 137 },
+    });
+    await engine.stop();
+  });
+
+  it('should_deliver_the_process_handle_even_when_registry_touch_maintenance_fails', async () => {
+    const sourceCodexHome = await privateDirectory('agent-nexus-codex-source-');
+    const persistenceRoot = await privateDirectory('agent-nexus-codex-persistence-');
+    await writeFile(join(sourceCodexHome, 'auth.json'), '{"token":"secret"}', { mode: 0o600 });
+    const registry = await ConversationRegistry.open(persistenceRoot);
+    const maintenance = vi.fn();
+    let host!: FakeHost;
+    const factory = createDefaultCodexAppServerEngineFactory({
+      sourceCodexHome,
+      persistenceRoot,
+      agentName: 'codex-dev',
+      clientVersion: '0.1.0',
+      environment: {},
+      openRegistry: async () => registry,
+      onMaintenanceError: maintenance,
+      createHost: (options, callbacks) => {
+        host = new FakeHost(options, callbacks);
+        return host;
+      },
+    });
+    const engine = factory({ key, sessionConfig, backendConfig });
+    await engine.start();
+    const touchFailure = new Error('registry touch unavailable');
+    vi.spyOn(registry, 'touch').mockRejectedValueOnce(touchFailure);
+
+    const started = await engine.startProcess({ argv: ['/usr/bin/tool'] });
+
+    expect(engine.processStatus(started.handle).state).toBe('running');
+    await vi.waitFor(() => expect(maintenance).toHaveBeenCalledWith(touchFailure));
+    const exec = host.requestDetails.find((request) => request.method === 'command/exec');
+    expect(exec).toBeDefined();
+    await engine.terminateProcess(started.handle);
+    await engine.stop();
   });
 
   it('should_not_apply_a_delayed_interactive_request_effect_to_the_next_turn', async () => {

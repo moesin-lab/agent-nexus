@@ -9,6 +9,7 @@ import {
   RpcProtocolError,
   RpcTransport,
   type RpcId,
+  type RpcRequestOptions,
 } from './rpc-transport.js';
 import type { ProcessHostCallbacks, ProcessHostOptions } from './process-host.js';
 
@@ -164,9 +165,9 @@ export class AuthenticatedWebSocketProcessHost {
     return this.startPromise;
   }
 
-  request(method: string, params: unknown): Promise<unknown> {
+  request(method: string, params: unknown, options?: RpcRequestOptions): Promise<unknown> {
     try {
-      return this.getTransport().request(method, params);
+      return this.getTransport().request(method, params, options);
     } catch (error) {
       return Promise.reject(error);
     }

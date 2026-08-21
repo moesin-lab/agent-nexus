@@ -19,7 +19,10 @@ import type { AgentEvent, SessionConfig, SessionKey } from '@agent-nexus/protoco
 import { createDefaultCodexAppServerEngineFactory } from './default-engine.js';
 import type { CodexAppServerConfig } from './config.js';
 import { CodexRemoteViewerAdapter } from './remote-viewer.js';
-import { createCodexAppServerRuntime } from './runtime.js';
+import {
+  createCodexAppServerRuntime,
+  type CodexAppServerSessionEngine,
+} from './runtime.js';
 import {
   runCodexAppServerCompatibilityProbe,
   runCodexAppServerViewerCompatibilityProbe,
@@ -42,6 +45,57 @@ interface RealViewerMetadata {
   tokenFile: string;
 }
 
+const PROCESS_FIXTURE = [
+  "const fs = require('node:fs')",
+  "const nonce = process.argv[1]",
+  "let write = 'blocked'",
+  "try { fs.writeFileSync(`process-write-probe-${nonce}`, 'forbidden'); write = 'allowed' } catch {}",
+  "const secret = Number(Boolean(process.env.CODEX_HOME || process.env.AGENT_NEXUS_PROCESS_SECRET))",
+  "process.stdout.write(`READY ${nonce} ${process.pid}\\nENV ${nonce} ${secret}\\nWRITE ${nonce} ${write}\\n`)",
+  "process.stdin.on('data', (chunk) => process.stdout.write(`PONG ${nonce} ${chunk.toString()}`))",
+  "setInterval(() => process.stdout.write(`TICK ${nonce}\\n`), 100)",
+].join(';');
+
+async function waitForProcessText(
+  engine: CodexAppServerSessionEngine,
+  handle: string,
+  initialCursor: number,
+  expected: string,
+  timeoutMs = 10_000,
+): Promise<{ cursor: number; text: string }> {
+  const deadline = Date.now() + timeoutMs;
+  let cursor = initialCursor;
+  let text = '';
+  while (Date.now() < deadline) {
+    const page = engine.readProcessOutput({ handle, cursor });
+    for (const chunk of page.chunks) {
+      text += Buffer.from(chunk.dataBase64, 'base64').toString('utf8');
+    }
+    cursor = page.nextCursor;
+    if (text.includes(expected)) return { cursor, text };
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`process output did not contain ${expected}`);
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+async function realStage<T>(name: string, operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw new Error(`real E2E stage ${name} failed`, { cause: error });
+  }
+}
+
 afterAll(async () => {
   await Promise.all(roots.map((path) => rm(path, { recursive: true, force: true })));
 });
@@ -58,7 +112,8 @@ describe.skipIf(!runReal)('Codex app-server real integration', () => {
     roots.push(temporaryRoot);
     await chmod(temporaryRoot, 0o700);
     const persistenceRoot = await realpath(temporaryRoot);
-    const workingDir = await realpath(process.cwd());
+    await mkdir(join(persistenceRoot, 'workspace'), { mode: 0o700 });
+    const workingDir = await realpath(join(persistenceRoot, 'workspace'));
     const sourceCodexHome = await realpath(
       process.env['CODEX_HOME'] || join(homedir(), '.codex'),
     );
@@ -90,45 +145,122 @@ describe.skipIf(!runReal)('Codex app-server real integration', () => {
       persistenceRoot,
       agentName: 'real-codex',
       clientVersion: '0.1.0-e2e',
-      environment: process.env,
+      environment: {
+        ...process.env,
+        AGENT_NEXUS_PROCESS_SECRET: 'must-not-reach-process-child',
+      },
     };
-    const first = createDefaultCodexAppServerEngineFactory(dependencies)({
+    const factory = createDefaultCodexAppServerEngineFactory(dependencies);
+    let first: ReturnType<typeof factory> | null = factory({
       key,
       sessionConfig,
       backendConfig,
     });
-    const started = await first.start();
-    await expect(first.runTurn('Reply with exactly FIRST_OK', 'real-message-1')).resolves.toMatchObject({
-      status: 'completed',
-      text: expect.stringContaining('FIRST_OK'),
-    });
-    await expect(first.runTurn('Reply with exactly SECOND_OK', 'real-message-2')).resolves.toMatchObject({
-      status: 'completed',
-      text: expect.stringContaining('SECOND_OK'),
-    });
-    await first.stop();
+    let resumed: ReturnType<typeof factory> | null = null;
+    try {
+      const started = await first.start();
+      const nonce = `process-${Date.now()}`;
+      const live = await realStage('first process start', () => first.startProcess({
+        argv: [process.execPath, '-e', PROCESS_FIXTURE, nonce],
+      }));
+      const ready = await waitForProcessText(first, live.handle, 0, `WRITE ${nonce} blocked`);
+      expect(ready.text).toContain(`ENV ${nonce} 0`);
+      await expect(
+        lstat(join(workingDir, `process-write-probe-${nonce}`)),
+      ).rejects.toMatchObject({ code: 'ENOENT' });
+      const pidMatch = new RegExp(`READY ${nonce} (\\d+)`).exec(ready.text);
+      expect(pidMatch).not.toBeNull();
+      const livePid = Number(pidMatch![1]);
+      expect(processExists(livePid)).toBe(true);
+      expect(first.processStatus(live.handle)).toMatchObject({
+        handle: live.handle,
+        state: 'running',
+        nextCursor: expect.any(Number),
+      });
+      const firstTurn = await realStage('first model turn', () =>
+        first.runTurn('Reply with exactly FIRST_OK', 'real-message-1'));
+      expect(firstTurn).toMatchObject({
+        status: 'completed',
+        text: expect.stringContaining('FIRST_OK'),
+      });
+      const afterTurn = await waitForProcessText(
+        first,
+        live.handle,
+        ready.cursor,
+        `TICK ${nonce}`,
+      );
+      const afterTurnStatus = first.processStatus(live.handle);
+      expect(afterTurnStatus.state).toBe('running');
+      expect(afterTurnStatus.nextCursor).toBeGreaterThanOrEqual(afterTurn.cursor);
+      await realStage('process stdin', () => first.writeProcessStdin({
+        handle: live.handle,
+        dataBase64: Buffer.from('PING\n').toString('base64'),
+      }));
+      await waitForProcessText(
+        first,
+        live.handle,
+        afterTurn.cursor,
+        `PONG ${nonce} PING`,
+      );
+      const secondTurn = await realStage('second model turn', () =>
+        first.runTurn('Reply with exactly SECOND_OK', 'real-message-2'));
+      expect(secondTurn).toMatchObject({
+        status: 'completed',
+        text: expect.stringContaining('SECOND_OK'),
+      });
+      expect(first.processStatus(live.handle).state).toBe('running');
+      const terminated = await realStage('process terminate', () =>
+        first.terminateProcess(live.handle));
+      expect(terminated).toMatchObject({
+        status: { state: 'exited', exitCode: expect.any(Number) },
+      });
+      await expect.poll(() => processExists(livePid), { timeout: 5_000 }).toBe(false);
+      await first.stop();
+      first = null;
 
-    const resumed = createDefaultCodexAppServerEngineFactory(dependencies)({
-      key: { ...key, channelId: 'chat-rebound' },
-      sessionConfig,
-      backendConfig,
-    });
-    await expect(resumed.start(started.threadId)).resolves.toMatchObject({ threadId: started.threadId });
-    await expect(
-      resumed.runTurn('Reply with exactly RESUME_OK', 'real-message-3'),
-    ).resolves.toMatchObject({
-      status: 'completed',
-      text: expect.stringContaining('RESUME_OK'),
-    });
-    const interrupted = resumed.runTurn(
-      'Run the shell command `sleep 30`, wait for it, then reply with TOO_LATE.',
-      'real-message-interrupt',
-    );
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-    await expect(resumed.interrupt()).resolves.toBe(true);
-    await expect(interrupted).resolves.toMatchObject({ status: 'interrupted' });
-    await resumed.stop();
-  }, 180_000);
+      resumed = factory({
+        key: { ...key, channelId: 'chat-rebound' },
+        sessionConfig,
+        backendConfig,
+      });
+      await expect(resumed.start(started.threadId)).resolves.toMatchObject({
+        threadId: started.threadId,
+      });
+      expect(() => resumed!.processStatus(live.handle)).toThrow(/not found/);
+      await expect(
+        resumed.runTurn('Reply with exactly RESUME_OK', 'real-message-3'),
+      ).resolves.toMatchObject({
+        status: 'completed',
+        text: expect.stringContaining('RESUME_OK'),
+      });
+      const cleanupNonce = `cleanup-${Date.now()}`;
+      const cleanupProcess = await resumed.startProcess({
+        argv: [process.execPath, '-e', PROCESS_FIXTURE, cleanupNonce],
+      });
+      const cleanupReady = await waitForProcessText(
+        resumed,
+        cleanupProcess.handle,
+        0,
+        `READY ${cleanupNonce}`,
+      );
+      const cleanupPid = Number(
+        new RegExp(`READY ${cleanupNonce} (\\d+)`).exec(cleanupReady.text)![1],
+      );
+      const interrupted = resumed.runTurn(
+        'Run the shell command `sleep 30`, wait for it, then reply with TOO_LATE.',
+        'real-message-interrupt',
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      await expect(resumed.interrupt()).resolves.toBe(true);
+      await expect(interrupted).resolves.toMatchObject({ status: 'interrupted' });
+      await resumed.stop();
+      resumed = null;
+      await expect.poll(() => processExists(cleanupPid), { timeout: 5_000 }).toBe(false);
+    } finally {
+      if (resumed) await resumed.stop().catch(() => undefined);
+      if (first) await first.stop().catch(() => undefined);
+    }
+  }, 240_000);
 
   it.skipIf(!runViewer)(
     'should_broadcast_to_the_authenticated_tmux_viewer_and_reject_the_previous_incarnation_token',
@@ -327,12 +459,17 @@ describe.skipIf(!runReal)('Codex app-server real integration', () => {
       try {
         const crashState = await readWorkerState(worker);
         expect(processGroupExists(crashState.appServerPgid)).toBe(true);
+        expect(processExists(crashState.processPid)).toBe(true);
         expect(processGroupExists(crashState.viewerPgid)).toBe(true);
 
         worker.kill('SIGKILL');
         await waitForChildExit(worker);
         await expect.poll(
           () => processGroupExists(crashState.appServerPgid),
+          { timeout: 5_000, interval: 50 },
+        ).toBe(false);
+        await expect.poll(
+          () => processExists(crashState.processPid),
           { timeout: 5_000, interval: 50 },
         ).toBe(false);
 
@@ -385,6 +522,7 @@ describe.skipIf(!runReal)('Codex app-server real integration', () => {
         await expect(resumed.start(crashState.threadId)).resolves.toMatchObject({
           threadId: crashState.threadId,
         });
+        expect(() => resumed!.processStatus(crashState.processHandle)).toThrow(/not found/);
         await expect(
           resumed.runTurn(
             'Reply with exactly REAL_CRASH_RESUME_OK_731 and nothing else.',
@@ -587,6 +725,8 @@ function webSocketStatus(endpoint: string, token: string): Promise<number> {
 interface CrashWorkerState {
   threadId: string;
   appServerPgid: number;
+  processHandle: string;
+  processPid: number;
   viewerPgid: number;
   tokenFile: string;
 }

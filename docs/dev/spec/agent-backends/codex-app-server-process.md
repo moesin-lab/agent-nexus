@@ -96,9 +96,12 @@ ProcessStdinInput {
 | `streamStdoutStderr` | `true` |
 | `disableTimeout` | `true` |
 | `disableOutputCap` | `true`；资源上限由本地 owner 强制 |
+| `env` | `{CODEX_HOME: null}`；不把 conversation auth home 传给 tool child |
 | `sandboxPolicy` | 从 backend `sandbox` 与 `addDirs` 唯一派生 |
 
 caller 不得覆盖 cwd、env、timeout、output cap、sandbox、permission profile、TTY 或 PTY size。命令使用 argv，不经过 shell。
+
+argv 必须包含 `1..256` 个非空、无 NUL 的字符串；单个 argument UTF-8 byte 长度不超过 `64 KiB`，全部 argument 合计不超过 `256 KiB`。超限统一返回 `process_invalid_argv`，且不得向 app-server 发 request。
 
 `command/exec` final response 延迟到进程退出，因此该 request 不使用普通 `requestTimeoutMs`；transport close 仍必须立即 reject。其它 control request 继续使用普通 deadline。
 
@@ -140,6 +143,7 @@ turn 完成、中断或开始下一 turn 不改变 process state，也不把 thr
 
 - stdout/stderr 按 notification 到达顺序共享单调 cursor；
 - ring 上限固定 `1 MiB`；淘汰最老 bytes 后推进 `oldestCursor`；
+- ring 最多保留 `4096` 个有效 chunk；超过时淘汰最老 chunk，底层数组用游标与摊还 compaction，不能逐项 `shift()`；
 - 单次 read 最多返回 `64 KiB`；
 - cursor 落在已淘汰区时返回 `truncatedBefore=true`，不得静默假装完整；
 - 存储与接口只处理 bytes/base64，不跨 chunk 猜测 UTF-8；
@@ -149,7 +153,7 @@ turn 完成、中断或开始下一 turn 不改变 process state，也不把 thr
 
 ### stdin
 
-`writeProcessStdin` 严格验证 base64。单次 decoded data 上限 `64 KiB`，单 handle pending stdin 上限 `256 KiB`。
+`writeProcessStdin` 先按 `64 KiB` decoded 上限预检 encoded length，再严格验证 canonical base64，避免超大字符串先触发完整扫描和分配。单 handle pending stdin 上限 `256 KiB` 且最多 `64` 个 pending operation。空 data 且不 close 的 no-op 必须拒绝，不能绕过 byte quota 堆积 Promise/RPC。
 
 每个 handle 有独立 write tail：先占 pending byte quota，再调用 `command/exec/write`，settle 后释放。`closeStdin=true` 入队时立即关闭 admission；后续非空 write 拒绝。重复 close 是幂等成功。
 
@@ -178,7 +182,7 @@ terminate `{}` 只表示 control 已接受。方法必须继续等待原 `comman
 - authorization root 是 runtime-private session identity；thread id 只描述 conversation lineage，不能授权 process 操作。
 - output notification 只有 connection-scoped process id，必须在接收它的 controller 内解析；不得在全局 map 跨 connection 查找。
 - 即使两个 SessionKey 内部生成相同 upstream process id，仍不能互查、互写或互杀。
-- caller 不能传 env。tool child 只继承 app-server 受控环境；daemon、平台、数据库 credential 不得进入 child。
+- caller 不能传 env。tool child 只继承 app-server 受控的 OS 环境，并显式删除 app-server 自身使用的 `CODEX_HOME`；daemon、平台、数据库与 Codex auth credential 不得进入 child。
 - sandbox 唯一映射：`read-only -> readOnly(networkAccess=false)`；`workspace-write -> workspaceWrite(writableRoots=[workingDir,...addDirs], networkAccess=false)`；`danger-full-access -> dangerFullAccess`。
 
 `danger-full-access` 仍等价于让远程操作者在本机执行任意命令；process API 不提供额外文件隔离。PGID cleanup 防止普通 descendant orphan，不承诺阻止恶意 child 主动 `setsid` 逃逸；后者需要 cgroup、job object 或独立 UID sandbox。

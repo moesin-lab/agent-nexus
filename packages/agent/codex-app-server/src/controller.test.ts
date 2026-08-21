@@ -72,6 +72,22 @@ const flush = async (): Promise<void> => {
 };
 
 describe('AppServerController', () => {
+  it('should_fail_closed_if_a_process_notification_bypasses_its_owner', async () => {
+    const controller = new AppServerController(new FakePort(), options);
+    await controller.initialize();
+
+    expect(() => controller.handleNotification({
+      method: 'command/exec/outputDelta',
+      params: {
+        processId: 'foreign',
+        stream: 'stdout',
+        deltaBase64: '',
+        capReached: false,
+      },
+    })).toThrow(/process notification/);
+    expect(controller.status()).toBe('Errored');
+  });
+
   it('should_expose_only_initialized_thread_and_active_turn_identity', async () => {
     const port = new FakePort();
     const controller = new AppServerController(port, options);
@@ -186,7 +202,7 @@ describe('AppServerController', () => {
     });
   });
 
-  it('should_accept_only_same_thread_historical_usage_during_resume_notification_replay', async () => {
+  it('should_accept_delayed_usage_only_for_proven_same_thread_turns', async () => {
     const controller = new AppServerController(new FakePort(), options);
     await controller.initialize('thr_resume');
     const historicalUsage = {
@@ -216,7 +232,11 @@ describe('AppServerController', () => {
 
     const liveController = new AppServerController(new FakePort(), options);
     await liveController.initialize('thr_resume');
-    expect(() => liveController.handleNotification(historicalUsage)).toThrow(/turn ownership/i);
+    expect(() => liveController.handleNotification(historicalUsage)).not.toThrow();
+    expect(() => liveController.handleNotification({
+      ...historicalUsage,
+      params: { ...historicalUsage.params, turnId: 'turn_unknown' },
+    })).toThrow(/turn ownership/i);
   });
 
   it('should_run_two_turns_serially_and_emit_one_final_per_turn', async () => {

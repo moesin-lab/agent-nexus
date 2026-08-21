@@ -32,14 +32,21 @@ import type {
   CodexRemoteViewerHandle,
   CodexRemoteViewerPort,
 } from './remote-viewer.js';
-import type { RpcId } from './rpc-transport.js';
+import {
+  CodexProcessController,
+  type CodexProcessOutputPage,
+  type CodexProcessStatus,
+  type CodexProcessTerminateResult,
+  type CodexProcessWriteResult,
+} from './process-controller.js';
+import type { RpcId, RpcRequestOptions } from './rpc-transport.js';
 import { decideServerRequest, type ServerRequestEffect } from './server-request-policy.js';
 import type { CodexAppServerSessionEngine } from './runtime.js';
 
 export interface CodexAppServerHostPort {
   start(): void | Promise<void>;
   pid(): number | undefined;
-  request(method: string, params: unknown): Promise<unknown>;
+  request(method: string, params: unknown, options?: RpcRequestOptions): Promise<unknown>;
   notify(method: string, params: unknown): Promise<void>;
   respondResult(id: RpcId, result: unknown): Promise<void>;
   respondError(id: RpcId, code: number, message: string): Promise<void>;
@@ -143,6 +150,7 @@ export function createDefaultCodexAppServerEngineFactory(
 class DefaultCodexAppServerSessionEngine implements CodexAppServerSessionEngine {
   private host: CodexAppServerHostPort | null = null;
   private controller: AppServerController | null = null;
+  private processController: CodexProcessController | null = null;
   private auth: AuthSnapshotManager | null = null;
   private registry: ConversationRegistry | null = null;
   private threadId: string | null = null;
@@ -231,7 +239,7 @@ class DefaultCodexAppServerSessionEngine implements CodexAppServerSessionEngine 
             initializingNotifications.push(frame);
             return;
           }
-          controller?.handleNotification(frame);
+          this.routeNotification(controller, frame);
         },
         onServerRequest: (frame) => void this.handleServerRequest(frame),
         onFatal: (error) => controller?.fail(error.message),
@@ -275,11 +283,22 @@ class DefaultCodexAppServerSessionEngine implements CodexAppServerSessionEngine 
         { onFatal: (error) => this.reportFatal(error) },
       );
       this.controller = controller;
+      this.processController = new CodexProcessController(this.host, {
+        workingDir: this.input.sessionConfig.workingDir,
+        sandbox: this.input.backendConfig.sandbox,
+        addDirs: this.input.backendConfig.addDirs,
+        terminateGraceMs: this.input.backendConfig.terminateGraceMs,
+        onFatal: (error) => controller?.fail(error.message),
+      });
       const threadId = await controller.initialize(resumeThreadId);
       this.assertNotStopped();
       initialized = true;
       for (const frame of initializingNotifications) {
-        controller.handleInitializationNotification(frame);
+        if (frame['method'] === 'command/exec/outputDelta') {
+          this.processController.handleNotification(frame);
+        } else {
+          controller.handleInitializationNotification(frame);
+        }
       }
       if (provisionalHomeId) {
         await registry.commit(provisionalHomeId, threadId);
@@ -327,8 +346,10 @@ class DefaultCodexAppServerSessionEngine implements CodexAppServerSessionEngine 
           }
         }
         if (!hostError && this.host === failedHost) {
+          this.processController?.confirmHostStopped();
           this.host = null;
           this.controller = null;
+          this.processController = null;
         }
         if (viewerError && hostError) {
           throw new AggregateError(
@@ -367,6 +388,36 @@ class DefaultCodexAppServerSessionEngine implements CodexAppServerSessionEngine 
     return this.requireController().interrupt();
   }
 
+  async startProcess(input: { argv: string[] }): Promise<CodexProcessStatus> {
+    const status = await this.requireProcessController().start(input);
+    if (this.registry && this.threadId) {
+      void this.registry
+        .touch(this.threadId)
+        .catch((error) => this.dependencies.onMaintenanceError?.(asError(error)));
+    }
+    return status;
+  }
+
+  processStatus(handle: string): CodexProcessStatus {
+    return this.requireProcessController().status(handle);
+  }
+
+  readProcessOutput(input: { handle: string; cursor: number }): CodexProcessOutputPage {
+    return this.requireProcessController().readOutput(input);
+  }
+
+  writeProcessStdin(input: {
+    handle: string;
+    dataBase64?: string;
+    closeStdin?: boolean;
+  }): Promise<CodexProcessWriteResult> {
+    return this.requireProcessController().writeStdin(input);
+  }
+
+  terminateProcess(handle: string): Promise<CodexProcessTerminateResult> {
+    return this.requireProcessController().terminate(handle);
+  }
+
   onFatal(handler: (error: Error) => void): () => void {
     this.fatalHandlers.add(handler);
     return () => this.fatalHandlers.delete(handler);
@@ -383,6 +434,11 @@ class DefaultCodexAppServerSessionEngine implements CodexAppServerSessionEngine 
     this.controller?.stop();
     const startup = this.startPromise;
     const initialHost = this.host;
+    try {
+      await this.processController?.beginStop();
+    } catch (error) {
+      this.dependencies.onMaintenanceError?.(asError(error));
+    }
     let viewerError: unknown;
     try {
       await this.stopViewer();
@@ -393,6 +449,7 @@ class DefaultCodexAppServerSessionEngine implements CodexAppServerSessionEngine 
     if (initialHost) {
       try {
         await this.stopHost(initialHost);
+        this.processController?.confirmHostStopped();
       } catch (error) {
         hostError = error;
       }
@@ -415,6 +472,7 @@ class DefaultCodexAppServerSessionEngine implements CodexAppServerSessionEngine 
     if (this.host && this.host !== initialHost) {
       try {
         await this.stopHost(this.host);
+        this.processController?.confirmHostStopped();
       } catch (error) {
         hostError ??= error;
       }
@@ -429,6 +487,7 @@ class DefaultCodexAppServerSessionEngine implements CodexAppServerSessionEngine 
     if (hostError) throw hostError;
     this.host = null;
     this.controller = null;
+    this.processController = null;
     this.releaseLive?.();
     this.releaseLive = null;
     this.running = false;
@@ -441,6 +500,29 @@ class DefaultCodexAppServerSessionEngine implements CodexAppServerSessionEngine 
   private requireController(): AppServerController {
     if (!this.controller || this.stopped) throw new Error('session engine 未运行');
     return this.controller;
+  }
+
+  private requireProcessController(): CodexProcessController {
+    if (!this.processController || !this.running || this.stopped) {
+      throw new Error('session process owner 未运行');
+    }
+    return this.processController;
+  }
+
+  private routeNotification(
+    controller: AppServerController | null,
+    frame: Record<string, unknown>,
+  ): void {
+    if (frame['method'] === 'command/exec/outputDelta') {
+      const owner = this.processController;
+      if (!owner) {
+        controller?.fail('unowned command/exec output notification');
+        return;
+      }
+      owner.handleNotification(frame);
+      return;
+    }
+    controller?.handleNotification(frame);
   }
 
   private assertNotStopped(): void {

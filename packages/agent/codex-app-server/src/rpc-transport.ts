@@ -1,5 +1,16 @@
 export type RpcId = number | string;
 
+export type RpcResponseObservation =
+  | { kind: 'result'; result: unknown }
+  | { kind: 'error'; error: RpcRemoteError };
+
+export interface RpcRequestOptions {
+  /** null keeps the request pending until a response or transport close. */
+  timeoutMs?: number | null;
+  /** Runs synchronously before the request Promise settles or a later frame is handled. */
+  onResponse?: (response: RpcResponseObservation) => void;
+}
+
 export interface RpcFrameSink {
   write(frame: string): Promise<void>;
 }
@@ -36,6 +47,7 @@ interface PendingRequest {
   method: string;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
+  onResponse?: (response: RpcResponseObservation) => void;
   timer?: ReturnType<typeof setTimeout>;
 }
 
@@ -75,16 +87,34 @@ export class RpcTransport {
     return this.fatalError !== null;
   }
 
-  request(method: string, params: unknown): Promise<unknown> {
+  request(method: string, params: unknown, options: RpcRequestOptions = {}): Promise<unknown> {
     if (this.fatalError) return Promise.reject(this.fatalError);
     if (typeof method !== 'string' || method.length === 0) {
       return Promise.reject(new RpcProtocolError('RPC method 必须是非空字符串'));
     }
+    if (
+      options.timeoutMs !== undefined &&
+      options.timeoutMs !== null &&
+      (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1)
+    ) {
+      return Promise.reject(new RpcProtocolError('RPC request timeoutMs 必须是正整数或 null'));
+    }
+    if (options.onResponse !== undefined && typeof options.onResponse !== 'function') {
+      return Promise.reject(new RpcProtocolError('RPC request onResponse 必须是函数'));
+    }
+    const timeoutMs = options.timeoutMs === undefined
+      ? this.options.requestTimeoutMs
+      : options.timeoutMs;
     const id = this.nextId;
     this.nextId += 1;
 
     const promise = new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { method, resolve, reject });
+      this.pending.set(id, {
+        method,
+        resolve,
+        reject,
+        ...(options.onResponse ? { onResponse: options.onResponse } : {}),
+      });
     });
     const frame = line({ jsonrpc: '2.0', id, method, params });
 
@@ -92,12 +122,14 @@ export class RpcTransport {
       .then(() => {
         const pending = this.pending.get(id);
         if (!pending || this.fatalError) return;
-        pending.timer = setTimeout(() => {
-          const active = this.pending.get(id);
-          if (!active) return;
-          this.pending.delete(id);
-          active.reject(new RpcRequestTimeoutError(method, id));
-        }, this.options.requestTimeoutMs);
+        if (timeoutMs !== null) {
+          pending.timer = setTimeout(() => {
+            const active = this.pending.get(id);
+            if (!active) return;
+            this.pending.delete(id);
+            active.reject(new RpcRequestTimeoutError(method, id));
+          }, timeoutMs);
+        }
       })
       .catch((error: unknown) => {
         this.fail(
@@ -186,9 +218,12 @@ export class RpcTransport {
       if (typeof body['code'] !== 'number' || typeof body['message'] !== 'string') {
         this.throwFatal('RPC error 缺少 code/message');
       }
-      pending.reject(new RpcRemoteError(body['code'], body['message'], body['data']));
+      const remoteError = new RpcRemoteError(body['code'], body['message'], body['data']);
+      this.observeResponse(pending, { kind: 'error', error: remoteError });
+      pending.reject(remoteError);
       return;
     }
+    this.observeResponse(pending, { kind: 'result', result: frame['result'] });
     pending.resolve(frame['result']);
   }
 
@@ -225,6 +260,19 @@ export class RpcTransport {
       }
       this.pending.clear();
       if (notifyFatal) this.options.onFatal?.(error);
+    }
+  }
+
+  private observeResponse(
+    pending: PendingRequest,
+    response: RpcResponseObservation,
+  ): void {
+    try {
+      pending.onResponse?.(response);
+    } catch {
+      const error = new RpcProtocolError(`RPC ${pending.method} response observer 失败`);
+      pending.reject(error);
+      this.fail(error);
     }
   }
 

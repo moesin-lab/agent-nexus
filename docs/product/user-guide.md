@@ -324,7 +324,7 @@ Codex exec backend 固定使用非交互 `codex exec --json` / `resume`，并固
 
 该 backend 能在新 child 中恢复已持久化的 idle thread，但不会重放或恢复 daemon 崩溃时仍在执行的 turn。`conversationRetentionMs: null` 表示不自动删除 committed conversation；设置正整数后，过期且没有 live owner 的 conversation 会被回收，旧 session ref 可能因此无法 resume。
 
-`sandbox` 与 `addDirs` 的安全含义和上面的 Codex exec backend 相同。approval 固定为 `never`；`danger-full-access` 会产生启动日志和第一轮平台安全警告。首版只返回完整 final，不提升 streaming、tool-call 或 token-usage 事件，也不开放 experimental process/background-terminal、process stdin 或可写 TUI attach API。
+`sandbox` 与 `addDirs` 的安全含义和上面的 Codex exec backend 相同。approval 固定为 `never`；`danger-full-access` 会产生启动日志和第一轮平台安全警告。首版只返回完整 final，不提升 streaming、tool-call 或 token-usage 事件。backend-private runtime 提供稳定的 process start/status/output/stdin/terminate：process 可跨同一 live app-server connection 的多个 turn 存活，但不会跨 daemon/app-server restart 恢复；旧 handle 在新 child 中失效。平台 slash command、自然语言 dynamic tool、experimental `process/*` / background terminal 与可写 TUI attach 仍不开放。
 
 `supplementalViewer.enabled` 默认 `false`。设为 `true` 后需要本机 `tmux`，并只启动带独立 capability token 的 loopback 被动 viewer；它不是第二个可写控制面。viewer compatibility gate 失败时 backend 记录 warning 并回退到默认 stdio 主路径。该字段只在重启 agent-nexus 后生效。
 

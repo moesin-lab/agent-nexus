@@ -36,7 +36,7 @@ AGENT_NEXUS_RUN_PACKED_CODEX_E2E=1 \
 git diff --check
 ```
 
-验证器安装并复验传入的同一个 tarball，包括包内容、bin 权限、内部 workspace bundle 边界、`better-sqlite3` 原生查询、`ws` runtime dependency 和首次启动脚手架。两条带环境变量的命令需要本机已认证的精确 Codex binary；源码 real suite 验证 durable resume、interrupt、authenticated passive viewer 与 hard-crash cleanup，packed real gate 再从安装后的 bin 启动 bundled app-server、完成真实一轮并确认清理。缺少任一证据时不能把通用 source/packed smoke 当作 Codex release gate。
+验证器安装并复验传入的同一个 tarball，包括包内容、bin 权限、内部 workspace bundle 边界、`better-sqlite3` 原生查询、`ws` runtime dependency 和首次启动脚手架。两条带环境变量的命令需要本机已认证的精确 Codex binary；源码 real suite 验证 durable resume、interrupt、authenticated passive viewer、跨 turn process 与 hard-crash cleanup，packed real gate 再从安装后的 bin 启动 bundled app-server，完成两轮及 process start/output/stdin/terminate/PID cleanup。缺少任一证据时不能把通用 source/packed smoke 当作 Codex release gate。
 
 成功输出必须保存到本仓库的 GitHub Actions run、PR comment 或 issue comment，并明确记录完整 commit SHA、runner OS/arch、Node 版本、`codex --version` 和上述命令结果。证据必须对应准备打 tag 的同一个 commit；发布 workflow 的 `codex-real-gate-commit` 填该完整 SHA，`codex-real-gate-evidence` 填本仓库内的证据 URL。workflow 会拒绝 commit 不一致、缺失或不属于本仓库的 URL；environment reviewer 仍需打开 URL 核对内容。证据定义与 CI 矩阵见 [`../testing/strategy.md` §发布制品验证](../testing/strategy.md#发布制品验证)。
 

@@ -100,6 +100,19 @@ export {
 export {
   CodexAppServerRuntimeError,
   createCodexAppServerRuntime,
+  type CodexAppServerRuntime,
   type CodexAppServerRuntimeDependencies,
   type CodexAppServerSessionEngine,
 } from './runtime.js';
+export {
+  CodexProcessController,
+  CodexProcessError,
+  type CodexProcessControllerOptions,
+  type CodexProcessLimits,
+  type CodexProcessOutputChunk,
+  type CodexProcessOutputPage,
+  type CodexProcessState,
+  type CodexProcessStatus,
+  type CodexProcessTerminateResult,
+  type CodexProcessWriteResult,
+} from './process-controller.js';

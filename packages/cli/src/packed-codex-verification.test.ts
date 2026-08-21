@@ -1,49 +1,120 @@
 import { describe, expect, it, vi } from 'vitest';
+import type {
+  CodexAppServerSessionEngine,
+  CodexProcessOutputPage,
+  CodexProcessStatus,
+} from '@agent-nexus/agent-codex-app-server';
 import { runPackedCodexTurnVerification } from './packed-codex-verification.js';
 
+const PROCESS_HANDLE = 'packed-process-handle';
+const PROCESS_IDENTITY = 'PACKED_CODEX_PROCESS_OK_731';
+
+const status = (state: CodexProcessStatus['state'], cursor: number): CodexProcessStatus => ({
+  handle: PROCESS_HANDLE,
+  state,
+  nextCursor: cursor,
+  oldestCursor: 0,
+  stdinOpen: state === 'running',
+  ...(state === 'exited' ? { exitCode: 137 } : {}),
+});
+
+function processPage(cursor: number, text: string): CodexProcessOutputPage {
+  const bytes = Buffer.from(text);
+  const nextCursor = cursor + bytes.length;
+  return {
+    status: status('running', nextCursor),
+    requestedCursor: cursor,
+    oldestCursor: 0,
+    nextCursor,
+    truncatedBefore: false,
+    chunks: [{
+      stream: 'stdout',
+      startCursor: cursor,
+      endCursor: nextCursor,
+      dataBase64: bytes.toString('base64'),
+    }],
+  };
+}
+
+function processMethods() {
+  const output = [
+    `READY ${PROCESS_IDENTITY} 999999\n`,
+    `TICK ${PROCESS_IDENTITY}\n`,
+    `PONG ${PROCESS_IDENTITY} PING\n`,
+  ];
+  let cursor = 0;
+  return {
+    startProcess: vi.fn(async () => status('running', 0)),
+    processStatus: vi.fn(() => status('running', cursor)),
+    readProcessOutput: vi.fn((input: { handle: string; cursor: number }) => {
+      expect(input).toEqual({ handle: PROCESS_HANDLE, cursor });
+      const text = output.shift() ?? '';
+      const page = processPage(cursor, text);
+      cursor = page.nextCursor;
+      return page;
+    }),
+    writeProcessStdin: vi.fn(async () => ({ acceptedBytes: 5, stdinOpen: true })),
+    terminateProcess: vi.fn(async () => ({
+      alreadyTerminal: false,
+      status: status('exited', cursor),
+    })),
+  };
+}
+
+function createEngineWithTurns(
+  outcomes: Array<{ status: 'completed' | 'interrupted' | 'failed'; text: string | null }>,
+  stop = vi.fn(async () => undefined),
+) {
+  const processes = processMethods();
+  const engine = {
+    start: vi.fn(async () => ({ threadId: 'thr_packed', pid: 12 })),
+    runTurn: vi.fn(async () => outcomes.shift() ?? {
+      status: 'failed' as const,
+      text: null,
+    }),
+    interrupt: vi.fn(async () => false),
+    stop,
+    ...processes,
+  } satisfies CodexAppServerSessionEngine;
+  return { engine, processes, stop };
+}
+
 describe('runPackedCodexTurnVerification', () => {
-  it('runs_one_real-shaped_turn_and_waits_for_engine_cleanup', async () => {
-    const stop = vi.fn(async () => undefined);
+  it('runs_the_full_process_path_across_two_turns_and_waits_for_cleanup', async () => {
     const dispose = vi.fn(async () => undefined);
-    const createEngine = vi.fn(async () => ({
-      engine: {
-        start: vi.fn(async () => ({ threadId: 'thr_packed', pid: 12 })),
-        runTurn: vi.fn(async () => ({
-          status: 'completed' as const,
-          text: 'PACKED_CODEX_TURN_OK_731',
-        })),
-        interrupt: vi.fn(async () => false),
-        stop,
-        isAlive: vi.fn(() => true),
-      },
-      dispose,
-    }));
+    const created = createEngineWithTurns([
+      { status: 'completed', text: 'PACKED_CODEX_TURN_ONE_OK_731' },
+      { status: 'completed', text: 'PACKED_CODEX_TURN_TWO_OK_731' },
+    ]);
+    const createEngine = vi.fn(async () => ({ engine: created.engine, dispose }));
 
     await expect(runPackedCodexTurnVerification({ createEngine })).resolves.toEqual({
       threadId: 'thr_packed',
     });
-    expect(stop).toHaveBeenCalledTimes(1);
+    expect(created.engine.runTurn).toHaveBeenCalledTimes(2);
+    expect(created.processes.startProcess).toHaveBeenCalledTimes(1);
+    expect(created.processes.processStatus).toHaveBeenCalledTimes(3);
+    expect(created.processes.readProcessOutput).toHaveBeenCalledTimes(3);
+    expect(created.processes.writeProcessStdin).toHaveBeenCalledWith({
+      handle: PROCESS_HANDLE,
+      dataBase64: Buffer.from('PING\n').toString('base64'),
+    });
+    expect(created.processes.terminateProcess).toHaveBeenCalledWith(PROCESS_HANDLE);
+    expect(created.stop).toHaveBeenCalledTimes(1);
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
   it('rejects_a_false_positive_outcome_but_still_cleans_up', async () => {
-    const stop = vi.fn(async () => undefined);
     const dispose = vi.fn(async () => undefined);
-    const createEngine = vi.fn(async () => ({
-      engine: {
-        start: vi.fn(async () => ({ threadId: 'thr_bad' })),
-        runTurn: vi.fn(async () => ({ status: 'completed' as const, text: 'wrong' })),
-        interrupt: vi.fn(async () => false),
-        stop,
-        isAlive: vi.fn(() => true),
-      },
-      dispose,
-    }));
+    const created = createEngineWithTurns([
+      { status: 'completed', text: 'wrong' },
+    ]);
+    const createEngine = vi.fn(async () => ({ engine: created.engine, dispose }));
 
     await expect(runPackedCodexTurnVerification({ createEngine })).rejects.toThrow(
       /packed Codex turn verification failed/,
     );
-    expect(stop).toHaveBeenCalledTimes(1);
+    expect(created.stop).toHaveBeenCalledTimes(1);
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
@@ -52,14 +123,15 @@ describe('runPackedCodexTurnVerification', () => {
     const interrupt = vi.fn(async () => true);
     const stop = vi.fn(async () => undefined);
     const dispose = vi.fn(async () => undefined);
+    const processes = processMethods();
     const createEngine = vi.fn(async () => ({
       engine: {
         start: vi.fn(async () => ({ threadId: 'thr_hung' })),
         runTurn: vi.fn(() => new Promise<never>(() => undefined)),
         interrupt,
         stop,
-        isAlive: vi.fn(() => true),
-      },
+        ...processes,
+      } satisfies CodexAppServerSessionEngine,
       dispose,
     }));
 
@@ -80,19 +152,11 @@ describe('runPackedCodexTurnVerification', () => {
   it('preserves_the_recovery_root_when_stop_is_not_confirmed', async () => {
     const stop = vi.fn(async () => { throw new Error('cleanup unconfirmed'); });
     const dispose = vi.fn(async () => undefined);
-    const createEngine = vi.fn(async () => ({
-      engine: {
-        start: vi.fn(async () => ({ threadId: 'thr_stop_failed' })),
-        runTurn: vi.fn(async () => ({
-          status: 'completed' as const,
-          text: 'PACKED_CODEX_TURN_OK_731',
-        })),
-        interrupt: vi.fn(async () => false),
-        stop,
-        isAlive: vi.fn(() => true),
-      },
-      dispose,
-    }));
+    const created = createEngineWithTurns([
+      { status: 'completed', text: 'PACKED_CODEX_TURN_ONE_OK_731' },
+      { status: 'completed', text: 'PACKED_CODEX_TURN_TWO_OK_731' },
+    ], stop);
+    const createEngine = vi.fn(async () => ({ engine: created.engine, dispose }));
 
     await expect(runPackedCodexTurnVerification({ createEngine })).rejects.toThrow(
       /cleanup unconfirmed/,

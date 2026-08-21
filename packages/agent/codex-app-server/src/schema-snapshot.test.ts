@@ -148,4 +148,30 @@ describe('Codex 0.146.0 stable schema snapshot', () => {
       notificationOwnershipScopes(schema),
     );
   });
+
+  it('pins_the_stable_sandboxed_command_exec_process_surface', async () => {
+    const clientRequest = JSON.parse(
+      await readFile(join(GENERATED_ROOT, 'ClientRequest.json'), 'utf8'),
+    ) as unknown;
+    const methods = collectMethodConstants(clientRequest);
+    expect(methods.has('command/exec')).toBe(true);
+    expect(methods.has('command/exec/write')).toBe(true);
+    expect(methods.has('command/exec/terminate')).toBe(true);
+    expect(methods.has('process/spawn')).toBe(false);
+
+    const execParams = JSON.parse(
+      await readFile(join(GENERATED_ROOT, 'v2/CommandExecParams.json'), 'utf8'),
+    ) as { required: string[]; properties: Record<string, unknown> };
+    expect(execParams.required).toEqual(['command']);
+    expect(Object.keys(execParams.properties)).toEqual(expect.arrayContaining([
+      'command',
+      'cwd',
+      'disableOutputCap',
+      'disableTimeout',
+      'processId',
+      'sandboxPolicy',
+      'streamStdin',
+      'streamStdoutStderr',
+    ]));
+  });
 });

@@ -17,6 +17,13 @@ import {
   type ControllerState,
   type TurnOutcome,
 } from './controller.js';
+import {
+  CodexProcessError,
+  type CodexProcessOutputPage,
+  type CodexProcessStatus,
+  type CodexProcessTerminateResult,
+  type CodexProcessWriteResult,
+} from './process-controller.js';
 
 export type { TurnOutcome } from './controller.js';
 
@@ -24,9 +31,35 @@ export interface CodexAppServerSessionEngine {
   start(resumeThreadId?: string): Promise<{ threadId: string; pid?: number }>;
   runTurn(text: string, clientUserMessageId: string): Promise<TurnOutcome>;
   interrupt(): Promise<boolean>;
+  startProcess(input: { argv: string[] }): Promise<CodexProcessStatus>;
+  processStatus(handle: string): CodexProcessStatus;
+  readProcessOutput(input: { handle: string; cursor: number }): CodexProcessOutputPage;
+  writeProcessStdin(input: {
+    handle: string;
+    dataBase64?: string;
+    closeStdin?: boolean;
+  }): Promise<CodexProcessWriteResult>;
+  terminateProcess(handle: string): Promise<CodexProcessTerminateResult>;
   stop(): Promise<void>;
   status(): ControllerState;
   onFatal?(handler: (error: Error) => void): () => void;
+}
+
+export interface CodexAppServerRuntime extends AgentRuntime {
+  startProcess(session: AgentSession, input: { argv: string[] }): Promise<CodexProcessStatus>;
+  processStatus(session: AgentSession, handle: string): Promise<CodexProcessStatus>;
+  readProcessOutput(
+    session: AgentSession,
+    input: { handle: string; cursor: number },
+  ): Promise<CodexProcessOutputPage>;
+  writeProcessStdin(
+    session: AgentSession,
+    input: { handle: string; dataBase64?: string; closeStdin?: boolean },
+  ): Promise<CodexProcessWriteResult>;
+  terminateProcess(
+    session: AgentSession,
+    handle: string,
+  ): Promise<CodexProcessTerminateResult>;
 }
 
 export interface CodexAppServerRuntimeDependencies {
@@ -76,6 +109,7 @@ function isTurnOutcome(value: unknown): value is TurnOutcome {
 interface RuntimeState {
   engine: CodexAppServerSessionEngine;
   emitter: EventEmitter;
+  sessionKey: SessionKey;
   sessionConfig: SessionConfig;
   ready: Promise<void>;
   queue: Promise<void>;
@@ -113,13 +147,33 @@ export class CodexAppServerRuntimeError extends Error {
 export function createCodexAppServerRuntime(
   backendConfig: CodexAppServerConfig,
   dependencies: CodexAppServerRuntimeDependencies,
-): AgentRuntime {
+): CodexAppServerRuntime {
   const states = new WeakMap<AgentSession, RuntimeState>();
+
+  const isOwnedSession = (
+    session: AgentSession,
+    state: RuntimeState | undefined,
+  ): state is RuntimeState => Boolean(
+    state &&
+    session.backend === 'codex-app-server' &&
+    session.key.platformName === state.sessionKey.platformName &&
+    session.key.platform === state.sessionKey.platform &&
+    session.key.channelId === state.sessionKey.channelId &&
+    session.key.initiatorUserId === state.sessionKey.initiatorUserId,
+  );
 
   const getState = (session: AgentSession): RuntimeState => {
     const state = states.get(session);
-    if (!state || session.backend !== 'codex-app-server') {
+    if (!isOwnedSession(session, state)) {
       throw new CodexAppServerRuntimeError('foreign or cloned AgentSession handle');
+    }
+    return state;
+  };
+
+  const getProcessState = (session: AgentSession): RuntimeState => {
+    const state = states.get(session);
+    if (!isOwnedSession(session, state)) {
+      throw new CodexProcessError('process_not_found', 'process not found');
     }
     return state;
   };
@@ -375,13 +429,14 @@ export function createCodexAppServerRuntime(
     }
   };
 
-  const runtime: AgentRuntime = {
+  const runtime: CodexAppServerRuntime = {
     name: () => 'codex-app-server',
     capabilities: () => ({ ...CAPABILITIES }),
 
     startSession(key, sessionConfig) {
+      const sessionKey: SessionKey = { ...key };
       const session: AgentSession = {
-        key,
+        key: { ...sessionKey },
         backend: 'codex-app-server',
         state: 'Spawning',
         startedAt: new Date(),
@@ -389,11 +444,16 @@ export function createCodexAppServerRuntime(
           ? { agentSessionId: sessionConfig.resumeFromAgentSessionId }
           : {}),
       };
-      const engine = dependencies.createEngine({ key, sessionConfig, backendConfig });
+      const engine = dependencies.createEngine({
+        key: { ...sessionKey },
+        sessionConfig,
+        backendConfig,
+      });
       let releaseReady!: () => void;
       const state: RuntimeState = {
         engine,
         emitter: new EventEmitter(),
+        sessionKey,
         sessionConfig,
         ready: new Promise<void>((resolve) => {
           releaseReady = resolve;
@@ -473,7 +533,12 @@ export function createCodexAppServerRuntime(
 
     isAlive(session) {
       const state = states.get(session);
-      if (!state || state.stopped || state.errored || session.state === 'Stopped') return false;
+      if (
+        !isOwnedSession(session, state) ||
+        state.stopped ||
+        state.errored ||
+        session.state === 'Stopped'
+      ) return false;
       const engineStatus = state.engine.status();
       if (engineStatus === 'Errored' || engineStatus === 'Stopped') {
         void beginFatalCleanup(session, state, state.active?.traceId ?? 'system');
@@ -519,6 +584,46 @@ export function createCodexAppServerRuntime(
       return { status: 'unsupported', message: '[unsupported command]' };
     },
 
+    async startProcess(session, processInput) {
+      const state = getProcessState(session);
+      await state.ready;
+      getProcessState(session);
+      assertProcessSessionAlive(session, state);
+      return state.engine.startProcess(processInput);
+    },
+
+    async processStatus(session, handle) {
+      const state = getProcessState(session);
+      await state.ready;
+      getProcessState(session);
+      assertProcessSessionAlive(session, state);
+      return state.engine.processStatus(handle);
+    },
+
+    async readProcessOutput(session, processInput) {
+      const state = getProcessState(session);
+      await state.ready;
+      getProcessState(session);
+      assertProcessSessionAlive(session, state);
+      return state.engine.readProcessOutput(processInput);
+    },
+
+    async writeProcessStdin(session, processInput) {
+      const state = getProcessState(session);
+      await state.ready;
+      getProcessState(session);
+      assertProcessSessionAlive(session, state);
+      return state.engine.writeProcessStdin(processInput);
+    },
+
+    async terminateProcess(session, handle) {
+      const state = getProcessState(session);
+      await state.ready;
+      getProcessState(session);
+      assertProcessSessionAlive(session, state);
+      return state.engine.terminateProcess(handle);
+    },
+
     onEvent(session, handler: AgentEventHandler) {
       getState(session).emitter.on('event', handler);
     },
@@ -539,4 +644,16 @@ export function createCodexAppServerRuntime(
   };
 
   return runtime;
+
+  function assertProcessSessionAlive(session: AgentSession, state: RuntimeState): void {
+    if (
+      state.stopped ||
+      state.errored ||
+      session.state === 'Stopped' ||
+      state.engine.status() === 'Errored' ||
+      state.engine.status() === 'Stopped'
+    ) {
+      throw new CodexAppServerRuntimeError('session is stopped or errored');
+    }
+  }
 }

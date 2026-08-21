@@ -46,7 +46,7 @@ async function main(): Promise<void> {
       throw new Error('packed Codex verification requires its explicit release gate');
     }
     await runPackedCodexTurnVerification();
-    process.stdout.write('packed Codex app-server turn verified\n');
+    process.stdout.write('packed Codex app-server process lifecycle verified\n');
     return;
   }
   let config;

@@ -82,6 +82,50 @@ describe('RpcTransport', () => {
     vi.useRealTimers();
   });
 
+  it('should_keep_an_explicit_no_deadline_request_pending_until_response_or_close', async () => {
+    vi.useFakeTimers();
+    const sink: RpcFrameSink = { write: vi.fn().mockResolvedValue(undefined) };
+    const transport = new RpcTransport(sink, { requestTimeoutMs: 50 });
+    const request = transport.request(
+      'command/exec',
+      { command: ['long-running'] },
+      { timeoutMs: null },
+    );
+    await flush();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    let settled = false;
+    void request.finally(() => {
+      settled = true;
+    });
+    await flush();
+    expect(settled).toBe(false);
+
+    transport.receive({ id: 1, result: { exitCode: 0, stdout: '', stderr: '' } });
+    await expect(request).resolves.toEqual({ exitCode: 0, stdout: '', stderr: '' });
+    vi.useRealTimers();
+  });
+
+  it('should_observe_a_response_synchronously_before_settling_its_promise', async () => {
+    const order: string[] = [];
+    const sink: RpcFrameSink = { write: vi.fn().mockResolvedValue(undefined) };
+    const transport = new RpcTransport(sink, { requestTimeoutMs: 1000 });
+    const request = transport.request('command/exec', {}, {
+      timeoutMs: null,
+      onResponse: (response) => order.push(response.kind),
+    });
+    void request.then(() => order.push('settled'));
+    await flush();
+
+    transport.receive({ id: 1, result: { exitCode: 0 } });
+    order.push('after-receive');
+
+    expect(order).toEqual(['result', 'after-receive']);
+    await request;
+    await flush();
+    expect(order).toEqual(['result', 'after-receive', 'settled']);
+  });
+
   it('should_fail_closed_on_unknown_duplicate_or_late_response_id', async () => {
     const failures: Error[] = [];
     const sink: RpcFrameSink = { write: vi.fn().mockResolvedValue(undefined) };

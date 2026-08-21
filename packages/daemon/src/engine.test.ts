@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   AgentCapabilitySet,
@@ -33,6 +36,8 @@ import { createLogger, type Logger } from './logger.js';
 import { ProviderCaptureService } from './provider-capture.js';
 import type { RoutingEntry } from './router.js';
 import { SessionStore } from './session-store.js';
+import { SqliteSessionPersistence } from './session-sqlite-store.js';
+import { SqliteStateDatabase } from './state-db.js';
 import {
   InMemoryTrajectoryStore,
   type TrajectoryStore,
@@ -8096,7 +8101,7 @@ describe('Engine', () => {
     expect(handlerErrLog).toBeUndefined();
   });
 
-  it('engine.stop 关闭仍活跃的 agent session 并清空 store', async () => {
+  it('engine.stop 关闭仍活跃的 agent session 并保留 resumable store', async () => {
     const platform = makePlatform();
     const agent = makeAgent();
     const store = new SessionStore();
@@ -8125,10 +8130,10 @@ describe('Engine', () => {
 
     expect(platform.stop).toHaveBeenCalledTimes(1);
     expect(agent.stopSession).toHaveBeenCalledTimes(1);
-    expect(store.get(ROUTED_SESSION_KEY)).toBeUndefined();
+    expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe('sid-1');
   });
 
-  it('engine.stop waits for active session cleanup before clearing stores', async () => {
+  it('engine.stop waits for active session cleanup before retaining durable state', async () => {
     const platform = makePlatform();
     const agent = makeAgent();
     const store = new SessionStore();
@@ -8163,7 +8168,9 @@ describe('Engine', () => {
 
     stopBarrier.resolve(undefined);
     await stopping;
-    expect(store.get(ROUTED_SESSION_KEY)).toBeUndefined();
+    expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe(
+      'sid-stop-barrier',
+    );
   });
 
   it('engine.stop rejects an unconfirmed session cleanup without clearing durable state', async () => {
@@ -8230,7 +8237,9 @@ describe('Engine', () => {
     stopBarrier.resolve(undefined);
     await Promise.all([first, second]);
     expect(platform.stop).toHaveBeenCalledTimes(1);
-    expect(store.get(ROUTED_SESSION_KEY)).toBeUndefined();
+    expect(store.get(ROUTED_SESSION_KEY)?.agentSessionId).toBe(
+      'sid-concurrent-stop',
+    );
   });
 
   it('engine.stop waits for an in-flight replacement cleanup and prevents the replacement start', async () => {
@@ -8513,6 +8522,125 @@ describe('Engine', () => {
         channelId: 'omt-topic-1',
       }),
     ).toMatchObject(fixedTopic);
+  });
+
+  it('resumes the same fixed topic with a fresh runtime after daemon restart', async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'agent-nexus-engine-session-'));
+    const path = join(tempRoot, 'state.db');
+    const fixedTopic = {
+      kind: 'thread' as const,
+      bindingMode: 'fixed' as const,
+      parentChannelId: 'oc-control',
+      rootMessageId: 'om-root-1',
+      url: 'https://applink.feishu.cn/client/thread/open?open_thread_id=omt-topic-1',
+    };
+    const topicEvent = (text: string) =>
+      makeEvent(text, {
+        platform: 'lark',
+        sessionKey: {
+          platform: 'lark',
+          channelId: 'omt-topic-1',
+          initiatorUserId: 'U1',
+        },
+        threadParentChannelId: 'oc-control',
+        deliveryScope: 'session',
+        sessionContainer: fixedTopic,
+      });
+
+    try {
+      const firstDatabase = new SqliteStateDatabase({ path });
+      const firstStore = new SessionStore({
+        persistence: new SqliteSessionPersistence({
+          database: firstDatabase.database,
+        }),
+      });
+      const firstPlatform = makePlatform();
+      const firstAgent = makeAgent();
+      const firstEngine = new Engine({
+        platform: firstPlatform,
+        agent: firstAgent.runtime,
+        logger: SILENT_LOGGER,
+        sessionStore: firstStore,
+        defaultSessionConfig: DEFAULT_CFG,
+      });
+      firstAgent.queueEvents([
+        ev('session_started', { agentSessionId: 'opaque-ref-before-restart' }),
+        ev('text_final', { text: 'first reply' }),
+        ev('turn_finished', { reason: 'stop', turnSequence: 1 }),
+      ]);
+      await firstEngine.start();
+      const firstDispatch = (
+        firstPlatform.start as ReturnType<typeof vi.fn>
+      ).mock.calls[0]![0] as EventHandler;
+      await firstDispatch(topicEvent('first prompt'));
+      const routedKey: SessionKey = {
+        platformName: 'mock-platform',
+        platform: 'lark',
+        channelId: 'omt-topic-1',
+        initiatorUserId: 'U1',
+      };
+      const originalSessionId = firstStore.ensureSessionId(routedKey);
+      await firstEngine.stop();
+      firstStore.close();
+      firstDatabase.close();
+
+      const secondDatabase = new SqliteStateDatabase({ path });
+      const secondStore = new SessionStore({
+        persistence: new SqliteSessionPersistence({
+          database: secondDatabase.database,
+        }),
+      });
+      const secondPlatform = makePlatform();
+      const secondAgent = makeAgent();
+      const secondEngine = new Engine({
+        platform: secondPlatform,
+        agent: secondAgent.runtime,
+        logger: SILENT_LOGGER,
+        sessionStore: secondStore,
+        defaultSessionConfig: {
+          ...DEFAULT_CFG,
+          workingDir: '/changed-after-restart',
+        },
+      });
+      secondAgent.queueEvents([
+        ev('session_started', { agentSessionId: 'opaque-ref-after-restart' }),
+        ev('text_final', { text: 'second reply' }),
+        ev('turn_finished', { reason: 'stop', turnSequence: 2 }),
+      ]);
+      await secondEngine.start();
+      expect(secondAgent.startSession).not.toHaveBeenCalled();
+      const secondDispatch = (
+        secondPlatform.start as ReturnType<typeof vi.fn>
+      ).mock.calls[0]![0] as EventHandler;
+      await secondDispatch(topicEvent('second prompt'));
+
+      expect(secondAgent.startSession).toHaveBeenCalledTimes(1);
+      expect(secondAgent.startSession.mock.calls[0]![1]).toMatchObject({
+        sessionId: originalSessionId,
+        resumeFromAgentSessionId: 'opaque-ref-before-restart',
+        workingDir: '/tmp',
+      });
+      expect(secondStore.get(routedKey)?.agentSessionId).toBe(
+        'opaque-ref-after-restart',
+      );
+      const rows = secondDatabase.database
+        .prepare(
+          'SELECT session_id, generation, working_dir FROM sessions WHERE session_key = ?',
+        )
+        .all('mock-platform:lark:omt-topic-1:U1');
+      expect(rows).toEqual([
+        {
+          session_id: originalSessionId,
+          generation: 1,
+          working_dir: '/tmp',
+        },
+      ]);
+      await secondEngine.stop();
+      secondStore.close();
+      secondDatabase.close();
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it.each(['/new', '/new continue', '/kill', '/nexus-kill'])(

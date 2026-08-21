@@ -14,7 +14,12 @@ import {
   ClaudeCodeJsonlSessionSourceAdapter,
 } from './external-session-import.js';
 import { SessionStore } from './session-store.js';
-import { InMemoryTrajectoryStore } from './trajectory-store.js';
+import { SqliteSessionPersistence } from './session-sqlite-store.js';
+import { SqliteStateDatabase } from './state-db.js';
+import {
+  InMemoryTrajectoryStore,
+  SqliteTrajectoryStore,
+} from './trajectory-store.js';
 
 const tempDirs: string[] = [];
 
@@ -430,6 +435,122 @@ describe('ExternalSessionImportService', () => {
     expect(trajectoryStore.getExternalSessionImport('imp-unknown')).toMatchObject({
       state: 'registered',
     });
+  });
+
+  it('rolls back an external link when the routing session cannot persist', () => {
+    const path = join(tempDir(), 'state.db');
+    const state = new SqliteStateDatabase({ path });
+    const trajectoryStore = new SqliteTrajectoryStore({
+      database: state.database,
+    });
+    const sessionStore = new SessionStore({
+      persistence: new SqliteSessionPersistence({ database: state.database }),
+    });
+    const service = new ExternalSessionImportService({
+      config: config(),
+      store: trajectoryStore,
+      sessionStore,
+      adapters: [],
+      now: fixedNow,
+      transaction: (action) => state.database.transaction(action)(),
+    });
+    trajectoryStore.upsertExternalSessionImport({
+      importId: 'imp-atomic',
+      sourceAdapter: 'codex-app-jsonl',
+      sourceSessionId: 'codex-thread-atomic',
+      sourcePathHash: 'sha256:atomic',
+      nativeSessionRef: 'codex-thread-atomic',
+      state: 'registered',
+      confidence: 'high',
+      metadataJson: '{}',
+      discoveredAt: '2026-06-23T09:00:00.000Z',
+    });
+    state.database.exec(`
+      CREATE TRIGGER reject_session_insert
+      BEFORE INSERT ON sessions
+      BEGIN
+        SELECT RAISE(ABORT, 'injected session failure');
+      END;
+    `);
+
+    expect(() =>
+      service.bindToRoutingSession({
+        importId: 'imp-atomic',
+        sessionKey: routedKey(),
+        agentOwner: 'codex',
+      }),
+    ).toThrow();
+
+    expect(trajectoryStore.getExternalSessionImport('imp-atomic')).toMatchObject({
+      state: 'registered',
+    });
+    expect(
+      trajectoryStore.getExternalSessionImport('imp-atomic')?.linkedSessionId,
+    ).toBeUndefined();
+    expect(sessionStore.get(routedKey())).toBeUndefined();
+
+    state.database.exec('DROP TRIGGER reject_session_insert');
+    const retried = service.bindToRoutingSession({
+      importId: 'imp-atomic',
+      sessionKey: routedKey(),
+      agentOwner: 'codex',
+    });
+    expect(retried.nativeSessionRef).toBe('codex-thread-atomic');
+    expect(sessionStore.get(routedKey())?.agentSessionId).toBe(
+      'codex-thread-atomic',
+    );
+    state.close();
+  });
+
+  it('rolls back SessionStore memory when the outer transaction aborts after writes', () => {
+    const path = join(tempDir(), 'state.db');
+    const state = new SqliteStateDatabase({ path });
+    const trajectoryStore = new SqliteTrajectoryStore({
+      database: state.database,
+    });
+    const sessionStore = new SessionStore({
+      persistence: new SqliteSessionPersistence({ database: state.database }),
+    });
+    const service = new ExternalSessionImportService({
+      config: config(),
+      store: trajectoryStore,
+      sessionStore,
+      adapters: [],
+      now: fixedNow,
+      transaction: (action) =>
+        state.database.transaction(() => {
+          action();
+          throw new Error('injected outer commit failure');
+        })(),
+    });
+    trajectoryStore.upsertExternalSessionImport({
+      importId: 'imp-outer-rollback',
+      sourceAdapter: 'codex-app-jsonl',
+      sourceSessionId: 'codex-thread-rollback',
+      sourcePathHash: 'sha256:rollback',
+      nativeSessionRef: 'codex-thread-rollback',
+      state: 'registered',
+      confidence: 'high',
+      metadataJson: '{}',
+      discoveredAt: '2026-06-23T09:00:00.000Z',
+    });
+
+    expect(() =>
+      service.bindToRoutingSession({
+        importId: 'imp-outer-rollback',
+        sessionKey: routedKey(),
+        agentOwner: 'codex',
+      }),
+    ).toThrow('injected outer commit failure');
+
+    expect(sessionStore.get(routedKey())).toBeUndefined();
+    expect(trajectoryStore.getExternalSessionImport('imp-outer-rollback')).toMatchObject({
+      state: 'registered',
+    });
+    expect(
+      state.database.prepare('SELECT COUNT(*) AS count FROM sessions').get(),
+    ).toEqual({ count: 0 });
+    state.close();
   });
 });
 

@@ -1,10 +1,10 @@
-import { createRequire } from 'node:module';
-import type DatabaseConstructor from 'better-sqlite3';
 import { type Database as BetterSqliteDatabase } from 'better-sqlite3';
 import { BasicRedactor, type Redactor } from './redaction.js';
+import {
+  initializeStateSchema,
+  openStateDatabase,
+} from './state-db.js';
 
-const require = createRequire(import.meta.url);
-const CURRENT_TRAJECTORY_SCHEMA_VERSION = 1;
 const SQLITE_DELETE_BATCH_SIZE = 900;
 
 export type TrajectoryConfidence = 'high' | 'medium' | 'low' | 'unknown';
@@ -183,7 +183,6 @@ export type TrajectoryStoreErrorCode =
   | 'invalid-content-ref'
   | 'invalid-import-state'
   | 'invalid-query'
-  | 'unsupported-schema-version'
   | 'duplicate-record';
 
 export class TrajectoryStoreError extends Error {
@@ -431,10 +430,10 @@ export class SqliteTrajectoryStore implements TrajectoryStore {
   private readonly redactor: Redactor;
 
   constructor(input: SqliteTrajectoryStoreInput = {}) {
-    this.db = input.database ?? createSqliteDatabase(input.path ?? ':memory:');
+    this.db = input.database ?? openStateDatabase(input.path ?? ':memory:');
     this.ownsDatabase = input.database === undefined;
     this.redactor = input.redactor ?? new BasicRedactor();
-    initializeTrajectorySchema(this.db);
+    if (input.database) initializeStateSchema(this.db);
   }
 
   close(): void {
@@ -827,11 +826,6 @@ export class SqliteTrajectoryStore implements TrajectoryStore {
   }
 }
 
-function createSqliteDatabase(path: string): BetterSqliteDatabase {
-  const Database = require('better-sqlite3') as typeof DatabaseConstructor;
-  return new Database(path);
-}
-
 interface ExternalSessionImportRow {
   import_id: string;
   source_adapter: string;
@@ -895,137 +889,6 @@ interface SqliteTrajectoryCursor {
   ts: string;
   sequence: number;
   segmentId: string;
-}
-
-function initializeTrajectorySchema(db: BetterSqliteDatabase): void {
-  // The initial trajectory tables keep nullable cross-links application-owned until sessions/usage are durable.
-  db.pragma('foreign_keys = ON');
-  db.pragma('journal_mode = WAL');
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS trajectory_schema_version (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      version INTEGER NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-  `);
-
-  const currentVersion = readTrajectorySchemaVersion(db);
-  if (currentVersion > CURRENT_TRAJECTORY_SCHEMA_VERSION) {
-    throw new TrajectoryStoreError(
-      'unsupported-schema-version',
-      `Trajectory schema version ${currentVersion} is newer than supported version ${CURRENT_TRAJECTORY_SCHEMA_VERSION}`,
-    );
-  }
-  if (currentVersion >= CURRENT_TRAJECTORY_SCHEMA_VERSION) return;
-
-  db.transaction(() => {
-    applyTrajectorySchemaV1(db);
-    setTrajectorySchemaVersion(db, CURRENT_TRAJECTORY_SCHEMA_VERSION);
-  })();
-}
-
-function applyTrajectorySchemaV1(db: BetterSqliteDatabase): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS external_session_imports (
-      import_id TEXT PRIMARY KEY,
-      source_adapter TEXT NOT NULL,
-      source_session_id TEXT NOT NULL,
-      source_path_hash TEXT NOT NULL,
-      native_session_ref TEXT,
-      linked_session_id TEXT,
-      state TEXT NOT NULL,
-      confidence TEXT NOT NULL,
-      metadata_json TEXT NOT NULL,
-      error_json TEXT,
-      discovered_at TEXT NOT NULL,
-      imported_at TEXT,
-      linked_at TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_external_session_imports_source
-      ON external_session_imports(source_adapter, source_session_id);
-    CREATE INDEX IF NOT EXISTS idx_external_session_imports_linked_session
-      ON external_session_imports(linked_session_id);
-    CREATE INDEX IF NOT EXISTS idx_external_session_imports_state
-      ON external_session_imports(state, discovered_at DESC);
-
-    CREATE TABLE IF NOT EXISTS trajectory_segments (
-      segment_id TEXT PRIMARY KEY,
-      session_id TEXT,
-      import_id TEXT,
-      provider_observation_id TEXT,
-      source TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      trace_id TEXT,
-      turn_sequence INTEGER,
-      sequence INTEGER NOT NULL,
-      ts TEXT NOT NULL,
-      summary TEXT NOT NULL,
-      content_ref TEXT,
-      usage_event_id TEXT,
-      log_anchor_json TEXT,
-      confidence TEXT NOT NULL,
-      redaction_state TEXT NOT NULL,
-      metadata_json TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_trajectory_segments_session
-      ON trajectory_segments(session_id, ts, sequence);
-    CREATE INDEX IF NOT EXISTS idx_trajectory_segments_import
-      ON trajectory_segments(import_id, ts, sequence);
-    CREATE INDEX IF NOT EXISTS idx_trajectory_segments_source_kind
-      ON trajectory_segments(source, kind);
-
-    CREATE TABLE IF NOT EXISTS provider_call_observations (
-      observation_id TEXT PRIMARY KEY,
-      session_id TEXT,
-      trace_id TEXT,
-      backend TEXT NOT NULL,
-      capture_mode TEXT NOT NULL,
-      request_started_at TEXT NOT NULL,
-      response_finished_at TEXT,
-      provider_host TEXT,
-      model TEXT,
-      request_summary TEXT NOT NULL,
-      response_summary TEXT,
-      request_body_ref TEXT,
-      response_body_ref TEXT,
-      stream_frames_ref TEXT,
-      request_bytes INTEGER NOT NULL,
-      response_bytes INTEGER,
-      redaction_state TEXT NOT NULL,
-      alignment_json TEXT NOT NULL,
-      error_code TEXT,
-      metadata_json TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_provider_call_observations_session
-      ON provider_call_observations(session_id, request_started_at);
-    CREATE INDEX IF NOT EXISTS idx_provider_call_observations_backend
-      ON provider_call_observations(backend, request_started_at);
-  `);
-}
-
-function readTrajectorySchemaVersion(db: BetterSqliteDatabase): number {
-  const row = db
-    .prepare('SELECT version FROM trajectory_schema_version WHERE id = 1')
-    .get() as { version: number } | undefined;
-  return row?.version ?? 0;
-}
-
-function setTrajectorySchemaVersion(
-  db: BetterSqliteDatabase,
-  version: number,
-): void {
-  db
-    .prepare(
-      `INSERT INTO trajectory_schema_version (id, version, updated_at)
-       VALUES (1, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         version = excluded.version,
-         updated_at = excluded.updated_at`,
-    )
-    .run(version, new Date().toISOString());
 }
 
 function importFromRow(row: ExternalSessionImportRow): ExternalSessionImportRecord {

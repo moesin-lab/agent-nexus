@@ -297,6 +297,7 @@ ExternalResumeBinding {
 绑定规则：
 
 - 用户选择外部 candidate resume 时，daemon 创建或更新当前 RoutingSession，并立即把 `nativeSessionRef` 写入 `sessions.agent_conversation_ref`。
+- `external_session_imports` 的 linked 状态与 RoutingSession 写入共享同一个 `state.db` 事务；任一侧失败时两侧都不得改变，candidate 必须保持可重试。
 - 下一次启动 agent 时，daemon 把该 ref 作为 `SessionConfig.resumeFromAgentSessionId` 传给对应 runtime。
 - Runtime 返回新的 conversation ref 时，按 persistence 的 `agent_conversation_ref` 更新语义覆盖。
 - 如果当前 RoutingSession 的 agent backend 与 candidate source 不兼容，必须拒绝绑定。

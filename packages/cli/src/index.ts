@@ -7,6 +7,8 @@ import {
   InMemoryIdempotencyStore,
   ProviderCaptureService,
   SessionStore,
+  SqliteSessionPersistence,
+  SqliteStateDatabase,
   SqliteTrajectoryStore,
   createLogger,
   daemonCommandDescriptors,
@@ -102,20 +104,20 @@ async function main(): Promise<void> {
     'routing_table_loaded',
   );
 
-  const sessionStore = new SessionStore();
+  const stateDbPath = join(configRoot(), 'state.db');
+  const stateDatabase = new SqliteStateDatabase({ path: stateDbPath });
+  const sessionStore = new SessionStore({
+    persistence: new SqliteSessionPersistence({
+      database: stateDatabase.database,
+    }),
+  });
   const commandRegistry = new ActiveCommandRegistry();
   const idempotencyStore = new InMemoryIdempotencyStore();
   let trajectoryStore: SqliteTrajectoryStore | undefined;
   if (config.daemon.trajectory.enabled) {
-    const trajectoryDbPath = join(configRoot(), 'state.db');
-    try {
-      trajectoryStore = new SqliteTrajectoryStore({ path: trajectoryDbPath });
-    } catch (err) {
-      logger.error(
-        { err, path: trajectoryDbPath },
-        'trajectory_store_open_failed',
-      );
-    }
+    trajectoryStore = new SqliteTrajectoryStore({
+      database: stateDatabase.database,
+    });
   }
   const trajectoryWriteEnabled =
     config.daemon.trajectory.enabled && trajectoryStore !== undefined;
@@ -125,6 +127,7 @@ async function main(): Promise<void> {
         store: trajectoryStore,
         sessionStore,
         contentStorageRoot: configRoot(),
+        transaction: (action) => stateDatabase.database.transaction(action)(),
       })
     : undefined;
   const providerCaptureService = trajectoryStore
@@ -250,6 +253,8 @@ async function main(): Promise<void> {
         await stopRuntimeEngines(engines);
       } finally {
         trajectoryStore?.close();
+        sessionStore.close();
+        stateDatabase.close();
       }
     },
   });

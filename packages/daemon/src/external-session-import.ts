@@ -138,6 +138,7 @@ export interface ExternalSessionImportServiceInput {
   contentStorageRoot?: string;
   redactor?: Redactor;
   now?: () => Date;
+  transaction?: <T>(action: () => T) => T;
 }
 
 export class ExternalSessionImportService implements ExternalSessionImporter {
@@ -148,6 +149,7 @@ export class ExternalSessionImportService implements ExternalSessionImporter {
   private readonly contentStorageRoot?: string;
   private readonly redactor: Redactor;
   private readonly now: () => Date;
+  private readonly transaction?: <T>(action: () => T) => T;
 
   constructor(input: ExternalSessionImportServiceInput) {
     this.config = input.config;
@@ -162,6 +164,7 @@ export class ExternalSessionImportService implements ExternalSessionImporter {
     this.contentStorageRoot = input.contentStorageRoot;
     this.redactor = input.redactor ?? new BasicRedactor();
     this.now = input.now ?? (() => new Date());
+    this.transaction = input.transaction;
   }
 
   run(): ExternalSessionImportRunResult {
@@ -229,18 +232,24 @@ export class ExternalSessionImportService implements ExternalSessionImporter {
     const linkedAtDate = this.now();
     const linkedAt = linkedAtDate.toISOString();
     const sessionId = this.sessionStore.createSessionId();
-    const binding = this.store.linkExternalSession({
-      importId: input.importId,
-      sessionId,
-      linkedAt,
-    });
-    this.sessionStore.bindExternalResumeToKey(input.sessionKey, {
-      agentSessionId: binding.nativeSessionRef,
-      agentOwner: input.agentOwner,
-      lastTurnAt: linkedAtDate,
-      title: titleFromMetadataJson(record.metadataJson) ?? record.sourceSessionId,
-    }, sessionId);
-    return binding;
+    const bind = (): ExternalResumeBinding => {
+      const binding = this.store.linkExternalSession({
+        importId: input.importId,
+        sessionId,
+        linkedAt,
+      });
+      this.sessionStore!.bindExternalResumeToKey(input.sessionKey, {
+        agentSessionId: binding.nativeSessionRef,
+        agentOwner: input.agentOwner,
+        lastTurnAt: linkedAtDate,
+        title:
+          titleFromMetadataJson(record.metadataJson) ?? record.sourceSessionId,
+      }, sessionId);
+      return binding;
+    };
+    return this.transaction
+      ? this.sessionStore.runInPersistenceTransaction(this.transaction, bind)
+      : bind();
   }
 
   private acceptCandidate(

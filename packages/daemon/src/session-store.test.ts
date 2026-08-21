@@ -1,7 +1,44 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionKey } from '@agent-nexus/protocol';
 import { serializeSessionKey } from '@agent-nexus/protocol';
-import { SessionStore } from './session-store.js';
+import {
+  SessionStore,
+  type SessionStoreSnapshot,
+} from './session-store.js';
+
+class MemorySessionPersistence {
+  private snapshot: SessionStoreSnapshot | undefined;
+  private rejectPredicate:
+    | ((snapshot: SessionStoreSnapshot) => boolean)
+    | undefined;
+  loadCalls = 0;
+
+  load(): SessionStoreSnapshot | undefined {
+    this.loadCalls += 1;
+    return structuredClone(this.snapshot);
+  }
+
+  save(snapshot: SessionStoreSnapshot): void {
+    if (this.rejectPredicate?.(snapshot)) {
+      this.rejectPredicate = undefined;
+      throw new Error('injected persistence failure');
+    }
+    this.snapshot = structuredClone(snapshot);
+  }
+
+  close(): void {}
+
+  rejectNextMatching(
+    predicate: (snapshot: SessionStoreSnapshot) => boolean = () => true,
+  ): void {
+    this.rejectPredicate = predicate;
+  }
+}
+
+function persistentStore(persistence: MemorySessionPersistence): SessionStore {
+  const options = { maxEntries: 100, persistence };
+  return new SessionStore(options);
+}
 
 const makeKey = (overrides: Partial<SessionKey> = {}): SessionKey => ({
   platformName: 'discord-main',
@@ -12,6 +49,167 @@ const makeKey = (overrides: Partial<SessionKey> = {}): SessionKey => ({
 });
 
 describe('SessionStore', () => {
+  it('restores the current session identity and resumable metadata from persistence', () => {
+    const persistence = new MemorySessionPersistence();
+    const key = makeKey({
+      platformName: 'lark-main',
+      platform: 'lark',
+      channelId: 'omt-topic-1',
+    });
+    const first = persistentStore(persistence);
+    const sessionId = first.ensureSessionId(key);
+    const entry = {
+      agentSessionId: 'opaque-ref-1',
+      agentOwner: 'codex',
+      lastTurnAt: new Date('2026-08-21T10:00:00.000Z'),
+      title: 'persistent topic',
+      workingDir: '/workspace/project',
+      nextSession: { workingDir: '/workspace/next' },
+    };
+    first.set(key, entry);
+
+    const restored = persistentStore(persistence);
+
+    expect(restored.ensureSessionId(key)).toBe(sessionId);
+    expect(restored.get(key)).toEqual(entry);
+  });
+
+  it('restores the exact fixed-topic link and pinned agent identity from persistence', () => {
+    const persistence = new MemorySessionPersistence();
+    const key = makeKey({
+      platformName: 'lark-main',
+      platform: 'lark',
+      channelId: 'omt-topic-1',
+    });
+    const first = persistentStore(persistence);
+    first.set(key, {
+      agentSessionId: 'opaque-ref-1',
+      agentOwner: 'codex',
+      lastTurnAt: new Date('2026-08-21T10:00:00.000Z'),
+      title: 'persistent topic',
+    });
+    first.registerThread(key, {
+      parentChannelId: 'oc-chat-1',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-root-1',
+      url: 'https://applink.feishu.cn/client/thread/open?open_thread_id=omt-topic-1',
+      parentUrl:
+        'https://applink.feishu.cn/client/chat/open?openChatId=oc-chat-1',
+    });
+    expect(
+      first.claimFixedThreadAgent(key, {
+        agentName: 'codex-dev',
+        agentOwner: 'codex',
+      }),
+    ).toBe(true);
+
+    const restored = persistentStore(persistence);
+
+    expect(restored.findThreadByChannelId(key)).toMatchObject({
+      parentChannelId: 'oc-chat-1',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-root-1',
+      url: 'https://applink.feishu.cn/client/thread/open?open_thread_id=omt-topic-1',
+      agentName: 'codex-dev',
+      agentOwner: 'codex',
+    });
+    expect(
+      restored.listForUser({
+        platformName: 'lark-main',
+        platform: 'lark',
+        initiatorUserId: 'U1',
+        agentOwner: 'codex',
+        limit: 10,
+      })[0]?.sessionContainer,
+    ).toMatchObject({
+      bindingMode: 'fixed',
+      rootMessageId: 'om-root-1',
+      url: 'https://applink.feishu.cn/client/thread/open?open_thread_id=omt-topic-1',
+    });
+  });
+
+  it('continues trajectory sequence allocation after persistence restore', () => {
+    const persistence = new MemorySessionPersistence();
+    const key = makeKey();
+    const first = persistentStore(persistence);
+    first.set(key, {
+      agentSessionId: 'opaque-ref-1',
+      lastTurnAt: new Date('2026-08-21T10:00:00.000Z'),
+    });
+    const sessionId = first.ensureSessionId(key);
+    expect(first.nextTrajectorySequence(sessionId)).toBe(1);
+    expect(first.nextTrajectorySequence(sessionId)).toBe(2);
+
+    const restored = persistentStore(persistence);
+
+    expect(restored.nextTrajectorySequence(sessionId)).toBe(3);
+  });
+
+  it('rolls back an in-memory first write when persistence rejects it', () => {
+    const persistence = new MemorySessionPersistence();
+    const store = persistentStore(persistence);
+    const key = makeKey();
+    persistence.rejectNextMatching();
+
+    expect(() =>
+      store.set(key, {
+        agentSessionId: 'ghost-ref',
+        lastTurnAt: new Date(1),
+      }),
+    ).toThrow('injected persistence failure');
+
+    expect(store.get(key)).toBeUndefined();
+    expect(persistence.loadCalls).toBe(1);
+    expect(
+      store.listForUser({
+        platformName: 'discord-main',
+        platform: 'discord',
+        initiatorUserId: 'U1',
+        limit: 10,
+      }),
+    ).toEqual([]);
+  });
+
+  it('rolls back the whole rebind when the final snapshot cannot persist', () => {
+    const persistence = new MemorySessionPersistence();
+    const store = persistentStore(persistence);
+    const sourceKey = makeKey({ channelId: 'C-old' });
+    const targetKey = makeKey({ channelId: 'C-new' });
+    store.set(sourceKey, {
+      agentSessionId: 'source-ref',
+      lastTurnAt: new Date(1),
+    });
+    store.set(targetKey, {
+      agentSessionId: 'target-ref',
+      lastTurnAt: new Date(2),
+    });
+    const source = store
+      .listForUser({
+        platformName: 'discord-main',
+        platform: 'discord',
+        initiatorUserId: 'U1',
+        limit: 10,
+      })
+      .find((session) => session.key.channelId === 'C-old');
+    persistence.rejectNextMatching((snapshot) =>
+      snapshot.sessions.some(
+        (session) =>
+          session.current &&
+          session.sessionId === source?.sessionId &&
+          session.key.channelId === 'C-new',
+      ),
+    );
+
+    expect(() =>
+      store.bindExistingToKey(targetKey, source!.sessionId, new Date(3)),
+    ).toThrow('injected persistence failure');
+
+    expect(store.get(sourceKey)?.agentSessionId).toBe('source-ref');
+    expect(store.get(targetKey)?.agentSessionId).toBe('target-ref');
+  });
+
   it('get on missing key returns undefined', () => {
     const store = new SessionStore();
     expect(store.get(makeKey())).toBeUndefined();
@@ -759,6 +957,7 @@ describe('SessionStore', () => {
       agentSessionId: 'sid-old',
       lastTurnAt: new Date(2),
       title: 'Old prompt',
+      workingDir: '/workspace/current',
     });
     const [source] = store.listForUser({
       platformName: 'discord-main',
@@ -775,10 +974,12 @@ describe('SessionStore', () => {
 
     expect(rebound).toMatchObject({
       agentSessionId: 'sid-old',
+      workingDir: '/workspace/current',
       nextSession: { workingDir: '/workspace/next' },
     });
     expect(store.get(targetKey)).toMatchObject({
       agentSessionId: 'sid-old',
+      workingDir: '/workspace/current',
       nextSession: { workingDir: '/workspace/next' },
     });
     expect(store.get(sourceKey)).toBeUndefined();

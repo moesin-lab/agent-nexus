@@ -85,7 +85,8 @@ RoutingSession、不调用 agent；只有明确列入文本控制面的精确命
 adapter，Lark adapter 使用 reply API 并设置 `reply_in_thread=true`。
 
 daemon 同时保留平台容器定位引用：`chat_id`、`thread_id`、`root_id`、精确消息 URL 与父群 AppLink。飞书入站事件
-不直接提供消息 URL；adapter 在快速 ACK 之后以 `root_id` 调用消息查询 API，从 `message_app_link` 补齐 URL。查询不得
+不直接提供消息 URL；adapter 在快速 ACK 之后以 `root_id` 调用消息查询 API，优先使用 `message_app_link`，字段为空时
+用响应中的 `chat_id + thread_id + thread_message_position` 组装精确话题 AppLink。查询不得
 阻塞首条 prompt 入队，并受 transport timeout 与 daemon resolver deadline 约束；失败时保留稳定 ID 与父群 AppLink，后续
 话题消息可重试补齐。
 

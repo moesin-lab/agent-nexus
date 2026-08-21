@@ -391,6 +391,8 @@ function parseMessageResponse(response: unknown): string {
 function parseSessionContainerLink(
   response: unknown,
   rootMessageId: string,
+  expectedParentChannelId: string,
+  expectedThreadId: string,
 ): string | undefined {
   if (!isRecord(response) || response['code'] !== 0) {
     throw new LarkPlatformError(
@@ -410,24 +412,55 @@ function parseSessionContainerLink(
   if (matches.length !== 1) {
     throw new LarkPlatformError('lark_sdk_protocol_error', false);
   }
-  const link = matches[0]!['message_app_link'];
-  if (link === undefined || link === '') return undefined;
-  if (typeof link !== 'string') {
-    throw new LarkPlatformError('lark_sdk_protocol_error', false);
+  const item = matches[0]!;
+  const link = item['message_app_link'];
+  if (link !== undefined && link !== null && link !== '') {
+    if (typeof link !== 'string') {
+      throw new LarkPlatformError('lark_sdk_protocol_error', false);
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(link);
+    } catch {
+      throw new LarkPlatformError('lark_sdk_protocol_error', false);
+    }
+    if (
+      parsed.protocol !== 'https:' ||
+      parsed.hostname !== 'applink.feishu.cn'
+    ) {
+      throw new LarkPlatformError('lark_sdk_protocol_error', false);
+    }
+    return link;
   }
-  let parsed: URL;
-  try {
-    parsed = new URL(link);
-  } catch {
-    throw new LarkPlatformError('lark_sdk_protocol_error', false);
+
+  const parentChannelId = item['chat_id'];
+  const threadId = item['thread_id'];
+  const threadPosition = item['thread_message_position'];
+  if (
+    typeof parentChannelId !== 'string' ||
+    parentChannelId.length === 0 ||
+    typeof threadId !== 'string' ||
+    threadId.length === 0 ||
+    typeof threadPosition !== 'string' ||
+    !/^-?\d+$/.test(threadPosition)
+  ) {
+    return undefined;
   }
   if (
-    parsed.protocol !== 'https:' ||
-    parsed.hostname !== 'applink.feishu.cn'
+    parentChannelId !== expectedParentChannelId ||
+    threadId !== expectedThreadId
   ) {
     throw new LarkPlatformError('lark_sdk_protocol_error', false);
   }
-  return link;
+
+  const fallback = new URL('https://applink.feishu.cn/client/thread/open');
+  // Feishu desktop and mobile currently consume different parameter spellings.
+  fallback.searchParams.set('openthreadid', threadId);
+  fallback.searchParams.set('openchatid', parentChannelId);
+  fallback.searchParams.set('open_thread_id', threadId);
+  fallback.searchParams.set('open_chat_id', parentChannelId);
+  fallback.searchParams.set('thread_position', threadPosition);
+  return fallback.toString();
 }
 
 function defaultSleep(milliseconds: number): Promise<void> {
@@ -938,7 +971,12 @@ export class LarkPlatformAdapter implements PlatformAdapter {
       const response = await this.client.getMessage({
         path: { message_id: rootMessageId },
       });
-      const url = parseSessionContainerLink(response, rootMessageId);
+      const url = parseSessionContainerLink(
+        response,
+        rootMessageId,
+        input.container.parentChannelId,
+        input.sessionKey.channelId,
+      );
       return url ? { url } : undefined;
     } catch (error) {
       if (error instanceof LarkPlatformError) throw error;

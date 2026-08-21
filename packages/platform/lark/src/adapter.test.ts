@@ -363,6 +363,146 @@ describe('LarkPlatformAdapter inbound', () => {
     });
   });
 
+  it('根消息没有 message_app_link 时用话题位置组装精确链接', async () => {
+    const factory = new FakeSdkFactory();
+    factory.getMessage.mockResolvedValue({
+      code: 0,
+      data: {
+        items: [
+          {
+            message_id: 'om_thread_root_1',
+            chat_id: 'oc_topic_group_1',
+            thread_id: 'omt_thread_1',
+            thread_message_position: '-1',
+            message_app_link: null,
+          },
+        ],
+      },
+    });
+    const adapter = makeAdapter(factory);
+    await adapter.start(vi.fn());
+
+    const result = await adapter.resolveSessionContainer?.({
+      sessionKey: {
+        platformName: 'lark-main',
+        platform: 'lark',
+        channelId: 'omt_thread_1',
+        initiatorUserId: 'ou_user_open_id',
+      },
+      container: {
+        kind: 'thread',
+        bindingMode: 'fixed',
+        parentChannelId: 'oc_topic_group_1',
+        rootMessageId: 'om_thread_root_1',
+      },
+      traceId: 'trace-topic-link-fallback',
+    });
+
+    expect(result).toBeDefined();
+    const url = new URL(result!.url);
+    expect(`${url.origin}${url.pathname}`).toBe(
+      'https://applink.feishu.cn/client/thread/open',
+    );
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      openthreadid: 'omt_thread_1',
+      openchatid: 'oc_topic_group_1',
+      open_thread_id: 'omt_thread_1',
+      open_chat_id: 'oc_topic_group_1',
+      thread_position: '-1',
+    });
+  });
+
+  it.each([
+    ['chat_id', 'oc_other_group', 'omt_thread_1'],
+    ['thread_id', 'oc_topic_group_1', 'omt_other_thread'],
+  ] as const)(
+    '拒绝为 %s 不匹配当前容器的根消息组装话题链接',
+    async (_field, chatId, threadId) => {
+      const factory = new FakeSdkFactory();
+      factory.getMessage.mockResolvedValue({
+        code: 0,
+        data: {
+          items: [
+            {
+              message_id: 'om_thread_root_1',
+              chat_id: chatId,
+              thread_id: threadId,
+              thread_message_position: '-1',
+              message_app_link: null,
+            },
+          ],
+        },
+      });
+      const adapter = makeAdapter(factory);
+      await adapter.start(vi.fn());
+
+      await expect(
+        adapter.resolveSessionContainer?.({
+          sessionKey: {
+            platformName: 'lark-main',
+            platform: 'lark',
+            channelId: 'omt_thread_1',
+            initiatorUserId: 'ou_user_open_id',
+          },
+          container: {
+            kind: 'thread',
+            bindingMode: 'fixed',
+            parentChannelId: 'oc_topic_group_1',
+            rootMessageId: 'om_thread_root_1',
+          },
+          traceId: 'trace-topic-link-mismatch',
+        }),
+      ).rejects.toMatchObject({ code: 'lark_sdk_protocol_error' });
+    },
+  );
+
+  it.each([
+    ['missing', undefined],
+    ['empty', ''],
+    ['non-integer', 'not-a-position'],
+  ] as const)(
+    '根消息的 thread_message_position %s 时不组装话题链接',
+    async (_case, threadPosition) => {
+      const factory = new FakeSdkFactory();
+      factory.getMessage.mockResolvedValue({
+        code: 0,
+        data: {
+          items: [
+            {
+              message_id: 'om_thread_root_1',
+              chat_id: 'oc_topic_group_1',
+              thread_id: 'omt_thread_1',
+              ...(threadPosition === undefined
+                ? {}
+                : { thread_message_position: threadPosition }),
+              message_app_link: null,
+            },
+          ],
+        },
+      });
+      const adapter = makeAdapter(factory);
+      await adapter.start(vi.fn());
+
+      await expect(
+        adapter.resolveSessionContainer?.({
+          sessionKey: {
+            platformName: 'lark-main',
+            platform: 'lark',
+            channelId: 'omt_thread_1',
+            initiatorUserId: 'ou_user_open_id',
+          },
+          container: {
+            kind: 'thread',
+            bindingMode: 'fixed',
+            parentChannelId: 'oc_topic_group_1',
+            rootMessageId: 'om_thread_root_1',
+          },
+          traceId: 'trace-topic-link-position-missing',
+        }),
+      ).resolves.toBeUndefined();
+    },
+  );
+
   it('根消息查询没有匹配项时保持 URL 未解析', async () => {
     const factory = new FakeSdkFactory();
     factory.getMessage.mockResolvedValue({

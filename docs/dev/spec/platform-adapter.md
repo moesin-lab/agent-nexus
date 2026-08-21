@@ -740,8 +740,10 @@ display data 或 raw payload。
 
 话题根消息还要填入 `sessionContainer.rootMessageId = message.root_id ?? message.message_id`，并以
 `https://applink.feishu.cn/client/chat/open?openChatId=<encoded chat_id>` 作为 `parentUrl`。Adapter 实现
-`resolveSessionContainer`：以 `rootMessageId` 调用 `client.im.v1.message.get`，只接受 `code=0`、唯一匹配根消息且
-`message_app_link` 是 `https://applink.feishu.cn/` URL 的响应。该查询由 daemon 在 route/auth 通过后异步发起，不阻塞下文的快速 ACK；
+`resolveSessionContainer`：以 `rootMessageId` 调用 `client.im.v1.message.get`，只接受 `code=0` 且唯一匹配根消息的响应。
+优先使用合法的 `https://applink.feishu.cn/` `message_app_link`；该字段为空时，必须校验响应中的 `chat_id` / `thread_id`
+与当前容器一致，并用 `thread_message_position` 组装 `/client/thread/open` 精确链接，同时携带 PC 与移动端使用的两套
+chat / thread 参数名。该查询由 daemon 在 route/auth 通过后异步发起，不阻塞下文的快速 ACK；
 查询失败不影响 turn，后续话题事件可重试补齐 URL。production Lark OpenAPI Client 的 HTTP 请求默认 10 秒 transport timeout；
 WS endpoint discovery 沿用 SDK 自带的 15 秒 timeout。daemon 另外以 15 秒 resolver deadline 释放 in-flight 去重项，避免
 platform promise 永久悬挂后阻止该话题重试。

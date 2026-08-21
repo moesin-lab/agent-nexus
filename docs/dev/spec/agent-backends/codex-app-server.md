@@ -8,6 +8,7 @@ related:
   - dev/adr/0022-codex-app-server-primary-tui-supplemental
   - dev/adr/0014-agent-backend-codex-cli
   - dev/spec/agent-runtime
+  - dev/spec/agent-backends/codex-app-server-process
   - dev/spec/config-routing
   - dev/spec/security/tool-boundary
   - dev/spec/infra/observability
@@ -40,7 +41,8 @@ contracts:
 | thread / turn / item / status / interrupt | 有 | 首版主路径；仍需 package contract tests |
 | token usage | 有，实机流中出现 | 未纳入现有 probe 断言；映射测试通过前不发 `usage` |
 | approval / request-user-input / MCP elicitation | 有 | 必须实现双向 fail-closed 响应；首版不自动批准 |
-| background terminal / process stdin / resize / terminate | 仅 `--experimental` 或版本相关 | 不属于首版承诺；真实 probe + 独立 spec amendment 后启用 |
+| sandboxed standalone process | stable `command/exec` family | 按 [`codex-app-server-process.md`](codex-app-server-process.md) 提供 start/status/output/stdin/terminate |
+| unsandboxed `process/*` / background terminal / resize | experimental 或不完整 | 禁用；不属于 stable process owner |
 | authenticated remote TUI / loopback WebSocket | 0.146.0 CLI surface，stable RPC schema 不变 | 默认禁用；启用时另过 viewer-specific runtime/release gate，并按 ADR-0023 与 terminal-session spec 的 per-incarnation capability-token 门禁 |
 | Unix socket / remote-control / daemon | 命令存在 | 本 backend 禁用；不以 remote viewer 名义启用 |
 
@@ -76,7 +78,7 @@ stdio transport 使用一行一个 UTF-8 JSON object；WebSocket transport 每�
 - 用 fatal UTF-8 decoder；拒绝空行、非法 JSON、非 object、截断 EOF 和超过 `8 MiB` 的单帧；
 - 写 pipe 尊重 backpressure；完整 frame 接受前不认为 request 已 dispatch；
 - request id 在 child lifetime 内单调递增且不复用；每个 request 只有一个 terminal response；unknown、duplicate、late response 是 protocol error；
-- 每个 outbound request 有 deadline；timeout 后从 pending map 删除。是否可安全重试由 method 语义决定，不能统一重放；
+- 普通 outbound request 有 deadline；timeout 后从 pending map 删除。deferred `command/exec` final request 按 process spec 显式使用 no-deadline pending，connection close 时仍立即 reject；是否可安全重试由 method 语义决定，不能统一重放；
 - stderr、error message 与日志不得包含 auth、用户 prompt、完整 frame、tool output 或 screen 内容。
 
 app-server wire 可省略 `jsonrpc:"2.0"`；agent-nexus 统一发送该字段，接收端兼容有/无该字段，但其它 envelope 字段必须按 snapshot schema 校验。
@@ -115,8 +117,11 @@ client -> initialized notification
 | `turn/start` | 提交一个 user turn | dispatch 后无 ack 属 ambiguous，禁止自动重发 |
 | `turn/interrupt` | 中断当前 turn | request 可重试一次，但最终以 `turn/completed` 为准 |
 | `thread/unsubscribe` | stop 前解除订阅 | best effort；不替代 process cleanup |
+| `command/exec` | 在 owner sandbox 内启动 connection-scoped process | 不自动重放；final response无普通 RPC deadline |
+| `command/exec/write` | start admission barrier或写/关闭 stdin | per-handle 串行；timeout 后不重放 bytes |
+| `command/exec/terminate` | 请求结束 process | per-handle 幂等；最终以原 exec response/host cleanup 为准 |
 
-首版不主动调用 filesystem、login、account mutation、plugin install、remote-control、daemon、process 或 background-terminal API。即使它们出现在 schema，也不能由模型、飞书命令或通用 passthrough 绕过 allowlist。
+首版不主动调用 filesystem、login、account mutation、plugin install、remote-control、daemon、experimental `process/*` 或 background-terminal API。stable `command/exec` family 只能经 backend-private process owner调用，不能由模型、平台命令或通用 passthrough 直接构造任意 RPC。
 
 ## Session 与 turn 状态机
 
@@ -191,9 +196,9 @@ app-server 会向 client 发带 `id + method + params` 的 ServerRequest。它�
 
 - `interrupt()` 只在 Busy 时调用一次 `turn/interrupt(threadId,turnId)`，等待匹配的 `turn/completed(interrupted)`；Idle 时是幂等 no-op。`interruptGraceMs` 内没有 terminal 时结束 process group并由 runtime 合成 `turn_finished(user_interrupt)`。
 - wall-clock deadline 到达时先原子 CAS terminal latch；CAS 成功即发唯一 `turn_finished(wallclock_timeout)`，再发 `turn/interrupt` 做后台收尾。grace 内匹配 `turn/completed` 只确认 cleanup，不再提升第二个 terminal；grace 到期则结束 process group，发 `error(timeout/process)`、cleanup、`session_stopped(wallclock_timeout)`。若自然 terminal 在 deadline callback CAS 前已经赢 latch，timeout callback 无动作。
-- `stopSession()` 返回可等待且幂等的 Promise；首次调用立即关闭 liveness，Busy 时先请求 interrupt，grace 到期则结束 process group并合成 `turn_finished(user_interrupt)`。supplemental viewer 是 backend-owned child，属于同一 stop barrier：先 force-stop viewer，再结束 app-server、reject RPC pending、关闭 pipe/socket，最后撤销 capability token；只有两类 child 都确认退出后才删除整个 incarnation runtime dir、发 `session_stopped(user_stop)` 并 resolve。viewer 已自然退出视为幂等成功；若 viewer 退出无法确认，仍必须删除 token 文件并结束 app-server，但保留不含 capability token 的 recovery metadata/launcher 供 next-start reconciliation，stop Promise reject，不能发 `session_stopped(user_stop)` 假报完整 cleanup。并发 stop 共享同一个完成结果，daemon 不得在 settle 前启动替代 session。
+- `stopSession()` 返回可等待且幂等的 Promise；首次调用立即关闭 liveness和新 process admission，Busy 时先请求 interrupt，并按 process spec best-effort 并行 terminate live process；grace 到期则结束整个 process group并合成所需 turn terminal。supplemental viewer 是 backend-owned child，属于同一 stop barrier：先 force-stop viewer，再结束 app-server、reject RPC pending、关闭 pipe/socket，最后撤销 capability token；只有两类 child 与 app-server PGID 确认退出后才删除整个 incarnation runtime dir、发 `session_stopped(user_stop)` 并 resolve。viewer 已自然退出视为幂等成功；若 viewer 退出无法确认，仍必须删除 token 文件并结束 app-server，但保留不含 capability token 的 recovery metadata/launcher 供 next-start reconciliation，stop Promise reject，不能发 `session_stopped(user_stop)` 假报完整 cleanup。并发 stop 共享同一个完成结果，daemon 不得在 settle 前启动替代 session。
 - child/pipe unexpected exit：所有 pending request reject；Busy turn 先 `error(process|host_protocol)` 与 `turn_finished(error)`，随后 cleanup 与 `session_stopped(error)`。Idle session 也必须进入 Stopped，不能保留幽灵 session。
-- daemon restart 后只允许在同一 durable home 用持久化 thread id 恢复 idle conversation。in-flight turn、pending ServerRequest 和 experimental background process 默认不可恢复；恢复审计无法证明安全终态时，标记上一 session error，不自动重放输入。
+- daemon restart 后只允许在同一 durable home 用持久化 thread id 恢复 idle conversation。in-flight turn、pending ServerRequest 与任何 live process 均不可恢复；旧 process handle 不持久化并返回 not found。恢复审计无法证明安全终态时，标记上一 session error，不自动重放输入。
 
 terminal latch 的 winner 是 runtime 第一次接受的匹配 `turn/completed`、deadline callback 成功的原子 CAS，或其它 grace 到期/child exit 后首次 runtime-synthesized terminal；winner 原子关闭 latch。随后到达的 response、notification、timeout callback 或 child exit只记 bounded late diagnostic，不得再发 terminal：
 
@@ -276,14 +281,14 @@ agent-nexus 生成并维护 conversation-private `config.toml`，固定 `check_f
 2. fake app-server 集成：双轮同 thread、两个 SessionKey 隔离、concurrent input queue、delta 已知但不提升、final 单次提升、tool item 不提升、usage 在未启用时不提升、terminal latch。
 3. ServerRequest：0.146 表中每个 method 恰好得到对应 exact result/error；unknown、timeout、disconnect 均 fail closed，副作用未发生。
 4. lifecycle：start failure、turn timeout、interrupt、stop、child crash、daemon shutdown 后无 child/process-group/pending request 残留；pre-commit crash 由 reconciliation 清 creating home，committed home 保留且 owner 不串线，只有显式 backend retention GC 才删除。
-5. real Codex：initialize、两轮、status、final、interrupt；隔离 `CODEX_HOME` 中 user MCP/skills/plugins 未加载。
+5. real Codex：initialize、两轮、status、final、interrupt；process start、跨 turn新增 output、stdin回显、terminate、PID absent；隔离 `CODEX_HOME` 中 user MCP/skills/plugins 未加载。
 6. restart/rebind：idle thread id 可由 registry 在新 child/新 SessionKey `thread/resume`；同一 SessionKey 多 generation 不共用 home；in-flight turn 不被自动重放。
 7. Node 22 与 24、macOS arm64/x64、Linux x64；未覆盖平台 fail closed。
-8. packed CLI：原始 schema testdata 不进入公开包；发布前先证明 snapshot hash 与 snapshot-derived runtime contract 已进入 bundle，再从安装后的 CLI release-verification 入口启动 app-server、完成一轮并等待清理，不能只跑源码测试或首次配置脚手架。
+8. packed CLI：原始 schema testdata 不进入公开包；发布前先证明 snapshot hash 与 snapshot-derived runtime contract 已进入 bundle，再从安装后的 CLI release-verification 入口启动 app-server、完成两轮与 process start/output/stdin/terminate 并等待清理，不能只跑源码测试或首次配置脚手架。
 9. authenticated viewer：真实 tmux `codex --remote` 与 structured controller 同时连接；controller final 出现在 terminal snapshot，旧 token 对新 incarnation 返回 401；真实 viewer 输入 foreign turn 时不产生平台 `error/text/item/turn`，只在 cleanup 完成后产生 `session_stopped(system/error)`。
 10. hard crash：独立 daemon worker 完成一轮后 SIGKILL；匿名 pipe supervisor 必须清除旧 app-server PGID，next-start reconciliation 必须清除旧 viewer PGID/token/stale lease，随后同一 thread 在新 incarnation resume 并完成一轮。
 
-experimental process/background terminal 不得用上述首版 gate 冒充完成。passive remote TUI viewer 只有在 ADR-0023、terminal-session spec 的 admission、incarnation、secret hygiene、双 client 广播和真实 E2E 门禁全部通过后才算完成；stdio 主路径测试不能替代这些证据。可写 attach / 人工接管不属于该 gate。
+stable process owner 的详细 gate 由 [`codex-app-server-process.md`](codex-app-server-process.md) 定义；experimental `process/*` 与 background terminal 不得用该 gate 冒充完成。passive remote TUI viewer 只有在 ADR-0023、terminal-session spec 的 admission、incarnation、secret hygiene、双 client 广播和真实 E2E 门禁全部通过后才算完成；stdio 主路径测试不能替代这些证据。可写 attach / 人工接管不属于该 gate。
 
 ## Attribution
 

@@ -110,7 +110,7 @@ export interface AgentRuntime {
   capabilities(): AgentCapabilitySet;
 
   startSession(key: SessionKey, config: SessionConfig): AgentSession;
-  stopSession(session: AgentSession): void;
+  stopSession(session: AgentSession): Promise<void>;
   isAlive(session: AgentSession): boolean;
 
   sendInput(session: AgentSession, input: AgentInput): Promise<void>;

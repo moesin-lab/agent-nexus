@@ -34,6 +34,22 @@ function run(command, args, options = {}) {
     });
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    let deadlineTimer;
+    let killTimer;
+
+    const clearTimers = () => {
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+      if (killTimer) clearTimeout(killTimer);
+    };
+
+    if (options.timeoutMs !== undefined) {
+      deadlineTimer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGTERM');
+        killTimer = setTimeout(() => child.kill('SIGKILL'), 5_000);
+      }, options.timeoutMs);
+    }
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -43,9 +59,17 @@ function run(command, args, options = {}) {
     child.stderr.on('data', (chunk) => {
       stderr += chunk;
     });
-    child.on('error', reject);
+    child.on('error', (error) => {
+      clearTimers();
+      reject(error);
+    });
     child.on('close', (code, signal) => {
+      clearTimers();
       const result = { code, signal, stdout, stderr };
+      if (timedOut) {
+        reject(new Error(`${command} timed out`));
+        return;
+      }
       if (code === 0 || options.allowFailure === true) {
         resolveRun(result);
         return;
@@ -133,6 +157,10 @@ async function verifyTarball(tarballPath, tempRoot) {
     SOURCE_MANIFEST.dependencies['@larksuiteoapi/node-sdk'],
   );
   assert.equal(
+    manifest.dependencies.ws,
+    SOURCE_MANIFEST.dependencies.ws,
+  );
+  assert.equal(
     Object.keys(manifest.dependencies).some((name) =>
       name.startsWith('@agent-nexus/'),
     ),
@@ -175,6 +203,18 @@ async function verifyTarball(tarballPath, tempRoot) {
   await assertMode(join(cliHome, 'secrets'), 0o700);
   await assertMode(join(cliHome, 'config.json'), 0o600);
   await assertMode(join(cliHome, 'secrets', 'DISCORD_BOT_TOKEN'), 0o600);
+
+  if (process.env.AGENT_NEXUS_RUN_PACKED_CODEX_E2E === '1') {
+    const packedCodex = await run(cli, ['--verify-packed-codex-turn'], {
+      timeoutMs: 180_000,
+      env: {
+        ...process.env,
+        AGENT_NEXUS_HOME: cliHome,
+      },
+    });
+    assert.match(packedCodex.stdout, /packed Codex app-server process lifecycle verified/);
+    process.stdout.write('packed Codex process lifecycle verified from installed CLI\n');
+  }
 }
 
 const tempRoot = await mkdtemp(join(tmpdir(), 'agent-nexus-pack-'));

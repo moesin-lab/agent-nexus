@@ -1,0 +1,177 @@
+// Generated from testdata/schema/0.146.0/generated/ServerNotification.json.
+// schema-snapshot.test.ts prevents this runtime allowlist from drifting from
+// the pinned stable Codex schema.
+export const SERVER_NOTIFICATION_METHODS_0_146 = [
+  'account/login/completed',
+  'account/rateLimits/updated',
+  'account/updated',
+  'app/list/updated',
+  'command/exec/outputDelta',
+  'configWarning',
+  'deprecationNotice',
+  'error',
+  'externalAgentConfig/import/completed',
+  'externalAgentConfig/import/progress',
+  'fs/changed',
+  'fuzzyFileSearch/sessionCompleted',
+  'fuzzyFileSearch/sessionUpdated',
+  'guardianWarning',
+  'hook/completed',
+  'hook/started',
+  'item/agentMessage/delta',
+  'item/autoApprovalReview/completed',
+  'item/autoApprovalReview/started',
+  'item/commandExecution/outputDelta',
+  'item/commandExecution/terminalInteraction',
+  'item/completed',
+  'item/fileChange/outputDelta',
+  'item/fileChange/patchUpdated',
+  'item/mcpToolCall/progress',
+  'item/plan/delta',
+  'item/reasoning/summaryPartAdded',
+  'item/reasoning/summaryTextDelta',
+  'item/reasoning/textDelta',
+  'item/started',
+  'mcpServer/oauthLogin/completed',
+  'mcpServer/startupStatus/updated',
+  'model/rerouted',
+  'model/safetyBuffering/updated',
+  'model/verification',
+  'process/exited',
+  'process/outputDelta',
+  'remoteControl/status/changed',
+  'serverRequest/resolved',
+  'skills/changed',
+  'thread/archived',
+  'thread/closed',
+  'thread/compacted',
+  'thread/deleted',
+  'thread/environment/connected',
+  'thread/environment/disconnected',
+  'thread/goal/cleared',
+  'thread/goal/updated',
+  'thread/name/updated',
+  'thread/realtime/closed',
+  'thread/realtime/error',
+  'thread/realtime/itemAdded',
+  'thread/realtime/outputAudio/delta',
+  'thread/realtime/sdp',
+  'thread/realtime/started',
+  'thread/realtime/transcript/delta',
+  'thread/realtime/transcript/done',
+  'thread/settings/updated',
+  'thread/started',
+  'thread/status/changed',
+  'thread/tokenUsage/updated',
+  'thread/unarchived',
+  'turn/completed',
+  'turn/diff/updated',
+  'turn/moderationMetadata',
+  'turn/plan/updated',
+  'turn/started',
+  'warning',
+  'windows/worldWritableWarning',
+  'windowsSandbox/setupCompleted',
+] as const;
+
+export type ServerNotificationMethod0_146 =
+  (typeof SERVER_NOTIFICATION_METHODS_0_146)[number];
+
+export type ServerNotificationOwnershipScope0_146 =
+  | 'connection'
+  | 'optional-thread'
+  | 'thread'
+  | 'optional-turn'
+  | 'turn'
+  | 'item'
+  | 'thread-object'
+  | 'turn-object'
+  | 'item-object';
+
+// Generated from each stable notification params definition in the pinned
+// schema. schema-snapshot.test.ts locks this table to the committed snapshot.
+export const SERVER_NOTIFICATION_OWNERSHIP_0_146 = {
+  'error': 'turn',
+  'thread/started': 'thread-object',
+  'thread/status/changed': 'thread',
+  'thread/archived': 'thread',
+  'thread/deleted': 'thread',
+  'thread/unarchived': 'thread',
+  'thread/closed': 'thread',
+  'skills/changed': 'connection',
+  'thread/name/updated': 'thread',
+  'thread/goal/updated': 'optional-turn',
+  'thread/goal/cleared': 'thread',
+  'thread/environment/connected': 'thread',
+  'thread/environment/disconnected': 'thread',
+  'thread/settings/updated': 'thread',
+  'thread/tokenUsage/updated': 'turn',
+  'turn/started': 'turn-object',
+  'hook/started': 'optional-turn',
+  'turn/completed': 'turn-object',
+  'hook/completed': 'optional-turn',
+  'turn/diff/updated': 'turn',
+  'turn/plan/updated': 'turn',
+  'item/started': 'item-object',
+  'item/autoApprovalReview/started': 'turn',
+  'item/autoApprovalReview/completed': 'turn',
+  'item/completed': 'item-object',
+  'item/agentMessage/delta': 'item',
+  'item/plan/delta': 'item',
+  'command/exec/outputDelta': 'connection',
+  'process/outputDelta': 'connection',
+  'process/exited': 'connection',
+  'item/commandExecution/outputDelta': 'item',
+  'item/commandExecution/terminalInteraction': 'item',
+  'item/fileChange/outputDelta': 'item',
+  'item/fileChange/patchUpdated': 'item',
+  'serverRequest/resolved': 'thread',
+  'item/mcpToolCall/progress': 'item',
+  'mcpServer/oauthLogin/completed': 'optional-thread',
+  'mcpServer/startupStatus/updated': 'optional-thread',
+  'account/updated': 'connection',
+  'account/rateLimits/updated': 'connection',
+  'app/list/updated': 'connection',
+  'remoteControl/status/changed': 'connection',
+  'externalAgentConfig/import/progress': 'connection',
+  'externalAgentConfig/import/completed': 'connection',
+  'fs/changed': 'connection',
+  'item/reasoning/summaryTextDelta': 'item',
+  'item/reasoning/summaryPartAdded': 'item',
+  'item/reasoning/textDelta': 'item',
+  'thread/compacted': 'turn',
+  'model/rerouted': 'turn',
+  'model/verification': 'turn',
+  'turn/moderationMetadata': 'turn',
+  'model/safetyBuffering/updated': 'turn',
+  'warning': 'optional-thread',
+  'guardianWarning': 'thread',
+  'deprecationNotice': 'connection',
+  'configWarning': 'connection',
+  'fuzzyFileSearch/sessionUpdated': 'connection',
+  'fuzzyFileSearch/sessionCompleted': 'connection',
+  'thread/realtime/started': 'thread',
+  'thread/realtime/itemAdded': 'thread',
+  'thread/realtime/transcript/delta': 'thread',
+  'thread/realtime/transcript/done': 'thread',
+  'thread/realtime/outputAudio/delta': 'thread',
+  'thread/realtime/sdp': 'thread',
+  'thread/realtime/error': 'thread',
+  'thread/realtime/closed': 'thread',
+  'windows/worldWritableWarning': 'connection',
+  'windowsSandbox/setupCompleted': 'connection',
+  'account/login/completed': 'connection',
+} as const satisfies Record<
+  ServerNotificationMethod0_146,
+  ServerNotificationOwnershipScope0_146
+>;
+
+const SERVER_NOTIFICATION_METHOD_SET_0_146 = new Set<string>(
+  SERVER_NOTIFICATION_METHODS_0_146,
+);
+
+export function isServerNotificationMethod0_146(
+  method: string,
+): method is ServerNotificationMethod0_146 {
+  return SERVER_NOTIFICATION_METHOD_SET_0_146.has(method);
+}

@@ -20,6 +20,7 @@ related:
 ### Added
 
 - 新增中国版飞书自建应用的 P2P 纯文本长连接接入；首次配置提示提供飞书官方应用创建链接和安全的 App ID / App Secret 后续步骤。
+- 新增固定 Codex 0.146.0 app-server 契约的结构化 backend，并提供默认关闭、独立鉴权的只读 tmux viewer；支持 durable thread resume、受控中断、进程组清理，以及 connection-private 的稳定 process start/status/output/stdin/terminate 与跨 turn 生命周期，并把源码与安装包真实 Codex 验证证据绑定到 exact tag commit 的发布门禁。
 
 ## [0.1.0] - 2026-07-26
 

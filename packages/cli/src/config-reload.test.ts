@@ -386,6 +386,40 @@ describe('createConfigReloader', () => {
 });
 
 describe('createConfigFieldsProvider', () => {
+  it('marks supplemental viewer intent as high-risk and restart-only', async () => {
+    const appServerAgent: AgentConfig = {
+      name: 'codex-persistent',
+      backend: 'codex-app-server',
+      codexAppServer: {
+        bin: 'codex',
+        workingDir: '/workspace',
+        sandbox: 'read-only',
+        addDirs: [],
+        maxInputBytes: 262_144,
+        requestTimeoutMs: 30_000,
+        interruptGraceMs: 5_000,
+        terminateGraceMs: 5_000,
+        conversationRetentionMs: null,
+        supplementalViewer: { enabled: false },
+      },
+    };
+    const provider = createConfigFieldsProvider({
+      load: async () => baseConfig({ agents: [appServerAgent] }),
+    });
+
+    const result = await provider({ userId: 'U1', channelId: 'C1', traceId: 't-viewer' });
+    const viewer = result.fields.find(
+      (field) => field.path === 'agents[0].codexAppServer.supplementalViewer.enabled',
+    );
+
+    expect(viewer).toMatchObject({
+      value: 'false',
+      valueKind: 'boolean',
+      effect: 'restart',
+      risk: 'high',
+    });
+  });
+
   it('returns grouped editable fields for common config paths', async () => {
     const provider = createConfigFieldsProvider({
       load: async () => baseConfig({ agents: [codexAgent, claudeAgent] }),

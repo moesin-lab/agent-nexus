@@ -14,7 +14,7 @@ related:
 
 ## 发布边界
 
-MVP 唯一公开产物是 `@moesin-lab/agent-nexus`。它提供 `agent-nexus` 二进制，把六个内部 `@agent-nexus/*` workspace package bundle 进 `dist/index.js`；内部 package 保持 `private: true`。
+MVP 唯一公开产物是 `@moesin-lab/agent-nexus`。它提供 `agent-nexus` 二进制，把七个内部 `@agent-nexus/*` workspace package bundle 进 `dist/index.js`；内部 package 保持 `private: true`。
 
 首发版本是 `0.1.0`，Git tag 是 `v0.1.0`，npm dist-tag 是 `latest`。支持范围与认证迁移决策见 [ADR-0020](../adr/0020-publish-single-npm-cli-package.md)。
 
@@ -26,19 +26,26 @@ MVP 唯一公开产物是 `@moesin-lab/agent-nexus`。它提供 `agent-nexus` �
 pnpm install --frozen-lockfile
 pnpm build
 pnpm test
+AGENT_NEXUS_RUN_CODEX_APP_SERVER_E2E=1 \
+AGENT_NEXUS_RUN_CODEX_VIEWER_E2E=1 \
+  pnpm test -- packages/agent/codex-app-server/src/default-engine.real.test.ts
 pnpm pack:cli
 node scripts/verify-packed-cli.mjs packages/cli/moesin-lab-agent-nexus-0.1.0.tgz
+AGENT_NEXUS_RUN_PACKED_CODEX_E2E=1 \
+  node scripts/verify-packed-cli.mjs packages/cli/moesin-lab-agent-nexus-0.1.0.tgz
 git diff --check
 ```
 
-验证器安装并复验传入的同一个 tarball，包括包内容、bin 权限、内部 workspace bundle 边界、`better-sqlite3` 原生查询和首次启动脚手架。证据定义与 CI 矩阵见 [`../testing/strategy.md` §发布制品验证](../testing/strategy.md#发布制品验证)。
+验证器安装并复验传入的同一个 tarball，包括包内容、bin 权限、内部 workspace bundle 边界、`better-sqlite3` 原生查询、`ws` runtime dependency 和首次启动脚手架。两条带环境变量的命令需要本机已认证的精确 Codex binary；源码 real suite 验证 durable resume、interrupt、authenticated passive viewer、跨 turn process 与 hard-crash cleanup，packed real gate 再从安装后的 bin 启动 bundled app-server，完成两轮及 process start/output/stdin/terminate/PID cleanup。缺少任一证据时不能把通用 source/packed smoke 当作 Codex release gate。
+
+成功输出必须保存到本仓库的 GitHub Actions run、PR comment 或 issue comment，并明确记录完整 commit SHA、runner OS/arch、Node 版本、`codex --version` 和上述命令结果。证据必须对应准备打 tag 的同一个 commit；发布 workflow 的 `codex-real-gate-commit` 填该完整 SHA，`codex-real-gate-evidence` 填本仓库内的证据 URL。workflow 会拒绝 commit 不一致、缺失或不属于本仓库的 URL；environment reviewer 仍需打开 URL 核对内容。证据定义与 CI 矩阵见 [`../testing/strategy.md` §发布制品验证](../testing/strategy.md#发布制品验证)。
 
 ## 首发前一次性配置
 
 1. npm 组织管理员确认当前账号控制 `moesin-lab`，并确认执行首发的用户具有该 scope 的 package publish 权限。仅有 organization 管理权限不自动授予 package publish 权限；未登录查询得到 404 也不能作为控制权证据。
 2. 为该用户创建一天有效、只允许 `@moesin-lab` scope read/write 的 npm granular access token，并显式启用 bypass 2FA。npm 的非交互 publish 要求这个选项；token 仅放入受保护的部署 environment，首发结束后立即撤销。细节见 [npm access token](https://docs.npmjs.com/about-access-tokens/) 与 [2FA publish 要求](https://docs.npmjs.com/requiring-2fa-for-package-publishing-and-settings-modification/)。
 3. 在 GitHub 创建 `npm-production` environment：
-   - 配置 required reviewers；
+   - 配置 required reviewers；reviewer 必须核对 Codex real-gate 证据 URL、完整 commit SHA 与当前 tag commit 一致；
    - deployment branch/tag policy 只允许受保护的 `v*` tag；
    - 添加 environment secret `NPM_TOKEN`。
 4. 为 `refs/tags/v*` 配置 repository ruleset：限制创建权限，并禁止更新和删除。environment 的 tag filter 只控制部署，不替代 tag 不可变保护。
@@ -48,8 +55,8 @@ git diff --check
 
 1. 确认 `CHANGELOG.md` 已把本次内容归入带日期的 `0.1.0`，CLI manifest 版本为 `0.1.0`。
 2. 从已通过保护的 `main` commit 创建 annotated tag `v0.1.0` 并推送；tag 不指向未合入的发布分支。
-3. 在 GitHub Actions 选择 **Publish npm CLI**，从 `v0.1.0` tag 手动触发，并在输入框填写 `0.1.0`。
-4. environment reviewer 核对 tag、commit、CI 与 npm scope 后批准。
+3. 在 GitHub Actions 选择 **Publish npm CLI**，从 `v0.1.0` tag 手动触发；`confirm-version` 填 `0.1.0`，`codex-real-gate-commit` 填本 tag 指向的完整 commit SHA，`codex-real-gate-evidence` 填本仓库内保存的成功证据 URL。
+4. environment reviewer 打开证据 URL，核对 tag、commit、Codex/Node/runner 版本、real suite、packed real gate、CI 与 npm scope 后批准。
 5. 无 secret 的 build job 重新 build/test，生成 tarball，用统一验证器复验同一文件，并上传带 SHA-256 的短期 artifact。受保护的 publish job 下载该 artifact、核对 build job 输出的 digest，再执行：
 
    ```bash

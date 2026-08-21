@@ -73,12 +73,14 @@ Proposed ──(显式签字盖章)──> Accepted
 | [0013](0013-usage-completeness-cost-confidence.md) | UsageRecord.completeness 语义——$ 视图可信度 | Proposed |
 | [0014](0014-agent-backend-codex-cli.md) | Agent 后端扩展——Codex CLI | Proposed |
 | [0015](0015-multi-platform-agent-config.md) | 多平台多 Agent 命名配置 | Proposed |
-| [0016](0016-tui-hosted-agent-backends.md) | TUI-hosted Agent Backend Family | Proposed |
+| [0016](deprecated/0016-tui-hosted-agent-backends.md) | TUI-hosted Agent Backend Family | Superseded by 0022 |
 | [0017](0017-slash-command-registry.md) | Slash command registry 统一声明与注册 | Proposed |
 | [0018](0018-trajectory-observability-read-model.md) | Trajectory Observability 读模型与外部观测 | Proposed |
 | [0019](0019-lark-platform-via-official-node-sdk.md) | 飞书平台通过官方 Node SDK 接入 | Accepted |
 | [0020](0020-publish-single-npm-cli-package.md) | 首发只发布单一 npm CLI 包 | Proposed |
 | [0021](0021-lark-thread-as-session-container.md) | 飞书话题作为独立 session 容器 | Proposed |
+| [0022](0022-codex-app-server-primary-tui-supplemental.md) | Codex 以 app-server 为主控制面，TUI 作为补充视图 | Proposed |
+| [0023](0023-supplemental-terminal-session-host.md) | 补充终端会话采用窄接口与可替换 PTY/tmux 适配器 | Proposed |
 
 ## 职责边界
 

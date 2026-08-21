@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Logger } from '@agent-nexus/daemon';
 import {
   startEnginesWithSignalShutdown,
+  stopRuntimeEngines,
   type RuntimeEngine,
   type RuntimeSignalSource,
 } from './startup.js';
@@ -107,5 +108,70 @@ describe('startEnginesWithSignalShutdown', () => {
       expect(shutdown).toHaveBeenCalledTimes(1);
     });
     expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it('部分 engine 启动失败时先清理所有已启动或启动中的 engine', async () => {
+    const startError = new Error('second engine failed to start');
+    const engines: RuntimeEngine[] = [
+      { start: vi.fn(async () => {}) },
+      { start: vi.fn(async () => { throw startError; }) },
+    ];
+    const signals = new FakeSignalSource();
+    const shutdown = vi.fn(async () => {});
+    const exit = vi.fn();
+
+    await expect(
+      startEnginesWithSignalShutdown({
+        engines,
+        signals,
+        shutdown,
+        exit,
+        logger: makeLogger(),
+      }),
+    ).rejects.toBe(startError);
+
+    expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it('关机清理失败时记录失败并使用非零退出码', async () => {
+    const engines: RuntimeEngine[] = [{ start: vi.fn(async () => {}) }];
+    const signals = new FakeSignalSource();
+    const cleanupError = new Error('session cleanup not confirmed');
+    const shutdown = vi.fn(async () => {
+      throw cleanupError;
+    });
+    const exit = vi.fn();
+    const logger = makeLogger();
+
+    await expect(
+      startEnginesWithSignalShutdown({ engines, signals, shutdown, exit, logger }),
+    ).resolves.toBe(true);
+    signals.emit('SIGTERM');
+
+    await vi.waitFor(() => expect(exit).toHaveBeenCalledTimes(1));
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(logger.error).toHaveBeenCalledWith({ err: cleanupError }, 'shutdown_error');
+  });
+});
+
+describe('stopRuntimeEngines', () => {
+  it('等待所有 engine 清理完成后再传播失败', async () => {
+    const cleanupError = new Error('first engine cleanup failed');
+    const secondStop = deferred();
+    let settled = false;
+    const stopping = stopRuntimeEngines([
+      { stop: vi.fn(() => { throw cleanupError; }) },
+      { stop: vi.fn(() => secondStop.promise) },
+    ]).finally(() => {
+      settled = true;
+    });
+    const rejected = expect(stopping).rejects.toBe(cleanupError);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    secondStop.resolve();
+    await rejected;
   });
 });

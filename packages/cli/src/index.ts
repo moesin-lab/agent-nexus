@@ -32,11 +32,23 @@ import {
   previewConfigFileEdit,
 } from './config.js';
 import { createCliPlatform } from './platform-factory.js';
-import { startEnginesWithSignalShutdown } from './startup.js';
+import { startEnginesWithSignalShutdown, stopRuntimeEngines } from './startup.js';
+import { runPackedCodexTurnVerification } from './packed-codex-verification.js';
 
 const PROVIDER_RETENTION_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 async function main(): Promise<void> {
+  if (process.argv.slice(2).includes('--verify-packed-codex-turn')) {
+    if (
+      process.argv.slice(2).length !== 1 ||
+      process.env['AGENT_NEXUS_RUN_PACKED_CODEX_E2E'] !== '1'
+    ) {
+      throw new Error('packed Codex verification requires its explicit release gate');
+    }
+    await runPackedCodexTurnVerification();
+    process.stdout.write('packed Codex app-server process lifecycle verified\n');
+    return;
+  }
   let config;
   const secretsByRef = new Map<string, string>();
   try {
@@ -235,7 +247,7 @@ async function main(): Promise<void> {
     shutdown: async () => {
       try {
         providerRetentionSweep?.stop();
-        await Promise.all(engines.map((engine) => engine.stop()));
+        await stopRuntimeEngines(engines);
       } finally {
         trajectoryStore?.close();
       }

@@ -10,6 +10,7 @@ const INTERNAL_MANIFEST_URLS = [
   new URL('../../daemon/package.json', import.meta.url),
   new URL('../../agent/claudecode/package.json', import.meta.url),
   new URL('../../agent/codex/package.json', import.meta.url),
+  new URL('../../agent/codex-app-server/package.json', import.meta.url),
   new URL('../../platform/discord/package.json', import.meta.url),
   new URL('../../platform/lark/package.json', import.meta.url),
 ];
@@ -36,7 +37,7 @@ describe('published CLI package artifact', () => {
         access: 'public',
       },
     });
-    expect(internalManifests).toHaveLength(6);
+    expect(internalManifests).toHaveLength(7);
     expect(internalManifests.every((manifest) => manifest['private'] === true)).toBe(
       true,
     );
@@ -71,7 +72,10 @@ describe('published CLI package artifact', () => {
   });
 
   it('declares bundled platform externals as runtime dependencies', async () => {
-    const cliManifest = await readJson(CLI_MANIFEST_URL);
+    const [cliManifest, appServerManifest] = await Promise.all([
+      readJson(CLI_MANIFEST_URL),
+      readJson(new URL('../../agent/codex-app-server/package.json', import.meta.url)),
+    ]);
     const dependencies = cliManifest['dependencies'] as
       | Record<string, string>
       | undefined;
@@ -79,6 +83,10 @@ describe('published CLI package artifact', () => {
 
     expect(dependencies?.['better-sqlite3']).toBe('^12.11.1');
     expect(dependencies?.['@larksuiteoapi/node-sdk']).toBe('1.70.0');
+    expect(dependencies?.['ws']).toBe('8.21.3');
+    expect(
+      (appServerManifest['dependencies'] as Record<string, string> | undefined)?.['ws'],
+    ).toBe('8.21.3');
     expect(
       Object.values(dependencies ?? {}).some((version) =>
         version.startsWith('workspace:'),
@@ -86,6 +94,7 @@ describe('published CLI package artifact', () => {
     ).toBe(false);
     expect(scripts?.['bundle']).toContain('--target=node22');
     expect(scripts?.['bundle']).toContain('--external:better-sqlite3');
+    expect(scripts?.['bundle']).toContain('--external:ws');
     expect(scripts?.['bundle']).toContain(
       '--external:@larksuiteoapi/node-sdk',
     );

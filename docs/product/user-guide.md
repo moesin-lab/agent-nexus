@@ -19,7 +19,10 @@ related:
 
 - Node.js 22 或 24
 - 从源码构建时需要 pnpm >= 10（仓库 `packageManager` 锁定版本为 `pnpm@10.33.2`）
-- 本机已安装并登录 Claude Code CLI，`claude --version` 能运行
+- 本机已安装并登录至少一个 agent CLI：
+  - Claude Code backend 需要 `claude --version` 能运行
+  - `codex` backend 需要已登录的 Codex CLI
+  - `codex-app-server` backend 当前只接受 `codex --version` 输出 `codex-cli 0.146.0`
 - 一个已配置的平台入口：
   - Discord bot token、bot user id、你的 Discord user id；bot 已加入测试 server 并开启 `MESSAGE CONTENT INTENT`
   - 或中国版飞书自建应用的 App ID / App Secret / bot open_id；已启用机器人、长连接和 `im.message.receive_v1`
@@ -161,7 +164,7 @@ chmod 600 ~/.agent-nexus/config.json
 | `platforms[].auth.allowlist.allowDM` | 否 | 默认 `true`；DM 仍必须命中 `userIds` |
 | `platforms[].testGuildId` | 否 | 开发时把 slash command 限定注册到一个 guild，避免全局 slash command 缓存延迟 |
 | `agents[].name` | 是 | agent 配置稳定名称；binding 用它引用该 agent |
-| `agents[].backend` | 是 | `claudecode` 或 `codex` |
+| `agents[].backend` | 是 | `claudecode`、`codex` 或 `codex-app-server` |
 | `agents[].timeoutMs` | 否 | 单次输入 wall-clock timeout，默认 `300000`（5 分钟）；长任务可调大，例如 `1800000` |
 | `agents[].claudeCode.workingDir` | backend 为 `claudecode` 时是 | Claude Code 默认工作目录 |
 | `agents[].claudeCode.bin` | 否 | Claude Code CLI 路径；默认 `claude` |
@@ -173,6 +176,14 @@ chmod 600 ~/.agent-nexus/config.json
 | `agents[].codex.sandbox` | 否 | 默认 `read-only`；可设为 `workspace-write` 或 `danger-full-access` |
 | `agents[].codex.addDirs` | 否 | 默认 `[]`；逐个传给 `--add-dir` |
 | `agents[].codex.loadUserConfig` / `loadRules` | 否 | 默认 `false`，启动时传 `--ignore-user-config` / `--ignore-rules` |
+| `agents[].codexAppServer.workingDir` | backend 为 `codex-app-server` 时是 | 必须是已存在的绝对路径；作为 app-server thread 的工作目录 |
+| `agents[].codexAppServer.bin` | 否 | Codex CLI 路径；默认 `codex`，当前必须解析为 `codex-cli 0.146.0` |
+| `agents[].codexAppServer.sandbox` / `addDirs` | 否 | 默认 `read-only` / `[]`；只从该 backend 配置读取，不继承用户 Codex config |
+| `agents[].codexAppServer.maxInputBytes` | 否 | 单条用户文本 UTF-8 上限；默认 `262144`，范围 `1..1048576` |
+| `agents[].codexAppServer.requestTimeoutMs` | 否 | 单个 app-server RPC 响应上限；默认 `30000`，范围 `1..300000` |
+| `agents[].codexAppServer.interruptGraceMs` / `terminateGraceMs` | 否 | 中断与结束进程的收敛窗口；默认均为 `5000` 毫秒 |
+| `agents[].codexAppServer.conversationRetentionMs` | 否 | 默认 `null`，不自动删除 committed conversation；非空时最小 `60000` |
+| `agents[].codexAppServer.supplementalViewer.enabled` | 否 | 默认 `false`；restart-only，被动只读 viewer，需要本机 `tmux`，门禁失败时回退 stdio |
 | `bindings[].platformName` | 是 | 引用 `platforms[].name` |
 | `bindings[].agentName` | 是 | 引用 `agents[].name` |
 | `bindings[].match.discord.channelIds` | Discord 是 | 该 binding 匹配的 Discord channel/thread id 列表 |
@@ -180,7 +191,7 @@ chmod 600 ~/.agent-nexus/config.json
 | `daemon.commandRegistry.registration.enabled` | 否 | 默认 `true`；设为 `false` 时不 apply 远端 slash command 注册计划，本地 command dispatch 保持 fail-closed |
 | `daemon.commandRegistry.registration.applyTimeoutMs` | 否 | 默认 `30000`；注册计划 apply 超时毫秒数 |
 | `daemon.commandRegistry.registration.retry.maxAttempts` / `backoffMs` | 否 | 默认 `3` / `1000`；启动时注册计划 apply 的重试策略 |
-| `daemon.commandRegistry.aliases.singleAgent.enabled` | 否 | 默认 `true`；控制裸 `/new` / `/stop` single-agent slash alias，不影响 `/codex-new` / `/codex-stop` / `/claudecode-new` / `/claudecode-stop` |
+| `daemon.commandRegistry.aliases.singleAgent.enabled` | 否 | 默认 `true`；控制裸 `/new` / `/stop` single-agent slash alias，不影响各 backend 的稳定命令名 |
 | `daemon.commandRegistry.aliases.legacy.replyMode` | 否 | 默认 `true`；控制 legacy `/reply-mode` 是否注册，不影响 `/discord-reply-mode` |
 | `daemon.commandRegistry.textPrefixes.newSession` | 否 | 默认 `true`；控制普通消息中的 `/new` 文本前缀，不影响 slash command |
 | `daemon.trajectory.externalImport.enabled` | 否 | 默认 `false`；关闭时 `/nexus-external-sessions` 不扫描任何 root |
@@ -194,7 +205,7 @@ chmod 600 ~/.agent-nexus/config.json
 
 如果你确实需要远程等价本机操作，可以把 `permissionLevel` 设为 `bypassPermissions`。这是 Claude Code backend 的 YOLO 模式：agent-nexus 会跳过工具权限控制 probe，并在启动日志打 warn；不要把这个模式暴露给不可信 Discord 账号或公共频道。其他非 `default` 模式也会跳过该 probe，不提供工具隔离强安全承诺。
 
-### Codex backend 配置细节
+### Codex exec backend 配置细节
 
 启用 Codex CLI backend 时，最小配置通常是：
 
@@ -279,9 +290,45 @@ chmod 600 ~/.agent-nexus/config.json
 | 远程等价本机操作 | `sandbox: "danger-full-access"`，并确认 allowlist、channel binding 和外层隔离 |
 | 复用个人 Codex CLI 行为 | 只在理解影响后把 `loadUserConfig` 或 `loadRules` 改为 `true` |
 
-Codex backend 固定使用非交互 `codex exec --json` / `resume`，并固定传 `--ask-for-approval never`。因此需要人工确认的操作不会弹出审批窗口；应通过 `sandbox`、`workingDir`、`addDirs` 和默认不加载用户配置 / rules 来控制边界。`danger-full-access` 明确表示放弃 Codex 文件系统 sandbox 边界。
+Codex exec backend 固定使用非交互 `codex exec --json` / `resume`，并固定传 `--ask-for-approval never`。因此需要人工确认的操作不会弹出审批窗口；应通过 `sandbox`、`workingDir`、`addDirs` 和默认不加载用户配置 / rules 来控制边界。`danger-full-access` 明确表示放弃 Codex 文件系统 sandbox 边界。
 
-启动时默认只跑快速 Codex compatibility probe：检查 `codex --version` 与 help 中的必需 flag，不发起真实模型 turn。这样 Discord bot 启动不会先等待多轮 `codex exec --json`。如果要做完整 Codex backend 验证，使用仓库里的 `scripts/verify-codex-agent.sh`。
+启动时默认只跑快速 Codex exec compatibility probe：检查 `codex --version` 与 help 中的必需 flag，不发起真实模型 turn。这样 Discord bot 启动不会先等待多轮 `codex exec --json`。如果要做完整 Codex exec backend 验证，使用仓库里的 `scripts/verify-codex-agent.sh`。
+
+### Codex app-server backend 配置细节
+
+`codex-app-server` 通过结构化 app-server RPC 维护一个 durable thread。一份把关键默认值展开的配置是：
+
+```json
+{
+  "name": "codex-persistent",
+  "backend": "codex-app-server",
+  "timeoutMs": 300000,
+  "codexAppServer": {
+    "workingDir": "/path/to/your/repo",
+    "bin": "codex",
+    "sandbox": "read-only",
+    "addDirs": [],
+    "maxInputBytes": 262144,
+    "requestTimeoutMs": 30000,
+    "interruptGraceMs": 5000,
+    "terminateGraceMs": 5000,
+    "conversationRetentionMs": null,
+    "supplementalViewer": {
+      "enabled": false
+    }
+  }
+}
+```
+
+当前 schema 和 runtime 只兼容精确的 `codex-cli 0.146.0`，并且只支持 macOS 与 Linux；版本或平台不匹配时启动 probe 会 fail closed，不会静默回落到 `codex exec`。每个 conversation 使用独立、持久的 `CODEX_HOME`，只复制当前 Codex 登录所需的 auth snapshot，并保存 thread state 与 agent-nexus 生成的最小配置。它默认不继承用户级 Codex config、rules、MCP、hooks、skills、plugins、features 或 model 配置。
+
+该 backend 能在新 child 中恢复已持久化的 idle thread，但不会重放或恢复 daemon 崩溃时仍在执行的 turn。`conversationRetentionMs: null` 表示不自动删除 committed conversation；设置正整数后，过期且没有 live owner 的 conversation 会被回收，旧 session ref 可能因此无法 resume。
+
+`sandbox` 与 `addDirs` 的安全含义和上面的 Codex exec backend 相同。approval 固定为 `never`；`danger-full-access` 会产生启动日志和第一轮平台安全警告。首版只返回完整 final，不提升 streaming、tool-call 或 token-usage 事件。backend-private runtime 提供稳定的 process start/status/output/stdin/terminate：process 可跨同一 live app-server connection 的多个 turn 存活，但不会跨 daemon/app-server restart 恢复；旧 handle 在新 child 中失效。平台 slash command、自然语言 dynamic tool、experimental `process/*` / background terminal 与可写 TUI attach 仍不开放。
+
+`supplementalViewer.enabled` 默认 `false`。设为 `true` 后需要本机 `tmux`，并只启动带独立 capability token 的 loopback 被动 viewer；它不是第二个可写控制面。viewer compatibility gate 失败时 backend 记录 warning 并回退到默认 stdio 主路径。该字段只在重启 agent-nexus 后生效。
+
+Discord 下该 backend 的稳定命令是 `/codex-app-server-new`、`/codex-app-server-stop` 和 `/codex-app-server-status`。`status` 返回当前持久 session 的 `Spawning`、`Idle`、`Busy`、`Stopped` 或 `Errored` 状态。
 
 按所选平台写 secret。Discord token：
 
@@ -334,16 +381,19 @@ agent-nexus
 @bot /new
 @bot /new 从这个问题重新开始
 /claudecode-new  # 路由给 Claude Code agent package
-/codex-new       # 路由给 Codex agent package
+/codex-new       # 路由给 Codex exec agent package
+/codex-app-server-new # 路由给 Codex app-server agent package
 ```
 
-`/claudecode-new` 和 `/codex-new` 是 agent slash command 的稳定名称，按当前频道 binding 路由到对应 backend。每个 `-new` 命令只在对应 backend 已配置且在该 Discord 注册 scope 有 binding 时注册；只启用一个 backend 时只会看到对应的那一个。`/new` 只有在同一个 Discord 注册 scope 里只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时才会作为 slash command alias 出现；多 backend 共用同一个 scope 时不会注册裸 `/new`，避免歧义。`@bot /new <prompt>` 是文本前缀形式，可以在重置后立即带 prompt 开新一轮；可用 `daemon.commandRegistry.textPrefixes.newSession=false` 禁用。
+`/claudecode-new`、`/codex-new` 和 `/codex-app-server-new` 是 agent slash command 的稳定名称，按当前频道 binding 路由到对应 backend。每个 `-new` 命令只在对应 backend 已配置且在该 Discord 注册 scope 有 binding 时注册；只启用一个 backend 时只会看到对应的那一个。`/new` 只有在同一个 Discord 注册 scope 里只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时才会作为 slash command alias 出现；多 backend 共用同一个 scope 时不会注册裸 `/new`，避免歧义。`@bot /new <prompt>` 是文本前缀形式，可以在重置后立即带 prompt 开新一轮；可用 `daemon.commandRegistry.textPrefixes.newSession=false` 禁用。
 
 中断和终止：
 
 ```text
 /claudecode-stop  # 路由给 Claude Code agent package
-/codex-stop       # 路由给 Codex agent package
+/codex-stop       # 路由给 Codex exec agent package
+/codex-app-server-stop   # 中断 Codex app-server 当前 turn
+/codex-app-server-status # 查看 Codex app-server 当前状态
 /stop             # 单 agent scope 下的便捷 alias
 /nexus-kill       # daemon 直接终止当前 RoutingSession
 /nexus-sessions   # 列出可恢复 session，并用下拉菜单切换
@@ -355,7 +405,7 @@ agent-nexus
 /nexus-queue      # 打开当前会话队列面板；可移动、编辑、取消 pending、插入 next prompt，或让下一条接管
 ```
 
-`new` / `stop` 是 agent command，daemon 只完成鉴权、reverse-map、binding route 和 envelope 转发；重置、停止、排队或拒绝等具体语义由对应 agent package/runtime 决定。`/new` / `/codex-new` / `/claudecode-new` 会把当前 channel/user 的旧 agent conversation 移出活跃区并保留到 `/nexus-sessions` 可恢复列表，让下一条消息开启新会话。`/nexus-kill` 是 daemon command，会终止当前 RoutingSession、取消 pending items，并同样把旧 conversation 留在可恢复列表。`/nexus-sessions` 是内存态 session switcher：Discord 会显示仅调用方可见的下拉菜单，每项用该 session 的第一条用户消息做标题；选择某一项后当前 channel/user 会绑定到对应 agent conversation，下一条消息按该 conversation resume；当前进程通常最多保留 100 条 session 记录，超过后只淘汰最旧的非活跃历史，活跃记录本身超过上限时可暂时超出，进程重启后列表会丢失。切换 settings 里的 agent binding 时，旧 conversation 仍会保留，但只在切回兼容 backend 后重新出现在列表中。`/nexus-new-thread` 会在当前 channel 下创建 private thread，默认把调用者加入；thread 中第一条用户消息启动一个新的 agent session；只有创建时未传标题、仍使用默认占位标题时，才会自动把 thread 名改成第一条消息生成的标题，不迁移父 channel 的当前会话。`/nexus-working-dir` 默认设置当前 channel/thread 的工作目录默认值；thread 未设置时继承父 channel 的默认值。传 `scope:session` 时才为当前 channel/thread + user 的下一次新 agent session 设置一次性 override。路径必须是非空绝对路径，不再限制在当前 binding 目标 agent 的默认 `workingDir` 内。如果当前 session 正在运行，workingDir 变更会排到当前 turn 后面，不会影响当前进程。`/nexus-settings` 是统一入口：展示并修改当前 reply-mode、effective workingDir、channel agent binding、session resume、new-thread 和 `config.json` 设置；每次操作返回新的 ephemeral 快照。settings 里的 workingDir 直接用 modal 输入路径；agent binding 是当前进程内的 channel override，重启后回到配置文件 binding。settings 里的 config 编辑从 `Config file` 面板进入：常用字段会按分组展示，platform / agent / binding 用配置里的 `name` 选择；高级路径仍可用 `agents[0].codex.workingDir` 这类 dot / bracket 路径和值输入。提交新值后先显示 preview（resolved path、旧值、新值、生效方式和风险提示），点击 `Apply` 才写入 `config.json` 并自动 reload。校验失败不写文件；路径里不存在的对象字段会在 preview / 保存反馈里提示，看到 warning 时先核对是否拼错。热生效字段会立即应用；仅重启生效字段会写入文件并在反馈中提示重启。`/nexus-queue` 打开当前 channel/thread + user 的 daemon queue 面板：用下拉选择 pending item，再用按钮上移、下移、编辑 message prompt 或取消；`Run next` / `action:next` 会中断当前 running turn，让下一条 pending item 接着执行；`Insert next` 会用 modal 插入一条排在当前 running 后面的 prompt；`action:clear` 只取消 pending items，不中断 running turn。
+`new` / `stop` / `status` 是 agent command，daemon 只完成鉴权、reverse-map、binding route 和 envelope 转发；重置、停止、排队、状态查询或拒绝等具体语义由对应 agent package/runtime 决定。`/new` 及各 backend 的 `-new` 稳定命令会把当前 channel/user 的旧 agent conversation 移出活跃区并保留到 `/nexus-sessions` 可恢复列表，让下一条消息开启新会话。`/nexus-kill` 是 daemon command，会终止当前 RoutingSession、取消 pending items，并同样把旧 conversation 留在可恢复列表。`/nexus-sessions` 是内存态 session switcher：Discord 会显示仅调用方可见的下拉菜单，每项用该 session 的第一条用户消息做标题；选择某一项后当前 channel/user 会绑定到对应 agent conversation，下一条消息按该 conversation resume；当前进程通常最多保留 100 条 session 记录，超过后只淘汰最旧的非活跃历史，活跃记录本身超过上限时可暂时超出，进程重启后列表会丢失。切换 settings 里的 agent binding 时，旧 conversation 仍会保留，但只在切回兼容 backend 后重新出现在列表中。`/nexus-new-thread` 会在当前 channel 下创建 private thread，默认把调用者加入；thread 中第一条用户消息启动一个新的 agent session；只有创建时未传标题、仍使用默认占位标题时，才会自动把 thread 名改成第一条消息生成的标题，不迁移父 channel 的当前会话。`/nexus-working-dir` 默认设置当前 channel/thread 的工作目录默认值；thread 未设置时继承父 channel 的默认值。传 `scope:session` 时才为当前 channel/thread + user 的下一次新 agent session 设置一次性 override。路径必须是非空绝对路径，不再限制在当前 binding 目标 agent 的默认 `workingDir` 内。如果当前 session 正在运行，workingDir 变更会排到当前 turn 后面，不会影响当前进程。`/nexus-settings` 是统一入口：展示并修改当前 reply-mode、effective workingDir、channel agent binding、session resume、new-thread 和 `config.json` 设置；每次操作返回新的 ephemeral 快照。settings 里的 workingDir 直接用 modal 输入路径；agent binding 是当前进程内的 channel override，重启后回到配置文件 binding。settings 里的 config 编辑从 `Config file` 面板进入：常用字段会按分组展示，platform / agent / binding 用配置里的 `name` 选择；高级路径仍可用 `agents[0].codexAppServer.workingDir` 这类 dot / bracket 路径和值输入。提交新值后先显示 preview（resolved path、旧值、新值、生效方式和风险提示），点击 `Apply` 才写入 `config.json` 并自动 reload。校验失败不写文件；路径里不存在的对象字段会在 preview / 保存反馈里提示，看到 warning 时先核对是否拼错。热生效字段会立即应用；仅重启生效字段会写入文件并在反馈中提示重启。`/nexus-queue` 打开当前 channel/thread + user 的 daemon queue 面板：用下拉选择 pending item，再用按钮上移、下移、编辑 message prompt 或取消；`Run next` / `action:next` 会中断当前 running turn，让下一条 pending item 接着执行；`Insert next` 会用 modal 插入一条排在当前 running 后面的 prompt；`action:clear` 只取消 pending items，不中断 running turn。
 
 当前除 `/discord-reply-mode` / `/reply-mode` / `/nexus-sessions` / `/nexus-external-sessions` / `/nexus-new-thread` / `/nexus-working-dir` / `/nexus-settings` / `/nexus-queue` 外，agent / daemon slash command 的成功 ack 会作为普通频道消息发送；如果 command registry 尚未激活、当前频道没有匹配 binding，或调用方未通过 allowlist，Discord 会显示一条仅调用方可见的 ephemeral 反馈。排障时看 daemon 日志中的 `command_*` / `auth_denied` / `command_registration_*` / `thread_create_failed` 事件。
 
@@ -408,14 +458,14 @@ running item 不能被 `/nexus-queue` 编辑或重排；要保留 pending 并尽
 
 ## 工具与安全
 
-- 默认工具集是 `Read` / `Grep` / `Glob` / `Edit` / `Write`。
-- `Bash` 默认禁用；加入 `allowedTools` 后启动会打 warn。
-- 白名单外工具应在执行前被拒绝；机制细节见 [`../dev/spec/security/tool-boundary.md`](../dev/spec/security/tool-boundary.md)。
-- agent-nexus 是本机进程。它能访问的文件和网络能力取决于本机运行环境与 Claude Code 工作目录。
+- Claude Code backend 的默认工具集是 `Read` / `Grep` / `Glob` / `Edit` / `Write`；`Bash` 默认禁用，加入 `allowedTools` 后启动会打 warn。
+- Codex exec 与 app-server backend 不使用 Claude Code 的工具 allowlist；它们依赖 `sandbox`、`workingDir`、`addDirs` 和固定 approval 策略控制边界。
+- 工具边界机制见 [`../dev/spec/security/tool-boundary.md`](../dev/spec/security/tool-boundary.md)。
+- agent-nexus 是本机进程。它能访问的文件和网络能力取决于本机运行环境、所选 backend、sandbox 和工作目录。
 
 ## 停止
 
-会话内 agent command 用 `/stop`、`/codex-stop` 或 `/claudecode-stop`；要直接终止当前 Nexus route 用 `/nexus-kill`。
+会话内 agent command 用 `/stop` 或对应 backend 的稳定 `-stop` 命令；要直接终止当前 Nexus route 用 `/nexus-kill`。
 
 前台运行时按 `Ctrl-C`。进程收到 `SIGINT` / `SIGTERM` 后会调用 engine stop 并断开平台连接。
 

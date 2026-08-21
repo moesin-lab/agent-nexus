@@ -141,7 +141,7 @@ Idle|Busy -> stop -> Stopping -> Stopped
 
 ### 输入
 
-- 首版只接受非空 `user_message.text`；NUL、禁止控制字符和超过 `maxInputBytes` 的 UTF-8 文本在写 pipe 前拒绝。
+- 首版只接受非空 `user_message.text`；允许普通多行文本需要的 HT（`U+0009`）、LF（`U+000A`）和 CR（`U+000D`），拒绝 C0/C1 范围 `U+0000–U+0008`、`U+000B–U+000C`、`U+000E–U+001F`、`U+007F–U+009F`，并在写 pipe 前拒绝超过 `maxInputBytes` 的 UTF-8 文本。
 - 输入映射为 `turn/start.input=[{type:"text",text,text_elements:[]}]`；用户内容不进入 argv、shell 或日志。
 - 每条输入携带稳定 `clientUserMessageId` 时只用于关联，不把它当上游 idempotency guarantee。frame 已 dispatch 但 response 丢失时进入 ambiguous，禁止自动重发。
 

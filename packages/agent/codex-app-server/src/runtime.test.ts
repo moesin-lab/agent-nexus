@@ -149,6 +149,39 @@ function setup(
 }
 
 describe('createCodexAppServerRuntime', () => {
+  it.each([
+    ['C0 BEL', '\u0007'],
+    ['DEL', '\u007f'],
+    ['C1 NEL', '\u0085'],
+  ])(
+    'should_reject_prohibited_%s_control_characters_before_dispatch',
+    async (_label, control) => {
+      const { engine, runtime, session } = setup();
+      await waitFor(() => session.state === 'Idle');
+
+      await expect(
+        runtime.sendInput(
+          session,
+          input(`before${control}after`, 'trace-control'),
+        ),
+      ).rejects.toThrow(/控制字符/);
+      expect(engine.turns).toEqual([]);
+    },
+  );
+
+  it('should_allow_tabs_and_line_breaks_in_multiline_user_text', async () => {
+    const { engine, runtime, session } = setup();
+    const text = 'line 1\tvalue\r\nline 2';
+    engine.outcomes.push({ status: 'completed', text: 'OK' });
+    await waitFor(() => session.state === 'Idle');
+
+    await runtime.sendInput(session, input(text, 'trace-multiline'));
+
+    expect(engine.turns).toEqual([
+      { text, clientUserMessageId: 'trace-multiline' },
+    ]);
+  });
+
   it('should_emit_a_platform_visible_safety_warning_before_the_first_dangerous_turn', async () => {
     const { engine, runtime, session, events } = setup(undefined, {
       ...config,

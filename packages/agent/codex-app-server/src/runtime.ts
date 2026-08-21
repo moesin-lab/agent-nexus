@@ -98,6 +98,11 @@ const CAPABILITIES: AgentCapabilitySet = {
   supportsStdinInterrupt: false,
 };
 
+// Keep ordinary multiline text usable while rejecting C0/C1 controls that can
+// change terminal or transport behavior without being visible to an operator.
+const PROHIBITED_USER_TEXT_CONTROL =
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
+
 export class CodexAppServerRuntimeError extends Error {
   constructor(message: string) {
     super(message);
@@ -227,8 +232,11 @@ export function createCodexAppServerRuntime(
     if (input.type !== 'user_message' || typeof input.text !== 'string' || input.text.length === 0) {
       throw new CodexAppServerRuntimeError('codex-app-server 仅接受非空 user_message');
     }
-    if (input.text.includes('\u0000') || Buffer.byteLength(input.text) > backendConfig.maxInputBytes) {
-      throw new CodexAppServerRuntimeError('user_message 包含 NUL 或超过 maxInputBytes');
+    if (
+      PROHIBITED_USER_TEXT_CONTROL.test(input.text) ||
+      Buffer.byteLength(input.text) > backendConfig.maxInputBytes
+    ) {
+      throw new CodexAppServerRuntimeError('user_message 包含禁止控制字符或超过 maxInputBytes');
     }
     if (backendConfig.sandbox === 'danger-full-access' && !state.safetyWarningEmitted) {
       state.safetyWarningEmitted = true;

@@ -28,6 +28,12 @@ export {
   AuthSnapshotManager,
 } from './auth-snapshot.js';
 export { buildCodexChildEnvironment } from './child-environment.js';
+export {
+  CodexProfileSessionCatalog,
+  type CodexProfileSessionCatalogDependencies,
+  type CodexProfileSessionCatalogHostPort,
+  type CodexProfileSessionCatalogOptions,
+} from './profile-session-catalog.js';
 export { codexAppServerCommandDescriptors } from './command-descriptors.js';
 export {
   CodexAppServerCompatibilityError,

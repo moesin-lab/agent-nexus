@@ -22,6 +22,9 @@ related:
 - 一个飞书话题固定对应一个 Session；P2P 与群主时间线普通文本静默拒绝，不会进入 agent
 - 只发送纯文本消息，长回复按 4000 个 UTF-16 code unit 切片
 - `/new` 与 `/new <prompt>` 只提示新建话题，不在现有话题或 P2P 下生成第二个 Session
+- 对配置为 `codex` 的 agent，话题群主时间线 `/nexus-sessions` 会扫描同一 `codexHome` 的最近可恢复 thread，每批
+  最多为 10 个首次发现的 session 创建新话题，并把最后一个完成 turn 的回复作为根消息；后续消息精确 resume 原
+  Codex thread；P2P 只列出已有话题，不尝试把单聊当作话题父群
 - 保存话题精确 AppLink；OpenAPI 未返回加密消息链接时用 chat / thread / position 组装，`/nexus-sessions` 可在 daemon 重启后继续引导回原话题
 - 不支持图片/文件、卡片、富文本、消息编辑、删除、reaction、typing indicator 或飞书原生 slash command
 
@@ -33,9 +36,9 @@ related:
 
 1. 打开上面的[飞书官方创建入口](https://open.feishu.cn/page/launcher?from=backend_oneclick)，创建企业自建应用。
 2. 在应用能力中启用机器人。
-3. 在权限管理中开通单聊消息、群聊中 @机器人的消息和 bot 发消息所需的最小权限；群消息接收至少使用
-   `im:message.group_at_msg:readonly`。若希望话题内不必每条都 @机器人，再申请敏感权限
-   `im:message.group_msg`。
+3. 在权限管理中开通单聊消息、群聊中 @机器人的消息、读取群信息和 bot 发消息所需的最小权限；群消息接收至少
+   使用 `im:message.group_at_msg:readonly`。若希望话题内不必每条都 @机器人，再申请敏感权限
+   `im:message.group_msg`。profile 恢复还要求机器人能读取目标话题群信息并向该群发送消息。
 4. 在事件与回调中选择“使用长连接接收事件”，订阅 `im.message.receive_v1`。
 5. 创建并发布一个应用版本，把测试用户加入可用范围。
 6. 在“凭证与基础信息”复制 `App ID` 和 `App Secret`。`App Secret` 只写入本机 secret 文件，不写进 `config.json`。
@@ -153,21 +156,29 @@ agent-nexus
 - `platform_connection_ready`，且 `platform=lark`
 - `engine_started`
 
-在飞书里给机器人发送：
+在飞书话题群主时间线和 P2P 分别发送：
 
 ```text
-P2P：/nexus-sessions
+话题群主时间线：/nexus-sessions
+P2P：/nexus-sessions（只列已有话题）
 话题：ping
 ```
 
-P2P 应返回可恢复话题列表或 `[no resumable sessions]`；话题中的 `ping` 应收到留在原话题的回复。P2P 或群主
-时间线发送普通文本时没有任何回复，这是预期行为。飞书长连接不需要公网 webhook 或本机监听端口。
+话题群主时间线应先返回 profile sync 计数，再返回可恢复话题列表或 `[no resumable sessions]`；每次最多创建 10
+个新话题，再次执行继续下一批。首次发现 Codex native session 时，该话题群会出现以最后一个完成 turn 回复为根
+消息的新话题；进入该话题发送 `ping` 应精确 resume 原 thread，且回复仍留在话题内。P2P 只列已有话题并返回去
+话题群同步的提示。P2P 或群主时间线发送普通文本时没有任何回复，这是预期行为。飞书长连接不需要
+公网 webhook 或本机监听端口。
 
 飞书没有可注册的原生 slash command。P2P/群主时间线的首批控制入口是 `/nexus-sessions`；`/new` 与
 `/new <prompt>` 只返回“请新建话题”指引。普通文本、未知 `/foo` 和未列入控制面的命令均静默拒绝。话题内
 `/status`、`/stop` 仍控制该话题的后端任务；`/new`、`/kill` 与 `/nexus-kill` 不会替换或归档固定 Session。
 
-`/nexus-sessions` 优先展示飞书返回的精确根消息 AppLink；链接读取暂时失败时降级显示父群入口和
+`/nexus-sessions` 的 profile 扫描只接受 interactive、非 ephemeral、非 active、非 subagent 且 cwd 落在该
+agent `workingDir/addDirs` 边界内的 Codex thread。扫描或创建失败会在控制回复中显示计数；创建结果不明确的条目
+记为 ambiguous，不自动重试。列表优先展示飞书返回的精确根消息 AppLink；链接读取暂时失败时降级显示父群入口和
 `thread_id/root_id`，在原话题再发一条消息会重试补齐。
+普通话题若已产生并持久化同一 Codex thread，扫描只把它计为 existing，不再创建第二个话题。fixed 话题同时固定
+agent 与 opaque profile identity；修改该 agent 的 `codexHome` 后，旧话题不会把原 ref 交给新 profile。
 
 同一个飞书应用不要同时启动多个 agent-nexus 进程。官方长连接会在同应用的多个客户端间分发事件，不会向每个客户端广播；要路由到多个 agent，应在同一 platform 下增加 bindings。

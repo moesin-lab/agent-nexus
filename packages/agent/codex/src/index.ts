@@ -449,7 +449,7 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
     emitEvent(state, 'session_started', traceId, {
       agentSessionId: threadId,
       pid: session.pid,
-      workingDir: runtimeConfig.workingDir,
+      workingDir: state.sessionConfig.workingDir,
       capabilities,
     });
   }
@@ -649,9 +649,13 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
     const traceId = input.traceId;
     const prompt = input.text ?? '';
     const threadId = session.agentSessionId ?? state.sessionConfig.resumeFromAgentSessionId;
+    const turnConfig = {
+      ...runtimeConfig,
+      workingDir: state.sessionConfig.workingDir,
+    };
     const args = threadId
-      ? buildCodexResumeArgs(runtimeConfig, threadId, prompt)
-      : buildCodexExecArgs(runtimeConfig, prompt);
+      ? buildCodexResumeArgs(turnConfig, threadId, prompt)
+      : buildCodexExecArgs(turnConfig, prompt);
 
     let completedTurn!: TurnState;
     await new Promise<void>((resolve) => {
@@ -675,6 +679,14 @@ export function createCodexRuntime(opts: CodexRuntimeOptions): AgentRuntime {
           buffer: false,
           stdin: 'ignore',
           detached: process.platform !== 'win32',
+          ...(runtimeConfig.codexHome
+            ? {
+                env: {
+                  ...process.env,
+                  CODEX_HOME: runtimeConfig.codexHome,
+                },
+              }
+            : {}),
         }) as ChildProcess;
       } catch (err) {
         emitEvent(state, 'error', traceId, {

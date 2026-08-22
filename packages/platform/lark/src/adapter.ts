@@ -6,6 +6,9 @@ import {
 import type { Logger } from '@agent-nexus/daemon';
 import type {
   CapabilitySet,
+  CreateThreadFailureOutcome,
+  CreateThreadInput,
+  CreateThreadResult,
   EventHandler,
   MessageRef,
   OutboundMessage,
@@ -31,7 +34,8 @@ export const LARK_CAPABILITIES: CapabilitySet = {
   supportsSelects: false,
   supportsModals: false,
   supportsThreads: true,
-  supportsThreadCreation: false,
+  supportsThreadCreation: true,
+  supportsThreadCreateIdempotencyKey: true,
   supportsEphemeral: false,
   supportsAttachments: false,
   maxAttachmentsPerMessage: 0,
@@ -56,13 +60,19 @@ export interface LarkAdapterInternals {
 }
 
 export class LarkPlatformError extends Error {
+  readonly creationOutcome?: CreateThreadFailureOutcome;
+
   constructor(
     public readonly code: string,
     public readonly retryable: boolean,
-    options?: { cause?: unknown },
+    options?: {
+      cause?: unknown;
+      creationOutcome?: CreateThreadFailureOutcome;
+    },
   ) {
     super(code, options);
     this.name = 'LarkPlatformError';
+    this.creationOutcome = options?.creationOutcome;
   }
 }
 
@@ -95,6 +105,16 @@ const BOT_PROBE_TIMEOUT_MS = 15_000;
 const WS_READY_TIMEOUT_MS = 30_000;
 const STABLE_CONNECTION_MS = 60_000;
 const MAX_RETRY_BACKOFF_MS = 30_000;
+const LARK_MESSAGE_RATE_LIMITED = 230020;
+const LARK_MESSAGE_BEING_SENT = 230049;
+const LARK_MESSAGE_DEFINITE_REJECTIONS = new Set([
+  230001, 230002, 230006, 230013, 230015, 230017, 230018, 230019,
+  230022, 230025, 230027, 230028, 230029, 230034, 230035, 230036,
+  230038, 230053, 230054, 230055, 230075, 230099, 232009,
+]);
+const LARK_MESSAGE_CORRECTABLE_REJECTIONS = new Set([
+  230002, 230006, 230013, 230018, 230027, 230035, 230036, 230053,
+]);
 const REMOVED_RAW_KEYS = new Set(['token', 'tenant_key', 'app_id']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -257,6 +277,7 @@ function normalizeLarkEvent(
     ...(timestamp === undefined
       ? {}
       : { platformTimestamp: new Date(timestamp) }),
+    channelKind: isTopic ? 'thread' : chatType === 'p2p' ? 'direct' : 'group',
     ...(isTopic
       ? {
           threadParentChannelId: chatId,
@@ -338,6 +359,36 @@ function readHttpStatus(error: unknown): number | undefined {
     : undefined;
 }
 
+function readLarkBusinessCode(error: unknown): number | undefined {
+  if (!isRecord(error)) return undefined;
+  if (typeof error['code'] === 'number') return error['code'];
+  const response = error['response'];
+  const data = isRecord(response) ? response['data'] : undefined;
+  return isRecord(data) && typeof data['code'] === 'number'
+    ? data['code']
+    : undefined;
+}
+
+function classifyMessageCreateBusinessCode(code: number): {
+  outcome: CreateThreadFailureOutcome;
+  retryable: boolean;
+} {
+  if (code === LARK_MESSAGE_RATE_LIMITED) {
+    return { outcome: 'not-created', retryable: true };
+  }
+  if (code === LARK_MESSAGE_BEING_SENT) {
+    return { outcome: 'unknown', retryable: true };
+  }
+  if (LARK_MESSAGE_DEFINITE_REJECTIONS.has(code)) {
+    return {
+      outcome: 'not-created',
+      retryable: LARK_MESSAGE_CORRECTABLE_REJECTIONS.has(code),
+    };
+  }
+  // 未知业务码不能证明服务端没有接受消息；保守阻断自动重放。
+  return { outcome: 'unknown', retryable: false };
+}
+
 function readRetryAfterMs(error: unknown): number | undefined {
   if (!isRecord(error)) return undefined;
   const response = error['response'];
@@ -386,6 +437,132 @@ function parseMessageResponse(response: unknown): string {
     throw new LarkPlatformError('lark_sdk_protocol_error', false);
   }
   return data['message_id'];
+}
+
+function validateThreadParent(response: unknown, parentChannelId: string): void {
+  if (!isRecord(response) || typeof response['code'] !== 'number') {
+    throw new LarkPlatformError('lark_sdk_protocol_error', false, {
+      creationOutcome: 'not-created',
+    });
+  }
+  if (response['code'] !== 0) {
+    const retryable =
+      response['code'] === LARK_MESSAGE_RATE_LIMITED ||
+      response['code'] === LARK_MESSAGE_BEING_SENT ||
+      response['retryable'] === true;
+    throw new LarkPlatformError(
+      'lark_thread_parent_query_failed',
+      retryable,
+      { creationOutcome: 'not-created' },
+    );
+  }
+  const data = response['data'];
+  if (
+    !isRecord(data) ||
+    typeof data['group_message_type'] !== 'string'
+  ) {
+    throw new LarkPlatformError('lark_sdk_protocol_error', false, {
+      creationOutcome: 'not-created',
+    });
+  }
+  if (
+    data['chat_id'] !== undefined &&
+    data['chat_id'] !== null &&
+    data['chat_id'] !== '' &&
+    data['chat_id'] !== parentChannelId
+  ) {
+    throw new LarkPlatformError('lark_sdk_protocol_error', false, {
+      creationOutcome: 'not-created',
+    });
+  }
+  if (data['group_message_type'] !== 'thread') {
+    throw new LarkPlatformError('lark_thread_parent_not_topic_group', false, {
+      creationOutcome: 'not-created',
+    });
+  }
+}
+
+function parseCreatedThread(
+  response: unknown,
+  expectedParentChannelId: string,
+): CreateThreadResult {
+  if (!isRecord(response) || typeof response['code'] !== 'number') {
+    throw new LarkPlatformError('lark_thread_create_outcome_unknown', false, {
+      creationOutcome: 'unknown',
+    });
+  }
+  if (response['code'] !== 0) {
+    const failure = classifyMessageCreateBusinessCode(response['code']);
+    throw new LarkPlatformError(
+      failure.outcome === 'unknown'
+        ? 'lark_thread_create_outcome_unknown'
+        : 'lark_thread_create_failed',
+      failure.retryable || response['retryable'] === true,
+      { creationOutcome: failure.outcome },
+    );
+  }
+  const data = response['data'];
+  const messageId = isRecord(data) ? data['message_id'] : undefined;
+  const parentChannelId = isRecord(data) ? data['chat_id'] : undefined;
+  const threadId = isRecord(data) ? data['thread_id'] : undefined;
+  const rootId = isRecord(data) ? data['root_id'] : undefined;
+  if (
+    typeof messageId !== 'string' ||
+    messageId.length === 0 ||
+    parentChannelId !== expectedParentChannelId ||
+    typeof threadId !== 'string' ||
+    threadId.length === 0 ||
+    (rootId !== undefined && rootId !== null && rootId !== '' && rootId !== messageId)
+  ) {
+    throw new LarkPlatformError('lark_thread_create_outcome_unknown', false, {
+      creationOutcome: 'unknown',
+    });
+  }
+  const result: CreateThreadResult = {
+    threadId,
+    parentChannelId,
+    rootMessageId: messageId,
+  };
+  const link = isRecord(data) ? data['message_app_link'] : undefined;
+  if (link !== undefined && link !== null && link !== '') {
+    if (typeof link !== 'string' || !isTrustedLarkAppLink(link)) {
+      throw new LarkPlatformError('lark_thread_create_outcome_unknown', false, {
+        creationOutcome: 'unknown',
+      });
+    }
+    result.url = link;
+  }
+  return result;
+}
+
+function isTrustedLarkAppLink(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' && parsed.hostname === 'applink.feishu.cn';
+  } catch {
+    return false;
+  }
+}
+
+function creationRequestFailure(error: unknown): {
+  outcome: CreateThreadFailureOutcome;
+  retryable: boolean;
+} {
+  const businessCode = readLarkBusinessCode(error);
+  if (businessCode !== undefined) {
+    return classifyMessageCreateBusinessCode(businessCode);
+  }
+  const status = readHttpStatus(error);
+  if (status === 429) return { outcome: 'not-created', retryable: true };
+  if (
+    status !== undefined &&
+    status >= 400 &&
+    status < 500 &&
+    status !== 408
+  ) {
+    return { outcome: 'not-created', retryable: false };
+  }
+  return { outcome: 'unknown', retryable: isRetryableSendFailure(error) };
 }
 
 function parseSessionContainerLink(
@@ -895,6 +1072,101 @@ export class LarkPlatformAdapter implements PlatformAdapter {
     this.state = 'stopped';
     this.stopPromise = Promise.resolve();
     return this.stopPromise;
+  }
+
+  async createThread(input: CreateThreadInput): Promise<CreateThreadResult> {
+    if (
+      !this.client ||
+      (this.state !== 'running' && this.state !== 'reconnecting')
+    ) {
+      throw new LarkPlatformError('lark_not_running', false, {
+        creationOutcome: 'not-created',
+      });
+    }
+    if (
+      input.visibility !== 'public' ||
+      input.autoArchiveDurationMinutes !== undefined
+    ) {
+      throw new LarkPlatformError('lark_thread_options_unsupported', false, {
+        creationOutcome: 'not-created',
+      });
+    }
+    const text = input.initialMessage ?? input.title;
+    if (!text || text.length > MAX_OUTBOUND_TEXT_LENGTH) {
+      throw new LarkPlatformError('message_too_large', false, {
+        creationOutcome: 'not-created',
+      });
+    }
+    const uuid = input.idempotencyKey ??
+      (this.internals.randomBytes?.(16) ?? nodeRandomBytes(16)).toString('hex');
+    if (!/^[A-Za-z0-9:_-]{1,50}$/.test(uuid)) {
+      throw new LarkPlatformError('lark_thread_idempotency_key_invalid', false, {
+        creationOutcome: 'not-created',
+      });
+    }
+    try {
+      const parent = await this.client.getChat({
+        path: { chat_id: input.parentChannelId },
+      });
+      validateThreadParent(parent, input.parentChannelId);
+    } catch (error) {
+      if (error instanceof LarkPlatformError) throw error;
+      throw new LarkPlatformError(
+        'lark_thread_parent_query_failed',
+        isRetryableSendFailure(error),
+        { cause: error, creationOutcome: 'not-created' },
+      );
+    }
+    try {
+      const response = await this.client.createMessage({
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          receive_id: input.parentChannelId,
+          msg_type: 'text',
+          content: JSON.stringify({ text }),
+          uuid,
+        },
+      });
+      const created = parseCreatedThread(response, input.parentChannelId);
+      if (!created.url && created.rootMessageId) {
+        try {
+          const message = await this.client.getMessage({
+            path: { message_id: created.rootMessageId },
+          });
+          const url = parseSessionContainerLink(
+            message,
+            created.rootMessageId,
+            created.parentChannelId,
+            created.threadId,
+          );
+          if (url) created.url = url;
+        } catch (error) {
+          this.options.logger.debug(
+            {
+              traceId: input.traceId,
+              platform: 'lark',
+              platformName: this.options.platformName,
+              code:
+                error instanceof LarkPlatformError
+                  ? error.code
+                  : 'lark_message_query_failed',
+            },
+            'session_container_resolution_failed',
+          );
+        }
+      }
+      return created;
+    } catch (error) {
+      if (error instanceof LarkPlatformError) throw error;
+      const failure = creationRequestFailure(error);
+      throw new LarkPlatformError(
+        failure.outcome === 'unknown'
+          ? 'lark_thread_create_outcome_unknown'
+          : 'lark_thread_create_failed',
+        failure.retryable,
+        { cause: error, creationOutcome: failure.outcome },
+      );
+    }
   }
 
   async send(

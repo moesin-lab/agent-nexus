@@ -45,6 +45,7 @@ Codex owner 配置：
 codex {
     workingDir: path                        // 必填，传给 --cd
     bin: string = "codex"
+    codexHome: path?                        // 可选；CLI 组装层缺省为当前有效 CODEX_HOME 或 ~/.codex
     model: string?                          // 可选，传给 --model
     sandbox: "read-only" | "workspace-write" | "danger-full-access" = "read-only"
     addDirs: path[] = []                    // sandboxed 模式逐个传 --add-dir；仅显式配置时启用
@@ -58,6 +59,8 @@ codex {
 - `parseCodexConfig` / `CodexConfigError` / 默认值住 `@agent-nexus/agent-codex`，符合 [`config-ownership.md`](../../standards/config-ownership.md)。
 - CLI 只能根据当前配置 schema 选择 backend package，然后调用对应 package 的 config parser / probe / runtime factory；不得在 `packages/cli` 里校验 Codex 字段语义。
 - `codex` 配置只在所属 agent/backend 选择为 `codex` 时生效；是否允许 inactive backend 配置块存在由当前配置 schema 决定。
+- `codexHome` 选择 native resume namespace。CLI 必须 canonicalize 后同时注入 runtime 子进程与只读 profile catalog；
+  两者不一致时 fail closed。配置与日志不得展开其中的认证内容。
 
 安全默认值：
 
@@ -84,8 +87,33 @@ codex \
     --skip-git-repo-check \
     [--ignore-user-config] \
     [--ignore-rules] \
-    <prompt>
+  <prompt>
 ```
+
+两种命令都以相同的有效 `CODEX_HOME=<codexHome>` 启动。只把 thread id 交给另一个 profile 的 `codex exec resume`
+不属于受支持恢复路径。
+
+### Profile session catalog
+
+`codex` 命名 agent 可组装 [`AgentSessionCatalog`](../agent-runtime.md#profile-session-catalog)。catalog 使用同一
+Codex binary 的稳定 app-server `thread/list` 与 `thread/read(includeTurns=true)` 只读 profile history，不调用
+`thread/start`、`thread/resume` 或 `turn/start`，也不把 app-server 变成该 agent 的 turn runtime。
+
+`thread/list` 固定传 `useStateDbOnly=true`，按 `updated_at desc` 分页，只接受 interactive source，避免 catalog 扫描
+rollout 并修复 profile metadata。排除 subagent 与 ephemeral thread；候选 canonical cwd 必须落在该 agent 的
+`workingDir` 或显式 `addDirs` 边界内。`thread/read` 后重新校验 source、subagent、ephemeral、active 与 cwd，避免
+list/read 竞态把进行中的 thread 物化。对每个候选读取完整 turns，选择最后一个 completed
+turn；优先取其最后一个 `agentMessage.phase="final_answer"`，兼容旧记录时回退该 turn 最后一个 agentMessage。
+使用 `Thread.id` 作为 native resume ref，禁止使用 thread tree 共享的 `Thread.sessionId`。
+
+catalog initialize 只允许逐版本验证过的 app-server `0.146.0` 与 `0.148.0-alpha.9`，同时校验返回的 client
+evidence、platform 与 codexHome；其它 patch/minor 版本不得仅凭字段看似兼容而放行。任何 response shape、cursor、turn 状态
+或 item shape 不符合固定 schema 时，本次扫描 fail closed。`active` thread 不参与物化。`thread/read` 的单帧上限为
+64 MiB；超过上限拒绝该次扫描，不降级解析 rollout 文件。catalog 进程在扫描结束、失败或取消后都必须经过同一
+process-group stop 屏障。两个版本都在 `packages/agent/codex-app-server/testdata/schema/<version>/` 保存完整 stable
+schema 与 hash manifest；0.148.0-alpha.9 另有 2026-08-21 macOS arm64 profile 实机扫描的脱敏证据，结构测试固定
+catalog 消费的 initialize、thread/list、thread/read 与 completed agent message 字段。该版本证据不扩大
+`codex-app-server` turn runtime 的 0.146.0 gate。
 
 ### 续接 turn
 
@@ -194,7 +222,8 @@ Codex 顶层 `error` 是诊断 / 重连提示通道，可能出现 `Reconnecting
 - 新 session 第一轮必须从 `thread.started.thread_id` 取得后端会话 ID。
 - 后续 `sendInput` 必须用 `codex exec resume <thread_id> <prompt>`。
 - 若 `SessionConfig.resumeFromAgentSessionId` 非空，第一轮也用该 ID resume，并要求 stdout 返回同一个 `thread_id`；不一致 fail closed。
-- `exec-server` / `app-server` 属 experimental 路径，当前 contract 未验证 wire protocol；默认不得依赖。
+- `app-server` 只允许用于上文固定版本窗口内的只读 profile catalog；Codex turn runtime 仍只使用 `exec --json`，
+  不得把 catalog host 复用为 turn runtime。
 
 ## 中断与超时
 

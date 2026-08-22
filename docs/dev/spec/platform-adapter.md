@@ -251,6 +251,7 @@ CapabilitySet {
     supportsModals: bool?              // 缺省按 false 处理
     supportsThreads: bool              // 是否支持 thread 作为 channelId
     supportsThreadCreation: bool?      // 缺省按 false 处理
+    supportsThreadCreateIdempotencyKey: bool? // createThread 是否真实传递稳定去重键；缺省 false
     supportsEphemeral: bool            // 仅发起者可见；native 实现与 ack/followup 编排归 adapter
     supportsAttachments: bool
     maxAttachmentsPerMessage: int
@@ -275,12 +276,14 @@ CreateThreadInput {
     visibility: "private" | "public"
     autoArchiveDurationMinutes: int?
     initialMessage: string?
+    idempotencyKey: string?
     traceId: string
 }
 
 CreateThreadResult {
     threadId: string
     parentChannelId: string
+    rootMessageId: string?
     url: string?
 }
 
@@ -302,6 +305,11 @@ ResolveSessionContainerResult {
 ```
 
 `autoArchiveDurationMinutes` 是通用 TTL 意图，不定义具体枚举；adapter 若不支持或平台只支持离散值，必须在实现侧拒绝或映射到最近合法值，并记录结构化日志。
+
+`idempotencyKey` 是跨进程稳定的资源创建键。平台只有在真实传递该字段时才能声明
+`supportsThreadCreateIdempotencyKey=true`，并须在平台允许的去重窗口内原样复用；daemon 不得把平台去重窗口当作
+永久 exactly-once 保证，远端 dispatch 前必须先落 durable ambiguous checkpoint。未声明该 capability 的平台不得
+用于 profile materialization。`rootMessageId` 用于根消息就是容器入口的平台；没有独立根消息的平台可省略。
 
 `resolveSessionContainer` 输入不携带用户消息正文或 raw payload。Adapter 必须校验返回 URL 属于目标平台的
 可导航 HTTPS 域名；空结果返回 `undefined`，响应形状非法则按 platform protocol error 拒绝。
@@ -553,6 +561,7 @@ Discord adapter 声明 `supportsEmbeds=true` 时，必须把 `OutboundMessage.em
 CreateThreadResult {
     threadId: string
     parentChannelId: string
+    rootMessageId?: string
     url?: string
     setupWarnings?: [{ code: "initial_message_failed" }]
 }
@@ -582,6 +591,27 @@ platform-lark 在 package 内部定义最窄的 `LarkSdkFactory` test seam，用
 该 factory 不进入 protocol 公共接口。production factory 必须固定使用 `@larksuiteoapi/node-sdk@1.70.0`。
 `Client` 与 `WSClient` 必须显式使用 SDK `Domain.Feishu`，首版不接受可配置 domain，也不连接
 `open.larksuite.com`。禁止 spawn/exec `lark-cli`，也禁止读取 CLI profile。
+
+### 创建恢复话题
+
+Lark `createThread` 只用于 ADR-0024 的已鉴权 profile session materialization 和显式控制面建话题。调用前必须
+通过 `im.v1.chat.get` 确认目标 `chat_id` 的 `group_message_type="thread"`；验证失败时不得发送消息。`initialMessage`
+必填且必须已经由 daemon 脱敏并限制在单条 `maxTextLength` 内；adapter 不切成多个根消息。
+
+adapter 以 `parentChannelId` 调 `im.v1.message.create(receive_id_type="chat_id")`，把 `idempotencyKey` 原样放入
+`uuid`。成功响应必须同时满足 `code=0`、`data.chat_id=parentChannelId`、非空 `message_id` 与非空
+`thread_id`；`rootMessageId = data.root_id ?? data.message_id`。任一身份字段缺失或不匹配都按 protocol error
+fail closed，不能把群主时间线消息绑定成 Session。
+
+`url` 优先使用合法的 `https://applink.feishu.cn/` `message_app_link`；字段缺失时可按已校验的 chat/thread/
+thread position 组装 fallback，仍不足则省略 URL，后续复用 `resolveSessionContainer` 补齐。创建前验证失败明确为
+`not-created`；发送请求出现 timeout、连接重置或无法确认服务端结果时明确为 `unknown`。官方发送消息接口列出的
+确定拒绝码 `230001/230002/230006/230013/230015/230017/230018/230019/230022/230025/230027/230028/230029/230034/230035/230036/230038/230053/230054/230055/230075/230099/232009`
+返回 `not-created`；其中配置、权限或成员关系可纠正的拒绝可由下一次显式控制命令重试。业务码 `230020` 是明确
+限频未创建，返回 `not-created + retryable`；`230049` 表示消息仍在发送，返回 `unknown + retryable`，但 daemon
+仍标 ambiguous 且不自动重放。SDK 可能把这些 HTTP 400 reject 为 error，adapter 必须从结构化
+`error.response.data.code` 分类，不能只看 HTTP status。其它未知 create business code 保守按 `unknown`。飞书 UUID
+去重窗口不能视作永久保证；daemon 对 `unknown` 标记 ambiguous 并停止盲重试。
 
 SDK logger 使用 `LoggerLevel.error` 和 agent-nexus 提供的 redacting logger。不得启用 SDK 默认 debug/info
 payload 日志；logger callback 只保留稳定 category 与过 redaction 的 cause，不转发 raw event、request body、
@@ -825,7 +855,8 @@ CapabilitySet {
     supportsSelects: false
     supportsModals: false
     supportsThreads: true
-    supportsThreadCreation: false
+    supportsThreadCreation: true
+    supportsThreadCreateIdempotencyKey: true
     supportsEphemeral: false
     supportsAttachments: false
     maxAttachmentsPerMessage: 0
@@ -843,7 +874,8 @@ Lark 不注册 native slash command，`supportsSlashCommands` 必须保持 `fals
 `/foo` 静默丢弃，不进入 agent。
 
 话题内的 `/new` 同样返回“请新建话题”，`/kill` 与 `/nexus-kill` 不得归档当前固定绑定；需要替换 Session 时必须
-由用户新建话题。`/nexus-sessions` 在不支持 select 的 Lark 上返回纯文本话题列表，每项优先显示精确 URL，否则显示
+由用户新建话题；ADR-0024 的 profile recovery 例外由话题外已鉴权 `/nexus-sessions` 触发，只为尚未物化的
+native session 创建固定话题。`/nexus-sessions` 在不支持 select 的 Lark 上返回纯文本话题列表，每项优先显示精确 URL，否则显示
 `parentUrl` 和 `thread_id/root_id`；不把历史 session rebind 到当前控制面或另一话题。
 
 ### Lark 合约测试
@@ -866,10 +898,12 @@ Lark 不注册 native slash command，`supportsSlashCommands` 必须保持 `fals
 11. success/error/malformed SDK response 分别返回 MessageRef、分类错误、protocol error。
 12. production dependency 固定 1.70.0；fixture 记录 SDK version、上游 commit、生成路径与日期。
 13. production 路径显式使用 `Domain.Feishu`，不 spawn/exec `lark-cli`、不读取 CLI profile，也不使用 SDK Channel 模块。
-14. 根消息查询不阻塞 EventDispatcher ACK；合法 `message_app_link` 被补写，空/非法响应稳定降级且不影响 turn。
-15. P2P/群主时间线普通文本与未知 `/foo` 零回复、零 Session、零 agent 调用；话题 `/new` 按稳定 `localName` 拒绝且不产生第二 generation。
-16. fixed 话题首次 dispatch 固定 agent identity；热路由切到同 owner 不同实例、不同 owner，或在 agent ref 建立前切换时均 fail closed 且不停止原 handle。
-17. AppLink 查询永久不返回时，turn 不阻塞；resolver deadline 后释放去重项，下一条话题消息只发起一次重试；production HTTP adapter 注入有限 timeout。
+14. `createThread` 在发送前验证话题群；稳定 uuid 重放返回同一 thread/root；parent 不匹配、缺 thread_id、非法
+    AppLink fail closed；发送结果不明确时暴露 `unknown`，不伪装成安全可重试。
+15. 根消息查询不阻塞 EventDispatcher ACK；合法 `message_app_link` 被补写，空/非法响应稳定降级且不影响 turn。
+16. P2P/群主时间线普通文本与未知 `/foo` 零回复、零 Session、零 agent 调用；话题 `/new` 按稳定 `localName` 拒绝且不产生第二 generation。
+17. fixed 话题首次 dispatch 固定 agent identity；热路由切到同 owner 不同实例、不同 owner，或在 agent ref 建立前切换时均 fail closed 且不停止原 handle。
+18. AppLink 查询永久不返回时，turn 不阻塞；resolver deadline 后释放去重项，下一条话题消息只发起一次重试；production HTTP adapter 注入有限 timeout。
 
 ## 测试契约（合约测试）
 

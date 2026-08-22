@@ -19,6 +19,8 @@ related:
 contracts:
   - AgentRuntime
   - AgentSession
+  - AgentSessionCatalog
+  - RecoverableAgentSession
   - SessionConfig
   - AgentInput
   - AgentEvent
@@ -196,6 +198,44 @@ AgentInput {
     traceId: string
 }
 ```
+
+## Profile Session Catalog
+
+支持原生 session 发现的 backend 可以额外提供只读 `AgentSessionCatalog`。它不是 `AgentRuntime` 的方法：catalog
+负责读取指定 profile 的 durable history，runtime 仍只负责启动和继续一个明确的 opaque ref。CLI 必须把 catalog
+与产生它的精确命名 agent 一起注入 daemon；daemon 不解析 profile 路径、Codex rollout 或 backend 私有 thread tree。
+
+```text
+interface AgentSessionCatalog {
+    profileId() -> string
+    listRecent(input: { limit: int }) -> Promise<RecoverableAgentSession[]>
+}
+
+RecoverableAgentSession {
+    nativeSessionRef: string
+    updatedAt: timestamp
+    workingDir: path
+    title: string?
+    lastCompletedTurnId: string
+    lastCompletedReply: string
+}
+```
+
+不变量：
+
+- `profileId` 是当前 native resume namespace 的稳定 opaque identity；不得包含或暴露 profile 绝对路径。
+- `nativeSessionRef` 是可原样交回同一 backend/profile 的 resume token；不得用 thread tree 的共享 session id 替代。
+- catalog 只返回非 ephemeral、非 subagent、位于当前 agent 允许 working directory 边界内的 session。
+- `lastCompletedReply` 只取最新 `status="completed"` turn 的 final answer；更晚的 in-progress、failed、interrupted
+  turn、reasoning、tool output与 commentary 都不能覆盖它。
+- `lastCompletedReply` 是 transient outbound seed：daemon 可脱敏和限长后发送到平台，但不得把原文写入 SQLite、
+  日志、trajectory、模型 prompt 或下一轮 `AgentInput`。
+- catalog schema/version 不兼容、profile identity 不匹配或候选字段不完整时 fail closed，不返回低置信度猜测。
+- daemon 把 catalog `profileId` 固定到 native ref 所属的 fixed container。后续恢复必须由同一精确
+  `agentName + agentOwner + profileId` 执行；配置切到另一 profile，或缺少原 catalog 时，不得把旧 ref 交给 runtime。
+- CLI 还必须把 backend 的 resume ref 是否强制属于 profile namespace 作为独立 assembly 属性传给 daemon；不能用
+  “当前 catalog 恰好缺失”推断该 backend 不再 profile-scoped。legacy fixed metadata 缺 profileId 时直接 resume
+  fail closed，只能由 catalog 精确命中同一 native ref 后 adoption。
 
 ## AgentEvent（输出事件）
 

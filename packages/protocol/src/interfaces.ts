@@ -55,6 +55,7 @@ export interface CreateThreadInput {
   visibility: 'private' | 'public';
   autoArchiveDurationMinutes?: number;
   initialMessage?: string;
+  idempotencyKey?: string;
   traceId: string;
 }
 
@@ -65,9 +66,12 @@ export interface CreateThreadSetupWarning {
 export interface CreateThreadResult {
   threadId: string;
   parentChannelId: string;
+  rootMessageId?: string;
   url?: string;
   setupWarnings?: CreateThreadSetupWarning[];
 }
+
+export type CreateThreadFailureOutcome = 'not-created' | 'unknown';
 
 export interface UpdateThreadInput {
   threadId: string;

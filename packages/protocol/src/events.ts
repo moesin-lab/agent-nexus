@@ -68,6 +68,7 @@ interface NormalizedEventBase {
   guildId?: string;
   initiatorRoleIds?: string[];
   threadParentChannelId?: string;
+  channelKind?: 'direct' | 'group' | 'thread';
   deliveryScope?: 'session' | 'control';
   sessionContainer?: SessionContainerRef;
 

@@ -6,6 +6,7 @@ import {
   ExternalSessionImportService,
   InMemoryIdempotencyStore,
   ProviderCaptureService,
+  ProfileSessionRecoveryService,
   SessionStore,
   SqliteSessionPersistence,
   SqliteStateDatabase,
@@ -110,6 +111,10 @@ async function main(): Promise<void> {
     persistence: new SqliteSessionPersistence({
       database: stateDatabase.database,
     }),
+  });
+  const profileSessionRecovery = new ProfileSessionRecoveryService({
+    database: stateDatabase.database,
+    sessionStore,
   });
   const commandRegistry = new ActiveCommandRegistry();
   const idempotencyStore = new InMemoryIdempotencyStore();
@@ -227,6 +232,7 @@ async function main(): Promise<void> {
         store: trajectoryStore,
       },
       externalSessionImporter,
+      profileSessionRecovery,
       providerCapture,
     });
     engines.push(engine);

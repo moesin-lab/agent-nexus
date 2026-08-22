@@ -113,11 +113,13 @@ daemon 同时保留平台容器定位引用：`chat_id`、`thread_id`、`root_id
 
 ### 需要后续跟进的事
 
-- 若后续需要由 agent-nexus 自动建群或创建话题，另行决定资源生命周期与新增权限。
+- 非恢复场景若需要由 agent-nexus 自动建群或创建话题，另行决定资源生命周期与新增权限。
+- 原生 Agent Session 的控制面恢复可按 [ADR-0024](0024-materialize-native-sessions-as-platform-containers.md)
+  创建固定话题；该例外必须使用持久 materialization saga，不能扩展为启动时批量建话题。
 
 ## Out of scope
 
-- 不自动创建飞书应用、群聊或话题。
+- 不自动创建飞书应用或群聊；除 ADR-0024 定义的已鉴权恢复流程外，不自动创建话题。
 - 不支持群主时间线作为共享 session。
 - 不支持多用户共同驱动同一个 RoutingSession。
 - 不引入飞书卡片、按钮、附件、reaction、typing indicator 或 native slash command。

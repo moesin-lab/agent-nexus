@@ -172,6 +172,7 @@ chmod 600 ~/.agent-nexus/config.json
 | `agents[].claudeCode.allowedTools` | 否 | 默认 `Read/Grep/Glob/Edit/Write`；启用 `Bash` 需要显式加入 |
 | `agents[].codex.workingDir` | backend 为 `codex` 时是 | Codex 默认工作目录，传给 `--cd` |
 | `agents[].codex.bin` | 否 | Codex CLI 路径；默认 `codex` |
+| `agents[].codex.codexHome` | 否 | Codex profile 目录；默认当前 `CODEX_HOME` 或 `~/.codex`，runtime resume 与 profile 扫描必须使用同一路径 |
 | `agents[].codex.model` | 否 | 传给 Codex CLI 的 `--model` |
 | `agents[].codex.sandbox` | 否 | 默认 `read-only`；可设为 `workspace-write` 或 `danger-full-access` |
 | `agents[].codex.addDirs` | 否 | 默认 `[]`；逐个传给 `--add-dir` |
@@ -442,8 +443,10 @@ running item 不能被 `/nexus-queue` 编辑或重排；要保留 pending 并尽
 机器人单聊和群主时间线只作控制面：普通文本与未知命令静默拒绝，不创建 session。私有话题群中，每个
 `thread_id` 固定对应一个 Session，父群 `chat_id` 负责匹配 binding 与 auth；需要新上下文时新建话题。
 
-飞书不注册原生 slash command，也不支持 Discord 专属的 reply mode、交互面板或 queue 面板。控制面用
-`/nexus-sessions` 查看可恢复话题链接；`/new` 只提示新建话题。话题内 `/new`、`/kill` 和 `/nexus-kill` 不会
+飞书不注册原生 slash command，也不支持 Discord 专属的 reply mode、交互面板或 queue 面板。在话题群主时间线用
+`/nexus-sessions` 扫描当前 route 的 Codex profile、每批最多为 10 个首次发现的可恢复 thread 创建固定话题，并查看
+持久化话题链接；再次执行会继续下一批。P2P 只列已有话题并提示去话题群触发同步。根消息是原 session 最后一个
+完成 turn 的回复，不会再次作为 prompt 发给模型。`/new` 只提示新建话题。话题内 `/new`、`/kill` 和 `/nexus-kill` 不会
 替换或归档固定 Session。Agent 运行期间继续发送的普通文本仍会进入当前话题的 daemon queue，但当前没有飞书
 原生的队列管理 UI。完整能力边界、话题群设置和 ID 获取步骤见 [`platforms/lark.md`](platforms/lark.md)。
 

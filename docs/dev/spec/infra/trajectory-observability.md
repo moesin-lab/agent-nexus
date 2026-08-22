@@ -410,6 +410,7 @@ TrajectoryPage {
 | `external-source-outside-allowlist` | project path 不在 allowlist |
 | `native-resume-unavailable` | 无可用 native ref |
 | `native-resume-backend-mismatch` | candidate 与当前 agent backend 不兼容 |
+| `native-resume-profile-unavailable` | profile-scoped backend 无法验证 candidate 的 source profile identity |
 | `provider-capture-disabled` | provider capture 未启用 |
 | `provider-capture-unsupported` | backend/auth/mode 不支持 |
 | `provider-capture-redaction-failed` | redaction 失败，payload 已丢弃 |
@@ -427,6 +428,7 @@ TrajectoryPage {
 - `linked` 可以从 `registered` 直接进入，不要求先 `imported`。
 - `nativeSessionRef` 写入 `agent_conversation_ref`，下一次 spawn 传入 `resumeFromAgentSessionId`。
 - backend mismatch 拒绝 resume，不清除已有 RoutingSession ref。
+- profile-scoped backend 在 importer 不能证明 source profile identity 时拒绝 resume，不把当前 profile 当作来源猜测。
 - 成功绑定 external session 后才停止当前 live runtime handle；失败路径不改变旧 ref。
 - provider capture 默认关闭。
 - provider capture 开启后，`codex` / `claudecode` 的 `usage` AgentEvent 产生 transcript-only provider observation。

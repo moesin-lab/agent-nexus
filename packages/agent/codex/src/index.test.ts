@@ -499,6 +499,45 @@ describe('createCodexRuntime', () => {
     expect(events.filter((event) => event.type === 'turn_finished')).toHaveLength(2);
   });
 
+  it('恢复 profile session 时使用持久化 workingDir，并给子进程注入同一个 CODEX_HOME', async () => {
+    const child = makeExecSubproc();
+    mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);
+    const runtime = createCodexRuntime({
+      config: { ...codexConfig, codexHome: '/profiles/codex-main' },
+      logger: fakeLogger,
+    });
+    const session = runtime.startSession(sessionKey, {
+      ...sessionConfig,
+      workingDir: '/workspace/recovered',
+      resumeFromAgentSessionId: 'thread-baseline',
+    });
+    const events = collectEvents(runtime, session);
+
+    const turn = runtime.sendInput(session, {
+      type: 'user_message',
+      text: 'continue',
+      traceId: 'trace-recovered',
+    });
+    await nextTick();
+
+    expect(mockedExeca.mock.calls[0]![1]).toContain('/workspace/recovered');
+    expect(mockedExeca.mock.calls[0]![1]).not.toContain('/workspace/project');
+    expect(mockedExeca.mock.calls[0]![2]).toEqual(
+      expect.objectContaining({
+        env: expect.objectContaining({ CODEX_HOME: '/profiles/codex-main' }),
+      }),
+    );
+    child.emitFixture(fixture('resume-text'));
+    child.resolve();
+    await turn;
+
+    expect(
+      events.find((event) => event.type === 'session_started'),
+    ).toMatchObject({
+      payload: { workingDir: '/workspace/recovered' },
+    });
+  });
+
   it('resumeFromAgentSessionId 作为首轮 thread，返回不一致时 fail closed', async () => {
     const child = makeExecSubproc();
     mockedExeca.mockReturnValueOnce(child as unknown as ReturnType<typeof execa>);

@@ -22,6 +22,7 @@ related:
 - 新增中国版飞书自建应用的 P2P 纯文本长连接接入；首次配置提示提供飞书官方应用创建链接和安全的 App ID / App Secret 后续步骤。
 - 新增固定 Codex 0.146.0 app-server 契约的结构化 backend，并提供默认关闭、独立鉴权的只读 tmux viewer；支持 durable thread resume、受控中断、进程组清理，以及 connection-private 的稳定 process start/status/output/stdin/terminate 与跨 turn 生命周期，并把源码与安装包真实 Codex 验证证据绑定到 exact tag commit 的发布门禁。
 - 新增 RoutingSession SQLite registry：daemon 重启后恢复 sessionId、opaque conversation ref、generation、workingDir、历史列表与固定话题链接/agent identity；runtime handle 和 pending queue 不落盘、不自动 replay。
+- 新增 Codex profile session 恢复：`/nexus-sessions` 扫描同一 `codexHome` 的可恢复 thread，以最后一个完成 turn 的回复创建幂等飞书话题，并持久化 fixed topic、opaque profile identity、原生 resume ref 与 workingDir；普通话题已有相同 ref 时不重复物化，daemon 重启后只允许同 profile 从话题继续。
 
 ### Changed
 

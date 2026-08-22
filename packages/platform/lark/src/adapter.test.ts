@@ -81,6 +81,7 @@ class FakeSdkFactory implements LarkSdkFactory {
   public autoReady = true;
   public readonly replyMessage = vi.fn();
   public readonly getMessage = vi.fn();
+  public readonly getChat = vi.fn();
   public readonly client: LarkSdkClientPort = {
     request: vi.fn(async () => ({
       code: 0,
@@ -89,6 +90,7 @@ class FakeSdkFactory implements LarkSdkFactory {
     createMessage: vi.fn(),
     replyMessage: this.replyMessage,
     getMessage: this.getMessage,
+    getChat: this.getChat,
   } as LarkSdkClientPort;
 
   createClient(): LarkSdkClientPort {
@@ -162,12 +164,25 @@ function makeAdapter(
   });
 }
 
+function createThreadInput() {
+  return {
+    parentChannelId: 'oc_chat_1',
+    initiatorUserId: 'ou_user_open_id',
+    title: '已有 Codex session',
+    visibility: 'public' as const,
+    initialMessage: '最后一个完整回复',
+    idempotencyKey: '0123456789abcdef0123456789abcdef',
+    traceId: 'trace-recover-1',
+  };
+}
+
 describe('LarkPlatformAdapter inbound', () => {
-  it('声明话题纯文本能力且不声明 native slash / thread creation', () => {
+  it('声明话题纯文本和 thread creation 能力，但不声明 native slash', () => {
     const capabilities = makeAdapter(new FakeSdkFactory()).capabilities();
     expect(capabilities).toEqual(LARK_CAPABILITIES);
     expect(capabilities.supportsThreads).toBe(true);
-    expect(capabilities.supportsThreadCreation).toBe(false);
+    expect(capabilities.supportsThreadCreation).toBe(true);
+    expect(capabilities.supportsThreadCreateIdempotencyKey).toBe(true);
     expect(capabilities.supportsSlashCommands).toBe(false);
   });
 
@@ -238,6 +253,7 @@ describe('LarkPlatformAdapter inbound', () => {
       messageId: 'om_message_1',
       idempotencyKey: expectedIdempotencyKey,
       type: 'message',
+      channelKind: 'direct',
       deliveryScope: 'control',
       text: '你好，飞书',
       rawContentType: 'lark-node-sdk:im.message.receive_v1@1.70.0',
@@ -277,6 +293,7 @@ describe('LarkPlatformAdapter inbound', () => {
       },
       messageId: 'om_thread_message_1',
       threadParentChannelId: 'oc_topic_group_1',
+      channelKind: 'thread',
       deliveryScope: 'session',
       sessionContainer: {
         kind: 'thread',
@@ -314,6 +331,7 @@ describe('LarkPlatformAdapter inbound', () => {
 
     expect(handler).toHaveBeenCalledWith(
       expect.objectContaining({
+        channelKind: 'group',
         deliveryScope: 'control',
         sessionKey: expect.objectContaining({
           channelId: 'oc_topic_group_1',
@@ -1377,6 +1395,256 @@ describe('LarkPlatformAdapter lifecycle', () => {
     expect(factory.wsClients[0]!.close).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(factory.wsClients).toHaveLength(1);
+  });
+});
+
+describe('LarkPlatformAdapter createThread', () => {
+  it('预检话题群后，用稳定 uuid 创建根消息并返回精确 thread/root/link', async () => {
+    const factory = new FakeSdkFactory();
+    factory.getChat.mockResolvedValue({
+      code: 0,
+      data: { group_message_type: 'thread' },
+    });
+    vi.mocked(factory.client.createMessage).mockResolvedValue({
+      code: 0,
+      data: {
+        message_id: 'om_root_1',
+        chat_id: 'oc_chat_1',
+        thread_id: 'omt_thread_1',
+        root_id: 'om_root_1',
+        message_app_link:
+          'https://applink.feishu.cn/client/thread/open?open_thread_id=omt_thread_1',
+      },
+    });
+    const adapter = makeAdapter(factory);
+    await adapter.start(() => undefined);
+
+    await expect(
+      adapter.createThread({
+        parentChannelId: 'oc_chat_1',
+        initiatorUserId: 'ou_user_open_id',
+        title: '已有 Codex session',
+        visibility: 'public',
+        initialMessage: '最后一个完整回复',
+        idempotencyKey: '0123456789abcdef0123456789abcdef',
+        traceId: 'trace-recover-1',
+      }),
+    ).resolves.toEqual({
+      threadId: 'omt_thread_1',
+      parentChannelId: 'oc_chat_1',
+      rootMessageId: 'om_root_1',
+      url: 'https://applink.feishu.cn/client/thread/open?open_thread_id=omt_thread_1',
+    });
+    expect(factory.getChat).toHaveBeenCalledWith({
+      path: { chat_id: 'oc_chat_1' },
+    });
+    expect(factory.client.createMessage).toHaveBeenCalledWith({
+      params: { receive_id_type: 'chat_id' },
+      data: {
+        receive_id: 'oc_chat_1',
+        msg_type: 'text',
+        content: JSON.stringify({ text: '最后一个完整回复' }),
+        uuid: '0123456789abcdef0123456789abcdef',
+      },
+    });
+  });
+
+  it('父群不是话题群时在 create 前 fail closed', async () => {
+    const factory = new FakeSdkFactory();
+    factory.getChat.mockResolvedValue({
+      code: 0,
+      data: { chat_id: 'oc_chat_1', group_message_type: 'chat' },
+    });
+    const adapter = makeAdapter(factory);
+    await adapter.start(() => undefined);
+
+    await expect(
+      adapter.createThread(createThreadInput()),
+    ).rejects.toMatchObject({
+      code: 'lark_thread_parent_not_topic_group',
+      retryable: false,
+      creationOutcome: 'not-created',
+    });
+    expect(factory.client.createMessage).not.toHaveBeenCalled();
+  });
+
+  it('create 响应不带 AppLink 时立即查询根消息并保存 fallback 话题链接', async () => {
+    const factory = new FakeSdkFactory();
+    factory.getChat.mockResolvedValue({
+      code: 0,
+      data: { chat_id: 'oc_chat_1', group_message_type: 'thread' },
+    });
+    vi.mocked(factory.client.createMessage).mockResolvedValue({
+      code: 0,
+      data: {
+        message_id: 'om_root_1',
+        chat_id: 'oc_chat_1',
+        thread_id: 'omt_thread_1',
+      },
+    });
+    factory.getMessage.mockResolvedValue({
+      code: 0,
+      data: {
+        items: [
+          {
+            message_id: 'om_root_1',
+            chat_id: 'oc_chat_1',
+            thread_id: 'omt_thread_1',
+            thread_message_position: '-1',
+          },
+        ],
+      },
+    });
+    const adapter = makeAdapter(factory);
+    await adapter.start(() => undefined);
+
+    const created = await adapter.createThread(createThreadInput());
+
+    expect(created).toMatchObject({
+      threadId: 'omt_thread_1',
+      rootMessageId: 'om_root_1',
+      url: expect.stringContaining('open_thread_id=omt_thread_1'),
+    });
+    expect(created.url).toContain('thread_position=-1');
+    expect(factory.getMessage).toHaveBeenCalledWith({
+      path: { message_id: 'om_root_1' },
+    });
+  });
+
+  it('create 请求网络结果未知或成功响应缺 thread identity 时标记 ambiguous', async () => {
+    const factory = new FakeSdkFactory();
+    factory.getChat.mockResolvedValue({
+      code: 0,
+      data: { chat_id: 'oc_chat_1', group_message_type: 'thread' },
+    });
+    vi.mocked(factory.client.createMessage)
+      .mockRejectedValueOnce(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }))
+      .mockResolvedValueOnce({
+        code: 0,
+        data: { message_id: 'om_orphan', chat_id: 'oc_chat_1' },
+      });
+    const adapter = makeAdapter(factory);
+    await adapter.start(() => undefined);
+
+    await expect(adapter.createThread(createThreadInput())).rejects.toMatchObject({
+      code: 'lark_thread_create_outcome_unknown',
+      creationOutcome: 'unknown',
+    });
+    await expect(adapter.createThread(createThreadInput())).rejects.toMatchObject({
+      code: 'lark_thread_create_outcome_unknown',
+      creationOutcome: 'unknown',
+    });
+  });
+
+  it('按飞书业务码区分安全重试的限频与结果未定的发送中', async () => {
+    const factory = new FakeSdkFactory();
+    factory.getChat.mockResolvedValue({
+      code: 0,
+      data: { chat_id: 'oc_chat_1', group_message_type: 'thread' },
+    });
+    vi.mocked(factory.client.createMessage)
+      .mockResolvedValueOnce({ code: 230020, msg: 'rate limited' })
+      .mockResolvedValueOnce({ code: 230049, msg: 'message is being sent' });
+    const adapter = makeAdapter(factory);
+    await adapter.start(() => undefined);
+
+    await expect(adapter.createThread(createThreadInput())).rejects.toMatchObject({
+      code: 'lark_thread_create_failed',
+      retryable: true,
+      creationOutcome: 'not-created',
+    });
+    await expect(adapter.createThread(createThreadInput())).rejects.toMatchObject({
+      code: 'lark_thread_create_outcome_unknown',
+      retryable: true,
+      creationOutcome: 'unknown',
+    });
+  });
+
+  it('从 SDK rejected response 读取飞书业务码，且不把发送中误判为未创建', async () => {
+    const factory = new FakeSdkFactory();
+    factory.getChat.mockResolvedValue({
+      code: 0,
+      data: { chat_id: 'oc_chat_1', group_message_type: 'thread' },
+    });
+    vi.mocked(factory.client.createMessage)
+      .mockRejectedValueOnce(
+        Object.assign(new Error('request rejected'), {
+          response: { status: 400, data: { code: 230020 } },
+        }),
+      )
+      .mockRejectedValueOnce(
+        Object.assign(new Error('request rejected'), {
+          response: { status: 400, data: { code: 230049 } },
+        }),
+      );
+    const adapter = makeAdapter(factory);
+    await adapter.start(() => undefined);
+
+    await expect(adapter.createThread(createThreadInput())).rejects.toMatchObject({
+      retryable: true,
+      creationOutcome: 'not-created',
+    });
+    await expect(adapter.createThread(createThreadInput())).rejects.toMatchObject({
+      retryable: true,
+      creationOutcome: 'unknown',
+    });
+  });
+
+  it.each([
+    [230001, false],
+    [230002, true],
+    [230006, true],
+    [230013, true],
+    [230018, true],
+    [230022, false],
+    [230025, false],
+    [230027, true],
+    [230034, false],
+    [230054, false],
+    [230055, false],
+    [230075, false],
+    [232009, false],
+  ])(
+    '把飞书明确拒绝的业务码 %i 分类为确定未创建',
+    async (code, retryable) => {
+      const factory = new FakeSdkFactory();
+      factory.getChat.mockResolvedValue({
+        code: 0,
+        data: { chat_id: 'oc_chat_1', group_message_type: 'thread' },
+      });
+      vi.mocked(factory.client.createMessage).mockResolvedValue({
+        code,
+        msg: 'known rejection',
+      });
+      const adapter = makeAdapter(factory);
+      await adapter.start(() => undefined);
+
+      await expect(adapter.createThread(createThreadInput())).rejects.toMatchObject({
+        code: 'lark_thread_create_failed',
+        retryable,
+        creationOutcome: 'not-created',
+      });
+    },
+  );
+
+  it('未知飞书业务码仍保守标记为结果未定', async () => {
+    const factory = new FakeSdkFactory();
+    factory.getChat.mockResolvedValue({
+      code: 0,
+      data: { chat_id: 'oc_chat_1', group_message_type: 'thread' },
+    });
+    vi.mocked(factory.client.createMessage).mockResolvedValue({
+      code: 239999,
+      msg: 'future error',
+    });
+    const adapter = makeAdapter(factory);
+    await adapter.start(() => undefined);
+
+    await expect(adapter.createThread(createThreadInput())).rejects.toMatchObject({
+      code: 'lark_thread_create_outcome_unknown',
+      retryable: false,
+      creationOutcome: 'unknown',
+    });
   });
 });
 

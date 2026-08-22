@@ -10,6 +10,7 @@ export type CodexSandbox = (typeof SANDBOX_MODES)[number];
 
 export interface CodexConfig {
   bin: string;
+  codexHome?: string;
   workingDir: string;
   model?: string;
   sandbox: CodexSandbox;
@@ -75,6 +76,7 @@ export function parseCodexConfig(raw: unknown): CodexConfig {
   }
 
   const bin = optionalNonEmptyString(codex, 'bin', 'codex.bin') ?? DEFAULT_BIN;
+  const codexHome = optionalNonEmptyString(codex, 'codexHome', 'codex.codexHome');
   const model = optionalNonEmptyString(codex, 'model', 'codex.model');
 
   const sandboxRaw = codex['sandbox'];
@@ -114,6 +116,7 @@ export function parseCodexConfig(raw: unknown): CodexConfig {
 
   return {
     bin,
+    ...(codexHome === undefined ? {} : { codexHome }),
     workingDir,
     ...(model === undefined ? {} : { model }),
     sandbox,

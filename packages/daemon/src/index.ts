@@ -146,6 +146,13 @@ export {
 } from './session-store.js';
 export { SqliteSessionPersistence } from './session-sqlite-store.js';
 export {
+  ProfileSessionRecoveryService,
+  type NativeSessionMaterializationState,
+  type ProfileSessionRecoveryResult,
+  type ProfileSessionRecoveryServiceOptions,
+  type ProfileSessionRecoverySyncInput,
+} from './profile-session-recovery.js';
+export {
   CURRENT_STATE_SCHEMA_VERSION,
   SqliteStateDatabase,
   StateDatabaseError,

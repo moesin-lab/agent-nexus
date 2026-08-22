@@ -14,6 +14,8 @@ import { serializeSessionKey } from '@agent-nexus/protocol';
 export interface SessionEntry {
   agentSessionId?: string;
   agentOwner?: string;
+  /** Opaque native resume namespace identity; never a profile path. */
+  profileId?: string;
   lastTurnAt: Date;
   title?: string;
   workingDir?: string;
@@ -34,6 +36,8 @@ export interface ThreadRegistryEntry {
   parentUrl?: string;
   agentName?: string;
   agentOwner?: string;
+  /** Opaque profile identity supplied by the backend catalog (for example a CODEX_HOME hash). */
+  profileId?: string;
 }
 
 export interface ListedSessionEntry extends Omit<SessionEntry, 'agentSessionId'> {
@@ -48,6 +52,14 @@ export interface ExternalResumeSessionEntry {
   agentOwner?: string;
   lastTurnAt: Date;
   title?: string;
+  workingDir?: string;
+}
+
+export interface FixedNativeResumeThreadEntry extends ThreadRegistryEntry {
+  bindingMode: 'fixed';
+  agentName: string;
+  agentOwner: string;
+  profileId: string;
 }
 
 export interface ListSessionsInput {
@@ -55,7 +67,19 @@ export interface ListSessionsInput {
   platform: string;
   initiatorUserId: string;
   agentOwner?: string;
+  profileRequired?: boolean;
+  profileId?: string;
   limit: number;
+}
+
+export interface FindFixedNativeResumeBindingInput {
+  profileId: string;
+  nativeSessionRef: string;
+  agentName: string;
+  agentOwner: string;
+  platformName: string;
+  platform: string;
+  ownerUserId: string;
 }
 
 export interface FindThreadInput {
@@ -170,6 +194,9 @@ export class SessionStore {
     }
     if (nextEntry.agentOwner === undefined && existing?.agentOwner !== undefined) {
       nextEntry.agentOwner = existing.agentOwner;
+    }
+    if (nextEntry.profileId === undefined && existing?.profileId !== undefined) {
+      nextEntry.profileId = existing.profileId;
     }
     if (nextEntry.title === undefined && existing?.title !== undefined) {
       nextEntry.title = existing.title;
@@ -314,11 +341,18 @@ export class SessionStore {
       if (input.agentOwner && entry.agentOwner !== input.agentOwner) {
         continue;
       }
+      if (
+        input.profileRequired &&
+        (!input.profileId || entry.profileId !== input.profileId)
+      ) {
+        continue;
+      }
       entries.push({
         sessionId,
         key: { ...key },
         agentSessionId: entry.agentSessionId,
         agentOwner: entry.agentOwner,
+        profileId: entry.profileId,
         lastTurnAt: new Date(entry.lastTurnAt),
         title: entry.title,
         nextSession: entry.nextSession ? { ...entry.nextSession } : undefined,
@@ -365,6 +399,8 @@ export class SessionStore {
     sessionId: string,
     now: Date,
     agentOwner?: string,
+    profileId?: string,
+    profileRequired = false,
   ): SessionEntry | undefined {
     if (this.isFixedContainer(targetKey)) return undefined;
     const sourceRecord = this.sessionsBySessionId.get(sessionId);
@@ -377,9 +413,13 @@ export class SessionStore {
     if (agentOwner && source.agentOwner !== agentOwner) {
       return undefined;
     }
+    if (profileRequired && (!profileId || source.profileId !== profileId)) {
+      return undefined;
+    }
     const rebound: SessionEntry = {
       agentSessionId: source.agentSessionId,
       agentOwner: source.agentOwner,
+      profileId: source.profileId,
       lastTurnAt: now,
       title: source.title,
       workingDir: source.workingDir,
@@ -446,6 +486,66 @@ export class SessionStore {
     if (this.get(targetKey)) this.archiveCurrentInMemory(targetKey);
     this.set(targetKey, entry);
     return cloneEntry(this.get(targetKey)!);
+  }
+
+  bindNativeResumeToFixedThread(
+    targetKey: SessionKey,
+    entry: ExternalResumeSessionEntry,
+    thread: FixedNativeResumeThreadEntry,
+    sessionId: string,
+  ): SessionEntry {
+    if (
+      this.hasFixedNativeResumeBinding({
+        profileId: thread.profileId,
+        nativeSessionRef: entry.agentSessionId,
+        agentName: thread.agentName,
+        agentOwner: thread.agentOwner,
+        platformName: targetKey.platformName,
+        platform: targetKey.platform,
+        ownerUserId: targetKey.initiatorUserId,
+      })
+    ) {
+      throw new Error('Native session is already bound to a fixed thread');
+    }
+    const keyStr = serializeSessionKey(targetKey);
+    if (this.map.has(keyStr) || this.sessionIdsByKey.has(keyStr)) {
+      throw new Error('Recovered fixed session target is already occupied');
+    }
+    if (this.keysBySessionId.has(sessionId)) {
+      throw new Error(`Session id is already in use: ${sessionId}`);
+    }
+    const registryKey = threadRegistryKey({
+      platformName: targetKey.platformName,
+      platform: targetKey.platform,
+      channelId: targetKey.channelId,
+    });
+    if (this.threadsByChannel.has(registryKey)) {
+      throw new Error('Recovered fixed thread identity is already registered');
+    }
+    const stored = cloneEntry({ ...entry, profileId: thread.profileId });
+    this.sessionIdsByKey.set(keyStr, sessionId);
+    this.keysBySessionId.set(sessionId, { ...targetKey });
+    this.map.set(keyStr, stored);
+    this.sessionsBySessionId.set(sessionId, {
+      key: { ...targetKey },
+      entry: cloneEntry(stored),
+      generation: this.nextGenerationForKey(targetKey, sessionId),
+      createdAt: new Date(stored.lastTurnAt),
+      trajectorySequence: 0,
+    });
+    this.threadKeysByChannel.set(registryKey, {
+      platformName: targetKey.platformName,
+      platform: targetKey.platform,
+      channelId: targetKey.channelId,
+    });
+    this.threadsByChannel.set(registryKey, {
+      ...thread,
+      kind: 'thread',
+      bindingMode: 'fixed',
+    });
+    this.evictOverflow();
+    this.persist();
+    return cloneEntry(stored);
   }
 
   private evictOverflow(): boolean {
@@ -550,7 +650,12 @@ export class SessionStore {
 
   claimFixedThreadAgent(
     key: SessionKey,
-    identity: { agentName: string; agentOwner: string },
+    identity: {
+      agentName: string;
+      agentOwner: string;
+      profileId?: string;
+      profileRequired?: boolean;
+    },
   ): boolean {
     const registryKey = threadRegistryKey({
       platformName: key.platformName,
@@ -565,13 +670,105 @@ export class SessionStore {
     if (thread.agentOwner && thread.agentOwner !== identity.agentOwner) {
       return false;
     }
+    if (thread.profileId && thread.profileId !== identity.profileId) {
+      return false;
+    }
+    if (
+      !thread.profileId &&
+      (identity.profileRequired ?? identity.profileId !== undefined) &&
+      this.map.get(serializeSessionKey(key))?.agentSessionId
+    ) {
+      // 旧 fixed topic 的 native ref 属于哪个 profile 无法从 ref 本身证明。
+      // 必须先由 catalog 扫描命中并显式 adopt，不能在 resume 路径猜测。
+      return false;
+    }
     this.threadsByChannel.set(registryKey, {
       ...thread,
       agentName: identity.agentName,
       agentOwner: identity.agentOwner,
+      ...(identity.profileId ? { profileId: identity.profileId } : {}),
     });
     this.persist();
     return true;
+  }
+
+  hasFixedNativeResumeBinding(
+    input: FindFixedNativeResumeBindingInput,
+  ): boolean {
+    return this.findFixedNativeResumeBinding(input) !== undefined;
+  }
+
+  adoptFixedNativeResumeBindingProfile(
+    input: FindFixedNativeResumeBindingInput,
+  ): boolean {
+    const matched = this.findFixedNativeResumeBinding(input);
+    if (!matched) return false;
+    let changed = false;
+    if (!matched.thread.profileId) {
+      this.threadsByChannel.set(matched.registryKey, {
+        ...matched.thread,
+        profileId: input.profileId,
+      });
+      changed = true;
+    }
+    if (!matched.record.entry.profileId) {
+      const entry = cloneEntry({
+        ...matched.record.entry,
+        profileId: input.profileId,
+      });
+      this.sessionsBySessionId.set(matched.sessionId, {
+        ...matched.record,
+        entry,
+      });
+      this.map.set(serializeSessionKey(matched.record.key), cloneEntry(entry));
+      changed = true;
+    }
+    if (changed) {
+      this.persist();
+    }
+    return true;
+  }
+
+  private findFixedNativeResumeBinding(
+    input: FindFixedNativeResumeBindingInput,
+  ):
+    | {
+        registryKey: string;
+        thread: ThreadRegistryEntry;
+        sessionId: string;
+        record: StoredSessionRecord;
+      }
+    | undefined {
+    for (const [sessionId, record] of this.sessionsBySessionId.entries()) {
+      const { key, entry } = record;
+      if (this.sessionIdsByKey.get(serializeSessionKey(key)) !== sessionId) {
+        continue;
+      }
+      if (entry.agentSessionId !== input.nativeSessionRef) continue;
+      if (entry.agentOwner !== input.agentOwner) continue;
+      if (key.platformName !== input.platformName) continue;
+      if (key.platform !== input.platform) continue;
+      if (key.initiatorUserId !== input.ownerUserId) continue;
+      const thread = this.findThreadByChannelId(key);
+      if (thread?.bindingMode !== 'fixed') continue;
+      if (thread.agentName !== input.agentName) continue;
+      if (thread.agentOwner !== input.agentOwner) continue;
+      // V3 之前的 fixed topic 没有 profileId。这里只供 catalog adoption
+      // 查找精确 native ref；直接 resume 仍由 claimFixedThreadAgent fail closed。
+      if (thread.profileId && thread.profileId !== input.profileId) continue;
+      if (entry.profileId && entry.profileId !== input.profileId) continue;
+      return {
+        registryKey: threadRegistryKey({
+          platformName: key.platformName,
+          platform: key.platform,
+          channelId: key.channelId,
+        }),
+        thread,
+        sessionId,
+        record,
+      };
+    }
+    return undefined;
   }
 
   private isFixedContainer(key: SessionKey): boolean {

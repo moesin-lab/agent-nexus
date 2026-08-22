@@ -79,6 +79,7 @@ export interface CapabilitySet {
   supportsModals?: boolean;
   supportsThreads: boolean;
   supportsThreadCreation?: boolean;
+  supportsThreadCreateIdempotencyKey?: boolean;
   supportsEphemeral: boolean;
   supportsAttachments: boolean;
   maxAttachmentsPerMessage: number;

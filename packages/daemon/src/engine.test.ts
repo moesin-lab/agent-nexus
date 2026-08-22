@@ -14,6 +14,7 @@ import type {
   CapabilitySet,
   CommandDescriptor,
   CommandRegistrationScope,
+  CreateThreadInput,
   EventHandler,
   MessageRef,
   NormalizedEvent,
@@ -34,6 +35,7 @@ import { ExternalSessionImportServiceError } from './external-session-import.js'
 import { InMemoryIdempotencyStore } from './idempotency.js';
 import { createLogger, type Logger } from './logger.js';
 import { ProviderCaptureService } from './provider-capture.js';
+import { ProfileSessionRecoveryService } from './profile-session-recovery.js';
 import type { RoutingEntry } from './router.js';
 import { SessionStore } from './session-store.js';
 import { SqliteSessionPersistence } from './session-sqlite-store.js';
@@ -8457,16 +8459,310 @@ describe('Engine', () => {
     expect(agent.startSession).not.toHaveBeenCalled();
   });
 
+  it('用 /nexus-sessions 创建 fixed topic，daemon 重启后从该 topic 精确 resume', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-nexus-engine-profile-recovery-'));
+    try {
+      const databasePath = join(dir, 'state.sqlite');
+      const database = new SqliteStateDatabase({ path: databasePath });
+      const store = new SessionStore({
+        persistence: new SqliteSessionPersistence({ database: database.database }),
+      });
+      const platform = makePlatform({
+        supportsThreadCreation: true,
+        supportsThreadCreateIdempotencyKey: true,
+      });
+      platform.createThread.mockResolvedValue({
+        threadId: 'omt-recovered-1',
+        parentChannelId: 'oc-control',
+        rootMessageId: 'om-root-recovered-1',
+        url: 'https://applink.feishu.cn/client/thread/open?open_thread_id=omt-recovered-1',
+      });
+      const agent = makeAgent();
+      const catalog = {
+        profileId: () => 'codex-profile:test',
+        listRecent: vi.fn(async () => [
+          {
+            nativeSessionRef: 'thr-native-1',
+            updatedAt: new Date('2026-08-21T12:00:00.000Z'),
+            workingDir: '/workspace/recovered',
+            title: 'Recovered Codex session',
+            lastCompletedTurnId: 'turn-native-1',
+            lastCompletedReply: 'Last completed reply',
+          },
+        ]),
+      };
+      const engine = new Engine({
+        platform,
+        agents: [
+          {
+            agentName: 'codex-main',
+            agentOwner: 'codex',
+            agent: agent.runtime,
+            sessionCatalog: catalog,
+            defaultSessionConfig: DEFAULT_CFG,
+          },
+        ],
+        logger: SILENT_LOGGER,
+        sessionStore: store,
+        profileSessionRecovery: new ProfileSessionRecoveryService({
+          database: database.database,
+          sessionStore: store,
+        }),
+      });
+
+      await engine.start();
+      const dispatchHandler = (
+        platform.start as ReturnType<typeof vi.fn>
+      ).mock.calls[0]![0] as EventHandler;
+      const recoveryControlEvent = () =>
+        makeEvent('/nexus-sessions', {
+          platform: 'lark',
+          sessionKey: {
+            platform: 'lark',
+            channelId: 'oc-control',
+            initiatorUserId: 'U1',
+          },
+          channelKind: 'group',
+          deliveryScope: 'control',
+        });
+      await dispatchHandler(
+        makeEvent('/nexus-sessions', {
+          eventId: 'p2p-profile-list-only',
+          messageId: 'p2p-profile-list-only',
+          platform: 'lark',
+          sessionKey: {
+            platform: 'lark',
+            channelId: 'oc-p2p-control',
+            initiatorUserId: 'U1',
+          },
+          channelKind: 'direct',
+          deliveryScope: 'control',
+        }),
+      );
+      expect(catalog.listRecent).not.toHaveBeenCalled();
+      expect(platform.send).toHaveBeenCalledWith(
+        expect.objectContaining({ channelId: 'oc-p2p-control' }),
+        expect.objectContaining({
+          text: expect.stringContaining('run /nexus-sessions in a topic group'),
+        }),
+      );
+      await Promise.all([
+        dispatchHandler(recoveryControlEvent()),
+        dispatchHandler(recoveryControlEvent()),
+      ]);
+
+      expect(catalog.listRecent).toHaveBeenCalledWith({ limit: 100 });
+      expect(platform.createThread).toHaveBeenCalledOnce();
+      expect(agent.startSession).not.toHaveBeenCalled();
+      expect(platform.send).toHaveBeenCalledWith(
+        expect.objectContaining({ channelId: 'oc-control' }),
+        expect.objectContaining({
+          text: expect.stringContaining(
+            'https://applink.feishu.cn/client/thread/open?open_thread_id=omt-recovered-1',
+          ),
+        }),
+      );
+
+      await engine.stop();
+      store.close();
+      database.close();
+
+      const reopenedDatabase = new SqliteStateDatabase({ path: databasePath });
+      const reopenedStore = new SessionStore({
+        persistence: new SqliteSessionPersistence({
+          database: reopenedDatabase.database,
+        }),
+      });
+      const resumedPlatform = makePlatform({
+        supportsThreadCreation: true,
+        supportsThreadCreateIdempotencyKey: true,
+      });
+      const resumedAgent = makeAgent();
+      const resumedEngine = new Engine({
+        platform: resumedPlatform,
+        agents: [
+          {
+            agentName: 'codex-main',
+            agentOwner: 'codex',
+            agent: resumedAgent.runtime,
+            sessionCatalog: catalog,
+            defaultSessionConfig: DEFAULT_CFG,
+          },
+        ],
+        logger: SILENT_LOGGER,
+        sessionStore: reopenedStore,
+      });
+      await resumedEngine.start();
+      const resumedDispatchHandler = (
+        resumedPlatform.start as ReturnType<typeof vi.fn>
+      ).mock.calls[0]![0] as EventHandler;
+
+      resumedAgent.queueEvents([]);
+      await resumedDispatchHandler(
+        makeEvent('continue from recovered session', {
+          platform: 'lark',
+          sessionKey: {
+            platform: 'lark',
+            channelId: 'omt-recovered-1',
+            initiatorUserId: 'U1',
+          },
+          deliveryScope: 'session',
+        }),
+      );
+      expect(resumedAgent.startSession).toHaveBeenCalledWith(
+        expect.objectContaining({ channelId: 'omt-recovered-1' }),
+        expect.objectContaining({
+          workingDir: '/workspace/recovered',
+          resumeFromAgentSessionId: 'thr-native-1',
+        }),
+      );
+      expect(
+        reopenedStore.findThreadByChannelId({
+          platformName: 'mock-platform',
+          platform: 'lark',
+          channelId: 'omt-recovered-1',
+        }),
+      ).toMatchObject({ profileId: 'codex-profile:test' });
+      await resumedEngine.stop();
+      reopenedStore.close();
+      reopenedDatabase.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('跨父群并发 /nexus-sessions 共享同一个 profile sync', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-nexus-engine-profile-coalesce-'));
+    try {
+      const database = new SqliteStateDatabase({ path: join(dir, 'state.sqlite') });
+      const store = new SessionStore({
+        persistence: new SqliteSessionPersistence({ database: database.database }),
+      });
+      const platform = makePlatform({
+        supportsThreadCreation: true,
+        supportsThreadCreateIdempotencyKey: true,
+      });
+      platform.createThread.mockImplementation(async (input: CreateThreadInput) => {
+        return {
+          threadId: `omt-${input.parentChannelId}`,
+          parentChannelId: input.parentChannelId,
+          rootMessageId: `om-${input.parentChannelId}`,
+        };
+      });
+      const agent = makeAgent();
+      let releaseCatalog!: () => void;
+      const catalogBarrier = new Promise<void>((resolve) => {
+        releaseCatalog = resolve;
+      });
+      const catalog = {
+        profileId: () => 'codex-profile:test',
+        listRecent: vi.fn(async () => {
+          await catalogBarrier;
+          return [
+            {
+              nativeSessionRef: 'thr-native-1',
+              updatedAt: new Date('2026-08-21T12:00:00.000Z'),
+              workingDir: '/workspace/recovered',
+              title: 'Recovered Codex session',
+              lastCompletedTurnId: 'turn-native-1',
+              lastCompletedReply: 'Last completed reply',
+            },
+          ];
+        }),
+      };
+      const engine = new Engine({
+        platform,
+        agents: [
+          {
+            agentName: 'codex-main',
+            agentOwner: 'codex',
+            agent: agent.runtime,
+            sessionCatalog: catalog,
+            defaultSessionConfig: DEFAULT_CFG,
+          },
+        ],
+        logger: SILENT_LOGGER,
+        sessionStore: store,
+        profileSessionRecovery: new ProfileSessionRecoveryService({
+          database: database.database,
+          sessionStore: store,
+        }),
+      });
+
+      await engine.start();
+      const dispatchHandler = (
+        platform.start as ReturnType<typeof vi.fn>
+      ).mock.calls[0]![0] as EventHandler;
+      const controlEvent = (channelId: string) =>
+        makeEvent('/nexus-sessions', {
+          platform: 'lark',
+          sessionKey: {
+            platform: 'lark',
+            channelId,
+            initiatorUserId: 'U1',
+          },
+          channelKind: 'group',
+          deliveryScope: 'control',
+        });
+
+      const first = dispatchHandler(controlEvent('oc-control-1'));
+      await vi.waitFor(() => expect(catalog.listRecent).toHaveBeenCalledOnce());
+      const second = dispatchHandler(controlEvent('oc-control-2'));
+      await vi.waitFor(() => expect(catalog.listRecent).toHaveBeenCalledOnce());
+      let stopSettled = false;
+      const stopping = engine.stop().finally(() => {
+        stopSettled = true;
+      });
+      expect(
+        await Promise.race([
+          stopping.then(() => true),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 25)),
+        ]),
+      ).toBe(false);
+      expect(stopSettled).toBe(false);
+      expect(platform.stop).not.toHaveBeenCalled();
+      expect(platform.createThread).not.toHaveBeenCalled();
+      releaseCatalog();
+      await Promise.all([first, second, stopping]);
+
+      expect(catalog.listRecent).toHaveBeenCalledOnce();
+      expect(platform.createThread).toHaveBeenCalledOnce();
+      expect(platform.stop).toHaveBeenCalledOnce();
+      expect(
+        database.database
+          .prepare(
+            `SELECT COUNT(*) AS count, MIN(parent_channel_id) AS parentChannelId
+             FROM native_session_materializations`,
+          )
+          .get(),
+      ).toEqual({ count: 1, parentChannelId: 'oc-control-1' });
+      store.close();
+      database.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('keeps one fixed topic on one session across turns and stores its container metadata', async () => {
     const platform = makePlatform();
     const agent = makeAgent();
     const store = new SessionStore();
+    const catalog = {
+      profileId: () => 'codex-profile:ordinary-topic',
+      listRecent: vi.fn(async () => []),
+    };
     const engine = new Engine({
       platform,
-      agent: agent.runtime,
+      agents: [
+        {
+          agentName: 'mock-agent',
+          agent: agent.runtime,
+          sessionCatalog: catalog,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
       logger: SILENT_LOGGER,
       sessionStore: store,
-      defaultSessionConfig: DEFAULT_CFG,
     });
     const fixedTopic = {
       kind: 'thread' as const,
@@ -8521,7 +8817,212 @@ describe('Engine', () => {
         platform: 'lark',
         channelId: 'omt-topic-1',
       }),
-    ).toMatchObject(fixedTopic);
+    ).toMatchObject({
+      ...fixedTopic,
+      profileId: 'codex-profile:ordinary-topic',
+    });
+  });
+
+  it('profile 变化后对已有 fixed topic 的 native resume fail closed', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const key: SessionKey = {
+      platformName: 'mock-platform',
+      platform: 'lark',
+      channelId: 'omt-topic-profile-bound',
+      initiatorUserId: 'U1',
+    };
+    store.registerThread(key, {
+      parentChannelId: 'oc-control',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-root-profile-bound',
+    });
+    store.claimFixedThreadAgent(key, {
+      agentName: 'codex-main',
+      agentOwner: 'codex',
+      profileId: 'codex-profile:old',
+    });
+    store.set(key, {
+      agentSessionId: 'thr-native-old-profile',
+      agentOwner: 'codex',
+      lastTurnAt: new Date(1),
+    });
+    const engine = new Engine({
+      platform,
+      agents: [
+        {
+          agentName: 'codex-main',
+          agentOwner: 'codex',
+          agent: agent.runtime,
+          sessionCatalog: {
+            profileId: () => 'codex-profile:new',
+            listRecent: vi.fn(async () => []),
+          },
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(
+      makeEvent('do not resume across profiles', {
+        platform: 'lark',
+        sessionKey: {
+          platform: 'lark',
+          channelId: 'omt-topic-profile-bound',
+          initiatorUserId: 'U1',
+        },
+        threadParentChannelId: 'oc-control',
+        deliveryScope: 'session',
+        sessionContainer: {
+          kind: 'thread',
+          bindingMode: 'fixed',
+          parentChannelId: 'oc-control',
+          rootMessageId: 'om-root-profile-bound',
+        },
+      }),
+    );
+
+    expect(agent.startSession).not.toHaveBeenCalled();
+    expect(agent.sendInput).not.toHaveBeenCalled();
+  });
+
+  it('profile-scoped agent 缺少 catalog 时不认领 legacy fixed native ref', async () => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const key: SessionKey = {
+      platformName: 'mock-platform',
+      platform: 'lark',
+      channelId: 'omt-legacy-profile-topic',
+      initiatorUserId: 'U1',
+    };
+    store.registerThread(key, {
+      parentChannelId: 'oc-control',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-legacy-profile-root',
+    });
+    expect(
+      store.claimFixedThreadAgent(key, {
+        agentName: 'codex-main',
+        agentOwner: 'codex',
+      }),
+    ).toBe(true);
+    store.set(key, {
+      agentSessionId: 'thr-legacy-profile',
+      agentOwner: 'codex',
+      lastTurnAt: new Date(1),
+    });
+    const engine = new Engine({
+      platform,
+      agents: [
+        {
+          agentName: 'codex-main',
+          agentOwner: 'codex',
+          sessionProfileRequired: true,
+          agent: agent.runtime,
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    await dispatchHandler(
+      makeEvent('must not guess the legacy profile', {
+        platform: 'lark',
+        sessionKey: {
+          platform: 'lark',
+          channelId: key.channelId,
+          initiatorUserId: 'U1',
+        },
+        threadParentChannelId: 'oc-control',
+        deliveryScope: 'session',
+        sessionContainer: {
+          kind: 'thread',
+          bindingMode: 'fixed',
+          parentChannelId: 'oc-control',
+          rootMessageId: 'om-legacy-profile-root',
+        },
+      }),
+    );
+
+    expect(agent.startSession).not.toHaveBeenCalled();
+    expect(agent.sendInput).not.toHaveBeenCalled();
+    await engine.stop();
+  });
+
+  it.each([
+    ['缺少 profile identity', undefined],
+    ['profile identity 不匹配', 'codex-profile:old'],
+  ])('profile-scoped rebindable current session 在%s时不开启跨 profile resume', async (_label, storedProfileId) => {
+    const platform = makePlatform();
+    const agent = makeAgent();
+    const store = new SessionStore();
+    const key: SessionKey = {
+      platformName: 'mock-platform',
+      platform: 'lark',
+      channelId: 'oc-rebindable-profile',
+      initiatorUserId: 'U1',
+    };
+    store.set(key, {
+      agentSessionId: 'thr-old-profile',
+      agentOwner: 'codex',
+      ...(storedProfileId ? { profileId: storedProfileId } : {}),
+      lastTurnAt: new Date(1),
+    });
+    const engine = new Engine({
+      platform,
+      agents: [
+        {
+          agentName: 'codex-main',
+          agentOwner: 'codex',
+          agent: agent.runtime,
+          sessionCatalog: {
+            profileId: () => 'codex-profile:new',
+            listRecent: vi.fn(async () => []),
+          },
+          defaultSessionConfig: DEFAULT_CFG,
+        },
+      ],
+      logger: SILENT_LOGGER,
+      sessionStore: store,
+    });
+
+    await engine.start();
+    const dispatchHandler = (
+      platform.start as ReturnType<typeof vi.fn>
+    ).mock.calls[0]![0] as EventHandler;
+    agent.queueEvents([]);
+    await dispatchHandler(
+      makeEvent('start in the selected profile', {
+        platform: 'lark',
+        sessionKey: {
+          platform: 'lark',
+          channelId: key.channelId,
+          initiatorUserId: 'U1',
+        },
+        deliveryScope: 'session',
+      }),
+    );
+
+    expect(agent.startSession).toHaveBeenCalledWith(
+      expect.objectContaining({ channelId: key.channelId }),
+      expect.objectContaining({ resumeFromAgentSessionId: undefined }),
+    );
+    await engine.stop();
   });
 
   it('resumes the same fixed topic with a fresh runtime after daemon restart', async () => {

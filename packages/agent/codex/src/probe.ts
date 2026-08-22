@@ -161,12 +161,19 @@ function assertNoDangerousArgs(args: string[]): void {
 }
 
 function runCodex(
-  bin: string,
+  config: CodexConfig,
   args: string[],
   timeoutMs: number | undefined,
 ): ReturnType<typeof execa> {
-  if (timeoutMs === undefined) return execa(bin, args);
-  return execa(bin, args, { timeout: timeoutMs });
+  const options = {
+    ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }),
+    ...(config.codexHome
+      ? { env: { ...process.env, CODEX_HOME: config.codexHome } }
+      : {}),
+  };
+  return Object.keys(options).length === 0
+    ? execa(config.bin, args)
+    : execa(config.bin, args, options);
 }
 
 async function runProbeStep<T>(
@@ -192,7 +199,7 @@ async function verifyWorkspaceWrite(
   );
   assertNoDangerousArgs(args);
   try {
-    const probe = await runCodex(config.bin, args, timeoutMs);
+    const probe = await runCodex(config, args, timeoutMs);
     const facts = collectFacts((probe.stdout ?? '').toString());
     if (!facts.sawCommandStarted || !facts.sawCommandCompleted) {
       throw new Error('workspace-write probe did not emit command_execution events');
@@ -220,7 +227,7 @@ export async function runCompatibilityProbe(
       );
     }
     const version = await runProbeStep(logger, 'version', () =>
-      runCodex(config.bin, ['--version'], timeoutMs),
+      runCodex(config, ['--version'], timeoutMs),
     );
     const versionText = (version.stdout ?? '').toString().trim();
     if (!versionText) {
@@ -229,8 +236,8 @@ export async function runCompatibilityProbe(
     logger.info({ version: versionText }, 'codex_cli_version');
 
     const combinedHelp = await runProbeStep(logger, 'help', async () => {
-      const topHelp = await runCodex(config.bin, ['--help'], timeoutMs);
-      const execHelp = await runCodex(config.bin, ['exec', '--help'], timeoutMs);
+      const topHelp = await runCodex(config, ['--help'], timeoutMs);
+      const execHelp = await runCodex(config, ['exec', '--help'], timeoutMs);
       return `${topHelp.stdout}\n${execHelp.stdout}`;
     });
     for (const flag of [
@@ -260,7 +267,7 @@ export async function runCompatibilityProbe(
     const execArgs = buildCodexExecArgs(config, 'Reply exactly: CODEX_PROBE_OK');
     assertNoDangerousArgs(execArgs);
     const execProbe = await runProbeStep(logger, 'exec-json', () =>
-      runCodex(config.bin, execArgs, timeoutMs),
+      runCodex(config, execArgs, timeoutMs),
     );
     const execFacts = collectFacts((execProbe.stdout ?? '').toString());
     requireBaseTurnFacts(execFacts, 'exec');
@@ -272,7 +279,7 @@ export async function runCompatibilityProbe(
     );
     assertNoDangerousArgs(resumeArgs);
     const resumeProbe = await runProbeStep(logger, 'resume-json', () =>
-      runCodex(config.bin, resumeArgs, timeoutMs),
+      runCodex(config, resumeArgs, timeoutMs),
     );
     const resumeFacts = collectFacts((resumeProbe.stdout ?? '').toString());
     requireBaseTurnFacts(resumeFacts, 'resume');
@@ -286,7 +293,7 @@ export async function runCompatibilityProbe(
     );
     assertNoDangerousArgs(toolArgs);
     const toolProbe = await runProbeStep(logger, 'tool-json', () =>
-      runCodex(config.bin, toolArgs, timeoutMs),
+      runCodex(config, toolArgs, timeoutMs),
     );
     const toolFacts = collectFacts((toolProbe.stdout ?? '').toString());
     if (!toolFacts.sawCommandStarted) {

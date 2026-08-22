@@ -376,6 +376,19 @@ describe('ExternalSessionImportService', () => {
     });
     const displacedSessionId = sessionStore.ensureSessionId(routedKey());
 
+    expect(() =>
+      service.bindToRoutingSession({
+        importId: 'imp-codex',
+        sessionKey: routedKey(),
+        agentOwner: 'codex',
+        profileRequired: true,
+        profileId: 'codex-profile:current',
+      }),
+    ).toThrow('has no verified native profile identity');
+    expect(trajectoryStore.getExternalSessionImport('imp-codex')).toMatchObject({
+      state: 'registered',
+    });
+
     const binding = service.bindToRoutingSession({
       importId: 'imp-codex',
       sessionKey: routedKey(),

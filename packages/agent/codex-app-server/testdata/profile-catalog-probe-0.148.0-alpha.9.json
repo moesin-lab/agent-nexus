@@ -1,0 +1,11 @@
+{
+  "codexVersion": "0.148.0-alpha.9",
+  "platform": "macos-arm64",
+  "profileIdRedacted": true,
+  "requestedLimit": 10,
+  "recovered": 10,
+  "allNativeSessionRefsNonEmpty": true,
+  "allLastCompletedRepliesNonEmpty": true,
+  "replyBodiesRecorded": false,
+  "verifiedAt": "2026-08-21"
+}

@@ -109,6 +109,7 @@ export type ExternalSessionImportServiceErrorCode =
   | 'external-adapter-unavailable'
   | 'external-source-unsupported'
   | 'native-resume-backend-mismatch'
+  | 'native-resume-profile-unavailable'
   | 'native-resume-unavailable';
 
 export class ExternalSessionImportServiceError extends Error {
@@ -127,6 +128,8 @@ export interface ExternalSessionImporter {
     importId: string;
     sessionKey: SessionKey;
     agentOwner: string;
+    profileRequired?: boolean;
+    profileId?: string;
   }): ExternalResumeBinding;
 }
 
@@ -201,6 +204,8 @@ export class ExternalSessionImportService implements ExternalSessionImporter {
     importId: string;
     sessionKey: SessionKey;
     agentOwner: string;
+    profileRequired?: boolean;
+    profileId?: string;
   }): ExternalResumeBinding {
     if (!this.sessionStore) {
       throw new ExternalSessionImportServiceError(
@@ -226,6 +231,14 @@ export class ExternalSessionImportService implements ExternalSessionImporter {
       throw new ExternalSessionImportServiceError(
         'native-resume-unavailable',
         `External import ${input.importId} has no native session ref`,
+      );
+    }
+    if (input.profileRequired) {
+      // Imported refs have no proven source profile identity yet. Associating
+      // one with the selected profile here would cross a resume namespace.
+      throw new ExternalSessionImportServiceError(
+        'native-resume-profile-unavailable',
+        `External import ${input.importId} has no verified native profile identity`,
       );
     }
 

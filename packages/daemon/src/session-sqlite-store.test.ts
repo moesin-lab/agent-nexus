@@ -26,15 +26,6 @@ describe('SqliteSessionPersistence', () => {
         database: firstDatabase.database,
       }),
     });
-    first.set(key, {
-      agentSessionId: 'opaque-ref-1',
-      agentOwner: 'codex',
-      lastTurnAt: new Date('2026-08-21T10:00:00.000Z'),
-      title: 'persistent topic',
-      workingDir: '/workspace/project',
-      nextSession: { workingDir: '/workspace/next' },
-    });
-    const sessionId = first.ensureSessionId(key);
     first.registerThread(key, {
       parentChannelId: 'oc-chat-1',
       ownerUserId: 'ou-user-1',
@@ -48,8 +39,19 @@ describe('SqliteSessionPersistence', () => {
       first.claimFixedThreadAgent(key, {
         agentName: 'codex-dev',
         agentOwner: 'codex',
+        profileId: 'codex-profile:dev',
       }),
     ).toBe(true);
+    first.set(key, {
+      agentSessionId: 'opaque-ref-1',
+      agentOwner: 'codex',
+      profileId: 'codex-profile:dev',
+      lastTurnAt: new Date('2026-08-21T10:00:00.000Z'),
+      title: 'persistent topic',
+      workingDir: '/workspace/project',
+      nextSession: { workingDir: '/workspace/next' },
+    });
+    const sessionId = first.ensureSessionId(key);
     first.close();
     firstDatabase.close();
 
@@ -64,6 +66,7 @@ describe('SqliteSessionPersistence', () => {
     expect(second.get(key)).toMatchObject({
       agentSessionId: 'opaque-ref-1',
       agentOwner: 'codex',
+      profileId: 'codex-profile:dev',
       title: 'persistent topic',
       workingDir: '/workspace/project',
       nextSession: { workingDir: '/workspace/next' },
@@ -74,6 +77,7 @@ describe('SqliteSessionPersistence', () => {
       url: 'https://applink.feishu.cn/client/thread/open?open_thread_id=omt-topic-1',
       agentName: 'codex-dev',
       agentOwner: 'codex',
+      profileId: 'codex-profile:dev',
     });
     expect(
       second.listForUser({

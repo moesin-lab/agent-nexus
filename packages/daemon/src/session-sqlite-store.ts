@@ -28,6 +28,7 @@ interface SessionRow {
 interface SessionMeta {
   sessionKey: SessionKey;
   title?: string;
+  profileId?: string;
   sessionContainer?: {
     kind: 'thread';
     bindingMode: 'fixed' | 'rebindable';
@@ -42,6 +43,7 @@ interface SessionMeta {
     renameOnFirstPrompt?: boolean;
     agentName?: string;
     agentOwner?: string;
+    profileId?: string;
   };
   trajectorySequence: number;
 }
@@ -103,6 +105,8 @@ export class SqliteSessionPersistence implements SessionStorePersistence {
         if (row.agent_backend !== 'unknown') {
           entry.agentOwner = row.agent_backend;
         }
+        const profileId = meta.profileId ?? meta.fixedThread?.profileId;
+        if (profileId !== undefined) entry.profileId = profileId;
         if (meta.title !== undefined) entry.title = meta.title;
         if (row.working_dir.length > 0) entry.workingDir = row.working_dir;
         const nextSession = parseNextSession(row);
@@ -215,6 +219,9 @@ function buildMeta(
     trajectorySequence: session.trajectorySequence,
   };
   if (session.entry.title !== undefined) meta.title = session.entry.title;
+  if (session.entry.profileId !== undefined) {
+    meta.profileId = session.entry.profileId;
+  }
   if (thread) {
     meta.sessionContainer = {
       kind: 'thread',
@@ -236,6 +243,7 @@ function buildMeta(
         : {}),
       ...(thread.agentName ? { agentName: thread.agentName } : {}),
       ...(thread.agentOwner ? { agentOwner: thread.agentOwner } : {}),
+      ...(thread.profileId ? { profileId: thread.profileId } : {}),
     };
   }
   return meta;
@@ -274,6 +282,12 @@ function parseMeta(row: SessionRow): SessionMeta {
     }
     meta.title = value['title'];
   }
+  if (value['profileId'] !== undefined) {
+    if (typeof value['profileId'] !== 'string' || value['profileId'].length === 0) {
+      throw invalidSessionRow(row.session_id, 'meta_json.profileId is invalid');
+    }
+    meta.profileId = value['profileId'];
+  }
   if (isSessionContainer(value['sessionContainer'])) {
     meta.sessionContainer = { ...value['sessionContainer'] };
   } else if (value['sessionContainer'] !== undefined) {
@@ -303,6 +317,16 @@ function parseMeta(row: SessionRow): SessionMeta {
     throw invalidSessionRow(
       row.session_id,
       'fixed session container is missing pinned agent identity',
+    );
+  }
+  if (
+    meta.profileId &&
+    meta.fixedThread?.profileId &&
+    meta.profileId !== meta.fixedThread.profileId
+  ) {
+    throw invalidSessionRow(
+      row.session_id,
+      'session profileId disagrees with fixed thread profileId',
     );
   }
   return meta;
@@ -434,6 +458,7 @@ function threadFromMeta(meta: SessionMeta): ThreadRegistryEntry | undefined {
       : {}),
     ...(fixed.agentName ? { agentName: fixed.agentName } : {}),
     ...(fixed.agentOwner ? { agentOwner: fixed.agentOwner } : {}),
+    ...(fixed.profileId ? { profileId: fixed.profileId } : {}),
   };
 }
 
@@ -504,6 +529,7 @@ function isFixedThread(
     typeof value['ownerUserId'] === 'string' &&
     optionalString(value['agentName']) &&
     optionalString(value['agentOwner']) &&
+    optionalString(value['profileId']) &&
     (value['renameOnFirstPrompt'] === undefined ||
       typeof value['renameOnFirstPrompt'] === 'boolean') &&
     (value['autoArchiveDurationMinutes'] === undefined ||

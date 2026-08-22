@@ -3,7 +3,7 @@ import type DatabaseConstructor from 'better-sqlite3';
 import { type Database as BetterSqliteDatabase } from 'better-sqlite3';
 
 const require = createRequire(import.meta.url);
-export const CURRENT_STATE_SCHEMA_VERSION = 2;
+export const CURRENT_STATE_SCHEMA_VERSION = 3;
 
 export type StateDatabaseErrorCode =
   | 'unsupported-schema-version'
@@ -72,6 +72,12 @@ export function initializeStateSchema(database: BetterSqliteDatabase): void {
     database.transaction(() => {
       applySchemaV2(database);
       setSchemaVersion(database, 2);
+    })();
+  }
+  if (currentVersion < 3) {
+    database.transaction(() => {
+      applySchemaV3(database);
+      setSchemaVersion(database, 3);
     })();
   }
   validateCurrentSchema(database);
@@ -193,6 +199,42 @@ function applySchemaV2(database: BetterSqliteDatabase): void {
   `);
 }
 
+function applySchemaV3(database: BetterSqliteDatabase): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS native_session_materializations (
+      operation_id TEXT PRIMARY KEY,
+      profile_id TEXT NOT NULL,
+      native_session_ref TEXT NOT NULL,
+      agent_name TEXT NOT NULL,
+      agent_owner TEXT NOT NULL,
+      platform_name TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      parent_channel_id TEXT NOT NULL,
+      owner_user_id TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      state TEXT NOT NULL CHECK (
+        state IN ('planned', 'container_created', 'linked', 'failed', 'ambiguous')
+      ),
+      thread_id TEXT,
+      root_message_id TEXT,
+      url TEXT,
+      linked_session_id TEXT,
+      error_code TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (
+        profile_id, native_session_ref, agent_name, agent_owner,
+        platform_name, platform, owner_user_id
+      )
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_native_session_materializations_state
+      ON native_session_materializations(state, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_native_session_materializations_linked_session
+      ON native_session_materializations(linked_session_id);
+  `);
+}
+
 function readSchemaVersion(database: BetterSqliteDatabase): number {
   try {
     const row = database
@@ -286,6 +328,33 @@ function validateCurrentSchema(database: BetterSqliteDatabase): void {
     database,
     'sessions',
     ['session_key', 'generation'],
+    true,
+  );
+  validateIndex(database, 'native_session_materializations', [
+    'state',
+    'updated_at',
+  ]);
+  validateIndex(database, 'native_session_materializations', [
+    'linked_session_id',
+  ]);
+  validateIndex(
+    database,
+    'native_session_materializations',
+    ['idempotency_key'],
+    true,
+  );
+  validateIndex(
+    database,
+    'native_session_materializations',
+    [
+      'profile_id',
+      'native_session_ref',
+      'agent_name',
+      'agent_owner',
+      'platform_name',
+      'platform',
+      'owner_user_id',
+    ],
     true,
   );
 }
@@ -395,6 +464,26 @@ const REQUIRED_TABLE_SCHEMA: Record<
     cost_used_usd: real(),
     budget_limit_usd: real(),
     meta_json: text(),
+  },
+  native_session_materializations: {
+    operation_id: textPrimaryKey(),
+    profile_id: text(true),
+    native_session_ref: text(true),
+    agent_name: text(true),
+    agent_owner: text(true),
+    platform_name: text(true),
+    platform: text(true),
+    parent_channel_id: text(true),
+    owner_user_id: text(true),
+    idempotency_key: text(true),
+    state: text(true),
+    thread_id: text(),
+    root_message_id: text(),
+    url: text(),
+    linked_session_id: text(),
+    error_code: text(),
+    created_at: text(true),
+    updated_at: text(true),
   },
 };
 

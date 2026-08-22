@@ -25,7 +25,7 @@ contracts:
 
 ## 已验证能力与门禁
 
-首个且当前唯一兼容版本是 Codex CLI `0.146.0`。2026-07-31 的 macOS arm64 实机 probe 已验证：
+turn runtime 首个且当前唯一兼容版本是 Codex CLI `0.146.0`。2026-07-31 的 macOS arm64 实机 probe 已验证：
 
 - initialize / initialized；
 - `thread/start` 返回 thread id；
@@ -85,11 +85,17 @@ app-server wire 可省略 `jsonrpc:"2.0"`；agent-nexus 统一发送该字段，
 
 ## schema 与版本策略
 
-- package 当前只接受精确版本 `0.146.0`；扩大范围必须先增加对应完整 snapshot、结构 diff 与真实 probe，不能使用无上界范围。
-- 仓库在 `packages/agent/codex-app-server/testdata/schema/<version>/` 保存由最低受支持 binary 的 `codex app-server generate-json-schema --out <dir>` 生成的完整 stable JSON schema snapshot、文件 hash manifest、生成命令、上游版本和许可证归属；stable generation 必须省略 `--experimental`，不得使用 0.146.0 不接受的 `--experimental=false`。runtime 可从 snapshot 生成裁剪后的 allowlist validator，但禁止只提交手写 method 名列表或“看起来相似”的宽松类型替代版本门禁。
+- turn runtime 只接受精确版本 `0.146.0`。`codex` backend 的只读 profile catalog 另接受精确版本
+  `0.146.0` 与 `0.148.0-alpha.9`，但不得据此把 0.148 扩大到 turn/runtime/process surface；扩大任一范围必须先增加
+  对应完整 snapshot、结构 diff 与真实 probe，不能使用无上界范围。
+- 仓库在 `packages/agent/codex-app-server/testdata/schema/<version>/` 保存每个受支持 binary 的
+  `codex app-server generate-json-schema --out <dir>` 完整 stable JSON schema snapshot、文件 hash manifest、生成命令、
+  上游版本和许可证归属；stable generation 必须省略 `--experimental`，不得使用 0.146.0 不接受的
+  `--experimental=false`。0.148 snapshot 的结构测试只 pin catalog 实际消费的 initialize/thread list/read 字段，
+  turn runtime 仍只从 0.146 snapshot 派生 allowlist validator。禁止只提交手写 method 名列表或“看起来相似”的宽松类型替代版本门禁。
 - CI 对最低/最高受支持版本重新生成 schema，并检查 allowlisted request/response/notification/ServerRequest 的结构 diff。新增 optional notification 不自动扩大 runtime 权限。
 - schema diff 只允许通过同一变更中的 compatibility range、snapshot、validator、spec、安全 review 与真实 probe 一并更新；generated output 不一致、缺文件或 manifest hash 不匹配时发布失败。
-- runtime initialize 后校验 app-server 返回的 `userAgent` 以前缀 `agent-nexus/0.146.0` 承载精确 server 版本证据，并校验 `codexHome` 与当前受支持 Unix 平台；版本未知、平台不匹配、schema-derived allowlist 不匹配或 required method 缺失时 fail closed。
+- turn runtime initialize 后校验 app-server 返回的 `userAgent` 以前缀 `agent-nexus/0.146.0` 承载精确 server 版本证据，并校验 `codexHome` 与当前受支持 Unix 平台；版本未知、平台不匹配、schema-derived allowlist 不匹配或 required method 缺失时 fail closed。catalog 按其独立精确版本集合和 catalog 字段 snapshot 校验，不改变 runtime gate。
 - 首版 `initialize.params.capabilities.experimentalApi=false`。任何 experimental method/field 必须先更新本 spec、schema snapshot、security review 与实机 probe。
 - viewer-specific runtime probe 除上述 base gate 外，还必须在创建 listener 前确认同一个 `0.146.0` binary 同时暴露 `app-server --ws-auth capability-token`、`--ws-token-file`、`codex --remote` 与 `--remote-auth-token-env`。发布认证另要求该精确 binary 通过无/错/旧 token 拒绝、controller+TUI 双 client 广播与 passive-viewer E2E。viewer gate 失败只回退默认 stdio，不启用 `experimentalApi`，不扩大 stable RPC method/schema allowlist。
 

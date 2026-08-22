@@ -34,6 +34,7 @@ describe('parseCodexConfig', () => {
       addDirs: ['/tmp/a', '/tmp/b'],
       loadUserConfig: true,
       loadRules: true,
+      codexHome: '/profiles/codex-main',
     });
 
     expect(result).toEqual({
@@ -44,7 +45,17 @@ describe('parseCodexConfig', () => {
       addDirs: ['/tmp/a', '/tmp/b'],
       loadUserConfig: true,
       loadRules: true,
+      codexHome: '/profiles/codex-main',
     });
+  });
+
+  it('codexHome 必须是非空字符串', () => {
+    expect(() =>
+      parseCodexConfig({
+        workingDir: '/workspace/project',
+        codexHome: '',
+      }),
+    ).toThrow(CodexConfigError);
   });
 
   it('显式 danger-full-access sandbox → 原样保留', () => {

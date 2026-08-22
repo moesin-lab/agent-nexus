@@ -12,6 +12,10 @@ const SNAPSHOT_ROOT = fileURLToPath(
   new URL('../testdata/schema/0.146.0', import.meta.url),
 );
 const GENERATED_ROOT = join(SNAPSHOT_ROOT, 'generated');
+const CATALOG_SNAPSHOT_ROOT = fileURLToPath(
+  new URL('../testdata/schema/0.148.0-alpha.9', import.meta.url),
+);
+const CATALOG_GENERATED_ROOT = join(CATALOG_SNAPSHOT_ROOT, 'generated');
 
 async function filesUnder(root: string): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true });
@@ -22,6 +26,39 @@ async function filesUnder(root: string): Promise<string[]> {
     }),
   );
   return nested.flat().sort();
+}
+
+async function assertSnapshotIntegrity(
+  root: string,
+  expectedMetadata: Record<string, unknown>,
+): Promise<void> {
+  const metadata = JSON.parse(
+    await readFile(join(root, 'metadata.json'), 'utf8'),
+  ) as Record<string, unknown>;
+  expect(metadata).toEqual(expectedMetadata);
+
+  const generatedRoot = join(root, 'generated');
+  const generated = await filesUnder(generatedRoot);
+  expect(generated).toHaveLength(metadata['generatedFileCount'] as number);
+  const actual = new Map(
+    await Promise.all(
+      generated.map(async (path) => [
+        relative(generatedRoot, path),
+        createHash('sha256').update(await readFile(path)).digest('hex'),
+      ] as const),
+    ),
+  );
+  const manifest = (await readFile(join(root, 'SHA256SUMS'), 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => {
+      const match = /^([a-f0-9]{64})  (.+)$/.exec(line);
+      if (!match) throw new Error(`invalid snapshot manifest line: ${line}`);
+      return [match[2]!, match[1]!] as const;
+    });
+  expect(manifest).toHaveLength(generated.length);
+  expect(new Set(manifest.map(([path]) => path)).size).toBe(generated.length);
+  expect(new Map(manifest)).toEqual(actual);
 }
 
 function collectMethodConstants(value: unknown, methods = new Set<string>()): Set<string> {
@@ -76,10 +113,7 @@ function notificationOwnershipScopes(schema: unknown): Record<string, string> {
 
 describe('Codex 0.146.0 stable schema snapshot', () => {
   it('is complete, reproducible, and covered by the committed hash manifest', async () => {
-    const metadata = JSON.parse(
-      await readFile(join(SNAPSHOT_ROOT, 'metadata.json'), 'utf8'),
-    ) as Record<string, unknown>;
-    expect(metadata).toEqual({
+    await assertSnapshotIntegrity(SNAPSHOT_ROOT, {
       codexVersion: '0.146.0',
       experimental: false,
       generationCommand: [
@@ -93,28 +127,6 @@ describe('Codex 0.146.0 stable schema snapshot', () => {
       upstream: 'https://github.com/openai/codex',
       upstreamLicense: 'Apache-2.0',
     });
-
-    const generated = await filesUnder(GENERATED_ROOT);
-    expect(generated).toHaveLength(metadata['generatedFileCount'] as number);
-    const actual = new Map(
-      await Promise.all(
-        generated.map(async (path) => [
-          relative(GENERATED_ROOT, path),
-          createHash('sha256').update(await readFile(path)).digest('hex'),
-        ] as const),
-      ),
-    );
-    const manifest = (await readFile(join(SNAPSHOT_ROOT, 'SHA256SUMS'), 'utf8'))
-      .trim()
-      .split('\n')
-      .map((line) => {
-        const match = /^([a-f0-9]{64})  (.+)$/.exec(line);
-        if (!match) throw new Error(`invalid snapshot manifest line: ${line}`);
-        return [match[2]!, match[1]!] as const;
-      });
-    expect(manifest).toHaveLength(generated.length);
-    expect(new Set(manifest.map(([path]) => path)).size).toBe(generated.length);
-    expect(new Map(manifest)).toEqual(actual);
   });
 
   it('contains exactly the committed stable ServerRequest method allowlist', async () => {
@@ -173,5 +185,132 @@ describe('Codex 0.146.0 stable schema snapshot', () => {
       'streamStdin',
       'streamStdoutStderr',
     ]));
+  });
+});
+
+describe('Codex 0.148.0-alpha.9 read-only catalog schema snapshot', () => {
+  it('is complete, reproducible, and covered by the committed hash manifest', async () => {
+    await assertSnapshotIntegrity(CATALOG_SNAPSHOT_ROOT, {
+      codexVersion: '0.148.0-alpha.9',
+      experimental: false,
+      generationCommand: [
+        'codex',
+        'app-server',
+        'generate-json-schema',
+        '--out',
+        '<OUTPUT_DIR>',
+      ],
+      generatedFileCount: 285,
+      upstream: 'https://github.com/openai/codex',
+      upstreamLicense: 'Apache-2.0',
+    });
+  });
+
+  it('pins every schema field consumed by the read-only profile catalog', async () => {
+    const initialize = JSON.parse(
+      await readFile(join(CATALOG_GENERATED_ROOT, 'v1/InitializeResponse.json'), 'utf8'),
+    ) as { required: string[]; properties: Record<string, unknown> };
+    expect(initialize.required).toEqual(
+      expect.arrayContaining(['codexHome', 'platformFamily', 'platformOs', 'userAgent']),
+    );
+
+    const listParams = JSON.parse(
+      await readFile(join(CATALOG_GENERATED_ROOT, 'v2/ThreadListParams.json'), 'utf8'),
+    ) as { properties: Record<string, unknown> };
+    expect(Object.keys(listParams.properties)).toEqual(
+      expect.arrayContaining([
+        'cursor',
+        'limit',
+        'sortDirection',
+        'sortKey',
+        'sourceKinds',
+        'useStateDbOnly',
+      ]),
+    );
+
+    const listResponse = JSON.parse(
+      await readFile(join(CATALOG_GENERATED_ROOT, 'v2/ThreadListResponse.json'), 'utf8'),
+    ) as {
+      required: string[];
+      properties: Record<string, unknown>;
+      definitions: Record<
+        string,
+        { required?: string[]; properties?: Record<string, unknown>; oneOf?: unknown[] }
+      >;
+    };
+    expect(listResponse.required).toContain('data');
+    expect(Object.keys(listResponse.properties)).toEqual(
+      expect.arrayContaining(['data', 'nextCursor']),
+    );
+    expect(listResponse.definitions['Thread']?.required).toEqual(
+      expect.arrayContaining([
+        'cwd',
+        'ephemeral',
+        'id',
+        'source',
+        'status',
+        'turns',
+        'updatedAt',
+      ]),
+    );
+    expect(Object.keys(listResponse.definitions['Thread']?.properties ?? {})).toContain(
+      'parentThreadId',
+    );
+
+    const readParams = JSON.parse(
+      await readFile(join(CATALOG_GENERATED_ROOT, 'v2/ThreadReadParams.json'), 'utf8'),
+    ) as { required: string[]; properties: Record<string, unknown> };
+    expect(readParams.required).toEqual(['threadId']);
+    expect(Object.keys(readParams.properties)).toEqual(
+      expect.arrayContaining(['includeTurns', 'threadId']),
+    );
+
+    const readResponse = JSON.parse(
+      await readFile(join(CATALOG_GENERATED_ROOT, 'v2/ThreadReadResponse.json'), 'utf8'),
+    ) as {
+      required: string[];
+      definitions: Record<string, { required?: string[]; oneOf?: Array<Record<string, unknown>> }>;
+    };
+    expect(readResponse.required).toEqual(['thread']);
+    expect(readResponse.definitions['Turn']?.required).toEqual(
+      expect.arrayContaining(['id', 'items', 'status']),
+    );
+    const agentMessage = readResponse.definitions['ThreadItem']?.oneOf?.find((variant) => {
+      const properties = variant['properties'] as
+        | Record<string, { enum?: string[] }>
+        | undefined;
+      return properties?.['type']?.enum?.[0] === 'agentMessage';
+    });
+    expect(agentMessage).toMatchObject({
+      required: expect.arrayContaining(['id', 'text', 'type']),
+      properties: {
+        phase: expect.any(Object),
+        text: expect.any(Object),
+      },
+    });
+  });
+
+  it('keeps the real profile probe redacted and records catalog acceptance evidence', async () => {
+    const evidence = JSON.parse(
+      await readFile(
+        new URL(
+          '../testdata/profile-catalog-probe-0.148.0-alpha.9.json',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    ) as Record<string, unknown>;
+    expect(evidence).toEqual({
+      codexVersion: '0.148.0-alpha.9',
+      platform: 'macos-arm64',
+      profileIdRedacted: true,
+      requestedLimit: 10,
+      recovered: 10,
+      allNativeSessionRefsNonEmpty: true,
+      allLastCompletedRepliesNonEmpty: true,
+      replyBodiesRecorded: false,
+      verifiedAt: '2026-08-21',
+    });
+    expect(JSON.stringify(evidence)).not.toMatch(/\/Users\/|lastCompletedReply|nativeSessionRef/);
   });
 });

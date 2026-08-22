@@ -405,9 +405,11 @@ Daemon 可以拥有显式、独立的 text-control 功能。除配置控制的 `
 该 transport 不读取 active reverse map，也不能从任意字符串猜 owner；它只能按当前 route 与 descriptor allowlist 构造 platform-neutral envelope。关闭 `textPrefixes.newSession` 后 `/new` 按既有配置作为普通 prompt。带参数、额外 token、大小写变体与其它已知命令仍稳定拒绝；支持更多命令时必须先更新本节。
 
 `NormalizedEvent.deliveryScope="control"` 进一步收紧上述默认：普通文本、未知 `/foo` 与任何会启动 agent turn
-的文本都静默终止。该 scope 除上述 immediate controls 外只增加精确 `/nexus-sessions`，用于读取当前用户可恢复的原平台
-容器定位引用，不执行 rebind。`/new` 与 `/new <prompt>` 属已知控制意图，但在 control scope 只返回“请创建新的原生
-Session 容器”反馈，不创建 Session。
+的文本都静默终止。该 scope 除上述 immediate controls 外只增加精确 `/nexus-sessions`。它先在当前 route 存在
+`AgentSessionCatalog`、平台支持 thread creation 且真实传递创建幂等键、当前 `channelKind` 不是 `direct` 时扫描
+profile、物化尚未绑定的固定容器，再读取当前用户可恢复的原平台容器定位引用；direct control 只列已有容器并提示
+去话题群主时间线触发同步。控制面自身不执行 rebind，也不启动 agent turn。`/new` 与 `/new <prompt>` 属已知控制
+意图，但在 control scope 只返回“请创建新的原生 Session 容器”反馈，不创建 Session。
 
 `sessionContainer.bindingMode="fixed"` 的 session scope 也不得执行 `/new`、`/new <prompt>` 或会归档当前绑定的
 `/kill` / `/nexus-kill`；这些文本返回稳定的新建容器指引，不产生新 generation。native `/new` 判断使用稳定的
@@ -526,7 +528,7 @@ P3-P5 必须覆盖：
 - stale generation result 不激活 active map。
 - active map missing、reverse map miss、agent owner mismatch fail-closed。
 - 无 native slash 平台的 `/new` 文本入口与精确 `/stop`、`/status`、`/kill` immediate controls 可用；其它已知控制命令稳定拒绝且不进入 agent；未知 `/foo` 仍可作为 prompt。
-- control scope 的普通文本与未知 `/foo` 静默终止；精确 `/nexus-sessions` 只列原容器定位引用；固定容器拒绝 `/new` 与 kill 归档。
+- control scope 的普通文本与未知 `/foo` 静默终止；精确 `/nexus-sessions` 可先物化 profile native session，随后只列原容器定位引用且不启动 agent；固定容器拒绝 `/new` 与 kill 归档。
 - agent command descriptor 来自 agent package 内声明配置文件，并进入对应 package 构建产物。
 - `/stop` 在 single-agent scope 作为 agent alias 路由到当前 backend，并以 agent command envelope 转发；daemon 不校验 agent 私有 handler、不映射为 runtime interrupt。
 - `/nexus-kill` 作为 daemon command 终止当前 RoutingSession，并把 opaque agent conversation ref 保留到可恢复历史。

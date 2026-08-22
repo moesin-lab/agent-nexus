@@ -16,6 +16,22 @@ export interface AgentInput {
   traceId: string;
 }
 
+/** 可由 backend 原生 profile 恢复的持久会话摘要。正文只允许短暂用于创建容器根消息。 */
+export interface RecoverableAgentSession {
+  nativeSessionRef: string;
+  updatedAt: Date;
+  workingDir: string;
+  title?: string;
+  lastCompletedTurnId: string;
+  lastCompletedReply: string;
+}
+
+/** backend profile 的只读会话目录；不得隐式启动、恢复或修改原生会话。 */
+export interface AgentSessionCatalog {
+  profileId(): string;
+  listRecent(input: { limit: number }): Promise<RecoverableAgentSession[]>;
+}
+
 /** docs/dev/spec/agent-runtime.md §TurnEndReason */
 export type TurnEndReason =
   | 'stop'

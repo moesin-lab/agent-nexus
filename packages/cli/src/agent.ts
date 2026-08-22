@@ -9,6 +9,7 @@ import {
   runCompatibilityProbe as runCodexCompatibilityProbe,
 } from '@agent-nexus/agent-codex';
 import {
+  CodexProfileSessionCatalog,
   CodexRemoteViewerAdapter,
   codexAppServerCommandDescriptors,
   createCodexAppServerRuntime,
@@ -29,6 +30,7 @@ import {
 } from '@agent-nexus/daemon';
 import type {
   AgentRuntime,
+  AgentSessionCatalog,
   CommandDescriptor,
   SessionConfig,
 } from '@agent-nexus/protocol';
@@ -42,6 +44,8 @@ import {
 
 export interface SelectedAgent {
   agent: AgentRuntime;
+  sessionCatalog?: AgentSessionCatalog;
+  sessionProfileRequired?: boolean;
   defaultSessionConfig: Omit<
     SessionConfig,
     'resumeFromAgentSessionId' | 'sessionId'
@@ -67,13 +71,31 @@ export async function createAgentRuntime(
   const timeoutMs = agentConfig.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
   if (agentConfig.backend === 'codex') {
     const codex = agentConfig.codex;
+    const codexHome = codex.codexHome
+      ? await realpath(codex.codexHome)
+      : assembly.sourceCodexHome ?? await realpath(
+          process.env['CODEX_HOME'] || join(homedir(), '.codex'),
+        );
+    const effectiveCodex = { ...codex, codexHome };
     await runCodexCompatibilityProbe({
-      config: codex,
+      config: effectiveCodex,
       logger,
       timeoutMs,
     });
     return {
-      agent: createCodexRuntime({ config: codex, logger }),
+      agent: createCodexRuntime({ config: effectiveCodex, logger }),
+      sessionProfileRequired: true,
+      sessionCatalog: new CodexProfileSessionCatalog(
+        {
+          bin: codex.bin,
+          codexHome,
+          allowedWorkingDirs: [codex.workingDir, ...codex.addDirs],
+          clientVersion: '0.146.0',
+          requestTimeoutMs: 30_000,
+          terminateGraceMs: 5_000,
+        },
+        { environment: assembly.environment ?? process.env },
+      ),
       defaultSessionConfig: {
         workingDir: codex.workingDir,
         timeoutMs,
@@ -242,6 +264,12 @@ export async function createAgentRegistry(
       agentOwner: agentConfig.backend,
       commandDescriptors,
       agent: selected.agent,
+      ...(selected.sessionProfileRequired
+        ? { sessionProfileRequired: true }
+        : {}),
+      ...(selected.sessionCatalog
+        ? { sessionCatalog: selected.sessionCatalog }
+        : {}),
       defaultSessionConfig: selected.defaultSessionConfig,
     });
   }

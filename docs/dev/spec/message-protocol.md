@@ -62,6 +62,7 @@ NormalizedEvent {
     guildId: string?                         // guild 事件所属 guild；DM 缺省
     initiatorRoleIds: string[]?              // guild 内发起者角色 ID；DM 缺省/空
     threadParentChannelId: string?           // thread 事件所属父 channel；非 thread 缺省
+    channelKind: "direct" | "group" | "thread"? // 当前容器形态；用于限制依赖父群的控制动作
     deliveryScope: "session" | "control"?    // 缺省 session；control 只允许显式控制文本
     sessionContainer: SessionContainerRef?   // 平台原生 Session 容器定位引用
 

@@ -81,6 +81,7 @@ Proposed ──(显式签字盖章)──> Accepted
 | [0021](0021-lark-thread-as-session-container.md) | 飞书话题作为独立 session 容器 | Proposed |
 | [0022](0022-codex-app-server-primary-tui-supplemental.md) | Codex 以 app-server 为主控制面，TUI 作为补充视图 | Proposed |
 | [0023](0023-supplemental-terminal-session-host.md) | 补充终端会话采用窄接口与可替换 PTY/tmux 适配器 | Proposed |
+| [0024](0024-materialize-native-sessions-as-platform-containers.md) | 把原生 Agent Session 物化为平台 Session 容器 | Proposed |
 
 ## 职责边界
 

@@ -5,6 +5,7 @@ import type {
   AgentCommandEnvelope,
   AgentCommandResult,
   AgentRuntime,
+  AgentSessionCatalog,
   AgentSession,
   CommandDescriptor,
   CommandPayload,
@@ -62,6 +63,10 @@ import {
 } from './router.js';
 import type { SessionStore } from './session-store.js';
 import type {
+  ProfileSessionRecoveryResult,
+  ProfileSessionRecoveryService,
+} from './profile-session-recovery.js';
+import type {
   TrajectorySegment,
   TrajectorySegmentKind,
   TrajectoryStore,
@@ -74,6 +79,9 @@ import {
 
 export interface EngineAgent {
   agent: AgentRuntime;
+  sessionCatalog?: AgentSessionCatalog;
+  /** Resume refs from this backend are profile-scoped even if the catalog is unavailable. */
+  sessionProfileRequired?: boolean;
   agentName: string;
   agentOwner?: string;
   commandDescriptors?: readonly CommandDescriptor[];
@@ -81,6 +89,19 @@ export interface EngineAgent {
     SessionConfig,
     'resumeFromAgentSessionId' | 'sessionId'
   >;
+}
+
+function sessionProfileScope(agent: EngineAgent): {
+  profileRequired: boolean;
+  profileId?: string;
+} {
+  return {
+    profileRequired:
+      agent.sessionProfileRequired ?? Boolean(agent.sessionCatalog),
+    ...(agent.sessionCatalog
+      ? { profileId: agent.sessionCatalog.profileId() }
+      : {}),
+  };
 }
 
 /** config reloader 由组装层注入；语义见 docs/dev/spec/config-routing.md §配置热重载 */
@@ -210,6 +231,7 @@ export interface EngineDeps {
     store?: TrajectoryStore;
   };
   externalSessionImporter?: ExternalSessionImporter;
+  profileSessionRecovery?: ProfileSessionRecoveryService;
   providerCapture?: ProviderCaptureRecorder;
 }
 
@@ -495,6 +517,7 @@ export class Engine {
   private readonly trajectoryEnabled: boolean;
   private readonly trajectoryStore?: TrajectoryStore;
   private readonly externalSessionImporter?: ExternalSessionImporter;
+  private readonly profileSessionRecovery?: ProfileSessionRecoveryService;
   private readonly providerCapture?: ProviderCaptureRecorder;
   private readonly streamEditThrottleMs: number;
   private readonly typingRefreshMs: number;
@@ -503,6 +526,10 @@ export class Engine {
   private readonly agentOverridesByChannel = new Map<string, string>();
   private readonly pendingConfigEdits = new Map<string, PendingConfigEdit>();
   private readonly sessionContainerResolutions = new Map<string, Promise<void>>();
+  private readonly profileSessionSyncs = new Map<
+    string,
+    Promise<ProfileSessionRecoveryResult>
+  >();
   /**
    * Daemon 级 per-SessionKey barrier：同 key 的 message / queued command
    * 按到达序执行，不同 key 之间互不阻塞。
@@ -561,6 +588,7 @@ export class Engine {
     this.trajectoryEnabled = deps.trajectory?.enabled ?? true;
     this.trajectoryStore = deps.trajectory?.store;
     this.externalSessionImporter = deps.externalSessionImporter;
+    this.profileSessionRecovery = deps.profileSessionRecovery;
     this.providerCapture = deps.providerCapture;
     this.streamEditThrottleMs =
       deps.streaming?.streamEditThrottleMs ?? DEFAULT_STREAM_EDIT_THROTTLE_MS;
@@ -586,8 +614,19 @@ export class Engine {
     if (this.stopPromise) return this.stopPromise;
     this.stopping = true;
     this.stopPromise = (async () => {
-      const platformStop = Promise.resolve().then(() => this.platform.stop());
       this.messageQueue.clearAll();
+      // Keep the adapter usable until every accepted profile sync reaches a
+      // durable checkpoint. Stopping it earlier can turn a pre-dispatch scan
+      // into a permanent not-created failure.
+      const profileSyncs = [...this.profileSessionSyncs.values()];
+      if (profileSyncs.length > 0) {
+        await Promise.allSettled(
+          profileSyncs.map((operation) =>
+            operation.then(() => undefined, () => undefined),
+          ),
+        );
+      }
+      const platformStop = Promise.resolve().then(() => this.platform.stop());
       const activeSessions = [...this.agentSessions];
       const inFlightStops = [...this.sessionStopBarriers.values()];
       const cleanupResults = await Promise.allSettled([
@@ -673,17 +712,104 @@ export class Engine {
       return;
     }
     if (text === '/nexus-sessions') {
+      let syncNotice: string | undefined;
+      if (
+        agentSlot.sessionCatalog &&
+        this.profileSessionRecovery &&
+        this.platform.capabilities().supportsThreadCreation &&
+        this.platform.capabilities().supportsThreadCreateIdempotencyKey &&
+        this.platform.createThread &&
+        event.channelKind === 'direct'
+      ) {
+        syncNotice =
+          '[profile sync skipped: run /nexus-sessions in a topic group]';
+      } else if (
+        agentSlot.sessionCatalog &&
+        this.profileSessionRecovery &&
+        this.platform.capabilities().supportsThreadCreation &&
+        this.platform.capabilities().supportsThreadCreateIdempotencyKey &&
+        this.platform.createThread
+      ) {
+        try {
+          // A native session is materialized once per profile/agent/platform/user.
+          // Parent channels are only the destination won by the first caller.
+          const syncKey = JSON.stringify([
+            this.platformName,
+            event.sessionKey.platform,
+            event.initiator.userId,
+            agentSlot.agentName,
+            agentSlot.agentOwner ?? agentSlot.agent.name(),
+            agentSlot.sessionCatalog.profileId(),
+          ]);
+          let operation = this.profileSessionSyncs.get(syncKey);
+          if (!operation) {
+            let tracked!: Promise<ProfileSessionRecoveryResult>;
+            tracked = this.profileSessionRecovery
+              .sync({
+                catalog: agentSlot.sessionCatalog,
+                agentName: agentSlot.agentName,
+                agentOwner: agentSlot.agentOwner ?? agentSlot.agent.name(),
+                platformName: this.platformName,
+                platform: event.sessionKey.platform,
+                parentChannelId: routedSessionKey.channelId,
+                ownerUserId: event.initiator.userId,
+                traceId: event.traceId,
+                maxTextLength: this.platform.capabilities().maxTextLength,
+                createThread: this.platform.createThread.bind(this.platform),
+              })
+              .finally(() => {
+                if (this.profileSessionSyncs.get(syncKey) === tracked) {
+                  this.profileSessionSyncs.delete(syncKey);
+                }
+              });
+            operation = tracked;
+            this.profileSessionSyncs.set(syncKey, tracked);
+          }
+          const sync = await operation;
+          syncNotice =
+            `[profile sync: ${sync.linked} new, ${sync.existing} existing, ` +
+            `${sync.retryable} retryable, ${sync.deferred} deferred, ` +
+            `${sync.failed} failed, ${sync.ambiguous} ambiguous]`;
+          this.logger.info(
+            {
+              traceId: event.traceId,
+              agentName: agentSlot.agentName,
+              discovered: sync.discovered,
+              linked: sync.linked,
+              existing: sync.existing,
+              failed: sync.failed,
+              ambiguous: sync.ambiguous,
+              retryable: sync.retryable,
+              deferred: sync.deferred,
+            },
+            'profile_session_sync_complete',
+          );
+        } catch (err) {
+          syncNotice = '[profile sync failed]';
+          this.logger.error(
+            {
+              traceId: event.traceId,
+              agentName: agentSlot.agentName,
+              err,
+            },
+            'profile_session_sync_failed',
+          );
+        }
+      }
       const sessions = this.sessionStore.listForUser({
         platformName: this.platformName,
         platform: event.sessionKey.platform,
         initiatorUserId: event.initiator.userId,
         agentOwner: agentSlot.agentOwner ?? agentSlot.agent.name(),
+        ...sessionProfileScope(agentSlot),
         limit: 25,
       });
       await this.sendCommandAck(
         routedEvent,
         routedSessionKey,
-        this.renderControlPlaneSessionList(sessions),
+        [syncNotice, this.renderControlPlaneSessionList(sessions)]
+          .filter((line): line is string => Boolean(line))
+          .join('\n'),
       );
       return;
     }
@@ -1070,6 +1196,7 @@ export class Engine {
     const claimed = this.sessionStore.claimFixedThreadAgent(key, {
       agentName: agentSlot.agentName,
       agentOwner,
+      ...sessionProfileScope(agentSlot),
     });
     if (claimed) return true;
     const fixed = this.sessionStore.findThreadByChannelId(key);
@@ -1079,8 +1206,10 @@ export class Engine {
         sessionKey: serializeSessionKey(key),
         fixedAgentName: fixed?.agentName,
         fixedAgentOwner: fixed?.agentOwner,
+        fixedProfileId: fixed?.profileId,
         requestedAgentName: agentSlot.agentName,
         requestedAgentOwner: agentOwner,
+        requestedProfileId: agentSlot.sessionCatalog?.profileId(),
       },
       'fixed_session_agent_mismatch',
     );
@@ -1734,6 +1863,7 @@ export class Engine {
       platform: event.sessionKey.platform,
       initiatorUserId: event.initiator.userId,
       agentOwner: agentSlot.agentOwner ?? agentSlot.agent.name(),
+      ...sessionProfileScope(agentSlot),
       limit: 25,
     });
     if (sessions.length === 0) {
@@ -2238,6 +2368,7 @@ export class Engine {
           platform: event.sessionKey.platform,
           initiatorUserId: event.initiator.userId,
           agentOwner: agentSlot.agentOwner ?? agentSlot.agent.name(),
+          ...sessionProfileScope(agentSlot),
           limit: 25,
         })
       : [];
@@ -3463,6 +3594,7 @@ export class Engine {
         platform: event.sessionKey.platform,
         initiatorUserId: event.initiator.userId,
         agentOwner,
+        ...sessionProfileScope(agentSlot),
         limit: Number.MAX_SAFE_INTEGER,
       })
       .some((candidate) => candidate.sessionId === sessionId);
@@ -3483,6 +3615,8 @@ export class Engine {
       sessionId,
       new Date(),
       agentOwner,
+      agentSlot.sessionCatalog?.profileId(),
+      sessionProfileScope(agentSlot).profileRequired,
     );
     if (!rebound) {
       return this.commandResponse(COMMAND_UNAVAILABLE_TEXT, event.traceId);
@@ -3520,6 +3654,7 @@ export class Engine {
         importId,
         sessionKey: routedSessionKey,
         agentOwner,
+        ...sessionProfileScope(agentSlot),
       });
     } catch (err) {
       if (err instanceof ExternalSessionImportServiceError) {
@@ -4773,6 +4908,9 @@ export class Engine {
               this.sessionStore.set(event.sessionKey, {
                 agentSessionId,
                 agentOwner: agentSlot.agentOwner ?? agentSlot.agent.name(),
+                ...(agentSlot.sessionCatalog
+                  ? { profileId: agentSlot.sessionCatalog.profileId() }
+                  : {}),
                 lastTurnAt: new Date(),
                 title,
                 workingDir: activeSessionForTrajectory?.workingDir,
@@ -5050,8 +5188,13 @@ export class Engine {
     }
     const agentOwner = agentSlot.agentOwner ?? agentSlot.agent.name();
     const stored = this.sessionStore.get(event.sessionKey);
+    const profileScope = sessionProfileScope(agentSlot);
     const incompatibleStoredRef =
-      stored?.agentSessionId !== undefined && stored.agentOwner !== agentOwner;
+      stored?.agentSessionId !== undefined &&
+      (stored.agentOwner !== agentOwner ||
+        (profileScope.profileRequired &&
+          (!profileScope.profileId ||
+            stored.profileId !== profileScope.profileId)));
     const active = this.agentSessions.get(sessionKeyStr);
     if (
       active &&
@@ -5082,6 +5225,8 @@ export class Engine {
             sessionKey: sessionKeyStr,
             storedAgentOwner: stored?.agentOwner,
             requestedAgentOwner: agentOwner,
+            storedProfileId: stored?.profileId,
+            requestedProfileId: profileScope.profileId,
           },
           'fixed_session_owner_mismatch',
         );

@@ -86,6 +86,9 @@ agent-nexus --home ~/.agent-nexus-stable
 | 飞书普通任务消息无响应 | 普通任务必须发在带 `thread_id` 的话题内；P2P 与群主时间线普通文本按设计静默拒绝，只接受明确控制命令。再查看 `route_not_found.channelId` 校对父群 `chat_id` 是否在 `match.lark.chatIds`，并查看 `auth_denied.userId` 校对 `auth.allowlist.userIds` |
 | 启动报 state schema / session store 错误 | 先备份 `<home>/state.db`；runtime 会拒绝打开比自身更新或结构损坏的 schema，不会静默退回内存。不要手工修改版本号或表结构 |
 | `/nexus-sessions` 只显示父群入口或稳定 ID | 根消息 AppLink 查询未成功；确认应用具备读取目标消息的权限并可访问飞书开放 API，随后在原话题再发一条消息触发重试 |
+| `/nexus-sessions` 显示 `profile sync failed` | 确认 `codexHome` 与实际 profile 一致、Codex CLI 落在 catalog 支持版本窗口、目标 cwd 位于 agent `workingDir/addDirs`，并检查应用是否能读取话题群和发送消息 |
+| `/nexus-sessions` 显示 ambiguous | 远端创建结果无法确认；不要重复发送或手工修改 `state.db`。先在目标群确认是否已有对应话题，当前版本不会自动重试该 operation |
+| 旧话题在修改 `codexHome` 后不再 resume | fixed topic 会固定创建它的 opaque profile identity，这是预期的 fail-closed 行为；恢复原 `codexHome`，或从新 profile 的控制面重新运行 `/nexus-sessions` |
 | `/discord-reply-mode` / `/reply-mode` 不出现 | 开发时配置 `platforms[].testGuildId`，避免全局 slash command 缓存延迟；确认 bot 邀请包含 `applications.commands` scope；确认 `daemon.commandRegistry.registration.enabled=true`；legacy `/reply-mode` 还要求 `daemon.commandRegistry.aliases.legacy.replyMode=true` |
 | `/codex-new` / `/claudecode-new` 不出现 | 确认对应 backend 的 agent 已配置，且当前 platform 至少有一条 binding 指向该 agent；裸 `/new` 只在同一注册 scope 只有一种 agent owner 且 `daemon.commandRegistry.aliases.singleAgent.enabled=true` 时出现 |
 | 同一个 Discord application 下其它工具注册的 slash command 消失 | agent-nexus 会用期望全集覆盖当前 application 在该 scope 下的命令；不要和其它工具共享同一个 bot application 的 slash command scope |

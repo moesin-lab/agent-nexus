@@ -163,8 +163,22 @@ RoutingSession 持有的 opaque agent conversation ref 与 live `AgentSession` h
 Trajectory read model 不改变本状态机。它以 RoutingSession / sessionId 为主要 anchor，另行记录外部 session 导入、native resume 绑定、AgentEvent transcript anchor、usage/log anchor 与可选 provider-call observation。
 
 外部 session resume 的架构边界与本节一致：daemon 保存 opaque native ref 并交给 agent runtime resume；外部 transcript 内容不因导入而进入模型上下文。字段、状态和查询契约见 [`trajectory-observability.md`](../spec/infra/trajectory-observability.md)。
+外部 import 记录当前没有可验证的 source profile identity，因此不能绑定到声明 profile-scoped 的 backend；此类恢复
+应改走同一 backend profile catalog，直到 importer 能提供并验证 opaque profile identity。
 
-当前实现把 RoutingSession registry 持久化到 `<home>/state.db`。daemon-owned `/nexus-sessions` 按当前 platform instance + platform + user 及更新时间倒序列出最近可恢复、且与当前 agent owner 兼容的 opaque agent conversation ref，包括同一 SessionKey 下被 `/new`、`/nexus-kill`、agent binding 切换或 session rebind 挤出活跃区的历史项。展示标题取自该 session 的第一条用户消息。可 rebind 容器通过平台交互组件把当前 SessionKey 绑定到所选 `agentSessionId`，下一条消息使用 `SessionConfig.resumeFromAgentSessionId` 恢复；rebind 迁移 opaque ref、agent owner、标题、实际 workingDir 与下一次 spawn override，不复制平台原生会话拓扑元数据。fixed session container 的定位引用与首次固定的 agent identity 一并落盘；列表展示原容器 URL/定位 ID，用户回原容器发送下一条消息时以原 opaque ref 启动新的 runtime handle，不执行 rebind。不兼容当前 agent owner 的历史不会显示，过期 interaction 也不能跨 backend 重绑。daemon-created 容器占位在 agent session 启动前不进入可恢复列表。
+当前实现把 RoutingSession registry 持久化到 `<home>/state.db`。daemon-owned `/nexus-sessions` 按当前 platform instance + platform + user 及更新时间倒序列出最近可恢复、且与当前 agent owner/profile 兼容的 opaque agent conversation ref，包括同一 SessionKey 下被 `/new`、`/nexus-kill`、agent binding 切换或 session rebind 挤出活跃区的历史项。展示标题取自该 session 的第一条用户消息。profile-scoped backend 把 opaque profile identity 与每条 RoutingSession 一并落盘；缺失或不匹配的历史不进入列表，也不能由 interaction rebind。可 rebind 容器通过平台交互组件把当前 SessionKey 绑定到所选 `agentSessionId`，下一条消息使用 `SessionConfig.resumeFromAgentSessionId` 恢复；rebind 迁移 opaque ref、agent owner、profile identity、标题、实际 workingDir 与下一次 spawn override，不复制平台原生会话拓扑元数据。fixed session container 的定位引用、首次固定的 agent identity 与 opaque profile identity 一并落盘；列表展示原容器 URL/定位 ID，用户回原容器发送下一条消息时只有同一 profile 才能以原 opaque ref 启动新的 runtime handle，不执行 rebind。不兼容当前 agent owner/profile 的历史不会显示，过期 interaction 也不能跨 backend/profile 重绑。daemon-created 容器占位在 agent session 启动前不进入可恢复列表。
+普通消息命中当前 rebindable SessionKey 时也执行同一 profile gate：缺失或不匹配的旧 ref 先归档，再在当前 profile
+创建新 Session；fixed 容器则直接 fail closed，不能把旧 ref 交给 runtime。
+
+话题外已鉴权 `/nexus-sessions` 还可触发当前 route 精确命名 agent 的 profile catalog。尚未物化的 native session
+按 [ADR-0024](../adr/0024-materialize-native-sessions-as-platform-containers.md) 新建固定容器：最后一个 completed
+turn 的回复只作为平台根消息，随后在单一 SQLite 事务中保存 opaque ref、原 workingDir、固定容器与 agent identity。
+用户在新容器的下一条消息才启动 runtime，并把原 opaque ref 放入 `resumeFromAgentSessionId`；seed 不作为新的
+`AgentInput`。扫描失败或 ambiguous 创建不会生成可恢复 RoutingSession。
+若普通 fixed topic 已经绑定同一 native ref，扫描把它计为 existing，不创建 materialization operation 或第二个容器。
+materialization identity 不含控制面父容器；同一用户从不同父容器并发扫描时，首个 durable reservation 决定话题目标。
+缺少 profile identity 的 legacy fixed topic 在 catalog 从当前 profile 返回同一 native ref 后才允许回填并恢复；在此之前
+直接收到的 topic 消息必须 fail closed。
 
 registry 的容量上限是软上限：当前实例通常最多保留 `100` 条 session 记录；超过上限时只淘汰非活跃历史中 `lastTurnAt` 最早的记录，并同步删除对应持久记录，不为凑上限中断仍活跃的 runtime handle。若活跃记录本身超过上限，记录数可暂时超出；某条记录转为非活跃历史时立即再次执行淘汰。
 
@@ -245,7 +259,11 @@ cursor 的平台还可能在断线窗口丢失事件，幂等只能消除重复�
 
 - CLI 在启动任何 platform 连接前从 SQLite 重建 current/history session registry，并把上一进程的非终态记录写为 **Interrupted**。
 - runtime handle、in-flight turn 与 daemon queue 不落盘，也不会在启动时自动 replay。
-- fixed session container 保持同一个 sessionId/generation；用户回到原话题发送下一条有效消息时，daemon 启动新的 runtime handle，并把已保存的 opaque ref 作为 `resumeFromAgentSessionId`。
+- 正常 shutdown 在关闭 Session registry/state DB 前等待已接受的 profile materialization 到达 durable checkpoint；
+  停机开始后拒绝新的扫描。hard crash 仍按 ADR-0024 的 ambiguous 语义恢复，不自动重放远端创建。
+- fixed session container 保持同一个 sessionId/generation；用户回到原话题发送下一条有效消息时，daemon 先校验
+  当前精确 agent/profile identity，再启动新的 runtime handle，并把已保存的 opaque ref 作为
+  `resumeFromAgentSessionId`；profile 已变化或当前 runtime 不提供原 profile catalog 时 fail closed。
 - rebindable 容器的历史继续通过 `/nexus-sessions` 选择后恢复。
 - 完整的 Idle/Interrupted 超时归档与交互式确认门仍按本状态机演进；当前 registry persistence 不从 SQLite 自行 replay 用户输入。
 

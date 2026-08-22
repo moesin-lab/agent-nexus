@@ -103,7 +103,10 @@ contracts:
   异步 URL resolver 只能补写 `url`，不得覆盖 `kind`、`bindingMode`、`parentChannelId` 或 `rootMessageId`。
   rebind 不迁移该字段；fixed container 必须拒绝 rebind。URL 与稳定 ID 只对通过当前 platform auth 的用户展示，不进入日志或 trajectory 摘要。
 - `meta_json.sessionKey` 保存完整四字段对象，用于无损恢复；不得通过对 `session_key` 的冒号拼接字符串执行 `split` 反序列化。
-- `meta_json.title` 保存 `/nexus-sessions` 展示标题；`meta_json.fixedThread` 只保存容器 owner 与首次固定的 `agentName + agentOwner`，不保存平台密钥。
+- `meta_json.title` 保存 `/nexus-sessions` 展示标题；`meta_json.profileId` 保存 backend catalog 提供的 opaque
+  native resume namespace identity，供所有 profile-scoped history 列表与 rebind fail closed；不得保存 profile 路径。
+  `meta_json.fixedThread` 只保存容器 owner、首次固定的
+  `agentName + agentOwner` 与可用时 catalog 提供的 opaque `profileId`，不保存 profile 路径或平台密钥。
 - `meta_json.trajectorySequence` 保存该 session 已分配的最后 sequence，重启后继续单调递增。
 
 ### idempotency
@@ -185,6 +188,51 @@ contracts:
 字段语义和状态机见 [`trajectory-observability.md`](trajectory-observability.md#导入状态)。
 
 把 external import 绑定为 RoutingSession 时，`external_session_imports.state/linked_session_id` 与对应 `sessions` 行必须在同一个 `state.db` 事务提交；任一写入失败都回滚整个绑定并允许重试。
+
+### native_session_materializations
+
+该表拥有 ADR-0024 的跨 profile/platform 物化 saga；不依赖 trajectory 开关。
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `operation_id` | TEXT PRIMARY KEY | 由下述 identity tuple 稳定派生，不含路径原文 |
+| `profile_id` | TEXT NOT NULL | agent catalog 提供的 opaque profile identity |
+| `native_session_ref` | TEXT NOT NULL | 可交回同一 backend/profile 的 opaque resume ref |
+| `agent_name` | TEXT NOT NULL | 当前 route 的精确命名 agent |
+| `agent_owner` | TEXT NOT NULL | backend owner |
+| `platform_name` | TEXT NOT NULL | platform instance |
+| `platform` | TEXT NOT NULL | platform type |
+| `parent_channel_id` | TEXT NOT NULL | 已鉴权控制面父容器 |
+| `owner_user_id` | TEXT NOT NULL | 发起同步并拥有固定容器的用户 |
+| `idempotency_key` | TEXT NOT NULL UNIQUE | 传给平台创建 port 的稳定键 |
+| `state` | TEXT NOT NULL | `planned|container_created|linked|failed|ambiguous` |
+| `thread_id` | TEXT | 远端创建成功后填写 |
+| `root_message_id` | TEXT | 平台根消息 ID |
+| `url` | TEXT | 经平台 adapter 校验的定位 URL |
+| `linked_session_id` | TEXT | `linked` 后对应的 `sessions.session_id` |
+| `error_code` | TEXT | 稳定错误分类；不得保存原始平台响应或正文 |
+| `created_at` | TEXT NOT NULL | RFC3339 |
+| `updated_at` | TEXT NOT NULL | RFC3339 |
+
+唯一约束覆盖 `(profile_id, native_session_ref, agent_name, agent_owner, platform_name, platform,
+owner_user_id)`。`parent_channel_id` 是首次成功 reservation 选中的物化目标，不属于 native session identity；同一用户
+从不同父容器并发触发扫描也只能产生一个 operation。同一 profile 的 rollout 文件位置变化不能产生新 operation；
+不同 profile、命名 agent、backend owner、平台实例/类型或用户互不串绑。
+
+状态转换：
+
+- `planned` 必须先于远端 create 落盘；dispatch 前先原子转为 `ambiguous(error_code=thread-create-in-flight)`，再使用
+  持久 `idempotency_key` 调平台。进程在请求前或请求中崩溃都保留 ambiguous，不跨重启自动重放。
+- 成功返回的 thread/root/url 把当前 in-flight ambiguous 转为 `container_created`，再进行本地绑定。
+- `container_created → linked` 与新 `sessions` 行、fixed thread metadata、原 workingDir、opaque ref、固定
+  `agentName + agentOwner + profileId` 必须在一个 `state.db` 事务提交。
+- 明确未创建且可重试的错误回到 `planned`，只允许下一次显式控制命令重试；明确未创建且不可重试写 `failed`；
+  无法确认远端是否创建保留 `ambiguous`。`ambiguous` 首版不得自动回到 planned。
+- `lastCompletedReply`、profile 绝对路径、Codex `Thread.sessionId` 与原始平台 response 不得进入本表。
+- 插入 `planned` 前必须查询当前 Session registry：同 platform instance/platform/user、精确 agent identity 与
+  profile 下若已有 fixed container 的 current session 绑定同一 `native_session_ref`，直接计为 existing，不创建本表行。
+  缺少 `profileId` 的旧 fixed metadata 不能被带 profile 的直接 resume 认领；只有当前 catalog 扫描实际返回同一
+  `native_session_ref` 时，才允许在同一精确 agent identity 下回填 profile 并计为 existing。
 
 ### trajectory_segments
 
@@ -332,8 +380,8 @@ interface Store {
 
 ## 迁移
 
-- SQLite store 沿用历史物理表名 `trajectory_schema_version` 作为整个 `state.db` 的唯一 schema version，当前版本为 2；不得另建 session 专属版本真相源。
-- 启动时检查 schema version；无版本记录的旧库依次运行幂等 V1 trajectory migration 与 V2 sessions migration，已有 V1 数据库只追加 V2。
+- SQLite store 沿用历史物理表名 `trajectory_schema_version` 作为整个 `state.db` 的唯一 schema version，当前版本为 3；不得另建 session 专属版本真相源。
+- 启动时检查 schema version；无版本记录的旧库依次运行幂等 V1 trajectory、V2 sessions 与 V3 native materialization migration；已有 V1/V2 数据库只追加缺失版本。
 - 每次 schema 变更必须提升版本并在 store open 时自动跑 pending migration。
 - 遇到高于当前 runtime 支持的 schema version 必须 fail-closed。
 - 当前版本号存在但缺少必需表/列时同样 fail-closed，不得静默回退为内存 SessionStore。

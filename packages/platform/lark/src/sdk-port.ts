@@ -24,6 +24,9 @@ export interface LarkSdkClientPort {
   getMessage(input: {
     path: { message_id: string };
   }): Promise<unknown>;
+  getChat(input: {
+    path: { chat_id: string };
+  }): Promise<unknown>;
 }
 
 export interface LarkSdkDispatcherPort {

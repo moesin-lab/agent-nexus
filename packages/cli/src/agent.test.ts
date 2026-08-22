@@ -23,6 +23,11 @@ const defaultEngine = vi.hoisted(() => {
   return { prepare, factory };
 });
 const createDefaultEngineFactoryMock = vi.hoisted(() => vi.fn(() => defaultEngine.factory));
+const codexProfileCatalog = vi.hoisted(() => ({
+  profileId: vi.fn(() => 'codex-profile:test'),
+  listRecent: vi.fn(async () => []),
+}));
+const createCodexProfileCatalogMock = vi.hoisted(() => vi.fn(() => codexProfileCatalog));
 const runAppServerProbeMock = vi.hoisted(() => vi.fn(async () => ({ codexVersion: '0.146.0' })));
 const runAppServerViewerProbeMock = vi.hoisted(() => vi.fn(async () => ({ codexVersion: '0.146.0' })));
 const viewerAdapter = vi.hoisted(() => ({
@@ -44,6 +49,7 @@ vi.mock('@agent-nexus/agent-codex', () => ({
 }));
 
 vi.mock('@agent-nexus/agent-codex-app-server', () => ({
+  CodexProfileSessionCatalog: createCodexProfileCatalogMock,
   codexAppServerCommandDescriptors: [{ handlerKey: 'new' }],
   createCodexAppServerRuntime: createAppServerRuntimeMock,
   createDefaultCodexAppServerEngineFactory: createDefaultEngineFactoryMock,
@@ -102,6 +108,7 @@ describe('createAgentRuntime', () => {
     runCodexProbeMock.mockClear();
     createAppServerRuntimeMock.mockClear();
     createDefaultEngineFactoryMock.mockClear();
+    createCodexProfileCatalogMock.mockClear();
     defaultEngine.prepare.mockReset().mockResolvedValue(undefined);
     defaultEngine.factory.mockClear();
     runAppServerProbeMock.mockClear();
@@ -368,14 +375,39 @@ describe('createAgentRuntime', () => {
     const selected = await createAgentRuntime(
       { name: 'codex-dev', backend: 'codex', timeoutMs: 1_800_000, codex },
       logger,
+      {
+        sourceCodexHome: '/profiles/codex-main',
+        environment: { PATH: '/usr/bin:/bin' },
+      },
     );
 
+    const effectiveCodex = {
+      ...codex,
+      codexHome: '/profiles/codex-main',
+    };
+
     expect(runCodexProbeMock).toHaveBeenCalledWith({
-      config: codex,
+      config: effectiveCodex,
       logger,
       timeoutMs: 1_800_000,
     });
-    expect(createCodexRuntimeMock).toHaveBeenCalledWith({ config: codex, logger });
+    expect(createCodexRuntimeMock).toHaveBeenCalledWith({
+      config: effectiveCodex,
+      logger,
+    });
+    expect(createCodexProfileCatalogMock).toHaveBeenCalledWith(
+      {
+        bin: 'codex',
+        codexHome: '/profiles/codex-main',
+        allowedWorkingDirs: ['/codex'],
+        clientVersion: '0.146.0',
+        requestTimeoutMs: 30_000,
+        terminateGraceMs: 5_000,
+      },
+      { environment: { PATH: '/usr/bin:/bin' } },
+    );
+    expect(selected.sessionCatalog).toBe(codexProfileCatalog);
+    expect(selected.sessionProfileRequired).toBe(true);
     expect(runClaudeProbeMock).not.toHaveBeenCalled();
     expect(createClaudeCodeRuntimeMock).not.toHaveBeenCalled();
     expect(selected.agent).toBe(codexRuntime);
@@ -398,10 +430,11 @@ describe('createAgentRuntime', () => {
     const selected = await createAgentRuntime(
       { name: 'codex-dev', backend: 'codex', codex },
       logger,
+      { sourceCodexHome: '/profiles/codex-main' },
     );
 
     expect(runCodexProbeMock).toHaveBeenCalledWith({
-      config: codex,
+      config: { ...codex, codexHome: '/profiles/codex-main' },
       logger,
       timeoutMs: 300_000,
     });

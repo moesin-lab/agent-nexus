@@ -180,6 +180,12 @@ type _CapabilitySetSupportsModals = Expect<
 type _CapabilitySetSupportsThreadCreation = Expect<
   Equal<CapabilitySet['supportsThreadCreation'], boolean | undefined>
 >;
+type _CapabilitySetSupportsThreadCreateIdempotencyKey = Expect<
+  Equal<
+    CapabilitySet['supportsThreadCreateIdempotencyKey'],
+    boolean | undefined
+  >
+>;
 type _CapabilitySetDoesNotExposeStringSelects = Expect<
   Not<HasKey<CapabilitySet, 'supportsStringSelects'>>
 >;

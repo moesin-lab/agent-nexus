@@ -74,6 +74,31 @@ describe('SqliteTrajectoryStore', () => {
     reopened.close();
   });
 
+  it('migrates a V2 state database to native session materializations', () => {
+    const dbPath = tempDbPath();
+    const previous = new SqliteStateDatabase({ path: dbPath });
+    previous.database.exec(`
+      DROP TABLE native_session_materializations;
+      UPDATE trajectory_schema_version
+      SET version = 2, updated_at = '2026-08-21T00:00:00.000Z'
+      WHERE id = 1;
+    `);
+    previous.close();
+
+    const migrated = new SqliteStateDatabase({ path: dbPath });
+    expect(readSchemaVersion(migrated.database)).toBe(
+      CURRENT_STATE_SCHEMA_VERSION,
+    );
+    expect(
+      migrated.database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'native_session_materializations'",
+        )
+        .get(),
+    ).toEqual({ name: 'native_session_materializations' });
+    migrated.close();
+  });
+
   it('fails closed when the state schema version is newer than supported', () => {
     const dbPath = tempDbPath();
     const db = openDb(dbPath);

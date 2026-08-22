@@ -928,6 +928,56 @@ describe('SessionStore', () => {
     expect(store.get(key)).toBeUndefined();
   });
 
+  it('filters and rebinds profile-scoped sessions only within the exact profile', () => {
+    const store = new SessionStore();
+    const sourceKey = makeKey({ channelId: 'C-profile-source' });
+    const targetKey = makeKey({ channelId: 'C-profile-target' });
+    store.set(sourceKey, {
+      agentSessionId: 'sid-profile-a',
+      agentOwner: 'codex',
+      profileId: 'codex-profile:a',
+      lastTurnAt: new Date(1),
+    });
+    const listInput = {
+      platformName: 'discord-main',
+      platform: 'discord',
+      initiatorUserId: 'U1',
+      agentOwner: 'codex',
+      profileRequired: true,
+      limit: 10,
+    };
+
+    expect(
+      store.listForUser({ ...listInput, profileId: 'codex-profile:b' }),
+    ).toEqual([]);
+    const [source] = store.listForUser({
+      ...listInput,
+      profileId: 'codex-profile:a',
+    });
+    expect(source).toMatchObject({ profileId: 'codex-profile:a' });
+    store.archiveCurrent(sourceKey);
+    expect(
+      store.bindExistingToKey(
+        targetKey,
+        source!.sessionId,
+        new Date(2),
+        'codex',
+        'codex-profile:b',
+        true,
+      ),
+    ).toBeUndefined();
+    expect(
+      store.bindExistingToKey(
+        targetKey,
+        source!.sessionId,
+        new Date(2),
+        'codex',
+        'codex-profile:a',
+        true,
+      ),
+    ).toMatchObject({ profileId: 'codex-profile:a' });
+  });
+
   it('rejects rebinding a session without an explicit agent owner', () => {
     const store = new SessionStore();
     const key = makeKey();
@@ -1214,12 +1264,14 @@ describe('SessionStore', () => {
       store.claimFixedThreadAgent(key, {
         agentName: 'codex-dev',
         agentOwner: 'codex',
+        profileId: 'codex-profile:dev',
       }),
     ).toBe(true);
     expect(
       store.claimFixedThreadAgent(key, {
         agentName: 'codex-prod',
         agentOwner: 'codex',
+        profileId: 'codex-profile:dev',
       }),
     ).toBe(false);
     expect(
@@ -1231,7 +1283,125 @@ describe('SessionStore', () => {
     expect(store.findThreadByChannelId(key)).toMatchObject({
       agentName: 'codex-dev',
       agentOwner: 'codex',
+      profileId: 'codex-profile:dev',
     });
+    expect(
+      store.claimFixedThreadAgent(key, {
+        agentName: 'codex-dev',
+        agentOwner: 'codex',
+        profileId: 'codex-profile:other',
+      }),
+    ).toBe(false);
+  });
+
+  it('finds an existing fixed native resume binding only in the same profile scope', () => {
+    const store = new SessionStore();
+    const key = makeKey({
+      platformName: 'lark-main',
+      platform: 'lark',
+      channelId: 'omt-topic-1',
+    });
+    store.registerThread(key, {
+      parentChannelId: 'oc-chat-1',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-root-1',
+    });
+    store.claimFixedThreadAgent(key, {
+      agentName: 'codex-dev',
+      agentOwner: 'codex',
+      profileId: 'codex-profile:dev',
+    });
+    store.set(key, {
+      agentSessionId: 'thr-native-1',
+      agentOwner: 'codex',
+      lastTurnAt: new Date(1),
+    });
+
+    const lookup = {
+      profileId: 'codex-profile:dev',
+      nativeSessionRef: 'thr-native-1',
+      agentName: 'codex-dev',
+      agentOwner: 'codex',
+      platformName: 'lark-main',
+      platform: 'lark',
+      ownerUserId: 'U1',
+    };
+    expect(store.hasFixedNativeResumeBinding(lookup)).toBe(true);
+    expect(
+      store.hasFixedNativeResumeBinding({
+        ...lookup,
+        profileId: 'codex-profile:other',
+      }),
+    ).toBe(false);
+    expect(
+      store.hasFixedNativeResumeBinding({ ...lookup, ownerUserId: 'U2' }),
+    ).toBe(false);
+  });
+
+  it('旧 fixed native binding 必须先由 catalog 确认 profile，不能直接跨 profile resume', () => {
+    const store = new SessionStore();
+    const key = makeKey({
+      platformName: 'lark-main',
+      platform: 'lark',
+      channelId: 'omt-legacy-topic',
+    });
+    store.registerThread(key, {
+      parentChannelId: 'oc-chat-1',
+      ownerUserId: 'U1',
+      bindingMode: 'fixed',
+      rootMessageId: 'om-legacy-root',
+    });
+    store.claimFixedThreadAgent(key, {
+      agentName: 'codex-dev',
+      agentOwner: 'codex',
+    });
+    store.set(key, {
+      agentSessionId: 'thr-legacy-native',
+      agentOwner: 'codex',
+      lastTurnAt: new Date(1),
+    });
+    const identity = {
+      profileId: 'codex-profile:confirmed',
+      nativeSessionRef: 'thr-legacy-native',
+      agentName: 'codex-dev',
+      agentOwner: 'codex',
+      platformName: 'lark-main',
+      platform: 'lark',
+      ownerUserId: 'U1',
+    };
+
+    expect(
+      store.listForUser({
+        platformName: 'lark-main',
+        platform: 'lark',
+        initiatorUserId: 'U1',
+        agentOwner: 'codex',
+        profileRequired: true,
+        profileId: identity.profileId,
+        limit: 10,
+      }),
+    ).toEqual([]);
+
+    expect(
+      store.claimFixedThreadAgent(key, {
+        agentName: 'codex-dev',
+        agentOwner: 'codex',
+        profileId: identity.profileId,
+      }),
+    ).toBe(false);
+    expect(store.adoptFixedNativeResumeBindingProfile(identity)).toBe(true);
+    expect(store.findThreadByChannelId(key)).toMatchObject({
+      profileId: identity.profileId,
+    });
+    expect(store.get(key)).toMatchObject({ profileId: identity.profileId });
+    expect(
+      store.claimFixedThreadAgent(key, {
+        agentName: 'codex-dev',
+        agentOwner: 'codex',
+        profileId: identity.profileId,
+      }),
+    ).toBe(true);
   });
 
   it('does not bind another resumable session into a fixed topic', () => {
